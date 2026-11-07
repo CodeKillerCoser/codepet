@@ -2,7 +2,7 @@ use ring::digest::{digest, SHA256};
 use serde_json::{json, Value};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    mpsc, Arc, OnceLock,
+    mpsc, Arc, Mutex, OnceLock,
 };
 use std::time::Instant;
 use webrtc::peer_connection::RTCPeerConnection;
@@ -84,15 +84,19 @@ pub(super) fn candidate(line: &str, salt: &str) -> Value {
         "candidateType": if ["host","srflx","prflx","relay"].contains(&f[7]) {f[7]} else {"unknown"}})
 }
 
-pub(super) struct Diagnostic {
+pub(in crate::remote::channels) struct Diagnostic {
     pub offer_id: String,
+    pub traffic: Arc<crate::ConnectionTraffic>,
     started: Instant,
+    stats_log: Mutex<StatsLogPolicy>,
 }
 impl Diagnostic {
     pub fn new(sdp: &str) -> Arc<Self> {
         Arc::new(Self {
             offer_id: id(sdp),
+            traffic: Arc::new(crate::ConnectionTraffic::new("unknown")),
             started: Instant::now(),
+            stats_log: Mutex::new(StatsLogPolicy::default()),
         })
     }
     #[track_caller]
@@ -145,11 +149,98 @@ impl Diagnostic {
             }
             reports.push(sanitize_stat(&v, &self.offer_id));
         }
+        if let Some(channel) = selected_channel(&reports) {
+            self.traffic.set_channel(channel);
+        }
+        if !self
+            .stats_log
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .should_emit(
+                &reports,
+                self.started.elapsed().as_millis(),
+                reason != "periodic",
+            )
+        {
+            return;
+        }
         self.emit(
             "ice.stats",
             json!({"reason":reason,"count":reports.len(),"truncated":reports.len()>128,
             "reports":reports.iter().take(128).collect::<Vec<_>>()}),
         );
+    }
+}
+
+#[derive(Default)]
+struct StatsLogPolicy {
+    fingerprint: Option<Vec<String>>,
+    last_ms: u128,
+}
+impl StatsLogPolicy {
+    fn should_emit(&mut self, reports: &[Value], now_ms: u128, force: bool) -> bool {
+        let mut fingerprint: Vec<String> = reports
+            .iter()
+            .map(|report| {
+                let mut topology = serde_json::Map::new();
+                for key in [
+                    "id",
+                    "type",
+                    "state",
+                    "nominated",
+                    "localCandidateId",
+                    "remoteCandidateId",
+                    "selectedCandidatePairId",
+                    "candidateType",
+                    "networkType",
+                    "relayProtocol",
+                    "address",
+                    "port",
+                ] {
+                    if let Some(value) = report.get(key) {
+                        topology.insert(key.into(), value.clone());
+                    }
+                }
+                Value::Object(topology).to_string()
+            })
+            .collect();
+        fingerprint.sort();
+        let emit = force
+            || self.fingerprint.as_ref() != Some(&fingerprint)
+            || now_ms.saturating_sub(self.last_ms) >= 30_000;
+        if emit {
+            self.fingerprint = Some(fingerprint);
+            self.last_ms = now_ms;
+        }
+        emit
+    }
+}
+
+fn selected_channel(reports: &[Value]) -> Option<&'static str> {
+    let selected = reports
+        .iter()
+        .find_map(|v| v["selectedCandidatePairId"].as_str());
+    let pair = reports.iter().find(|v| {
+        v["type"] == "candidate-pair"
+            && (selected.is_some_and(|id| v["id"] == id)
+                || (selected.is_none() && v["nominated"] == true && v["state"] == "succeeded"))
+    })?;
+    let local = reports
+        .iter()
+        .find(|v| v["id"] == pair["localCandidateId"])?;
+    let remote = reports
+        .iter()
+        .find(|v| v["id"] == pair["remoteCandidateId"])?;
+    if local["candidateType"] == "relay" || remote["candidateType"] == "relay" {
+        return Some("relay");
+    }
+    match (
+        local["address"]["family"].as_str(),
+        remote["address"]["family"].as_str(),
+    ) {
+        (Some("IPv6"), Some("IPv6")) => Some("ipv6-direct"),
+        (Some("IPv4"), Some("IPv4")) => Some("ipv4-direct"),
+        _ => None,
     }
 }
 
@@ -213,6 +304,32 @@ fn sanitize_stat(v: &Value, salt: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn stable_stats_are_throttled_but_state_changes_and_final_samples_survive() {
+        let mut policy = StatsLogPolicy::default();
+        let mut reports =
+            vec![json!({"id":"p","type":"candidate-pair","state":"succeeded","bytesSent":1})];
+        assert!(policy.should_emit(&reports, 0, false));
+        reports[0]["bytesSent"] = json!(500);
+        assert!(!policy.should_emit(&reports, 2_000, false));
+        assert!(policy.should_emit(&reports, 30_000, false));
+        reports[0]["state"] = json!("failed");
+        assert!(policy.should_emit(&reports, 30_001, false));
+        assert!(policy.should_emit(&reports, 30_002, true));
+    }
+    #[test]
+    fn selected_channel_requires_a_selected_pair_and_relay_takes_precedence() {
+        let mut reports = vec![
+            json!({"type":"candidate-pair","id":"p","state":"succeeded","nominated":true,"localCandidateId":"l","remoteCandidateId":"r"}),
+            json!({"id":"l","candidateType":"host","address":{"family":"IPv6"}}),
+            json!({"id":"r","candidateType":"host","address":{"family":"IPv6"}}),
+        ];
+        assert_eq!(selected_channel(&reports), Some("ipv6-direct"));
+        reports[2]["candidateType"] = json!("relay");
+        assert_eq!(selected_channel(&reports), Some("relay"));
+        reports[0]["nominated"] = json!(false);
+        assert_eq!(selected_channel(&reports), None);
+    }
     #[test]
     fn summaries_exclude_addresses_credentials_and_unknown_fields() {
         let value = candidate(

@@ -3,16 +3,18 @@ use codepet_provider_sdk::{ClientConnectionInfo, ClientConnectionsSnapshot};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
+use super::traffic::{ConnectionTraffic, ConnectionTrafficSnapshot};
 
 pub struct RemoteConnections {
     connections: Mutex<BTreeMap<String, String>>,
+    traffic: Mutex<BTreeMap<String, (String, Arc<ConnectionTraffic>)>>,
     snapshots: watch::Sender<ClientConnectionsSnapshot>,
 }
 
 impl Default for RemoteConnections {
     fn default() -> Self {
         let (snapshots, _) = watch::channel(ClientConnectionsSnapshot { revision: 0, connections: vec![] });
-        Self { connections: Mutex::new(BTreeMap::new()), snapshots }
+        Self { connections: Mutex::new(BTreeMap::new()), traffic: Mutex::new(BTreeMap::new()), snapshots }
     }
 }
 
@@ -26,6 +28,16 @@ impl RemoteConnections {
         entries.insert(id.clone(), client_id);
         self.publish(&entries);
         RemoteConnection { owner: self.clone(), id }
+    }
+
+    pub fn register_with_traffic(self: &Arc<Self>, client_id: String, traffic: Arc<ConnectionTraffic>) -> RemoteConnection {
+        let connection = self.register(client_id.clone());
+        self.traffic.lock().unwrap().insert(connection.id.clone(), (client_id, traffic));
+        connection
+    }
+    pub fn traffic_for_client(&self, client_id: &str) -> Vec<ConnectionTrafficSnapshot> {
+        self.traffic.lock().unwrap().values().filter(|(id, _)| id == client_id)
+            .map(|(_, traffic)| traffic.snapshot()).collect()
     }
 
     fn publish(&self, entries: &BTreeMap<String, String>) {
@@ -43,6 +55,7 @@ impl Drop for RemoteConnection {
     fn drop(&mut self) {
         let mut entries = self.owner.connections.lock().unwrap_or_else(|e| e.into_inner());
         entries.remove(&self.id);
+        self.owner.traffic.lock().unwrap().remove(&self.id);
         self.owner.publish(&entries);
     }
 }
@@ -50,6 +63,21 @@ impl Drop for RemoteConnection {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn traffic_belongs_to_each_live_connection_and_is_removed_on_close() {
+        let state = Arc::new(RemoteConnections::default());
+        let meter = Arc::new(ConnectionTraffic::new("lan")); meter.sent(123);
+        let first = state.register_with_traffic("phone".into(), meter);
+        let second = state.register_with_traffic("phone".into(), Arc::new(ConnectionTraffic::new("relay")));
+        assert_eq!(state.traffic_for_client("phone").len(), 2);
+        assert!(state.traffic_for_client("other").is_empty());
+        drop(first);
+        let remaining = state.traffic_for_client("phone");
+        assert_eq!(remaining[0].channel, "relay");
+        assert_eq!(remaining[0].sent_bytes, 0);
+        drop(second);
+        assert!(state.traffic_for_client("phone").is_empty());
+    }
     #[test]
     fn reconnect_and_two_clients_have_independent_lifetimes() {
         let state = Arc::new(RemoteConnections::default());

@@ -851,6 +851,9 @@ async fn loopback_tls_wss_listener_enforces_identity_subscription_isolation_and_
     assert_eq!(pong.sequence, 1);
     assert!(!pong.providers.is_empty());
     assert_eq!(host.gateway.remote_connections().snapshot().connections.len(), 2);
+    let traffic = host.gateway.remote_connections().traffic_for_client("client-a");
+    assert_eq!(traffic.len(), 2);
+    assert!(traffic.iter().all(|t| t.channel == "lan" && t.sent_bytes > 0 && t.received_bytes > 0));
     drop(heartbeat_while_loading);
     wait_for_active_sessions(&server, 1).await;
 
@@ -1428,6 +1431,12 @@ async fn rtc_and_lan_share_rpc_admission_large_messages_and_revocation() {
     send_request(&mut lan, handshake_request("lan-handshake", "rtc-client")).await;
     next_response(&mut lan, "lan-handshake").await;
     wait_for_active_sessions(&server, 2).await;
+    let traffic = host.gateway.remote_connections().traffic_for_client("rtc-client");
+    assert_eq!(traffic.len(), 2);
+    let rtc_traffic = traffic.iter().find(|t| t.channel != "lan").unwrap();
+    assert!(matches!(rtc_traffic.channel.as_str(), "ipv4-direct" | "ipv6-direct"), "{:?}", rtc_traffic);
+    assert!(rtc_traffic.sent_bytes > 72000 && rtc_traffic.received_bytes > 72000);
+    assert!(traffic.iter().any(|t| t.channel == "lan" && t.sent_bytes > 0 && t.received_bytes > 0));
     let credential = host.remote_access.validate_bearer(&pairing.credential).unwrap();
     host.remote_access.revoke_credential(&credential.credential_id).unwrap();
     assert_eq!(server.disconnect_credential(&credential.credential_id).await.unwrap(), 2);

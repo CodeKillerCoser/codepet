@@ -9,6 +9,7 @@ import os
 import re
 import sqlite3
 import time
+import threading
 from aiohttp import web
 from registration import DeviceRegistration
 
@@ -16,8 +17,9 @@ LOG = logging.getLogger('codepet.signal')
 
 
 def diagnostic(event, **fields):
-    LOG.info(json.dumps({'schema': 'codepet.signal.v1', 'timestampUnixMs': int(time.time() * 1000),
-                         'event': event, **fields}, separators=(',', ':')))
+    def clean(value):
+        return re.sub(r'[\x00-\x1f\x7f]', ' ', str(value))
+    LOG.info('%s%s', event, ''.join(f' | {key}={clean(value)}' for key, value in fields.items()), stacklevel=2)
 
 
 ID = re.compile(r"^[a-zA-Z0-9_-]{1,100}$")
@@ -35,6 +37,7 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         PRIMARY KEY(host,id));
     """)
     pending = {}
+    trickle_hosts = set()
     invitations = {}
     rates = {}
     registration = DeviceRegistration(db, registration_enabled, max_devices)
@@ -53,17 +56,19 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         finally:
             # Never log query strings, Authorization, envelopes or exception text.
             # Successful empty polls are represented by actual mailbox stage events.
-            if request.path != '/health' and (status != 200 or request.method != 'GET' or request.path == '/v1/ice'):
+            quiet_success = request.path == '/v1/ice-updates' or (request.method == 'PUT' and request.path == '/v1/clients')
+            if request.path != '/health' and (status != 200 or (request.method != 'GET' and not quiet_success) or request.path == '/v1/ice'):
                 kind, host, client = request.get('actor', (None, None, None))
                 diagnostic('http.complete', method=request.method,
-                           route=request.path if request.path in {'/v1/ice','/v1/offers','/v1/answers','/v1/answer','/v1/clients','/v1/devices/register'} else 'unknown',
+                           route=request.path if request.path in {'/v1/ice','/v1/ice-updates','/v1/offers','/v1/answers','/v1/answer','/v1/clients','/v1/devices/register'} else 'unknown',
                            status=status, role=kind, host=host, client=client,
                            durationMs=round((time.monotonic()-started)*1000))
 
     @web.middleware
     async def guard(request, handler):
         if request.path == '/health':
-            return web.json_response({'status': 'ok', 'protocol': 'codepet-signal-v1', 'deviceRegistration': registration_enabled})
+            return web.json_response({'status': 'ok', 'protocol': 'codepet-signal-v1', 'deviceRegistration': registration_enabled,
+                                      'features': ['client-trickle-ice-v1']})
         if request.path == '/v1/devices/register' and request.method == 'POST':
             return await handler(request)
         auth = request.headers.get('Authorization', '')
@@ -91,9 +96,10 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         for key in list(rates):
             if rates[key][0] < now - 60:
                 del rates[key]
-        key = (token, 'turn' if request.path == '/v1/ice' else 'signal')
+        category = 'trickle' if request.path == '/v1/ice-updates' else 'turn' if request.path == '/v1/ice' else 'signal'
+        key = (token, category)
         start, count = rates.get(key, (now, 0))
-        if count >= (12 if key[1] == 'turn' else 180):
+        if count >= (12 if key[1] == 'turn' else 600 if key[1] == 'trickle' else 180):
             raise web.HTTPTooManyRequests()
         rates[key] = (start, count + 1)
         for key in list(pending):
@@ -133,7 +139,8 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
 
     async def clients(request):
         host, _ = actor(request, 'host')
-        entries = (await body(request)).get('clients')
+        value = await body(request)
+        entries = value.get('clients')
         if not isinstance(entries, list) or len(entries) > 32:
             raise web.HTTPBadRequest()
         checked = []
@@ -145,6 +152,8 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
             if not isinstance(hashed, str) or not re.fullmatch('[0-9a-f]{64}', hashed):
                 raise web.HTTPBadRequest()
             checked.append((host, client, hashed))
+        previous = db.execute('SELECT host,id,token_hash FROM clients WHERE host=?', (host,)).fetchall()
+        changed = sorted(previous) != sorted(checked) or (host in trickle_hosts) != (value.get('trickleIce') is True)
         try:
             with db:
                 db.execute('DELETE FROM clients WHERE host=?', (host,))
@@ -152,9 +161,15 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         except sqlite3.IntegrityError:
             raise web.HTTPConflict()
         valid = {entry[1] for entry in checked}
+        if value.get('trickleIce') is True:
+            trickle_hosts.add(host)
+        else:
+            trickle_hosts.discard(host)
         for key in list(pending):
             if key[0] == host and key[1] not in valid:
                 del pending[key]
+        if changed:
+            diagnostic('clients.changed', host=host, count=len(checked), trickleIce=host in trickle_hosts)
         return web.json_response({'ok': True})
 
     async def ice(request):
@@ -165,7 +180,7 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         expiry = int(time.time()) + 86400
         username = f'{expiry}:{host}:{client or "host"}'
         password = base64.b64encode(hmac.new(turn_secret.encode(), username.encode(), hashlib.sha1).digest()).decode()
-        return web.json_response({'expires': expiry, 'iceServers': [
+        return web.json_response({'expires': expiry, 'trickleIce': host in trickle_hosts, 'iceServers': [
             {'urls': [f'stun:{public_ip}:3478'], 'username': '', 'credential': ''},
             {'urls': [f'turn:{public_ip}:3478?transport=udp',
                       f'turn:{public_ip}:3478?transport=tcp',
@@ -182,7 +197,7 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         if len(pending) >= 128 or sum(k[:2] == key[:2] for k in pending) >= 12:
             raise web.HTTPServiceUnavailable()
         pending[key] = {'attempt': attempt, 'envelope': envelope(value.get('envelope')),
-                        'answer': None, 'delivered': False, 'deadline': time.monotonic() + 60}
+                        'answer': None, 'delivered': False, 'updates': [], 'deadline': time.monotonic() + 60}
         diagnostic('offer.accepted', host=host, client=client, attempt=attempt, envelopeBytes=len(pending[key]['envelope']['payload']))
         return web.json_response({'ok': True})
 
@@ -230,6 +245,46 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
         host, client = actor(request, 'client')
         pending.pop((host, client, identifier(request.query.get('attempt'))), None)
         return web.json_response({'ok': True})
+
+    async def ice_update(request):
+        host, client = actor(request, 'client')
+        value = await body(request)
+        key = (host, client, identifier(value.get('attempt')))
+        entry = pending.get(key)
+        if entry is None:
+            raise web.HTTPNotFound()
+        sequence = value.get('sequence')
+        if type(sequence) is not int or not 0 <= sequence < 128:
+            raise web.HTTPBadRequest()
+        sealed = envelope(value.get('envelope'))
+        if len(sealed['payload']) > 16000:
+            raise web.HTTPRequestEntityTooLarge(max_size=16000, actual_size=len(sealed['payload']))
+        updates = entry['updates']
+        # Idempotent retries must not replace a previously accepted signed batch.
+        if sequence < len(updates):
+            if updates[sequence] != sealed:
+                raise web.HTTPConflict()
+        elif sequence == len(updates):
+            if sum(len(v['payload']) for v in updates) + len(sealed['payload']) > 128 * 1024:
+                raise web.HTTPRequestEntityTooLarge(max_size=128 * 1024, actual_size=128 * 1024 + 1)
+            updates.append(sealed)
+        else:
+            raise web.HTTPConflict()
+        return web.json_response({'ok': True})
+
+    async def ice_updates(request):
+        host, _ = actor(request, 'host')
+        key = (host, identifier(request.query.get('client')), identifier(request.query.get('attempt')))
+        entry = pending.get(key)
+        if entry is None:
+            raise web.HTTPNotFound()
+        try:
+            after = int(request.query.get('after', '0'))
+        except ValueError:
+            raise web.HTTPBadRequest()
+        if not 0 <= after <= len(entry['updates']):
+            raise web.HTTPBadRequest()
+        return web.json_response({'updates': entry['updates'][after:after + 4]})
 
     async def publish_invitation(request):
         host, _ = actor(request, 'host')
@@ -300,6 +355,8 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
     app.router.add_put('/v1/clients', clients)
     app.router.add_get('/v1/ice', ice)
     app.router.add_post('/v1/offers', offer)
+    app.router.add_post('/v1/ice-updates', ice_update)
+    app.router.add_get('/v1/ice-updates', ice_updates)
     app.router.add_delete('/v1/offers', cancel_offer)
     app.router.add_get('/v1/offers', offers)
     app.router.add_post('/v1/answers', answer)
@@ -312,7 +369,16 @@ def create_app(db_path, turn_secret, public_ip, registration_enabled=False, max_
 
 
 if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO, format='%(message)s')
+    factory = logging.getLogRecordFactory()
+    def record_factory(*args, **kwargs):
+        record = factory(*args, **kwargs)
+        record.thread = threading.get_native_id()
+        return record
+    logging.setLogRecordFactory(record_factory)
+    logging.Formatter.converter = time.gmtime
+    logging.basicConfig(level=logging.INFO,
+        format='%(asctime)s.%(msecs)03d+00:00 pid=%(process)d thread=%(thread)d %(levelname)s %(pathname)s:%(lineno)d [%(name)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S')
     config = json.load(open(os.environ.get('CODEPET_SIGNAL_CONFIG', '/etc/codepet-signal/config.json')))
     web.run_app(create_app(config['database'], config['turnSecret'], config['publicIp'],
                            config.get('deviceRegistration', False), config.get('maxDevices', 1024)),

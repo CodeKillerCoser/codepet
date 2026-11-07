@@ -220,7 +220,7 @@
   const defaultPetOpacity = 1;
   const minPetOpacity = 0.25;
   const updateAutoIntervalMs = 6 * 60 * 60 * 1000;
-  const remoteAccessPollIntervalMs = 10_000;
+  const remoteAccessPollIntervalMs = 1_000;
   const remotePairingRequestPollIntervalMs = 2_000;
 
   $: visibleRemoteDiagnostic = remoteRuntimeStatus?.diagnostic ?? remoteCommandError;

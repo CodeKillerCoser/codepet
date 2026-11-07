@@ -1,18 +1,23 @@
 //! Idle release has no dependency on client presence or heartbeat timing.
 use super::activity::Activity;
-use crate::generated::{InstanceStopRequest, ProtocolServer};
+use crate::generated::{InstanceStartRequest, InstanceStopRequest, ProtocolServer};
 use std::{sync::Arc, time::Duration};
 
-pub(super) async fn run<P: ProtocolServer + 'static>(provider: Arc<P>, activity: Arc<Activity>, timeout: Duration) {
+pub(super) async fn run<P: ProtocolServer + 'static>(provider: Arc<P>, activity: Arc<Activity>, timeout: Duration, restart: bool) {
     let mut clock = tokio::time::interval(Duration::from_secs(1).min(timeout));
     clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         clock.tick().await;
-        release_idle(provider.as_ref(), &activity, timeout).await;
+        maintain_idle(provider.as_ref(), &activity, timeout, restart).await;
     }
 }
 
+#[cfg(test)]
 pub(super) async fn release_idle<P: ProtocolServer>(provider: &P, activity: &Activity, timeout: Duration) {
+    maintain_idle(provider, activity, timeout, false).await;
+}
+
+async fn maintain_idle<P: ProtocolServer>(provider: &P, activity: &Activity, timeout: Duration, restart: bool) {
     // Non-blocking admission: a queued/ongoing RPC cannot be overtaken by idle stop.
     let Ok(_exclusive) = activity.gate.try_write() else { return; };
     for route in activity.idle_routes(timeout) {
@@ -22,6 +27,13 @@ pub(super) async fn release_idle<P: ProtocolServer>(provider: &P, activity: &Act
                 // this response, including adapters without a status event.
                 activity.instance(&response.instance);
                 activity.touch(&route.provider_instance_id);
+                if restart {
+                    let revision = activity.status_revision(&route.provider_instance_id);
+                    match provider.instance_start(InstanceStartRequest { route: route.clone() }).await {
+                        Ok(started) => activity.instance_response(&started.instance, revision),
+                        Err(error) => eprintln!("Idle restart failed for {}: {}", route.provider_instance_id, error.message),
+                    }
+                }
             }
             Err(error) => {
                 // Retry only after another idle window, not every scheduler tick.
@@ -62,13 +74,20 @@ mod tests {
         let clock = Arc::new(Mutex::new(Instant::now()));
         let read_clock = clock.clone();
         let activity = Arc::new(Activity::with_clock(Arc::new(move || *read_clock.lock().unwrap())));
-        let provider = Provider { stops: AtomicUsize::new(0) };
+        let provider = Provider { stops: AtomicUsize::new(0), starts: AtomicUsize::new(0) };
         status(&activity, "i", InstanceStatus::Ready);
         (clock, activity, provider)
     }
     fn advance(clock: &Mutex<Instant>, seconds: u64) { *clock.lock().unwrap() += Duration::from_secs(seconds); }
-    struct Provider { stops: AtomicUsize }
+    struct Provider { stops: AtomicUsize, starts: AtomicUsize }
     impl ProtocolServer for Provider {
+        fn instance_start<'a>(&'a self, request: InstanceStartRequest) -> ProtocolFuture<'a, InstanceStartResponse> {
+            Box::pin(async move {
+                assert!(self.stops.load(Ordering::SeqCst) > self.starts.load(Ordering::SeqCst));
+                self.starts.fetch_add(1, Ordering::SeqCst);
+                Ok(InstanceStartResponse { instance: instance(&request.route.provider_instance_id, InstanceStatus::Ready) })
+            })
+        }
         fn instance_stop<'a>(&'a self, request: InstanceStopRequest) -> ProtocolFuture<'a, InstanceStopResponse> {
             Box::pin(async move {
                 self.stops.fetch_add(1, Ordering::SeqCst);
@@ -77,6 +96,33 @@ mod tests {
         }
     }
     const WINDOW: Duration = Duration::from_secs(300);
+    #[test]
+    fn restart_response_cannot_overwrite_a_newer_ready_or_error_event() {
+        for latest in [InstanceStatus::Ready, InstanceStatus::Error] {
+            let (clock, activity, _) = fixture();
+            status(&activity, "i", InstanceStatus::Stopped);
+            let revision = activity.status_revision("i");
+            status(&activity, "i", InstanceStatus::Starting);
+            status(&activity, "i", latest);
+            activity.instance_response(&instance("i", InstanceStatus::Starting), revision);
+            advance(&clock, 300);
+            assert_eq!(!activity.idle_routes(WINDOW).is_empty(), latest == InstanceStatus::Ready);
+        }
+    }
+    #[tokio::test]
+    async fn opted_in_idle_recycles_once_but_explicit_stopped_instances_stay_stopped() {
+        let (clock, activity, provider) = fixture();
+        advance(&clock, 300);
+        maintain_idle(&provider, &activity, WINDOW, true).await;
+        assert_eq!(provider.starts.load(Ordering::SeqCst), 1);
+        maintain_idle(&provider, &activity, WINDOW, true).await;
+        assert_eq!(provider.stops.load(Ordering::SeqCst), 1);
+        status(&activity, "i", InstanceStatus::Stopped);
+        advance(&clock, 3600);
+        maintain_idle(&provider, &activity, WINDOW, true).await;
+        assert_eq!(provider.starts.load(Ordering::SeqCst), 1);
+    }
+
 
     #[tokio::test]
     async fn idle_deadline_is_independent_of_healthy_missing_or_removed_presence() {

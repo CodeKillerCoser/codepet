@@ -771,18 +771,21 @@ fn gateway_websocket_options() -> Options {
 }
 
 fn websocket_channel(socket: WebSocket) -> GatewayChannel {
-    let (sink, source) = socket.split();
+    let (sink, source) = super::websocket_diagnostics::ObservedSocket::new(socket).split();
+    let traffic = Arc::new(crate::ConnectionTraffic::new("lan"));
     GatewayChannel {
-        sink: Box::new(WebSocketSink(sink)),
-        source: Box::new(WebSocketSource(source)),
+        sink: Box::new(WebSocketSink(sink, traffic.clone())),
+        source: Box::new(WebSocketSource(source, traffic.clone())),
+        traffic,
     }
 }
 
-struct WebSocketSink(futures_util::stream::SplitSink<WebSocket, Message>);
+struct WebSocketSink(futures_util::stream::SplitSink<super::websocket_diagnostics::ObservedSocket, Message>, Arc<crate::ConnectionTraffic>);
 
 impl GatewaySink for WebSocketSink {
     fn send(&mut self, frame: GatewayFrame) -> ChannelFuture<'_, bool> {
         Box::pin(async move {
+            let size = match &frame { GatewayFrame::Text(text) => text.len(), _ => 0 };
             let message = match frame {
                 GatewayFrame::Text(text) => match String::from_utf8(text) {
                     Ok(text) => Message::text(text),
@@ -793,22 +796,24 @@ impl GatewaySink for WebSocketSink {
                 }
                 _ => return false,
             };
-            self.0.send(message).await.is_ok()
+            let sent = self.0.send(message).await.is_ok();
+            if sent { self.1.sent(size); }
+            sent
         })
     }
 }
 
-struct WebSocketSource(futures_util::stream::SplitStream<WebSocket>);
+struct WebSocketSource(futures_util::stream::SplitStream<super::websocket_diagnostics::ObservedSocket>, Arc<crate::ConnectionTraffic>);
 
 impl GatewaySource for WebSocketSource {
     fn recv(&mut self) -> ChannelFuture<'_, Option<GatewayFrame>> {
         Box::pin(async move {
             self.0.next().await.map(|message| match message.opcode {
-                OpCode::Text => GatewayFrame::Text(message.payload.to_vec()),
+                OpCode::Text => { self.1.received(message.payload.len()); GatewayFrame::Text(message.payload.to_vec()) },
                 OpCode::Ping | OpCode::Pong => GatewayFrame::KeepAlive,
                 OpCode::Close => GatewayFrame::Close {
-                    code: 1000,
-                    reason: String::new(),
+                    code: message.payload.get(..2).map(|b| u16::from_be_bytes([b[0],b[1]])).unwrap_or(1005),
+                    reason: message.payload.get(2..).and_then(|b| std::str::from_utf8(b).ok()).unwrap_or_default().to_owned(),
                 },
                 _ => GatewayFrame::Invalid,
             })

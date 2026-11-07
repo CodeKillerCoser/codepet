@@ -12,6 +12,9 @@ pub struct StdioServerOptions {
     pub dispatch_drain_timeout: Duration,
     /// Continuous business-idle window before releasing an instance Harness.
     pub idle_timeout: Duration,
+    /// Recycle the Harness after an automatic idle stop. Explicit stop/release
+    /// never enters this path. Adapters opt in independently of client presence.
+    pub restart_after_idle: bool,
 }
 
 impl Default for StdioServerOptions {
@@ -24,6 +27,7 @@ impl Default for StdioServerOptions {
             max_pending_control_requests: 4,
             dispatch_drain_timeout: Duration::from_secs(2),
             idle_timeout: Duration::from_secs(300),
+            restart_after_idle: false,
         }
     }
 }

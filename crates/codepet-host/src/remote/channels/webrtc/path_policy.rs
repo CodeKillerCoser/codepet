@@ -44,7 +44,10 @@ impl PathPolicy {
         settings
     }
 
-    fn accepts(self, line: &str) -> bool {
+    pub(super) fn accepts(self, line: &str) -> bool {
+        if self == Self::Auto {
+            return true;
+        }
         let fields: Vec<_> = line.split_whitespace().collect();
         if fields.len() < 8 || fields[6] != "typ" || !fields[2].eq_ignore_ascii_case("udp") {
             return false;
@@ -71,6 +74,9 @@ impl PathPolicy {
     }
 
     pub(super) fn filter_sdp(self, sdp: &str) -> HostResult<String> {
+        self.filter_sdp_with_empty(sdp, false)
+    }
+    pub(super) fn filter_sdp_with_empty(self, sdp: &str, allow_empty: bool) -> HostResult<String> {
         if self == Self::Auto {
             return Ok(sdp.to_owned());
         }
@@ -89,7 +95,7 @@ impl PathPolicy {
                 accepted
             })
             .collect();
-        if count == 0 {
+        if count == 0 && !allow_empty {
             return Err(rtc_error("no ICE candidates for requested path"));
         }
         Ok(lines.join("\r\n") + "\r\n")

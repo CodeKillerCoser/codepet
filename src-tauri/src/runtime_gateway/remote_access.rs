@@ -139,6 +139,7 @@ pub struct RemoteClientView {
     pub last_seen_at: u64,
     pub revoked_at: Option<u64>,
     pub online_session_count: usize,
+    pub connections: Vec<codepet_host::ConnectionTrafficSnapshot>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -672,7 +673,7 @@ impl RemoteAccessRuntime {
             .list_credentials()
             .map_err(RemoteCommandError::from)?;
         let inner = self.inner.lock().await;
-        Ok(project_remote_clients(credentials, |credential_id| {
+        let mut clients = project_remote_clients(credentials, |credential_id| {
             inner
                 .listener
                 .as_ref()
@@ -680,7 +681,13 @@ impl RemoteAccessRuntime {
                     listener.active_session_count_for_credential(credential_id)
                 })
                 .unwrap_or(0)
-        }))
+        });
+        if let Some(gateway) = &self.gateway {
+            for client in &mut clients {
+                client.connections = gateway.remote_connections().traffic_for_client(&client.remote_client_id);
+            }
+        }
+        Ok(clients)
     }
 
     pub async fn revoke_credential(
@@ -1476,6 +1483,7 @@ fn project_remote_clients(
                 last_seen_at,
                 revoked_at,
                 online_session_count,
+                connections: Vec::new(),
             })
         })
         .collect::<Vec<_>>();

@@ -2,7 +2,6 @@
 mod invitation;
 mod registration;
 mod service;
-pub use service::SignalingServiceController;
 use super::super::session::SessionRegistry;
 use super::path_policy::PathPolicy;
 use crate::{HostError, HostResult, ProviderGatewayService, RemoteAccessManager, RemoteCredential};
@@ -14,6 +13,7 @@ use ring::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+pub use service::SignalingServiceController;
 use std::{
     collections::{BTreeMap, HashSet},
     io::Write,
@@ -91,7 +91,9 @@ impl Cloud {
     }
 
     fn load_config(access: Arc<RemoteAccessManager>) -> HostResult<Option<Arc<Self>>> {
-        let Some((path, config)) = registration::load_or_create_config(&access)? else { return Ok(None); };
+        let Some((path, config)) = registration::load_or_create_config(&access)? else {
+            return Ok(None);
+        };
         let url = url::Url::parse(&config.service_url).map_err(|_| error())?;
         if url.scheme() != "https"
             || !url.username().is_empty()
@@ -253,7 +255,7 @@ impl Cloud {
         self.request(
             reqwest::Method::PUT,
             "/v1/clients",
-            Some(json!({"clients":clients})),
+            Some(json!({"clients":clients,"trickleIce":true})),
         )
         .await?;
         Ok(())
@@ -314,7 +316,7 @@ impl Cloud {
     }
 
     async fn accept(
-        &self,
+        self: &Arc<Self>,
         offer: &Value,
         gateway: Arc<ProviderGatewayService>,
         sessions: Arc<SessionRegistry>,
@@ -385,6 +387,9 @@ impl Cloud {
                     ..Default::default()
                 },
                 policy,
+                if body["trickleIce"] == true {
+                    Some(self.ice_updates(client.to_owned(), attempt.to_owned(), peer.public_key.clone(), hash(&bytes), expires, diagnostic.clone()))
+                } else { None },
             )
             .await?;
             diagnostic.emit("signal.answer.ready", json!({"attempt":attempt}));
@@ -404,10 +409,113 @@ impl Cloud {
         }
         result
     }
+
+    fn ice_updates(
+        self: &Arc<Self>,
+        client: String,
+        attempt: String,
+        public_key: String,
+        offer_hash: String,
+        expires: u64,
+        diagnostic: Arc<super::diagnostics::Diagnostic>,
+    ) -> tokio::sync::mpsc::Receiver<
+        HostResult<Vec<webrtc::ice_transport::ice_candidate::RTCIceCandidateInit>>,
+    > {
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+        let cloud = self.clone();
+        tokio::spawn(async move {
+            let result: HostResult<()> = async {
+                let mut sequence = 0;
+                let mut count = 0;
+                while now() < expires && !tx.is_closed() {
+                    cloud.active(&client)?;
+                    let path = format!("/v1/ice-updates?client={client}&attempt={attempt}&after={sequence}");
+                    let response = tokio::select! {
+                        _ = tx.closed() => return Ok(()),
+                        value = cloud.request(reqwest::Method::GET, &path, None) => value?,
+                    };
+                    for envelope in response["updates"].as_array().ok_or_else(error)? {
+                        let (mut candidates, complete) = verify_ice_update(&public_key,
+                            &cloud.access.remote_host_identity().device_id, &client, &attempt,
+                            &offer_hash, sequence, expires, envelope)?;
+                        count += candidates.len();
+                        if count > 128 { return Err(error()); }
+                        diagnostic.emit("ice.update.received", json!({"sequence":sequence,"count":candidates.len(),"complete":complete}));
+                        sequence += 1;
+                        if complete { candidates.push(Default::default()); }
+                        if tx.send(Ok(candidates)).await.is_err() { return Ok(()); }
+                        if complete { return Ok(()); }
+                    }
+                    tokio::select! { _ = tx.closed() => return Ok(()), _ = tokio::time::sleep(Duration::from_millis(500)) => {} }
+                }
+                Ok(())
+            }.await;
+            if let Err(failure) = result {
+                let _ = tx.send(Err(failure)).await;
+            }
+        });
+        rx
+    }
+}
+
+fn verify_ice_update(
+    public_key: &str,
+    host: &str,
+    client: &str,
+    attempt: &str,
+    offer_hash: &str,
+    sequence: u64,
+    expires: u64,
+    envelope: &Value,
+) -> HostResult<(
+    Vec<webrtc::ice_transport::ice_candidate::RTCIceCandidateInit>,
+    bool,
+)> {
+    let payload = envelope["payload"].as_str().ok_or_else(error)?;
+    if payload.len() > 16000 {
+        return Err(error());
+    }
+    let bytes = B64.decode(payload).map_err(|_| error())?;
+    let sig = B64
+        .decode(envelope["signature"].as_str().ok_or_else(error)?)
+        .map_err(|_| error())?;
+    signature::UnparsedPublicKey::new(
+        &signature::ED25519,
+        B64.decode(public_key).map_err(|_| error())?,
+    )
+    .verify(&bytes, &sig)
+    .map_err(|_| error())?;
+    let body: Value = serde_json::from_slice(&bytes).map_err(|_| error())?;
+    if body["v"] != 1
+        || body["kind"] != "ice-update"
+        || body["host"] != host
+        || body["client"] != client
+        || body["attempt"] != attempt
+        || body["offerHash"] != offer_hash
+        || body["sequence"] != sequence
+        || body["expires"] != expires
+        || now() >= expires
+        || !body["complete"].is_boolean()
+    {
+        return Err(error());
+    }
+    let candidates: Vec<webrtc::ice_transport::ice_candidate::RTCIceCandidateInit> =
+        serde_json::from_value(body["candidates"].clone()).map_err(|_| error())?;
+    if candidates.len() > 8
+        || candidates
+            .iter()
+            .any(|c| c.candidate.is_empty() || c.candidate.len() > 1024)
+    {
+        return Err(error());
+    }
+    Ok((candidates, body["complete"] == true))
 }
 
 fn authorization_required() -> HostError {
-    HostError::new("rtc_cloud_authorization_required", "信令服务地址已配置，但当前设备尚未获得该服务的授权")
+    HostError::new(
+        "rtc_cloud_authorization_required",
+        "信令服务地址已配置，但当前设备尚未获得该服务的授权",
+    )
 }
 
 fn authorized_service_url(authorized: &str, selected: Option<&str>) -> HostResult<String> {
@@ -415,7 +523,9 @@ fn authorized_service_url(authorized: &str, selected: Option<&str>) -> HostResul
     let bound = crate::normalize_signaling_service(authorized)?.ok_or_else(error)?;
     if let Some(selected) = selected {
         let selected = crate::normalize_signaling_service(selected)?.ok_or_else(error)?;
-        if selected != bound { return Err(authorization_required()); }
+        if selected != bound {
+            return Err(authorization_required());
+        }
         return Ok(selected);
     }
     Ok(bound)
@@ -467,10 +577,59 @@ fn verify_offer(
 mod tests {
     use super::*;
     #[test]
+    fn incremental_candidates_are_signed_bound_ordered_and_expire() {
+        let key = signature::Ed25519KeyPair::from_seed_unchecked(&[7; 32]).unwrap();
+        let public = B64.encode(key.public_key().as_ref());
+        let expires = now() + 60;
+        let body = json!({"v":1,"kind":"ice-update","host":"h","client":"c","attempt":"a","offerHash":"hash","expires":expires,
+            "sequence":0,"complete":true,"candidates":[{"candidate":"candidate:1 1 udp 1 192.0.2.1 1234 typ host","sdpMid":"0","sdpMLineIndex":0}]});
+        let sign = |body: &Value| {
+            let bytes = serde_json::to_vec(body).unwrap();
+            json!({"payload":B64.encode(&bytes),"signature":B64.encode(key.sign(&bytes).as_ref())})
+        };
+        assert_eq!(
+            verify_ice_update(&public, "h", "c", "a", "hash", 0, expires, &sign(&body))
+                .unwrap()
+                .0
+                .len(),
+            1
+        );
+        for (field, value) in [
+            ("host", json!("other")),
+            ("client", json!("other")),
+            ("attempt", json!("other")),
+            ("offerHash", json!("other")),
+            ("sequence", json!(1)),
+            ("expires", json!(0)),
+            ("kind", json!("answer")),
+        ] {
+            let mut changed = body.clone();
+            changed[field] = value;
+            assert!(
+                verify_ice_update(&public, "h", "c", "a", "hash", 0, expires, &sign(&changed))
+                    .is_err()
+            );
+        }
+        let mut bad = sign(&body);
+        bad["signature"] = json!(B64.encode([0; 64]));
+        assert!(verify_ice_update(&public, "h", "c", "a", "hash", 0, expires, &bad).is_err());
+    }
+    #[test]
     fn configured_service_preserves_legacy_authorization_without_forwarding_it() {
-        assert_eq!(authorized_service_url("https://signal.example.com:443/", None).unwrap(), "https://signal.example.com");
-        assert_eq!(authorized_service_url("https://172.96.254.12:8443", Some("172.96.254.12")).unwrap(), "https://172.96.254.12:8443");
-        assert_eq!(authorized_service_url("https://old.example.com", Some("https://new.example.com")).unwrap_err().code, "rtc_cloud_authorization_required");
+        assert_eq!(
+            authorized_service_url("https://signal.example.com:443/", None).unwrap(),
+            "https://signal.example.com"
+        );
+        assert_eq!(
+            authorized_service_url("https://172.96.254.12:8443", Some("172.96.254.12")).unwrap(),
+            "https://172.96.254.12:8443"
+        );
+        assert_eq!(
+            authorized_service_url("https://old.example.com", Some("https://new.example.com"))
+                .unwrap_err()
+                .code,
+            "rtc_cloud_authorization_required"
+        );
     }
     #[test]
     fn signed_offers_bind_identity_attempt_and_expiry() {

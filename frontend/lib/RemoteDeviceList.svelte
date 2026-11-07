@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { channelLabel, formatBytes } from "./connectionTraffic";
   import { CircleHelp, Globe2, Monitor, Smartphone, Tablet, Trash2 } from "@lucide/svelte";
   import { remoteDeviceConnectionLabel, remoteDeviceStatusMeta, remoteDeviceSystemLabel, type RemoteDevice } from "./remoteDevices";
 
@@ -39,6 +40,16 @@
           <strong>{device.deviceName}</strong>
           <span class="remote-device-platform">{remoteDeviceSystemLabel(device)}</span>
           <span>{remoteDeviceConnectionLabel(device, nowMs)}</span>
+          {#if device.status === "online"}
+            {#each device.connections ?? [] as connection}
+              <div class="connection-traffic" title="本机视角的应用数据量；速度为最近 3 秒平均值，不代表带宽上限">
+                <span class="connection-channel">{channelLabel(connection.channel)}</span>
+                <span>↑ {formatBytes(connection.sentBytesPerSecond)}/s</span>
+                <span>↓ {formatBytes(connection.receivedBytesPerSecond)}/s</span>
+                <span class="connection-total">本次连接 {formatBytes(connection.sentBytes + connection.receivedBytes)} · 上传 {formatBytes(connection.sentBytes)} / 下载 {formatBytes(connection.receivedBytes)}</span>
+              </div>
+            {/each}
+          {/if}
         </div>
 
         <div class="remote-device-actions">
@@ -89,3 +100,14 @@
     <p>添加设备后，Remote 客户端会显示在这里。</p>
   </div>
 {/if}
+
+<style>
+  .remote-device-list { container-type: inline-size; }
+  @container (max-width: 600px) {
+    .remote-device-row { grid-template-columns: 48px minmax(0, 1fr); }
+    .remote-device-actions { grid-column: 1 / -1; justify-content: flex-start; }
+  }
+  .connection-traffic { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .connection-traffic .connection-channel { color: var(--app-text); font-weight: 600; }
+  .connection-traffic .connection-total { flex-basis: 100%; white-space: normal; }
+</style>

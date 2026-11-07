@@ -44,6 +44,7 @@ pub struct ProviderInstanceRuntimeSnapshot {
 
 #[derive(Clone, Debug)]
 pub struct PluginRuntimeSnapshot {
+    pub runtime_inventory: Option<RuntimeGetInstalledResponse>,
     pub catalog: PluginDescriptor,
     pub reported: Option<ProviderPluginDescriptor>,
     pub state: PluginRuntimeState,
@@ -127,6 +128,7 @@ struct PluginEntry {
 impl PluginEntry {
     fn snapshot(&self) -> PluginRuntimeSnapshot {
         PluginRuntimeSnapshot {
+            runtime_inventory: self.runtime_inventory.clone(),
             catalog: self.catalog.clone(),
             reported: self.reported.clone(),
             state: self.state,

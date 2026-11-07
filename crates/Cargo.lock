@@ -503,6 +503,7 @@ dependencies = [
  "codepet-pet-sdk",
  "codepet-provider-data",
  "codepet-provider-sdk",
+ "flate2",
  "futures-util",
  "libc",
  "mdns-sd",

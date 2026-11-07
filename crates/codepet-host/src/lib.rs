@@ -46,6 +46,7 @@ pub use remote::channels::lan::listener::{
 pub use remote::channels::lan::network::{select_remote_lan_ipv4, remote_lan_interfaces, remote_lan_interface_for, RemoteLanInterface};
 
 pub use remote::connections::RemoteConnections;
+pub use remote::traffic::{ConnectionTraffic, ConnectionTrafficSnapshot};
 pub use remote::signaling_service::normalize_signaling_service;
 pub use remote::channels::webrtc::cloud::SignalingServiceController;
 

@@ -16,7 +16,7 @@ const CODEX_PLUGIN_ID: &str = "dev.codepet.codex";
 const OPENCODE_PLUGIN_ID: &str = "dev.codepet.opencode";
 
 #[tokio::test]
-async fn gateway_idle_release_preserves_history_and_interaction_recovery() {
+async fn gateway_idle_restart_keeps_provider_visible_and_ready_without_phone() {
     let workspace = crates_workspace();
     let target = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().parent().unwrap().to_path_buf();
     assert!(Command::new(cargo_executable()).args(["build", "--quiet", "-p", "codepet-provider-codex", "--bins"])
@@ -40,22 +40,23 @@ async fn gateway_idle_release_preserves_history_and_interaction_recovery() {
     // No phone is required to start, idle-release, or serve a later local read.
     assert!(manager.start_enabled().await.iter().all(|(_, result)| result.is_ok()));
     wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
+    select_fixture_runtime(&manager, CODEX_PLUGIN_ID, &executable("codex-app-server-fixture")).await;
     let listed = gateway.provider_list(ProviderListRequest {}).await.unwrap();
     let id = listed.providers[0].id.clone();
     let described = gateway.provider_describe(codepet_gateway_sdk::ProviderDescribeRequest { provider_id:id.clone() }).await.unwrap();
     assert!(described.capabilities.methods.contains(&codepet_gateway_sdk::GatewayCapability::ConversationReleaseInteraction));
     let conversation = codepet_gateway_sdk::RoutedResourceId { provider_id:id.clone(), native_resource_id:"thread-listed".into() };
-    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Stopped).await;
+    wait_for_idle_restart(&gateway).await;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         let read = gateway.conversation_get(codepet_gateway_sdk::ConversationGetRequest {
             conversation:conversation.clone(), cursor:None, limit:Some(20)
         }).await;
         if let Ok(read) = read { assert_eq!(read.conversation.resource, conversation); break; }
-        assert!(tokio::time::Instant::now() < deadline, "history should recover an idle Server on demand");
+        assert!(tokio::time::Instant::now() < deadline, "history must work after automatic restart");
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
-    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Stopped).await;
+    wait_for_idle_restart(&gateway).await;
     let resumed = gateway.conversation_resume(codepet_gateway_sdk::ConversationResumeRequest {
         conversation, force:None, limit:Some(20)
     }).await.unwrap();
@@ -89,6 +90,7 @@ async fn gateway_release_interaction_stops_codex_and_explicit_resume_restarts_it
     let _phone = manager.remote_connections().register("release-phone".into());
     assert!(manager.start_enabled().await.iter().all(|(_, result)| result.is_ok()));
     wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
+    select_fixture_runtime(&manager, CODEX_PLUGIN_ID, &executable("codex-app-server-fixture")).await;
     let listed = gateway.provider_list(ProviderListRequest {}).await.unwrap();
     let id = listed.providers[0].id.clone();
     let described = gateway.provider_describe(codepet_gateway_sdk::ProviderDescribeRequest { provider_id:id.clone() }).await.unwrap();
@@ -221,6 +223,11 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
     }
 
     wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
+    for (plugin, fixture) in [
+        (CODEX_PLUGIN_ID, "codex-app-server-fixture"),
+        ("dev.codepet.claude", "claude-stream-fixture"),
+        (OPENCODE_PLUGIN_ID, "opencode-server-fixture"),
+    ] { select_fixture_runtime(&manager, plugin, &executable(fixture)).await; }
     let first_phone = manager.remote_connections().register("phone-a".into());
     let second_phone = manager.remote_connections().register("phone-b".into());
     wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
@@ -230,7 +237,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
     )
     .await
     .unwrap();
-    assert_eq!(listed.providers.len(), 3);
+    assert_eq!(listed.providers.len(), 3, "listed={:?}; inventory={:?}", listed.providers.iter().map(|p| &p.id).collect::<Vec<_>>(), manager.snapshots().await.iter().map(|p| (&p.catalog.plugin_id, &p.runtime_inventory)).collect::<Vec<_>>());
     let codex = ready_provider(&listed.providers, "codex", &device_id);
     let claude = ready_provider(&listed.providers, "claude", &device_id);
     let opencode = ready_provider(&listed.providers, "opencode", &device_id);
@@ -426,4 +433,44 @@ fn cargo_executable() -> PathBuf {
         .map(|directory| directory.join(&configured))
         .find(|candidate| candidate.is_file())
         .expect("cargo executable must be available for built-in Provider integration tests")
+}
+
+async fn wait_for_idle_restart(gateway: &ProviderGatewayService) {
+    let cursor = gateway.current_event_cursor();
+    let mut events = gateway.subscribe_events(Some(&cursor)).unwrap();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        let mut stopped = false;
+        loop {
+            if let codepet_gateway_sdk::ProtocolEvent::ProviderChanged { params, .. } = events.next_event().await.unwrap() {
+                let status = params.payload.provider.runtime.status;
+                if status == ProviderStatus::Stopped { stopped = true; }
+                if stopped && status == ProviderStatus::Ready { break; }
+            }
+        }
+    }).await.expect("idle runtime must publish Stopped then Ready without any start request");
+    let listed = gateway.provider_list(ProviderListRequest {}).await.unwrap();
+    assert_eq!(listed.providers.len(), 1);
+    assert_eq!(listed.providers[0].runtime.status, ProviderStatus::Ready);
+}
+
+async fn select_fixture_runtime(manager: &PluginManager, plugin: &str, path: &Path) {
+    // A configured Harness alone is not a detected runtime. Exercise the actual
+    // scanner/selection boundary, independent of what is installed on this Mac.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        let inventory = manager.runtime_get_installed(plugin, codepet_provider_sdk::RuntimeGetInstalledRequest { refresh: None }).await.unwrap();
+        if inventory.scanning != Some(true) { break; }
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let path = std::fs::canonicalize(path).unwrap().to_string_lossy().into_owned();
+    manager.runtime_select(plugin, codepet_provider_sdk::RuntimeSelectRequest { candidate: codepet_provider_sdk::RuntimeCandidate {
+        executable_path:path.clone(), source:codepet_provider_sdk::RuntimeCandidateSource::Configured,
+    }}).await.unwrap();
+    loop {
+        let snapshot = manager.snapshot(plugin).await.unwrap();
+        if snapshot.runtime_inventory.as_ref().is_some_and(|i| i.selected.as_ref().is_some_and(|r| r.executable_path == path && !r.version.is_empty())) { break; }
+        assert!(tokio::time::Instant::now() < deadline, "fixture inventory was not reported: {:?}", snapshot.runtime_inventory);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }

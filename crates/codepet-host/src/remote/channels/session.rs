@@ -41,6 +41,7 @@ pub(crate) trait GatewaySource: Send {
 }
 
 pub(crate) struct GatewayChannel {
+    pub(crate) traffic: Arc<crate::ConnectionTraffic>,
     pub(crate) sink: Box<dyn GatewaySink>,
     pub(crate) source: Box<dyn GatewaySource>,
 }
@@ -341,7 +342,7 @@ pub(crate) async fn run_gateway_channel(
     credential: RemoteCredential,
     mut registration: SessionRegistration,
 ) {
-    let GatewayChannel { sink, mut source } = channel;
+    let GatewayChannel { sink, mut source, traffic } = channel;
     let (outbound_tx, outbound_rx) = mpsc::channel::<GatewayFrame>(OUTBOUND_QUEUE_CAPACITY);
     let (request_tx, request_rx) = mpsc::channel::<GatewayRequestDelivery>(REQUEST_QUEUE_CAPACITY);
     let trace_links = Arc::new(Mutex::new(SessionTraceLinks::default()));
@@ -526,7 +527,7 @@ pub(crate) async fn run_gateway_channel(
             presence = Some(
                 gateway
                     .remote_connections()
-                    .register(credential.client_id.clone()),
+                    .register_with_traffic(credential.client_id.clone(), traffic.clone()),
             );
             heartbeat = gateway::GatewayHeartbeat::default();
             handshaken = true;

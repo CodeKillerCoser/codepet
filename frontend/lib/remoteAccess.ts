@@ -1,3 +1,4 @@
+import type { ConnectionTraffic } from "./connectionTraffic";
 import { invoke } from "@tauri-apps/api/core";
 import type { DeviceDescriptor } from "../../sdk/typescript/codepet-core-sdk/src/generated";
 
@@ -29,6 +30,7 @@ export interface RemoteClient {
   lastSeenAt: number;
   revokedAt?: number | null;
   onlineSessionCount: number;
+  connections?: ConnectionTraffic[];
 }
 
 export interface RemotePairingStart {

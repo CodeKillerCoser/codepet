@@ -1,3 +1,4 @@
+import type { ConnectionTraffic } from "./connectionTraffic";
 import type { RemoteClient, RemotePairingStatusKind } from "./remoteAccess";
 
 export type RemoteDeviceType = "phone" | "tablet" | "desktop" | "browser" | "unknown";
@@ -12,6 +13,7 @@ export interface RemoteDevice {
   deviceType: RemoteDeviceType;
   status: RemoteDeviceStatus;
   lastConnectedAtMs?: number | null;
+  connections?: ConnectionTraffic[];
 }
 
 export type PairingPhase = "unavailable" | "starting" | "waiting" | "success" | "expired" | "cancelled" | "error";
@@ -51,6 +53,7 @@ export function remoteDeviceFromClient(client: RemoteClient): RemoteDevice {
 
   return {
     id: client.credentialId,
+    ...(client.connections ? { connections: client.connections } : {}),
     deviceName: client.descriptor.deviceName,
     operatingSystem: client.descriptor.operatingSystem,
     systemVersion: client.descriptor.systemVersion,

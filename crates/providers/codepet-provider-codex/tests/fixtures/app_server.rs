@@ -10,6 +10,10 @@ struct Options {
 }
 
 fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("codex-cli 0.166.0");
+        return;
+    }
     let options = options();
     if options.approval_mode == "force-takeover" {
         assert!(std::env::var("CODEPET_CODEX_HARNESS").is_ok_and(|value| !value.is_empty()));

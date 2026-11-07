@@ -7,6 +7,41 @@ from server import create_app, digest
 
 
 class AdmissionTest(unittest.IsolatedAsyncioTestCase):
+    async def test_repeated_client_sync_is_quiet_but_changes_and_failures_remain(self):
+        body = {'clients': [{'id': 'client-a', 'tokenHash': digest('client-token')}]}
+        with self.assertLogs('codepet.signal', level='INFO') as captured:
+            await self.call('PUT', '/v1/clients', 'host-token', body)
+        self.assertEqual(len(captured.records), 1)
+        self.assertIn('clients.changed', captured.records[0].getMessage())
+        with self.assertNoLogs('codepet.signal', level='INFO'):
+            await self.call('PUT', '/v1/clients', 'host-token', body)
+            await self.call('PUT', '/v1/clients', 'host-token', body)
+        with self.assertLogs('codepet.signal', level='INFO') as captured:
+            await self.call('PUT', '/v1/clients', 'host-token', dict(body, trickleIce=True))
+            await self.call('PUT', '/v1/clients', 'host-token', {'clients': []})
+            await self.call('PUT', '/v1/clients', 'bad-token', body)
+        self.assertEqual(sum('clients.changed' in r.getMessage() for r in captured.records), 2)
+        self.assertTrue(any('status=401' in r.getMessage() for r in captured.records))
+
+    async def test_trickle_capability_scoping_order_retries_and_cancellation(self):
+        clients = {'clients': [{'id': 'client-a', 'tokenHash': digest('client-token')}], 'trickleIce': True}
+        await self.call('PUT', '/v1/clients', 'host-token', clients)
+        self.assertTrue((await (await self.call('GET', '/v1/ice', 'client-token')).json())['trickleIce'])
+        envelope = {'payload': base64.b64encode(b'opaque').decode(), 'signature': base64.b64encode(bytes(64)).decode()}
+        await self.call('POST', '/v1/offers', 'client-token', {'attempt': 'trickle', 'envelope': envelope})
+        update = {'attempt': 'trickle', 'sequence': 0, 'envelope': envelope}
+        self.assertEqual((await self.call('POST', '/v1/ice-updates', 'client-token', update)).status, 200)
+        self.assertEqual((await self.call('POST', '/v1/ice-updates', 'client-token', update)).status, 200)
+        self.assertEqual((await self.call('POST', '/v1/ice-updates', 'client-token', dict(update, sequence=2))).status, 409)
+        path = '/v1/ice-updates?client=client-a&attempt=trickle&after=0'
+        self.assertEqual((await self.call('GET', path, 'other-host')).status, 404)
+        self.assertEqual((await self.call('GET', path, 'client-token')).status, 403)
+        self.assertEqual((await (await self.call('GET', path, 'host-token')).json())['updates'], [envelope])
+        self.assertEqual((await (await self.call('GET', path.replace('after=0', 'after=1'), 'host-token')).json())['updates'], [])
+        await self.call('DELETE', '/v1/offers?attempt=trickle', 'client-token')
+        self.assertEqual((await self.call('POST', '/v1/ice-updates', 'client-token', update)).status, 404)
+        await self.call('PUT', '/v1/clients', 'host-token', {'clients': clients['clients']})
+        self.assertFalse((await (await self.call('GET', '/v1/ice', 'client-token')).json())['trickleIce'])
     async def asyncSetUp(self):
         self.directory = tempfile.TemporaryDirectory()
         path = self.directory.name + '/state.db'
@@ -68,7 +103,6 @@ class AdmissionTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await (await self.call('GET', '/v1/offers', 'host-token')).json())['offers'], [])
 
     async def test_diagnostics_correlate_mailbox_without_logging_secrets(self):
-        import json
         secret_payload = base64.b64encode(b'private SDP and ICE password').decode()
         with self.assertLogs('codepet.signal', level='INFO') as captured:
             await self.call('PUT', '/v1/clients', 'host-token', {'clients': [{'id': 'client-a', 'tokenHash': digest('client-token')}]})
@@ -78,14 +112,15 @@ class AdmissionTest(unittest.IsolatedAsyncioTestCase):
             await self.call('POST', '/v1/answers', 'host-token', {'client': 'client-a', 'attempt': 'diagnostic-attempt', 'envelope': envelope})
             await self.call('GET', '/v1/answer?attempt=diagnostic-attempt', 'client-token')
             await self.call('GET', '/v1/answer?attempt=secret-query', 'invalid-secret-token')
-        entries = [json.loads(record.getMessage()) for record in captured.records]
+        entries = [record.getMessage() for record in captured.records]
         for stage in ['offer.accepted','offer.delivered','answer.accepted','answer.delivered']:
-            event = next(e for e in entries if e['event'] == stage)
-            self.assertEqual(event['attempt'], 'diagnostic-attempt')
+            event = next(e for e in entries if e.startswith(stage + ' |'))
+            self.assertIn('attempt=diagnostic-attempt', event)
+            self.assertFalse(event.startswith('{'))
         text = str(entries)
         for secret in [secret_payload, envelope['signature'], 'host-token','client-token','invalid-secret-token','secret-query']:
             self.assertNotIn(secret, text)
-        self.assertTrue(any(e.get('status') == 401 for e in entries))
+        self.assertTrue(any('status=401' in e for e in entries))
 
     async def test_oversized_and_turn_limits(self):
         self.assertEqual((await self.call('PUT', '/v1/clients', 'host-token', {'clients': [None]})).status, 400)

@@ -2102,3 +2102,38 @@ async fn observation_fans_out_locally_without_a_remote_instance() {
     drop(remote);
     manager.shutdown().await;
 }
+
+#[tokio::test]
+async fn handshake_list_and_ping_hide_undetected_builtins_but_keep_custom_providers() {
+    let manager = build_manager("device-visible", vec![
+        plugin("dev.codepet.codex", &["codex"]),
+        plugin("dev.codepet.claude", &["claude"]),
+        plugin("dev.codepet.opencode", &["opencode"]),
+        plugin("custom.provider", &["custom"]),
+    ]);
+    let gateway = Arc::new(ProviderGatewayService::with_remote_identity(manager.clone(), RemoteHostIdentity {
+        device_id:"device-visible".into(), descriptor:device_descriptor("Visible host"),
+    }).unwrap());
+    gateway.start_event_forwarding();
+    assert!(manager.start_enabled().await.iter().all(|(_, result)| result.is_ok()));
+    // Fixture binaries are online, but do not report installed built-in runtimes.
+    let handshake = gateway.protocol_handshake(handshake_request()).await.unwrap();
+    let list = gateway.provider_list(ProviderListRequest {}).await.unwrap();
+    let ping = gateway.protocol_ping(codepet_gateway_sdk::PingRequest { sequence:1 }).await.unwrap();
+    for providers in [&handshake.providers, &list.providers, &ping.providers] {
+        assert_eq!(providers.iter().map(|p| p.id.as_str()).collect::<Vec<_>>(), ["custom"]);
+    }
+    let cursor = gateway.current_event_cursor();
+    let mut events = gateway.subscribe_events(Some(&cursor)).unwrap();
+    manager.stop_instance(&codepet_provider_sdk::ProviderInstanceRoute {
+        device_id:"device-visible".into(), provider_plugin_id:"dev.codepet.claude".into(), provider_instance_id:"claude".into(),
+    }).await.unwrap();
+    // No hidden built-in may be reintroduced through a lifecycle notification.
+    let deadline = tokio::time::Instant::now() + Duration::from_millis(80);
+    while let Ok(Ok(event)) = tokio::time::timeout_at(deadline, events.next_event()).await {
+        if let GatewayEvent::ProviderChanged { params, .. } = event {
+            assert_eq!(params.payload.provider.id, "custom");
+        }
+    }
+    manager.shutdown().await;
+}

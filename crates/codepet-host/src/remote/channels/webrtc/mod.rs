@@ -80,6 +80,7 @@ pub(crate) async fn answer_offer_configured(
         registration,
         configuration,
         PathPolicy::Auto,
+        None,
     )
     .await
 }
@@ -92,8 +93,17 @@ async fn answer_offer_with_policy(
     mut registration: SessionRegistration,
     mut configuration: RTCConfiguration,
     path_policy: PathPolicy,
+    mut updates: Option<
+        mpsc::Receiver<HostResult<Vec<webrtc::ice_transport::ice_candidate::RTCIceCandidateInit>>>,
+    >,
 ) -> HostResult<RTCSessionDescription> {
     let settings = path_policy.configure(&mut configuration);
+    let compression = framing::supports_compression(&offer.sdp);
+    // Early SDP starts this phase earlier than legacy full gathering. Preserve
+    // the race's 55s budget so a genuinely late useful candidate is not lost.
+    let trickle_deadline = updates
+        .as_ref()
+        .map(|_| Instant::now() + Duration::from_secs(55));
     let diagnostic = Diagnostic::new(&offer.sdp);
     diagnostic.emit("connect.start", json!({"iceServerCount":configuration.ice_servers.len(),"policy":format!("{:?}",configuration.ice_transport_policy)}));
     diagnostic.description("remoteOffer", &offer.sdp);
@@ -115,8 +125,10 @@ async fn answer_offer_with_policy(
         return Err(rtc_error("invalid RTC offer"));
     }
     // Reparse after filtering: RTCSessionDescription also caches parsed SDP.
-    offer = RTCSessionDescription::offer(path_policy.filter_sdp(&offer.sdp)?)
-        .map_err(|_| rtc_error("invalid RTC offer SDP"))?;
+    offer = RTCSessionDescription::offer(
+        path_policy.filter_sdp_with_empty(&offer.sdp, updates.is_some())?,
+    )
+    .map_err(|_| rtc_error("invalid RTC offer SDP"))?;
     let peer = Arc::new(
         APIBuilder::new()
             .with_setting_engine(settings)
@@ -157,9 +169,8 @@ async fn answer_offer_with_policy(
     let weak_peer = Arc::downgrade(&peer);
     let stats_diag = diagnostic.clone();
     tokio::spawn(async move {
-        let mut sample = 0;
         loop {
-            tokio::time::sleep(Duration::from_secs(if sample < 30 { 2 } else { 30 })).await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
             let Some(peer) = weak_peer.upgrade() else {
                 break;
             };
@@ -169,7 +180,6 @@ async fn answer_offer_with_policy(
             {
                 break;
             }
-            sample += 1;
         }
     });
     peer.on_data_channel(Box::new(|channel| {
@@ -190,10 +200,13 @@ async fn answer_offer_with_policy(
             )
             .await
             .map_err(|_| rtc_error("create RTC channel"))?;
-        let (channel, closed) = channel_adapter(dc.clone(), diagnostic.clone());
+        let (channel, closed) = channel_adapter(dc.clone(), diagnostic.clone(), compression);
         peer.set_remote_description(offer)
             .await
             .map_err(|_| rtc_error("apply RTC offer"))?;
+        if let Some(updates) = updates.take() {
+            apply_remote_updates(&peer, updates, path_policy, diagnostic.clone());
+        }
         let answer = peer
             .create_answer(None)
             .await
@@ -207,7 +220,12 @@ async fn answer_offer_with_policy(
             .local_description()
             .await
             .ok_or_else(|| rtc_error("missing RTC answer"))?;
-        let answer = RTCSessionDescription::answer(path_policy.filter_sdp(&answer.sdp)?)
+        let mut answer_sdp = path_policy.filter_sdp(&answer.sdp)?;
+        if compression {
+            answer_sdp.push_str(framing::COMPRESSION_SDP);
+            answer_sdp.push_str("\r\n");
+        }
+        let answer = RTCSessionDescription::answer(answer_sdp)
             .map_err(|_| rtc_error("invalid RTC answer SDP"))?;
         diagnostic.description("localAnswer", &answer.sdp);
         Ok::<_, HostError>((answer, dc, channel, closed))
@@ -223,7 +241,7 @@ async fn answer_offer_with_policy(
     tokio::spawn(async move {
         let _lease = lease;
         let opened = tokio::select! {
-            result = timeout(OPEN_TIMEOUT, async {
+            result = timeout(trickle_deadline.map(|deadline| deadline.saturating_duration_since(Instant::now())).unwrap_or(OPEN_TIMEOUT), async {
                 while dc.ready_state() != RTCDataChannelState::Open {
                     if dc.ready_state() == RTCDataChannelState::Closed { return false; }
                     tokio::time::sleep(Duration::from_millis(20)).await;
@@ -244,13 +262,146 @@ async fn answer_offer_with_policy(
     Ok(answer)
 }
 
+fn apply_remote_updates(
+    peer: &Arc<RTCPeerConnection>,
+    mut updates: mpsc::Receiver<
+        HostResult<Vec<webrtc::ice_transport::ice_candidate::RTCIceCandidateInit>>,
+    >,
+    path_policy: PathPolicy,
+    diagnostic: Arc<Diagnostic>,
+) {
+    let weak = Arc::downgrade(&peer);
+    let update_diag = diagnostic;
+    tokio::spawn(async move {
+        loop {
+            let Some(peer) = weak.upgrade() else {
+                break;
+            };
+            use webrtc::peer_connection::peer_connection_state::RTCPeerConnectionState as State;
+            if matches!(
+                peer.connection_state(),
+                State::Connected | State::Closed | State::Failed
+            ) {
+                break;
+            }
+            let batch = match timeout(Duration::from_secs(1), updates.recv()).await {
+                Err(_) => continue,
+                Ok(None) => break,
+                Ok(Some(Ok(batch))) => batch,
+                Ok(Some(Err(_))) => {
+                    update_diag.emit(
+                        "ice.update.failed",
+                        json!({"cause":"invalidOrUnavailableUpdate"}),
+                    );
+                    let _ = peer.close().await;
+                    break;
+                }
+            };
+            for candidate in batch {
+                if !candidate.candidate.is_empty() && !path_policy.accepts(&candidate.candidate) {
+                    continue;
+                }
+                if peer.add_ice_candidate(candidate).await.is_err() {
+                    update_diag.emit("ice.update.failed", json!({"cause":"applyCandidate"}));
+                }
+            }
+        }
+    });
+}
+
 fn rtc_error(message: &str) -> HostError {
     HostError::new("remote_rtc_negotiation_failed", message).retryable(true)
+}
+
+#[cfg(test)]
+mod trickle_tests {
+    use super::*;
+    #[tokio::test]
+    async fn native_peer_accepts_late_candidates_after_an_empty_offer() {
+        let api = APIBuilder::new().build();
+        let client = Arc::new(
+            api.new_peer_connection(RTCConfiguration::default())
+                .await
+                .unwrap(),
+        );
+        let host = Arc::new(
+            api.new_peer_connection(RTCConfiguration::default())
+                .await
+                .unwrap(),
+        );
+        let _client_lease = PeerLease(client.clone());
+        let _host_lease = PeerLease(host.clone());
+        let options = || {
+            Some(RTCDataChannelInit {
+                negotiated: Some(0),
+                ordered: Some(true),
+                ..Default::default()
+            })
+        };
+        let dc = client.create_data_channel("test", options()).await.unwrap();
+        let remote = host.create_data_channel("test", options()).await.unwrap();
+        let mut gathered = client.gathering_complete_promise().await;
+        client
+            .set_local_description(client.create_offer(None).await.unwrap())
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(5), gathered.recv())
+            .await
+            .unwrap();
+        let offer = client.local_description().await.unwrap();
+        let candidates: Vec<_> = offer
+            .sdp
+            .lines()
+            .filter(|l| l.starts_with("a=candidate:"))
+            .map(
+                |l| webrtc::ice_transport::ice_candidate::RTCIceCandidateInit {
+                    candidate: l.trim_start_matches("a=").into(),
+                    sdp_mid: Some("0".into()),
+                    sdp_mline_index: Some(0),
+                    ..Default::default()
+                },
+            )
+            .collect();
+        assert!(!candidates.is_empty());
+        let empty = offer
+            .sdp
+            .lines()
+            .filter(|l| !l.starts_with("a=candidate:") && *l != "a=end-of-candidates")
+            .collect::<Vec<_>>()
+            .join("\r\n")
+            + "\r\n";
+        host.set_remote_description(RTCSessionDescription::offer(empty).unwrap())
+            .await
+            .unwrap();
+        let (tx, rx) = mpsc::channel(4);
+        apply_remote_updates(&host, rx, PathPolicy::Auto, Diagnostic::new(&offer.sdp));
+        let mut ready = host.gathering_complete_promise().await;
+        host.set_local_description(host.create_answer(None).await.unwrap())
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(5), ready.recv()).await.unwrap();
+        // Inject after Host has prepared its answer, through the production worker.
+        tx.send(Ok(candidates)).await.unwrap();
+        client
+            .set_remote_description(host.local_description().await.unwrap())
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(8), async {
+            while dc.ready_state() != RTCDataChannelState::Open
+                || remote.ready_state() != RTCDataChannelState::Open
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
 }
 
 fn channel_adapter(
     dc: Arc<RTCDataChannel>,
     diagnostic: Arc<Diagnostic>,
+    compression: bool,
 ) -> (GatewayChannel, watch::Receiver<bool>) {
     // Queue fragments rather than complete messages, bounding native ingress.
     let (tx, rx) = mpsc::channel(32);
@@ -293,11 +444,16 @@ fn channel_adapter(
     }));
     (
         GatewayChannel {
-            sink: Box::new(RtcSink(dc, diagnostic.clone())),
+            traffic: diagnostic.traffic.clone(),
+            sink: Box::new(RtcSink(dc, diagnostic.clone(), compression)),
             source: Box::new(RtcSource {
                 rx,
                 closed: closed.clone(),
-                decoder: Decoder::new(REQUEST_BYTES),
+                decoder: {
+                    let mut decoder = Decoder::new(REQUEST_BYTES);
+                    decoder.allow_compression = compression;
+                    decoder
+                },
                 diagnostic,
                 frames: 0,
             }),
@@ -306,7 +462,7 @@ fn channel_adapter(
     )
 }
 
-struct RtcSink(Arc<RTCDataChannel>, Arc<Diagnostic>);
+struct RtcSink(Arc<RTCDataChannel>, Arc<Diagnostic>, bool);
 impl RtcSink {
     async fn fragment(&self, bytes: Vec<u8>) -> bool {
         if self.0.buffered_amount().await > BUFFER_HIGH {
@@ -335,27 +491,41 @@ impl GatewaySink for RtcSink {
             match frame {
                 GatewayFrame::Text(bytes) => {
                     let started = Instant::now();
-                    self.1
-                        .emit("message.send.start", json!({"bytes":bytes.len()}));
+                    if bytes.len() >= FRAME_BYTES {
+                        self.1
+                            .emit("message.send.start", json!({"bytes":bytes.len()}));
+                    }
                     if bytes.is_empty() || bytes.len() > RESPONSE_BYTES {
                         return false;
                     }
+                    let original_size = bytes.len();
+                    let (bytes, compressed) = framing::compress_message(&bytes, self.2);
+                    if compressed {
+                        self.1.emit(
+                            "message.compressed",
+                            json!({"originalBytes":original_size,"wireBytes":bytes.len()}),
+                        );
+                    }
                     for (index, part) in bytes.chunks(FRAME_BYTES - HEADER_BYTES).enumerate() {
                         if !self
-                            .fragment(encode_fragment(
+                            .fragment(framing::encode_fragment_compressed(
                                 bytes.len(),
                                 index * (FRAME_BYTES - HEADER_BYTES),
                                 part,
+                                compressed,
                             ))
                             .await
                         {
                             return false;
                         }
+                        self.1.traffic.sent(part.len());
                     }
-                    self.1.emit(
-                        "message.send.complete",
-                        json!({"bytes":bytes.len(),"durationMs":started.elapsed().as_millis()}),
-                    );
+                    if bytes.len() >= FRAME_BYTES || started.elapsed() >= Duration::from_secs(1) {
+                        self.1.emit(
+                            "message.send.complete",
+                            json!({"bytes":bytes.len(),"durationMs":started.elapsed().as_millis()}),
+                        );
+                    }
                     true
                 }
                 GatewayFrame::Close { code, reason } => {
@@ -399,16 +569,22 @@ impl GatewaySource for RtcSource {
                     bytes = self.rx.recv() => bytes?,
                 };
                 self.frames += 1;
-                match self.decoder.push(&bytes) {
+                let decoded = self.decoder.push(&bytes);
+                if decoded.is_ok() && !matches!(&decoded, Ok(Some(GatewayFrame::Close { .. }))) {
+                    self.diagnostic.traffic.received(bytes.len() - HEADER_BYTES);
+                }
+                match decoded {
                     Ok(Some(message)) => {
                         let size = match &message {
                             GatewayFrame::Text(bytes) => bytes.len(),
                             _ => 0,
                         };
-                        self.diagnostic.emit(
-                            "message.receive.complete",
-                            json!({"bytes":size,"frames":self.frames}),
-                        );
+                        if self.frames > 1 {
+                            self.diagnostic.emit(
+                                "message.receive.complete",
+                                json!({"bytes":size,"frames":self.frames}),
+                            );
+                        }
                         self.frames = 0;
                         return Some(message);
                     }
@@ -444,8 +620,10 @@ mod source_tests {
         assert!(timeout(Duration::from_millis(5100), source.recv())
             .await
             .is_err());
+        assert_eq!(source.diagnostic.traffic.snapshot().received_bytes, 2);
         tx.send(encode_fragment(4, 2, b"cd").into()).await.unwrap();
         assert!(matches!(source.recv().await, Some(GatewayFrame::Text(value)) if value == b"abcd"));
+        assert_eq!(source.diagnostic.traffic.snapshot().received_bytes, 4);
         tx.send(encode_fragment(4, 0, b"ab").into()).await.unwrap();
         assert!(timeout(Duration::from_millis(10), source.recv())
             .await

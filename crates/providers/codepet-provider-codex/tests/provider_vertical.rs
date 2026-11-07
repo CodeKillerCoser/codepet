@@ -1597,7 +1597,7 @@ fn release_interaction_cancels_hung_acquire_through_control_lane() {
 }
 
 #[test]
-fn idle_online_release_then_restart_does_not_resume_previous_conversations() {
+fn idle_online_automatically_restarts_without_resuming_previous_conversations() {
     let directory = tempfile::tempdir().unwrap();
     let marker = directory.path().join("online-idle.txt");
     let mut provider = ProviderBinary::spawn_with_idle_timeout(2);
@@ -1606,6 +1606,7 @@ fn idle_online_release_then_restart_does_not_resume_previous_conversations() {
         let acquired = provider.request(id, "conversation.acquireInteraction", json!({"conversation":conversation_resource_value(id)}));
         assert!(acquired.get("error").is_none(), "{acquired}");
     }
+    provider.buffered.retain(|message| message["method"] != "event.instanceStatusChanged");
     let old = session_pids(&marker, "process/start", "");
     assert_eq!(old.len(), 1);
     assert!(session_method_count(&marker, "thread/resume") >= 2);
@@ -1626,8 +1627,7 @@ fn idle_online_release_then_restart_does_not_resume_previous_conversations() {
         provider.collect_for(Duration::from_millis(100));
     }
     let resumed_before = session_method_count(&marker, "thread/resume");
-    provider.buffered.retain(|message| message["method"] != "event.instanceStatusChanged");
-    provider.request("restart", "instance.start", json!({"route":route_value()}));
+    wait_for_replacement_server(&marker, 2);
     provider.receive(Duration::from_secs(3), |message| message["method"] == "event.instanceStatusChanged" && message.pointer("/params/instance/status") == Some(&json!("ready")));
     let all = session_pids(&marker, "process/start", "");
     assert_eq!(all.len(), 2);
@@ -1639,7 +1639,9 @@ fn idle_online_release_then_restart_does_not_resume_previous_conversations() {
     let acquired = provider.request("new-interaction", "conversation.acquireInteraction", json!({"conversation":conversation_resource_value("thread-c")}));
     assert!(acquired.get("error").is_none(), "{acquired}");
     assert_eq!(session_method_count(&marker, "thread/resume"), resumed_before + 1);
+    provider.buffered.retain(|message| message["method"] != "event.instanceStatusChanged");
     wait_for_processes_to_exit(&all, Duration::from_secs(5));
+    provider.receive(Duration::from_secs(3), |message| message["method"] == "event.instanceStatusChanged" && message.pointer("/params/instance/status") == Some(&json!("ready")));
     let resumed = provider.request("acquire-after-idle", "conversation.acquireInteraction", json!({"conversation":conversation_resource_value("thread-c")}));
     assert!(resumed.get("error").is_none(), "idle stop must remain recoverable: {resumed}");
     assert_eq!(session_pids(&marker, "process/start", "").len(), 3);
@@ -1687,14 +1689,9 @@ fn sdk_heartbeat_retains_offline_turns_until_finished_and_restarts_once() {
     wait_for_processes_to_exit(&server, Duration::from_secs(5));
     let alive = provider.request("provider-still-alive", "provider.describe", json!({}));
     assert!(alive.get("error").is_none());
-    provider.buffered.retain(|message| message.get("method").and_then(Value::as_str) != Some("event.instanceStatusChanged"));
+    wait_for_replacement_server(&marker, 2);
     provider.request("reconnected", "provider.ping", ping(4, &["phone-a"]));
     provider.collect_for(Duration::from_millis(100));
-    assert_eq!(session_pids(&marker, "process/start", "").len(), 1, "ping alone does not start a Server");
-    provider.request("restart-on-demand", "instance.start", json!({"route":route_value()}));
-    provider.receive(Duration::from_secs(3), |message|
-        message.get("method").and_then(Value::as_str) == Some("event.instanceStatusChanged")
-        && message.pointer("/params/instance/status").and_then(Value::as_str) == Some("ready"));
     assert_eq!(session_pids(&marker, "process/start", "").len(), 2);
     provider.request("presence-stop", "provider.ping", ping(5, &[]));
     let all_servers = session_pids(&marker, "process/start", "");
@@ -1730,7 +1727,8 @@ fn sdk_heartbeat_offline_turn_finishes_naturally_without_a_phone() {
     assert_eq!(terminal.pointer("/params/turn/status"), Some(&json!("completed")), "{terminal}");
     assert_eq!(session_method_count(&marker, "turn/interrupt"), 0);
     wait_for_processes_to_exit(&server, Duration::from_secs(5));
-    assert_eq!(session_pids(&marker, "process/start", ""), server, "no reconnect or replacement Server was needed");
+    wait_for_replacement_server(&marker, 2);
+    assert_eq!(session_method_count(&marker, "turn/interrupt"), 0, "idle replacement must wait for natural completion");
     provider.request("shutdown", "provider.shutdown", json!({}));
 }
 
@@ -4919,4 +4917,12 @@ async fn union_directory_reads_only_requested_pages_and_preserves_leftovers() {
     request.cursor = Some(format!("{token}:1"));
     assert_eq!(provider.conversation_list(request).await.unwrap_err().code, "invalid_cursor");
     provider.instance_stop(InstanceStopRequest {route}).await.unwrap();
+}
+
+fn wait_for_replacement_server(marker: &std::path::Path, count: usize) {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while session_pids(marker, "process/start", "").len() < count {
+        assert!(Instant::now() < deadline, "idle runtime did not restart automatically");
+        std::thread::sleep(Duration::from_millis(20));
+    }
 }

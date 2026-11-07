@@ -7,6 +7,7 @@ use codepet_provider_sdk::{
 async fn main() {
     let options = StdioServerOptions {
         max_frame_bytes: MAX_PROVIDER_FRAME_BYTES,
+        restart_after_idle: true,
         ..StdioServerOptions::default()
     };
     let mut options = options;

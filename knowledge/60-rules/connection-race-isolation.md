@@ -16,10 +16,18 @@ LAN/WSS、IPv6/IPv4 WebRTC 和 TURN 中继同时可用、超时、取消或网�
 
 按 attempt 独立签名、保存与回答；同时限制信箱、协商和活跃会话数量。签名绑定路径策略并在双方 ICE 配置及 SDP 候选中执行。竞速层只管理通道生命周期，Gateway 握手与业务 RPC 不在每个候选上重复发送。关闭时回收 peer、信令、订阅和定时器，迟到资源必须立即关闭。
 
+增量 ICE 必须先协商能力，旧端继续完整收集；提前发送 offer 后仍接收迟到候选，建连预算覆盖候选收集阶段。更新须签名绑定原始 offerHash、attempt、序号和到期时间，限制批次、总量，并在取消、撤销或连接完成时停止任务。
+
+压缩等传输扩展须双方协商，限制编码前及解码后大小。不得把压缩视为消除有序流阻塞；用大消息、背压及 RPC 时长验证实际收益。
+
 ## 来源
 
 [LAN 与 WebRTC 并行通道竞速](../20-product/parallel-connection-paths.md)。
 
+[增量候选交换与大响应压缩](../40-runbooks/webrtc-incremental-ice-and-compression.md)。
+
 ## 验证方式
 
 四路分别先成功、部分失败、全部失败、超时、用户取消、晚到成功和唯一 RPC 发送的测试；信令多 attempt 乱序应答与限额测试；原生探针检查 nominated candidate pair，而非依据 ICE server 配置推断路径。
+
+补充空候选 offer 后原生晚候选建连、旧端回退、签名绑定及过期拒绝、有界解压和未协商编码拒绝测试。

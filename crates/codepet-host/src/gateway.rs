@@ -602,6 +602,7 @@ impl ProviderGatewayService {
                 previous_state,
             } => {
                 let _ = previous_state;
+                if !gateway_plugin_visible(&snapshot) { return Ok(()); }
                 for instance in &snapshot.instances {
                     let provider = gateway_provider(&snapshot, instance).summary;
                     self.invalidate_recent(&provider.id)?;
@@ -620,6 +621,7 @@ impl ProviderGatewayService {
                 previous_status,
             } => {
                 let _ = previous_status;
+                if !gateway_plugin_visible(&snapshot) { return Ok(()); }
                 self.conversation_state.configure(self.manager.provider_state_paths().map_err(gateway_error)?).map_err(gateway_error)?;
                 self.invalidate_recent(&instance_id)?;
                 let runtime = snapshot
@@ -760,6 +762,7 @@ impl ProviderGatewayService {
         }
         let mut providers = Vec::new();
         for snapshot in self.manager.snapshots().await {
+            if !gateway_plugin_visible(&snapshot) { continue; }
             for instance in &snapshot.instances {
                 let mut runtime = gateway_provider(&snapshot, instance);
                 if self.conversation_state.path().is_none() {
@@ -1487,6 +1490,15 @@ impl ProtocolServer for ProviderGatewayService {
     }
 }
 
+fn gateway_plugin_visible(plugin: &PluginRuntimeSnapshot) -> bool {
+    // Built-ins describe installed runtimes, not merely shipped plugin binaries.
+    // Keep custom providers and installed-but-idle runtimes visible.
+    !matches!(plugin.catalog.plugin_id.as_str(),
+        "dev.codepet.codex" | "dev.codepet.claude" | "dev.codepet.opencode")
+        || plugin.runtime_inventory.as_ref().is_some_and(|inventory|
+            !inventory.harness_list.is_empty() || inventory.selected.is_some())
+}
+
 fn gateway_provider(
     plugin: &PluginRuntimeSnapshot,
     runtime: &ProviderInstanceRuntimeSnapshot,
@@ -2084,5 +2096,36 @@ fn cursor_error(
         message: message.to_string(),
         retryable: false,
         details: Some(details),
+    }
+}
+
+#[cfg(test)]
+mod visibility_tests {
+    use super::*;
+    #[test]
+    fn builtin_visibility_uses_inventory_not_process_or_instance_liveness() {
+        let mut plugin = PluginRuntimeSnapshot {
+            catalog: serde_json::from_value(serde_json::json!({
+                "pluginId":"dev.codepet.codex", "displayName":"Codex", "executable":"provider"
+            })).unwrap(),
+            runtime_inventory: None, reported: None, state: PluginRuntimeState::Ready,
+            diagnostic: None, generation: 1, connection_status: codepet_provider_sdk::ConnectionStatus::Online,
+            process_exit: None, stderr_diagnostics: vec![], instances: vec![],
+        };
+        for id in ["dev.codepet.codex", "dev.codepet.claude", "dev.codepet.opencode"] {
+            plugin.catalog.plugin_id = id.into();
+            assert!(!gateway_plugin_visible(&plugin));
+            plugin.runtime_inventory = Some(serde_json::from_value(serde_json::json!({"harnessList":[]})).unwrap());
+            assert!(!gateway_plugin_visible(&plugin));
+            plugin.runtime_inventory = None;
+        }
+        plugin.runtime_inventory = Some(serde_json::from_value(serde_json::json!({"harnessList":[{
+            "executablePath":"/runtime/codex", "version":"1", "source":"current-path"
+        }]})).unwrap());
+        plugin.state = PluginRuntimeState::Stopped;
+        assert!(gateway_plugin_visible(&plugin), "installed idle runtime must remain visible");
+        plugin.catalog.plugin_id = "custom.example".into();
+        plugin.runtime_inventory = None;
+        assert!(gateway_plugin_visible(&plugin), "custom provider need not expose built-in inventory");
     }
 }
