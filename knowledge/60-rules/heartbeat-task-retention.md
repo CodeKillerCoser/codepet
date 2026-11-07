@@ -2,7 +2,7 @@
 
 ## 规则
 
-手机在线状态和心跳只表达连通性。无论手机在线还是离线，实例存在运行/排队任务、待授权/待输入、未完成请求或未知发送结果时都不能自动释放。全部活动结束并持续空闲达到独立阈值后，释放共享 App Server。
+手机在线状态和心跳只表达连通性。无论手机在线还是离线，实例存在运行/排队任务、待授权/待输入、未完成请求或未知发送结果时都不能自动释放。只有适配器显式启用空闲回收，并且全部活动结束后持续空闲达到独立阈值，才释放共享 App Server；SDK 默认不回收，不能把 Codex 的会话锁适配策略套用到所有 Provider。
 
 ## 适用场景
 
@@ -16,17 +16,20 @@ Provider SDK heartbeat/activity/idle/mux、Host 按需恢复、Codex App Server 
 - 回收后禁止任何正常启动，或相反，启动时批量 resume 全部旧会话。
 - 心跳、历史轮询不停刷新空闲计时。
 - start 尚未返回或发送结果未知，就认为不存在活动任务。
+- 为解决 Codex 会话锁而默认每 300 秒停止 Claude/OpenCode，或改成循环重启它们。
 
 ## 推荐做法
 
-用 SDK 唯一活动投影与空闲回收器；默认 300 秒，通过 StdioServerOptions.idle_timeout 调整。请求持有共享执行门，回收独占并复核。读请求执行中保护，但不续期；业务交互重置计时。新进程启动不恢复旧会话集合，正常历史读取和 acquire 路径继续可用。明确手动停止/释放、真实 IPC EOF/故障和应用退出继续按原清理合同处理。
+用 SDK 唯一活动投影与空闲回收器；`StdioServerOptions.idle_timeout` 默认 None，只有 Some(正时长) 才启用定时器。当前仅 Codex 设置 300 秒并启用重启，Claude/OpenCode 保持就绪。请求持有共享执行门，回收独占并复核。读请求执行中保护，但不续期；业务交互重置计时。新进程启动不恢复旧会话集合，正常历史读取和 acquire 路径继续可用。明确手动停止/释放、真实 IPC EOF/故障和应用退出继续按原清理合同处理。
 
 SDK heartbeat 不得调用 Provider 生命周期方法，也不再根据心跳携带的 instances 缺失推导停止；显式实例管理仍走业务命令。自动释放只能通过统一回收器，不能复用无条件取消活动任务的手动 release RPC。
 
+当前定时器位于 Provider SDK，Host 不负责统一回收，因此不新增 release-control 协议。若将来由 Host 调度释放控制权，应通过能力声明筛选参与者，并保留 Provider 自身的活动保护；不支持的 Provider 不参与，不能退化为向全部实例发送 stop。
+
 ## 来源
 
-2026-11-05 用户澄清：释放旧 App Server 会释放其积累的会话锁，重启不会自动重新占用旧会话；活跃会话保护与心跳无关。参见 [实现架构](../10-architecture/interaction-runtime-lifecycle.md)。此前超时局部补丁已被该模型取代。
+2026-11-05 用户澄清：释放旧 App Server 会释放其积累的会话锁，重启不会自动重新占用旧会话；活跃会话保护与心跳无关。2026-11-08 明确空闲重启是 Codex 适配，不应作用于其他 Provider，见 [默认空闲回收误停其他 Provider](../40-runbooks/provider-idle-policy-opt-in.md)。参见 [实现架构](../10-architecture/interaction-runtime-lifecycle.md)。
 
 ## 验证方式
 
-SDK idle 单测覆盖正常/缺失心跳、跨会话活动、授权/输入、计时边界、准入竞态、未知发送结果。Codex binary 覆盖在线持续 ping/read 仍释放、离线运行保留、自然完成、重启不批量 resume。Host 覆盖空闲后的历史与交互恢复、三个 Provider 以及手动 release 暂停。独立导出编译必须含新 runtime 模块；真实桌面锁验证不能以 fixture 代替。
+SDK idle 单测覆盖默认策略在模拟 8 小时空闲后不停止、显式启用后回收、正常/缺失心跳、跨会话活动、授权/输入、计时边界、准入竞态、未知发送结果。Codex binary 覆盖在线持续 ping/read 仍释放、离线运行保留、自然完成、重启不批量 resume。Host 覆盖空闲后的历史与交互恢复、三个 Provider 以及手动 release 暂停会话但自动重启运行时。独立导出必须保留相同默认策略；真实桌面锁验证不能以 fixture 代替。

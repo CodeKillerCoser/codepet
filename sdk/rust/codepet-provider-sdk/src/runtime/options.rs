@@ -10,8 +10,9 @@ pub struct StdioServerOptions {
     pub max_concurrent_control_requests: usize,
     pub max_pending_control_requests: usize,
     pub dispatch_drain_timeout: Duration,
-    /// Continuous business-idle window before releasing an instance Harness.
-    pub idle_timeout: Duration,
+    /// Opt-in continuous business-idle window before releasing an instance Harness.
+    /// None (the default) keeps idle instances available without a lifecycle timer.
+    pub idle_timeout: Option<Duration>,
     /// Recycle the Harness after an automatic idle stop. Explicit stop/release
     /// never enters this path. Adapters opt in independently of client presence.
     pub restart_after_idle: bool,
@@ -26,9 +27,22 @@ impl Default for StdioServerOptions {
             max_concurrent_control_requests: 2,
             max_pending_control_requests: 4,
             dispatch_drain_timeout: Duration::from_secs(2),
-            idle_timeout: Duration::from_secs(300),
+            idle_timeout: None,
             restart_after_idle: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn idle_release_is_opt_in_and_enabled_windows_must_be_positive() {
+        let defaults = StdioServerOptions::default();
+        assert_eq!(defaults.idle_timeout, None);
+        assert!(validate_options(defaults).is_ok());
+        assert!(validate_options(StdioServerOptions { idle_timeout: Some(Duration::ZERO), ..defaults }).is_err());
+        assert!(validate_options(StdioServerOptions { idle_timeout: Some(Duration::from_secs(300)), ..defaults }).is_ok());
     }
 }
 
@@ -83,7 +97,7 @@ pub(crate) fn validate_options(options: StdioServerOptions) -> Result<(), StdioS
             )));
         }
     }
-    if options.idle_timeout.is_zero() {
+    if options.idle_timeout.is_some_and(|timeout| timeout.is_zero()) {
         return Err(StdioServerError::new("Provider idle_timeout must be greater than zero"));
     }
     if options.dispatch_drain_timeout.is_zero() {

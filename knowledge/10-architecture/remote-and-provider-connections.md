@@ -46,7 +46,7 @@ Host 启动/按需恢复 --> instance.start --> 新 Harness Server
 
 两段均每 20 秒交换，失联阈值 60 秒。Remote 请求超时 10 秒，持续未得到有效 pong 达阈值后进入既有重连流程；Host 的应用心跳超时关闭 socket。WebSocket 原生 Ping/Pong 保留，不能替代携带业务状态的应用心跳。连接增减或实例状态变化会唤醒 Host→Provider 的下一次交换，不等完整周期。应用 ping 绕过普通 RPC 排队，所以慢 get/resume 不阻塞其处理。
 
-Provider SDK 立即确认有效 ping，不调用生命周期方法。独立 idle 回收器默认在全部业务活动结束并连续空闲 300 秒后停止实例；Codex 通过 restart_after_idle=true 紧接着重新启动；请求准入门保护正在执行的操作。Host 显式启动插件时启动实例，历史读取和业务请求保留按需恢复。重启不会批量 resume 旧会话；不自动重发结果未知的业务请求。详见 [Runtime 生命周期](interaction-runtime-lifecycle.md)。
+Provider SDK 立即确认有效 ping，不调用生命周期方法。idle 回收默认关闭；仅 Codex 显式启用全部业务活动结束并连续空闲 300 秒后的 stop/start，Claude/OpenCode 不因空闲而停止或重启；请求准入门保护正在执行的操作。Host 显式启动插件时启动实例，历史读取和业务请求保留按需恢复。重启不会批量 resume 旧会话；不自动重发结果未知的业务请求。详见 [Runtime 生命周期](interaction-runtime-lifecycle.md)。
 
 `hostSessionId` 绑定当前插件进程；sequence 必须递增，client revision 不倒退，相同 revision 不得改变集合。旧包既不能改在线集合，也不能延长存活时间。Host 收到 pong 后复核插件 generation 与进程 identity；Remote 以连接 generation 和 Provider generation 丢弃旧响应。心跳摘要使用独立状态流，不伪装成有 cursor 的 replay event；同一次 ping 期间已发生的 provider.changed 优先于晚到摘要。
 

@@ -6,7 +6,7 @@
 
 源码确认旧行为是明确设计，并非本次已证明的进程崩溃：`conversation_release_interaction` 设置 `interaction_released=true` 后停止共享 App Server；`start_runtime` 拒绝非显式恢复的启动；`ready_server` 同时拒绝历史、项目等读取。旧回归 `release_interaction_stops_shared_server_and_stays_stopped_until_explicit_acquire` 也要求保持停止。
 
-自动空闲回收是另一条路径：SDK 默认窗口 300 秒，Codex main 启用 `restart_after_idle=true`，空闲 stop 后会 start；Claude/OpenCode 默认不启用重启。以上操作回收的是插件持有的 Harness 子进程，Provider 插件进程仍在线。手动 release 的旧暂停标记不能由空闲维护自动解除，因而符合用户观察。
+自动空闲回收是另一条路径：分析当时 SDK 默认窗口 300 秒，Codex main 启用 `restart_after_idle=true`，空闲 stop 后会 start；Claude/OpenCode 未启用重启。随后用户明确空闲回收只适配 Codex，SDK 已改为默认关闭，详见 [默认空闲回收误停其他 Provider](provider-idle-policy-opt-in.md)。以上操作回收的是插件持有的 Harness 子进程，Provider 插件进程仍在线。手动 release 的旧暂停标记不能由空闲维护自动解除，因而符合当时观察。
 
 ## 原因与行为调整
 

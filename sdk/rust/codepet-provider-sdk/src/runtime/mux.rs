@@ -63,7 +63,8 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
         Ok::<_, ProtocolError>(())
     });
     let heartbeat = super::heartbeat::HostHeartbeat::new();
-    let monitor = tokio::spawn(super::idle::run(provider.clone(), activity.clone(), options.idle_timeout, options.restart_after_idle));
+    let monitor = options.idle_timeout.map(|timeout|
+        tokio::spawn(super::idle::run(provider.clone(), activity.clone(), timeout, options.restart_after_idle)));
     let initialized = Arc::new(AtomicBool::new(false));
     let dispatch_closed = Arc::new(AtomicBool::new(false));
     let executions = Arc::new(std::sync::Mutex::new(Vec::<tokio::task::AbortHandle>::new()));
@@ -181,7 +182,8 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
     dispatch_closed.store(true, Ordering::SeqCst);
     for execution in executions.lock().unwrap_or_else(|e| e.into_inner()).drain(..) { execution.abort(); }
     output_closed.store(true, Ordering::SeqCst);
-    monitor.abort(); event_task.abort();
+    if let Some(monitor) = monitor { monitor.abort(); }
+    event_task.abort();
     // Once the connection is lost, queued handlers cannot deliver a response.
     if !shutdown_called { tasks.abort_all(); }
     let _ = tokio::time::timeout(options.dispatch_drain_timeout, async {

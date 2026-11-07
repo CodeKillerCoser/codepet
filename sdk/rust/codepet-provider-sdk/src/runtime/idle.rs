@@ -8,16 +8,17 @@ pub(super) async fn run<P: ProtocolServer + 'static>(provider: Arc<P>, activity:
     clock.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         clock.tick().await;
-        maintain_idle(provider.as_ref(), &activity, timeout, restart).await;
+        maintain_idle(provider.as_ref(), &activity, Some(timeout), restart).await;
     }
 }
 
 #[cfg(test)]
 pub(super) async fn release_idle<P: ProtocolServer>(provider: &P, activity: &Activity, timeout: Duration) {
-    maintain_idle(provider, activity, timeout, false).await;
+    maintain_idle(provider, activity, Some(timeout), false).await;
 }
 
-async fn maintain_idle<P: ProtocolServer>(provider: &P, activity: &Activity, timeout: Duration, restart: bool) {
+async fn maintain_idle<P: ProtocolServer>(provider: &P, activity: &Activity, timeout: Option<Duration>, restart: bool) {
+    let Some(timeout) = timeout else { return; };
     // Non-blocking admission: a queued/ongoing RPC cannot be overtaken by idle stop.
     let Ok(_exclusive) = activity.gate.try_write() else { return; };
     for route in activity.idle_routes(timeout) {
@@ -96,6 +97,23 @@ mod tests {
         }
     }
     const WINDOW: Duration = Duration::from_secs(300);
+    #[tokio::test]
+    async fn default_policy_keeps_idle_instances_available_even_after_hours() {
+        let (clock, activity, provider) = fixture();
+        let options = crate::StdioServerOptions::default();
+        for _ in 0..8 {
+            advance(&clock, 3600);
+            maintain_idle(&provider, &activity, options.idle_timeout, options.restart_after_idle).await;
+        }
+        assert_eq!(provider.stops.load(Ordering::SeqCst), 0);
+        assert_eq!(provider.starts.load(Ordering::SeqCst), 0);
+        assert_eq!(activity.idle_routes(WINDOW).len(), 1, "the instance is still Ready and idle");
+        // The same idle state is recycled only after the adapter opts in.
+        maintain_idle(&provider, &activity, Some(WINDOW), true).await;
+        assert_eq!(provider.stops.load(Ordering::SeqCst), 1);
+        assert_eq!(provider.starts.load(Ordering::SeqCst), 1);
+    }
+
     #[test]
     fn restart_response_cannot_overwrite_a_newer_ready_or_error_event() {
         for latest in [InstanceStatus::Ready, InstanceStatus::Error] {
@@ -113,13 +131,13 @@ mod tests {
     async fn opted_in_idle_recycles_once_but_explicit_stopped_instances_stay_stopped() {
         let (clock, activity, provider) = fixture();
         advance(&clock, 300);
-        maintain_idle(&provider, &activity, WINDOW, true).await;
+        maintain_idle(&provider, &activity, Some(WINDOW), true).await;
         assert_eq!(provider.starts.load(Ordering::SeqCst), 1);
-        maintain_idle(&provider, &activity, WINDOW, true).await;
+        maintain_idle(&provider, &activity, Some(WINDOW), true).await;
         assert_eq!(provider.stops.load(Ordering::SeqCst), 1);
         status(&activity, "i", InstanceStatus::Stopped);
         advance(&clock, 3600);
-        maintain_idle(&provider, &activity, WINDOW, true).await;
+        maintain_idle(&provider, &activity, Some(WINDOW), true).await;
         assert_eq!(provider.starts.load(Ordering::SeqCst), 1);
     }
 

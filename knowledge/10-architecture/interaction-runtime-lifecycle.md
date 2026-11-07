@@ -4,7 +4,7 @@
 
 ## 背景与目标
 
-App Server 可能自行打开并持有会话，缺少可靠的逐会话释放接口。结束旧进程可以释放这些锁；重启一个干净的新进程不会自动恢复全部旧会话。因此持续空闲后的回收有价值。2026-11-07 起 Codex 在自动停止旧进程后立即拉起干净的新进程，避免手机在线时长期停留在不可用状态；其他 Provider 默认保持释放策略。
+Codex App Server 可能自行打开并持有会话，缺少可靠的逐会话释放接口。结束旧进程可以释放这些锁；重启一个干净的新进程不会自动恢复全部旧会话。因此 Codex 持续空闲后的回收有价值。2026-11-07 起 Codex 在自动停止旧进程后立即拉起干净的新进程；2026-11-08 明确该策略只用于需要它的适配器，SDK 默认关闭自动回收，Claude/OpenCode 保持就绪。
 
 手机在线、失联、卸载或心跳延迟都不决定任务生死。自动释放的必要条件是：整个实例没有未结束任务、待处理请求或未确定结果的执行，并持续空闲达到窗口。
 
@@ -16,8 +16,8 @@ App Server 可能自行打开并持有会话，缺少可靠的逐会话释放接
 
 - `sdk/rust/codepet-provider-sdk/src/runtime/heartbeat.rs` 只校验 Host session、sequence 和客户端 revision 并返回 pong，不再含实例 worker、过期回收或 start/stop。
 - `runtime/activity.rs` 是唯一空闲投影：按实例跟踪 turn、approval、等待输入/运行中的会话摘要、未知发送结果、Ready 与 idleSince。终态墓碑避免晚到 start 响应复活已完成任务；其他会话终态不能解除当前活动。
-- `runtime/idle.rs` 每秒复核，只有 Ready 且持续空闲达到窗口才调用已有 instance.stop；启用 restart_after_idle 的 adapter 紧接着调用 instance.start。回收与 mux 请求准入共用执行门，保护尚未返回或排队中的请求。此门目前是 Provider 进程级，其他实例的慢 RPC 可能保守推迟释放，但不会取消其任务。
-- `runtime/options.rs` 的 idle_timeout 默认 300 秒，必须大于零，与 20/60 秒心跳参数无关。Codex 可通过进程环境 `CODEPET_PROVIDER_IDLE_TIMEOUT_SECONDS` 调整正整数秒数；其他 SDK 集成可设置 StdioServerOptions.idle_timeout。restart_after_idle 默认 false，Codex 显式启用，不由心跳或客户端数量决定。
+- 仅当适配器显式配置 `idle_timeout: Some(duration)` 时，mux 才创建 `runtime/idle.rs` 定时任务；只有 Ready 且持续空闲达到窗口才调用已有 instance.stop。启用 restart_after_idle 的 adapter 紧接着调用 instance.start。回收与 mux 请求准入共用执行门，保护尚未返回或排队中的请求。此门目前是 Provider 进程级，其他实例的慢 RPC 可能保守推迟释放，但不会取消其任务。
+- `runtime/options.rs` 的 idle_timeout 为 `Option<Duration>`，默认 None（关闭）；Some 必须大于零。Codex 显式选择 Some(300 秒) 与 restart_after_idle=true，并保留 `CODEPET_PROVIDER_IDLE_TIMEOUT_SECONDS` 正整数覆盖。Claude/OpenCode 沿用 None，不创建空闲回收定时器。此策略与 20/60 秒心跳参数、客户端数量无关，Host 不统一发送 stop/restart。自定义 Provider 若需要回收，必须自行显式选择策略。
 - Host manager 在显式启动插件时启动已启用实例，不再把启动责任交给心跳。历史读取与新建会话保留按需恢复，是否有 Remote 在线不再是本地业务读取的前置条件；远程认证仍由原接入层执行。
 - Codex 自动回收复用既有 stop/start 和 generation 隔离，不设置手动 release 的会话暂停标志。自动停止后通过同一个 start_runtime 启动；Stopped→Starting→Ready 是短暂过渡，新请求仍需等待 Ready。2026-11-08 起手动 release 也自动重启运行时，但手机会话保持暂停，只有显式 resume 才重新接管旧会话，详见 [立即释放规约](../60-rules/codex-explicit-interaction-release.md)。
 

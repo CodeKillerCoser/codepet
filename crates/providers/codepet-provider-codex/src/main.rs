@@ -7,6 +7,7 @@ use codepet_provider_sdk::{
 async fn main() {
     let options = StdioServerOptions {
         max_frame_bytes: MAX_PROVIDER_FRAME_BYTES,
+        idle_timeout: Some(std::time::Duration::from_secs(300)),
         restart_after_idle: true,
         ..StdioServerOptions::default()
     };
@@ -17,7 +18,7 @@ async fn main() {
             eprintln!("CODEPET_PROVIDER_IDLE_TIMEOUT_SECONDS must be a positive integer");
             std::process::exit(1);
         };
-        options.idle_timeout = std::time::Duration::from_secs(seconds);
+        options.idle_timeout = Some(std::time::Duration::from_secs(seconds));
     }
     if let Err(error) = serve_stdio(options, CodexProvider::new).await {
         eprintln!("Codex Provider stopped with an error: {error}");

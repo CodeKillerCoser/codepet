@@ -4,7 +4,7 @@
 
 支持 Server 模式的 Harness，每个 Provider 运行实例只有一个 Server。Codex list/get/create/resume/turn/approval 共用该 Server；会话槽只负责串行、配置与路由，不创建独立进程。删除会话租约、续租 timer 和过期 reaper。
 
-SDK 统一跟踪实例内全部会话活动，最后一项活动结束且持续空闲达到窗口后才释放 Server，默认 300 秒。手机在线和心跳正常不阻止释放；手机失联也不取消活动。心跳不调用 start/stop。旧进程退出释放其积累的会话锁，新进程可以按需启动，但不能批量 resume 旧会话。详见 [空闲释放规约](heartbeat-task-retention.md)。
+SDK 统一跟踪实例内全部会话活动，Codex 显式选择最后一项活动结束且持续空闲 300 秒后释放并重启 Server；SDK 默认不启用回收，其他 Provider 不继承此策略。手机在线和心跳正常不阻止 Codex 空闲释放；手机失联也不取消活动。心跳不调用 start/stop。旧进程退出释放其积累的会话锁，新进程不能批量 resume 旧会话。详见 [空闲释放规约](heartbeat-task-retention.md)。
 
 ## 适用场景
 
