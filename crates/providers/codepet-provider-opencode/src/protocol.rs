@@ -54,6 +54,7 @@ pub struct OpenCodeSession {
     pub agent: Option<String>,
     pub model: Option<OpenCodeModelRef>,
     pub time: OpenCodeSessionTime,
+    #[serde(default)]
     pub title: String,
     pub location: OpenCodeLocationRef,
 }
@@ -242,14 +243,12 @@ pub struct OpenCodePrompt {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct OpenCodePromptAdmission {
-    pub admitted_seq: u64,
     pub id: String,
     #[serde(rename = "sessionID")]
     pub session_id: String,
     pub prompt: OpenCodePrompt,
     pub delivery: String,
     pub time_created: u64,
-    pub promoted_seq: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -267,6 +266,7 @@ pub struct OpenCodePermissionReplyRequest {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct OpenCodeEvent {
+    pub created: Option<u64>,
     pub id: String,
     #[serde(rename = "type")]
     pub kind: String,

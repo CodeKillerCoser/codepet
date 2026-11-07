@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 
 struct FixtureState {
+    model_reads: u64,
     recent_mutated: bool,
     sessions: HashMap<String, Value>,
     active: HashSet<String>,
@@ -48,6 +49,7 @@ fn main() {
         1_700_000_000_000,
     );
     let state = Arc::new(Mutex::new(FixtureState {
+        model_reads: 0,
         recent_mutated: false,
         sessions: [("ses_fixture".to_string(), initial)].into_iter().collect(),
         active: HashSet::new(),
@@ -186,6 +188,13 @@ fn route(
     }
     if method == "GET" && path == "/api/model" {
         let startup = startup_config();
+        {
+            let mut state = lock(state);
+            state.model_reads += 1;
+            if state.model_reads <= startup["emptyModelResponses"].as_u64().unwrap_or(0) {
+                return (200, json!({"data":[]}).to_string());
+            }
+        }
         if let Some(marker) = startup["modelEntered"].as_str() {
             std::fs::write(marker, "entered").unwrap();
             thread::sleep(std::time::Duration::from_secs(3));

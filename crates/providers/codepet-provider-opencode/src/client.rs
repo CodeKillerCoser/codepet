@@ -40,9 +40,19 @@ pub struct OpenCodeClient {
     requests: Client,
     events: Client,
     auth: Option<(String, String)>,
+    api_v2: Arc<AtomicBool>,
 }
 
 impl OpenCodeClient {
+    pub(crate) fn configure_probe(&self, command: &mut std::process::Command) {
+        if self.api_v2.load(Ordering::SeqCst) {
+            // OpenCode 2 CLI probes otherwise start/attach its shared service.
+            command.arg("--server").arg(self.base_url.as_str());
+            if let Some((_, password)) = &self.auth {
+                command.env("OPENCODE_PASSWORD", password);
+            }
+        }
+    }
     fn new(
         base_url: Url,
         username: String,
@@ -71,15 +81,35 @@ impl OpenCodeClient {
             requests,
             events,
             auth: Some((username, password)),
+            api_v2: Arc::new(AtomicBool::new(false)),
         })
     }
 
     pub fn health(&self, timeout: Duration) -> Result<OpenCodeHealth, OpenCodeServerError> {
+        let deadline = Instant::now() + timeout;
         let response = self.request(self.requests.get(self.url(&["api", "health"])?))
             .timeout(timeout)
             .send()
             .map_err(transport_error)?;
-        decode_json(response)
+        if response.status() != reqwest::StatusCode::NOT_FOUND {
+            return decode_json(response);
+        }
+        // OpenCode 2 replaced health with info. Only an absent route allows
+        // fallback; authentication, malformed health and transport errors do not.
+        drop(response);
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(OpenCodeServerError::Timeout("Server info probe deadline expired".into()));
+        }
+        #[derive(serde::Deserialize)]
+        struct ServerInfo { version: String, pid: u32 }
+        let info: ServerInfo = decode_json(self.request(self.requests.get(self.url(&["api", "info"])?))
+            .timeout(remaining).send().map_err(transport_error)?)?;
+        if info.version.trim().is_empty() || info.pid == 0 {
+            return Err(OpenCodeServerError::Protocol("Invalid OpenCode Server info response".into()));
+        }
+        self.api_v2.store(true, Ordering::SeqCst);
+        Ok(OpenCodeHealth { healthy: true })
     }
 
     pub fn list_sessions(
@@ -132,7 +162,10 @@ impl OpenCodeClient {
         } else {
             request = request.query(&[("order", "asc")]);
         }
-        decode_json(request.send().map_err(transport_error)?)
+        let response = request.send().map_err(transport_error)?;
+        if self.api_v2.load(Ordering::SeqCst) {
+            crate::compatibility::messages(decode_json(response)?)
+        } else { decode_json(response) }
     }
 
     pub fn create_session(
@@ -212,16 +245,21 @@ impl OpenCodeClient {
         session_id: &str,
         request: &OpenCodePromptRequest,
     ) -> Result<OpenCodePromptAdmission, OpenCodeServerError> {
-        let response: OpenCodeDataResponse<OpenCodePromptAdmission> = decode_json(
-            self.request(
-                self.requests
-                    .post(self.url(&["api", "session", session_id, "prompt"])?),
-            )
-            .json(request)
-            .send()
-            .map_err(transport_error)?,
-        )?;
-        Ok(response.data)
+        let modern = self.api_v2.load(Ordering::SeqCst);
+        let body = if modern {
+            serde_json::json!({"id":request.id, "text":request.prompt.text, "delivery":request.delivery})
+        } else {
+            serde_json::to_value(request).map_err(|error| OpenCodeServerError::Protocol(error.to_string()))?
+        };
+        let response = self.request(self.requests.post(self.url(&["api", "session", session_id, "prompt"])?))
+            .json(&body).send().map_err(transport_error)?;
+        if modern {
+            let response: OpenCodeDataResponse<serde_json::Value> = decode_json(response)?;
+            crate::compatibility::admission(response.data)
+        } else {
+            let response: OpenCodeDataResponse<OpenCodePromptAdmission> = decode_json(response)?;
+            Ok(response.data)
+        }
     }
 
     pub fn interrupt(&self, session_id: &str) -> Result<(), OpenCodeServerError> {
@@ -252,6 +290,9 @@ impl OpenCodeClient {
         request_id: &str,
         reply: OpenCodePermissionReply,
     ) -> Result<(), OpenCodeServerError> {
+        let body = if self.api_v2.load(Ordering::SeqCst) {
+            serde_json::json!({"decision": reply})
+        } else { serde_json::json!(OpenCodePermissionReplyRequest { reply }) };
         decode_no_content(
             self.request(self.requests.post(self.url(&[
                 "api",
@@ -261,7 +302,7 @@ impl OpenCodeClient {
                 request_id,
                 "reply",
             ])?))
-            .json(&OpenCodePermissionReplyRequest { reply })
+            .json(&body)
             .send()
             .map_err(transport_error)?,
         )
@@ -315,7 +356,9 @@ impl OpenCodeServerSession {
         let _ = server_version; // Informational; compatibility is established by requests.
         if !current() { return Err(OpenCodeServerError::Protocol("Server startup cancelled".into())); }
         let deadline = Instant::now() + STARTUP_TIMEOUT;
-        let username = "codepet".to_string();
+        // 2.x fixes the username to opencode; older servers accept it through
+        // OPENCODE_SERVER_USERNAME. Both versions receive the same private secret.
+        let username = "opencode".to_string();
         let password = Uuid::new_v4().to_string();
         let mut command = codepet_provider_sdk::local_runtime::command(executable);
         codepet_provider_sdk::local_runtime::opencode_environment(&mut command, data_directory);
@@ -325,6 +368,7 @@ impl OpenCodeServerSession {
             .arg("127.0.0.1")
             .env("OPENCODE_SERVER_USERNAME", username.clone())
             .env("OPENCODE_SERVER_PASSWORD", password.clone())
+            .env("OPENCODE_PASSWORD", password.clone())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit());
@@ -397,6 +441,9 @@ impl OpenCodeServerSession {
             }
             if let Err(error) = inner.client.event_response().and_then(|response| {
                 read_sse(response, &inner.stopped, |event| {
+                    let event = if inner.client.api_v2.load(Ordering::SeqCst) {
+                        crate::compatibility::event(event)?
+                    } else { event };
                     send_event(&sender, event)
                 })
             }) {
@@ -871,6 +918,50 @@ mod tests {
 
 
     #[test]
+    fn health_negotiates_only_missing_route_and_validates_info() {
+        use std::io::{Read, Write};
+        for (responses, expected) in [
+            (vec![("/api/health", 200, r#"{"healthy":true}"#)], "legacy"),
+            (vec![("/api/health", 404, ""), ("/api/info", 200, r#"{"version":"2.2.6","pid":12}"#)], "modern"),
+            (vec![("/api/health", 401, "")], "401"),
+            (vec![("/api/health", 500, "")], "500"),
+            (vec![("/api/health", 200, r#"{"healthy":false}"#)], "unhealthy"),
+            (vec![("/api/health", 200, "{}")], "invalid"),
+            (vec![("/api/health", 404, ""), ("/api/info", 200, "{}")], "invalid"),
+            (vec![("/api/health", 404, ""), ("/api/info", 200, r#"{"version":"","pid":0}"#)], "invalid"),
+        ] {
+            let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = std::thread::spawn(move || {
+                for (path, status, body) in responses {
+                    let (mut stream, _) = listener.accept().unwrap();
+                    let mut buffer = [0; 4096];
+                    let count = stream.read(&mut buffer).unwrap();
+                    let request = String::from_utf8_lossy(&buffer[..count]);
+                    assert!(request.starts_with(&format!("GET {path} ")));
+                    assert!(request.to_lowercase().contains("authorization: basic "));
+                    write!(stream, "HTTP/1.1 {status} Response\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+                }
+            });
+            let client = super::OpenCodeClient::new(
+                reqwest::Url::parse(&format!("http://127.0.0.1:{port}/")).unwrap(), "opencode".into(), "secret".into()).unwrap();
+            let result = client.health(std::time::Duration::from_secs(1));
+            match expected {
+                "legacy" | "modern" => assert!(result.unwrap().healthy),
+                "unhealthy" => assert!(!result.unwrap().healthy),
+                "401" => assert!(matches!(result, Err(super::OpenCodeServerError::Http { status:401, .. }))),
+                "500" => assert!(matches!(result, Err(super::OpenCodeServerError::Http { status:500, .. }))),
+                _ => assert!(result.is_err()),
+            }
+            assert_eq!(client.api_v2.load(std::sync::atomic::Ordering::SeqCst), expected == "modern");
+            let mut probe = std::process::Command::new("opencode");
+            client.configure_probe(&mut probe);
+            assert_eq!(probe.get_args().count(), if expected == "modern" { 2 } else { 0 });
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
     fn parses_official_sse_framing_and_heartbeats() {
         let input = b": heartbeat\n\nevent: message\ndata: {\"id\":\"evt_1\",\"type\":\"server.connected\",\"data\":{}}\n\n";
         let stopped = AtomicBool::new(false);
@@ -982,6 +1073,7 @@ mod tests {
     fn event_queue_fails_closed_when_its_fixed_capacity_is_full() {
         let (sender, _receiver) = std::sync::mpsc::sync_channel(1);
         let event = OpenCodeEvent {
+            created: None,
             id: "evt_queue".to_string(),
             kind: "server.connected".to_string(),
             data: json!({}),
