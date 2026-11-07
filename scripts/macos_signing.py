@@ -184,7 +184,9 @@ def smoke(env, identity):
 def build():
     with signing_environment(os.environ) as (env, identity):
         smoke(env, identity)
-        command = ["npm", "run", "tauri", "--", "build", "--target", "aarch64-apple-darwin", "--bundles", "dmg", "--config", "src-tauri/tauri.macos-dmg.conf.json"]
+        # Tauri deletes the intermediate .app when only "dmg" is requested.
+        # Keep it for signature verification; distribution still uploads only the DMG.
+        command = ["npm", "run", "tauri", "--", "build", "--target", "aarch64-apple-darwin", "--bundles", "app,dmg", "--config", "src-tauri/tauri.macos-dmg.conf.json"]
         for attempt in range(1, 4):
             result = subprocess.run(command, cwd=ROOT, env=env)
             if result.returncode == 0:
