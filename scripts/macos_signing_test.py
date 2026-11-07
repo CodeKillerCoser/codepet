@@ -50,7 +50,7 @@ class SigningTest(unittest.TestCase):
                 self.fail("Mismatched identity was accepted")
             self.assertFalse(any(call.args[0][0] == "security" for call in run.call_args_list))
 
-    def test_build_failure_restores_keychains_removes_trust_and_hides_credentials(self):
+    def test_build_failure_restores_keychains_deletes_private_keys_and_hides_credentials(self):
         def execute(args, **kwargs):
             if args == ["security", "list-keychains", "-d", "user"]:
                 return b'"/tmp/original keychain-db"\n'
@@ -70,13 +70,13 @@ class SigningTest(unittest.TestCase):
                     raise RuntimeError("build failed")
             commands = [call.args[0] for call in run.call_args_list]
             self.assertIn(["security", "list-keychains", "-d", "user", "-s", "/tmp/original keychain-db"], commands)
-            self.assertTrue(any("remove-trusted-cert" in command for command in commands))
+            self.assertFalse(any("remove-trusted-cert" in command for command in commands))
             self.assertTrue(any("delete-keychain" in command for command in commands))
             self.assertEqual(list(Path(directory).iterdir()), [])
 
     def test_cleanup_attempts_all_actions_if_one_fails(self):
         def execute(args, **kwargs):
-            if "remove-trusted-cert" in args:
+            if args == ["security", "list-keychains", "-d", "user", "-s"]:
                 raise RuntimeError("failure")
             return b""
 
@@ -89,6 +89,25 @@ class SigningTest(unittest.TestCase):
                 with signing.signing_environment(self.environment(directory)):
                     pass
             self.assertTrue(any("delete-keychain" in call.args[0] for call in run.call_args_list))
+
+    def test_verification_extracts_the_leaf_and_rejects_hash_only_requirements(self):
+        certificate = b"fixture DER certificate"
+        identity = signing.hashlib.sha1(certificate).hexdigest().upper()
+        requirement = 'designated => identifier "com.codepet.desktop" and anchor H"123"'
+        def execute(args, **kwargs):
+            for argument in args:
+                if argument.startswith("--extract-certificates="):
+                    Path(argument.split("=", 1)[1] + "0").write_bytes(certificate)
+            if "-r-" in args:
+                return requirement.encode()
+            return b""
+        with patch.object(signing, "run", side_effect=execute), redirect_stdout(StringIO()):
+            self.assertEqual(signing.verify(Path("fixture.app"), identity, "com.codepet.desktop"), requirement)
+            with self.assertRaisesRegex(ValueError, "pinned certificate"):
+                signing.verify(Path("fixture.app"), "B" * 40, "com.codepet.desktop")
+            requirement = 'designated => cdhash H"123"'
+            with self.assertRaisesRegex(ValueError, "stable certificate"):
+                signing.verify(Path("fixture.app"), identity, "com.codepet.desktop")
 
     def test_command_failure_does_not_print_password(self):
         with patch.object(signing.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, b"secret", b"secret")):

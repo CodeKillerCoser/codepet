@@ -20,7 +20,7 @@ APP = ROOT / "src-tauri/target/aarch64-apple-darwin/release/bundle/macos/Code Pe
 PREFIX = "CODEPET_MACOS_"
 
 
-def run(args, *, env=None):
+def run(args, *, env=None, include_stderr=False):
     # Never include argv in errors: security takes passwords as command arguments.
     print(f"Signing helper: {Path(args[0]).name} {args[1]}", flush=True)
     try:
@@ -29,7 +29,7 @@ def run(args, *, env=None):
         raise RuntimeError(f"{Path(args[0]).name} exceeded the 120-second signing command deadline") from None
     if result.returncode:
         raise RuntimeError(f"{Path(args[0]).name} failed (exit {result.returncode}); command output suppressed to protect credentials")
-    return result.stdout
+    return result.stdout + result.stderr if include_stderr else result.stdout
 
 
 def fingerprint(certificate):
@@ -103,7 +103,7 @@ def signing_environment(source):
         run(["openssl", "x509", "-in", str(certificate), "-checkend", "2592000", "-noout"])
         keychain_password = secrets.token_urlsafe(48)
         previous = shlex.split(run(["security", "list-keychains", "-d", "user"]).decode())
-        created = trusted = False
+        created = False
         try:
             run(["security", "create-keychain", "-p", keychain_password, keychain])
             created = True
@@ -113,7 +113,6 @@ def signing_environment(source):
             run(["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", keychain_password, keychain])
             # Hosted macOS runners provide passwordless sudo. Admin-domain trust avoids a GUI prompt.
             run(["sudo", "-n", "security", "add-trusted-cert", "-d", "-r", "trustRoot", "-p", "codeSign", "-k", keychain, str(certificate)])
-            trusted = True
             run(["security", "list-keychains", "-d", "user", "-s", keychain, *previous])
             # Force selection by fingerprint; do not let inherited credentials select another identity.
             env = {k: v for k, v in env.items() if not k.startswith("APPLE_")}
@@ -121,9 +120,11 @@ def signing_environment(source):
             print(f"Using fixed Code Pet signing identity {identity}", flush=True)
             yield env, identity
         finally:
+            original_error = sys.exc_info()[1]
             cleanup = [["security", "list-keychains", "-d", "user", "-s", *previous]]
-            if trusted:
-                cleanup.append(["sudo", "-n", "security", "remove-trusted-cert", "-d", str(certificate)])
+            # remove-trusted-cert can wait for an authorization UI even under sudo.
+            # This codeSign-only trust record is discarded with the hosted VM;
+            # remove the private keychain here, without opening another authorization flow.
             if created:
                 cleanup.append(["security", "delete-keychain", keychain])
             failed = False
@@ -133,18 +134,20 @@ def signing_environment(source):
                 except RuntimeError:
                     failed = True
             if failed:
-                raise RuntimeError("Signing keychain cleanup failed; discard the hosted runner")
+                if original_error is None:
+                    raise RuntimeError("Signing keychain cleanup failed; discard the hosted runner")
+                print("Signing keychain cleanup also failed; discard the hosted runner", file=sys.stderr)
 
 
 def verify(app, identity, identifier):
     run(["codesign", "--verify", "--deep", "--strict", str(app)])
     with tempfile.TemporaryDirectory(prefix="codepet-certificate-check-") as temporary:
         prefix = str(Path(temporary) / "cert")
-        run(["codesign", "-d", "--extract-certificates", prefix, str(app)])
+        run(["codesign", "-d", f"--extract-certificates={prefix}", str(app)])
         if hashlib.sha1(Path(prefix + "0").read_bytes()).hexdigest().upper() != identity:
             raise ValueError("Built app is not signed with the pinned certificate")
-    result = subprocess.run(["codesign", "-d", "-r-", str(app)], capture_output=True, text=True, check=True)
-    requirement = next((line for line in (result.stdout + result.stderr).splitlines() if line.startswith("designated => ")), "")
+    details = run(["codesign", "-d", "-r-", str(app)], include_stderr=True).decode()
+    requirement = next((line for line in details.splitlines() if line.startswith("designated => ")), "")
     if not requirement or "cdhash" in requirement or f'identifier "{identifier}"' not in requirement or "anchor" not in requirement:
         raise ValueError("Built app lacks a stable certificate-based designated requirement")
     print(requirement, flush=True)
