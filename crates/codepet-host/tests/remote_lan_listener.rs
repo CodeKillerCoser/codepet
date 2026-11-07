@@ -40,17 +40,8 @@ impl TestHost {
     async fn start_with_id(device_id: &str) -> Self {
         let directory = tempfile::tempdir().unwrap();
         let device_path = directory.path().join("device.json");
-        std::fs::write(
-            &device_path,
-            serde_json::to_vec(&serde_json::json!({
-                "version": 1,
-                "deviceId": device_id,
-                "displayName": "LAN Listener Test Host",
-                "createdAt": 1
-            }))
-            .unwrap(),
-        )
-        .unwrap();
+        codepet_provider_data::app_state::open_app_state(&device_path).unwrap().execute(
+            "INSERT INTO host_identity VALUES(1,?1,'LAN Listener Test Host',1)",[device_id]).unwrap();
         let device = Arc::new(
             DeviceRegistry::open(device_path, "LAN Listener Test Host").unwrap(),
         );
@@ -1479,9 +1470,7 @@ async fn rtc_and_lan_share_rpc_admission_large_messages_and_revocation() {
 async fn rtc_android_probe_host() {
     let export = std::env::var("CODEPET_RTC_PROBE_EXPORT").expect("set CODEPET_RTC_PROBE_EXPORT");
     let host = TestHost::start().await;
-    if let Ok(config) = std::env::var("CODEPET_RTC_CLOUD_PROBE_CONFIG") {
-        std::fs::copy(config, host._directory.path().join("remote/rtc-cloud.json")).unwrap();
-    }
+    let fixture_service=std::env::var("CODEPET_RTC_CLOUD_PROBE_CONFIG").ok().map(|config|seed_signaling_fixture(&host,&serde_json::from_slice(&std::fs::read(config).unwrap()).unwrap()));
     let server = RemoteLanServer::start(
         RemoteLanServerConfig {
             bind_addr: "0.0.0.0:0".parse().unwrap(),
@@ -1489,6 +1478,7 @@ async fn rtc_android_probe_host() {
         },
         host.remote_access.clone(), host.gateway.clone(),
     ).await.unwrap();
+    if let Some(service)=fixture_service { server.signaling_service().configure(Some(service)).await.unwrap(); }
     let address = std::net::SocketAddr::new(std::net::Ipv4Addr::LOCALHOST.into(), server.local_addr().port());
     let client = PinnedTlsClient::new(address, host.remote_access.tls_identity().certificate_der().to_vec());
     let pairing = pair_client(&host.remote_access, &client, "rtc-android-probe").await;
@@ -1515,6 +1505,22 @@ async fn rtc_android_probe_host() {
     let _ = std::fs::remove_file(stop);
 }
 
+fn seed_signaling_fixture(host: &TestHost, config: &serde_json::Value) -> String {
+    use base64::{engine::general_purpose::STANDARD as B64,Engine};
+    let service=codepet_host::normalize_signaling_service(config["serviceUrl"].as_str().unwrap()).unwrap().unwrap();
+    let mut db=codepet_provider_data::app_state::open_app_state(&host._directory.path().join("remote").join(codepet_host::APP_STATE_DATABASE)).unwrap();
+    let tx=db.transaction().unwrap();
+    tx.execute("INSERT INTO signaling_identity VALUES(1,?1)",[B64.decode(config["seed"].as_str().unwrap()).unwrap()]).unwrap();
+    tx.execute("INSERT INTO signaling_services VALUES(?1,?2,?3)",rusqlite::params![service,config["hostToken"].as_str().unwrap(),config["autoRegister"].as_bool().unwrap_or(false)]).unwrap();
+    if let Some(peers)=config["peers"].as_object() {
+        for (id,peer) in peers {
+            tx.execute("INSERT INTO signaling_peers VALUES(?1,?2,?3,?4)",rusqlite::params![service,id,B64.decode(peer["publicKey"].as_str().unwrap()).unwrap(),peer["token"].as_str().unwrap()]).unwrap();
+        }
+    }
+    tx.commit().unwrap();
+    service
+}
+
 fn hex_sha256(value: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let digest = ring::digest::digest(&ring::digest::SHA256, value);
@@ -1532,10 +1538,9 @@ async fn invitation_tls_retries_share_authorization_without_vps() {
     use ring::{aead, signature::{Ed25519KeyPair, KeyPair, UnparsedPublicKey, ED25519}};
     use serde_json::{json, Value};
     let host = TestHost::start().await;
-    std::fs::write(host._directory.path().join("remote/rtc-cloud.json"),
-        json!({"serviceUrl":"https://127.0.0.1:9","hostToken":"test-host-token-which-is-at-least-32-bytes",
-            "seed":B64.encode([7;32]),"peers":{}}).to_string()).unwrap();
+    let service=seed_signaling_fixture(&host,&json!({"serviceUrl":"https://127.0.0.1:9","hostToken":"test-host-token-which-is-at-least-32-bytes","seed":B64.encode([7;32]),"peers":{}}));
     let server = RemoteLanServer::start(RemoteLanServerConfig::loopback(), host.remote_access.clone(), host.gateway.clone()).await.unwrap();
+    server.signaling_service().configure(Some(service)).await.unwrap();
     let client = PinnedTlsClient::new(server.local_addr(), host.remote_access.tls_identity().certificate_der().to_vec());
     let invitation = host.remote_access.begin_pairing().unwrap();
     let (_, host_key) = server.prepare_pairing_invitation(&invitation).unwrap().unwrap();
@@ -1599,10 +1604,9 @@ async fn rtc_public_relay_probe() {
     use webrtc::{api::APIBuilder, data_channel::data_channel_init::RTCDataChannelInit, peer_connection::{configuration::RTCConfiguration, policy::ice_transport_policy::RTCIceTransportPolicy}};
     let host_id = std::env::var("CODEPET_RTC_PROBE_HOST_ID").unwrap_or_else(|_| "device-lan-listener".into());
     let host = TestHost::start_with_id(&host_id).await;
-    if let Ok(config) = std::env::var("CODEPET_RTC_CLOUD_PROBE_CONFIG") {
-        std::fs::copy(config, host._directory.path().join("remote/rtc-cloud.json")).unwrap();
-    }
+    let fixture_service=std::env::var("CODEPET_RTC_CLOUD_PROBE_CONFIG").ok().map(|config|seed_signaling_fixture(&host,&serde_json::from_slice(&std::fs::read(config).unwrap()).unwrap()));
     let server=RemoteLanServer::start(RemoteLanServerConfig::loopback(),host.remote_access.clone(),host.gateway.clone()).await.unwrap();
+    if let Some(service)=fixture_service { server.signaling_service().configure(Some(service)).await.unwrap(); }
     if let Ok(service) = std::env::var("CODEPET_SIGNAL_REGISTRATION_URL") {
         let before = server.local_addr();
         server.signaling_service().configure(Some(service.clone())).await.unwrap();

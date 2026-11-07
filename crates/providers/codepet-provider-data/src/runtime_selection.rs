@@ -1,35 +1,26 @@
 use crate::{db_error, ProviderData};
 use codepet_provider_sdk::{local_runtime::RuntimeSelectionStorage, ProtocolError};
-use rusqlite::{Connection, OptionalExtension};
-
-pub(crate) fn initialize(db: &Connection) -> Result<(), ProtocolError> {
-    db.execute_batch("CREATE TABLE IF NOT EXISTS runtime_selection (
-        singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
-        executable_path TEXT NOT NULL
-    );").map_err(db_error)
-}
+use rusqlite::{params, OptionalExtension};
 
 impl RuntimeSelectionStorage for ProviderData {
     fn load_last_selected(&self) -> Result<Option<String>, ProtocolError> {
         // Protocol fixtures may initialize without Host-assigned directories.
         if !self.configured() { return Ok(None); }
-        self.connection()?.query_row(
-            "SELECT executable_path FROM runtime_selection WHERE singleton = 1",
-            [], |row| row.get(0),
-        ).optional().map_err(db_error)
+        let metadata = self.metadata.lock().map_err(db_error)?;
+        let (path, plugin) = metadata.as_ref().ok_or_else(|| crate::error("provider_not_initialized", "Missing Provider metadata"))?;
+        crate::app_state::open_app_state(path)?.query_row(
+            "SELECT selected_executable_path FROM providers WHERE id=?1", [plugin], |row| row.get::<_, Option<String>>(0),
+        ).optional().map(|v|v.flatten()).map_err(db_error)
     }
 
     fn save_last_selected(&self, path: Option<&str>) -> Result<(), ProtocolError> {
         if !self.configured() { return Ok(()); }
-        let db = self.connection()?;
-        match path {
-            Some(path) => db.execute(
-                "INSERT INTO runtime_selection(singleton, executable_path) VALUES(1, ?1)
-                 ON CONFLICT(singleton) DO UPDATE SET executable_path = excluded.executable_path",
-                [path],
-            ),
-            None => db.execute("DELETE FROM runtime_selection WHERE singleton = 1", []),
-        }.map_err(db_error)?;
+        let metadata = self.metadata.lock().map_err(db_error)?;
+        let (database, plugin) = metadata.as_ref().ok_or_else(|| crate::error("provider_not_initialized", "Missing Provider metadata"))?;
+        crate::app_state::open_app_state(database)?.execute(
+            "UPDATE providers SET selected_executable_path=?2,revision=revision+1,updated_at=?3 WHERE id=?1 AND selected_executable_path IS NOT ?2",
+            params![plugin,path,chrono::Utc::now().timestamp_millis()],
+        ).map_err(db_error)?;
         Ok(())
     }
 }

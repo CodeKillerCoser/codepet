@@ -6,7 +6,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 
-const METRICS: [&str; 5] = [
+pub(crate) const METRICS: [&str; 5] = [
     "totalTokens",
     "inputTokens",
     "outputTokens",
@@ -18,23 +18,10 @@ pub const HOOK_DATASET: &str = "observed-model-tokens";
 pub const CODEX_DATASET: &str = "codex-account-daily";
 
 pub(crate) fn initialize(db: &Connection) -> Result<(), ProtocolError> {
-    db.execute_batch("CREATE TABLE IF NOT EXISTS usage_records (
-        instance TEXT NOT NULL, dataset TEXT NOT NULL, record_id TEXT NOT NULL,
-        at INTEGER NOT NULL, duration INTEGER NOT NULL, model TEXT,
-        values_json TEXT NOT NULL, updated INTEGER NOT NULL,
-        PRIMARY KEY(instance,dataset,record_id));
-        CREATE INDEX IF NOT EXISTS usage_time ON usage_records(instance,dataset,at);
-        CREATE TABLE IF NOT EXISTS usage_buckets (
-        instance TEXT NOT NULL,dataset TEXT NOT NULL,at INTEGER NOT NULL,duration INTEGER NOT NULL,
-        model TEXT NOT NULL,values_json TEXT NOT NULL,known_json TEXT NOT NULL,records INTEGER NOT NULL,updated INTEGER NOT NULL,
-        PRIMARY KEY(instance,dataset,at,model));
-        CREATE TABLE IF NOT EXISTS usage_native_summary(instance TEXT PRIMARY KEY,payload TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS usage_snapshots (
-        id TEXT PRIMARY KEY, binding TEXT NOT NULL, result TEXT NOT NULL, expires INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS usage_sources (
-        path TEXT PRIMARY KEY, position INTEGER NOT NULL, fingerprint TEXT NOT NULL, checked INTEGER NOT NULL DEFAULT 0);
-        CREATE TABLE IF NOT EXISTS usage_inbox (id TEXT PRIMARY KEY,provider TEXT NOT NULL,payload TEXT NOT NULL,received INTEGER NOT NULL);")
-        .map_err(db_error)
+    db.execute_batch(include_str!("usage.sql")).map_err(db_error)
+}
+pub(crate) fn read_five<T: rusqlite::types::FromSql>(r: &rusqlite::Row<'_>, offset: usize) -> rusqlite::Result<[T;5]> {
+    Ok([r.get(offset)?,r.get(offset+1)?,r.get(offset+2)?,r.get(offset+3)?,r.get(offset+4)?])
 }
 
 pub fn datasets(codex: bool) -> Vec<UsageDataset> {
@@ -86,12 +73,11 @@ impl ProviderData {
         let tx = db
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(db_error)?;
-        let previous:Option<(i64,i64,Option<String>,String)>=tx.query_row(
-            "SELECT at,duration,model,values_json FROM usage_records WHERE instance=?1 AND dataset=?2 AND record_id=?3",
-            params![instance,dataset,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).optional().map_err(db_error)?;
-        let encoded = serde_json::to_string(&values).map_err(db_error)?;
+        let previous:Option<(i64,i64,Option<String>,[Option<u64>;5])>=tx.query_row(
+            "SELECT at,duration,model,total_tokens,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens FROM usage_records WHERE instance=?1 AND dataset=?2 AND record_id=?3",
+            params![instance,dataset,id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,read_five(r,3)?))).optional().map_err(db_error)?;
         if previous.as_ref().is_some_and(|(time, span, m, v)| {
-            *time == at && *span == duration && m.as_deref() == model && *v == encoded
+            *time == at && *span == duration && m.as_deref() == model && *v == values
         }) {
             return Ok(());
         }
@@ -103,17 +89,15 @@ impl ProviderData {
                 time,
                 span,
                 m.as_deref(),
-                serde_json::from_str(&v).map_err(db_error)?,
+                v,
                 -1,
             )?;
         }
         adjust_bucket(&tx, instance, dataset, at, duration, model, values, 1)?;
-        tx.execute("INSERT INTO usage_records VALUES (?1,?2,?3,?4,?5,?6,?7,?8)
+        tx.execute("INSERT INTO usage_records VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12)
             ON CONFLICT(instance,dataset,record_id) DO UPDATE SET at=excluded.at,duration=excluded.duration,
-            model=excluded.model,values_json=excluded.values_json,updated=excluded.updated
-            WHERE at!=excluded.at OR duration!=excluded.duration OR model IS NOT excluded.model OR values_json!=excluded.values_json",
-            params![instance,dataset,id,at,duration,model,encoded,Utc::now().timestamp_millis()])
-            .map_err(db_error)?;
+            model=excluded.model,total_tokens=excluded.total_tokens,input_tokens=excluded.input_tokens,output_tokens=excluded.output_tokens,cache_read_tokens=excluded.cache_read_tokens,cache_write_tokens=excluded.cache_write_tokens,updated=excluded.updated",
+            params![instance,dataset,id,at,duration,model,values[0],values[1],values[2],values[3],values[4],Utc::now().timestamp_millis()]).map_err(db_error)?;
         tx.commit().map_err(db_error)?;
         Ok(())
     }
@@ -255,61 +239,17 @@ impl ProviderData {
         if !(1..=1000).contains(&limit) {
             return Err(error("invalid_usage_query", "Invalid page limit"));
         }
-        let mut binding = q.clone();
-        if let Some(page) = binding.get_mut("page").and_then(Value::as_object_mut) {
-            page.remove("cursor");
-        }
-        let binding = format!("{instance}:{}", binding);
         let db = self.connection()?;
-        db.execute(
-            "DELETE FROM usage_snapshots WHERE expires < ?1",
-            [Utc::now().timestamp()],
-        )
-        .map_err(db_error)?;
+        db.execute("DELETE FROM usage_snapshots WHERE expires < ?1", [Utc::now().timestamp()]).map_err(db_error)?;
         if let Some(cursor) = q["page"]["cursor"].as_str() {
-            let (id, offset) = cursor
-                .split_once(':')
-                .ok_or_else(|| error("invalid_cursor", "Malformed usage cursor"))?;
-            let offset: usize = offset
-                .parse()
-                .map_err(|_| error("invalid_cursor", "Malformed offset"))?;
-            let saved: Option<(String, String)> = db
-                .query_row(
-                    "SELECT binding,result FROM usage_snapshots WHERE id=?1",
-                    [id],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
-                )
-                .optional()
-                .map_err(db_error)?;
-            let (expected, result) =
-                saved.ok_or_else(|| error("usage_cursor_expired", "Usage snapshot expired"))?;
-            if expected != binding {
-                return Err(error(
-                    "invalid_cursor",
-                    "Cursor does not match query or instance",
-                ));
-            }
-            return page_result(
-                serde_json::from_str(&result).map_err(db_error)?,
-                id,
-                offset,
-                limit,
-            );
+            let (id,offset) = cursor.split_once(':').ok_or_else(||error("invalid_cursor","Malformed usage cursor"))?;
+            let offset = offset.parse().map_err(|_|error("invalid_cursor","Malformed offset"))?;
+            return page_result(crate::usage_snapshot::load(&db,id,instance,&q)?, id,offset,limit);
         }
-        let mut statement = db.prepare("SELECT at,duration,NULLIF(model,''),values_json,updated,known_json,records FROM usage_buckets WHERE instance=?1 AND dataset=?2 AND at>=?3 AND at<?4 ORDER BY at,model").map_err(db_error)?;
-        let records = statement
-            .query_map(params![source, dataset, from, to], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, Option<String>>(2)?,
-                    r.get::<_, String>(3)?,
-                    r.get::<_, i64>(4)?,
-                    r.get::<_, String>(5)?,
-                    r.get::<_, i64>(6)?,
-                ))
-            })
-            .map_err(db_error)?;
+        let mut statement = db.prepare("SELECT at,duration,NULLIF(model,''),total_tokens,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,updated,total_tokens_known_count,input_tokens_known_count,output_tokens_known_count,cache_read_tokens_known_count,cache_write_tokens_known_count,records FROM usage_buckets WHERE instance=?1 AND dataset=?2 AND at>=?3 AND at<?4 ORDER BY at,model").map_err(db_error)?;
+        let records = statement.query_map(params![source,dataset,from,to], |r| Ok((
+            r.get::<_,i64>(0)?,r.get::<_,i64>(1)?,r.get::<_,Option<String>>(2)?,read_five::<u64>(r,3)?,r.get::<_,i64>(8)?,read_five::<i64>(r,9)?,r.get::<_,i64>(14)?
+        ))).map_err(db_error)?;
         let mut buckets: BTreeMap<(i64, Option<String>), (i64, Sums)> = BTreeMap::new();
         let mut daily: BTreeMap<(String, Option<String>), Sums> = BTreeMap::new();
         let mut total = Sums::default();
@@ -333,8 +273,7 @@ impl ProviderData {
                     continue;
                 }
             }
-            let sums: [u64; 5] = serde_json::from_str(&values).map_err(db_error)?;
-            let known: [i64; 5] = serde_json::from_str(&known).map_err(db_error)?;
+            let sums = values;
             let values = std::array::from_fn(|i| (known[i] > 0).then_some(sums[i]));
             let missing = std::array::from_fn(|i| known[i] < count);
             let (start, end) = bucket(at, grain, tz)?;
@@ -457,29 +396,12 @@ impl ProviderData {
             result["summaries"] = summary;
         }
         if codex {
-            let native: Option<String> = db
-                .query_row(
-                    "SELECT payload FROM usage_native_summary WHERE instance=?1",
-                    [source],
-                    |r| r.get(0),
-                )
-                .optional()
-                .map_err(db_error)?;
-            if let Some(native) = native {
-                result["nativeAccountSummary"] = serde_json::from_str(&native).map_err(db_error)?;
+            if let Some(native) = crate::usage_snapshot::load_native(&db,source)? {
+                result["nativeAccountSummary"] = native;
             }
         }
-        // Bounded lifetime; snapshots make pagination independent of concurrent ingestion.
-        db.execute(
-            "INSERT INTO usage_snapshots VALUES (?1,?2,?3,?4)",
-            params![
-                id,
-                binding,
-                result.to_string(),
-                Utc::now().timestamp() + 300
-            ],
-        )
-        .map_err(db_error)?;
+
+        crate::usage_snapshot::save(&db,&id,instance,&q,&result)?;
         db.execute("DELETE FROM usage_snapshots WHERE id NOT IN (SELECT id FROM usage_snapshots ORDER BY expires DESC LIMIT 32)",[]).map_err(db_error)?;
         page_result(result, &id, 0, limit)
     }
@@ -537,15 +459,8 @@ fn adjust_bucket(
     values: [Option<u64>; 5],
     delta: i64,
 ) -> Result<(), ProtocolError> {
-    let old:Option<(String,String,i64)>=db.query_row("SELECT values_json,known_json,records FROM usage_buckets WHERE instance=?1 AND dataset=?2 AND at=?3 AND model=?4",params![instance,dataset,at,model.unwrap_or("")],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(db_error)?;
-    let (mut sums, mut known, mut records): ([u64; 5], [i64; 5], i64) = match old {
-        Some((s, k, n)) => (
-            serde_json::from_str(&s).map_err(db_error)?,
-            serde_json::from_str(&k).map_err(db_error)?,
-            n,
-        ),
-        None => ([0; 5], [0; 5], 0),
-    };
+    let old:Option<([u64;5],[i64;5],i64)>=db.query_row("SELECT total_tokens,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,total_tokens_known_count,input_tokens_known_count,output_tokens_known_count,cache_read_tokens_known_count,cache_write_tokens_known_count,records FROM usage_buckets WHERE instance=?1 AND dataset=?2 AND at=?3 AND model=?4",params![instance,dataset,at,model.unwrap_or("")],|r|Ok((read_five(r,0)?,read_five(r,5)?,r.get(10)?))).optional().map_err(db_error)?;
+    let (mut sums,mut known,mut records) = old.unwrap_or(([0;5],[0;5],0));
     records += delta;
     for i in 0..5 {
         if let Some(n) = values[i] {
@@ -565,7 +480,7 @@ fn adjust_bucket(
         )
         .map_err(db_error)?;
     } else {
-        db.execute("INSERT INTO usage_buckets VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(instance,dataset,at,model) DO UPDATE SET values_json=excluded.values_json,known_json=excluded.known_json,records=excluded.records,updated=excluded.updated",params![instance,dataset,at,duration,model.unwrap_or(""),serde_json::to_string(&sums).map_err(db_error)?,serde_json::to_string(&known).map_err(db_error)?,records,Utc::now().timestamp_millis()]).map_err(db_error)?;
+        db.execute("INSERT INTO usage_buckets VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17) ON CONFLICT(instance,dataset,at,model) DO UPDATE SET total_tokens=excluded.total_tokens,input_tokens=excluded.input_tokens,output_tokens=excluded.output_tokens,cache_read_tokens=excluded.cache_read_tokens,cache_write_tokens=excluded.cache_write_tokens,total_tokens_known_count=excluded.total_tokens_known_count,input_tokens_known_count=excluded.input_tokens_known_count,output_tokens_known_count=excluded.output_tokens_known_count,cache_read_tokens_known_count=excluded.cache_read_tokens_known_count,cache_write_tokens_known_count=excluded.cache_write_tokens_known_count,records=excluded.records,updated=excluded.updated",params![instance,dataset,at,duration,model.unwrap_or(""),sums[0],sums[1],sums[2],sums[3],sums[4],known[0],known[1],known[2],known[3],known[4],records,Utc::now().timestamp_millis()]).map_err(db_error)?;
     }
     Ok(())
 }

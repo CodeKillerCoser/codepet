@@ -12,7 +12,8 @@ mod error;
 mod gateway;
 mod providers;
 mod remote;
-mod persistence;
+mod storage;
+pub use codepet_provider_data::app_state::APP_STATE_DATABASE;
 mod log_origin;
 pub use log_origin::{LogOrigin, format_text_log, format_rtc_log};
 

@@ -286,10 +286,13 @@ impl PluginManager {
     }
 
     /// Called while constructing the Gateway, before starting Provider processes.
-    /// Every participant uses one locked document; a late path switch is rejected.
+    /// Every participant uses the same metadata database; a late path switch is rejected.
     pub(crate) fn set_conversation_state_path(&self, path: &std::path::Path) -> HostResult<()> {
         if !path.is_absolute() {
             return Err(HostError::new("conversation_state_unavailable", "Shared state path must be absolute"));
+        }
+        if path != self.inner.instances.database_path() {
+            return Err(HostError::new("conversation_state_unavailable", "Conversation state and Provider registry must share one metadata database"));
         }
         let plugins = self.inner.plugins.try_read().map_err(|_| HostError::new(
             "conversation_state_unavailable", "Configure shared state before starting Providers"))?;
@@ -544,8 +547,9 @@ impl PluginManager {
                     "conversation_state_unavailable", "Shared state path must be UTF-8"))?;
                 descriptor.env.insert("CODEPET_CONVERSATION_STATE_DATABASE".into(), path.to_owned());
             }
-            if let Some(dirs) = &provider_directories {
-                descriptor.env.insert("CODEPET_CONVERSATION_STATE_DATABASE".into(), dirs.database_path.clone());
+            descriptor.env.insert("CODEPET_APP_STATE_DATABASE".into(), self.inner.instances.database_path().to_string_lossy().into_owned());
+            if provider_directories.is_some() {
+                descriptor.env.insert("CODEPET_CONVERSATION_STATE_DATABASE".into(), self.inner.instances.database_path().to_string_lossy().into_owned());
             }
             match PluginProcess::spawn(&descriptor, self.inner.config.process.clone()) {
                 Ok(process) => {
@@ -1121,8 +1125,9 @@ impl PluginManager {
 
     pub(crate) fn provider_state_paths(&self) -> HostResult<Vec<(String,std::path::PathBuf)>> {
         let mut paths=Vec::new();
+        if self.inner.config.provider_data_root.is_none() && self.inner.conversation_state_path.lock().map_err(|_| HostError::new("conversation_state_unavailable","Shared state lock poisoned"))?.is_none() { return Ok(paths); }
         for record in self.inner.instances.list()? {
-            if let Some(dirs)=self.provider_directories(&record.plugin_id)? {paths.push((record.instance_id,std::path::PathBuf::from(dirs.database_path)));}
+            paths.push((record.instance_id,self.inner.instances.database_path().to_owned()));
         }
         Ok(paths)
     }
@@ -1140,7 +1145,7 @@ impl PluginManager {
         }
         let logs = logs_root.join(plugin_id);
         std::fs::create_dir_all(&data)?; std::fs::create_dir_all(&logs)?;
-        Ok(Some(codepet_provider_sdk::ProviderDirectories { data:data.to_string_lossy().into_owned(), logs:logs.to_string_lossy().into_owned(), database_path:data.join("provider.sqlite").to_string_lossy().into_owned() }))
+        Ok(Some(codepet_provider_sdk::ProviderDirectories { data:data.to_string_lossy().into_owned(), logs:logs.to_string_lossy().into_owned(), database_path:data.join("usage.sqlite").to_string_lossy().into_owned() }))
     }
 
     pub async fn conversation_list(

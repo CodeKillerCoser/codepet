@@ -1,9 +1,8 @@
-use crate::persistence::{persistence_io, write_json_atomically};
+use rusqlite::{params, OptionalExtension};
 use crate::{HostError, HostResult};
 use codepet_provider_sdk::{DeviceId, TimestampMs};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -86,42 +85,18 @@ impl DeviceRegistry {
         let path = path.into();
         let display_name = display_name.into();
         DeviceIdentity::validate_display_name(&display_name)?;
-        if !path.exists() {
-            let identity = DeviceIdentity::generate(display_name)?;
-            write_json_atomically(&path, &identity)?;
-            return Ok(Self {
-                identity,
-                diagnostics: Vec::new(),
-            });
-        }
-
-        match read_identity(&path) {
-            Ok(mut identity) => {
-                if identity.update_display_name(display_name)? {
-                    write_json_atomically(&path, &identity)?;
-                }
-                Ok(Self {
-                    identity,
-                    diagnostics: Vec::new(),
-                })
-            }
-            Err(error) => {
-                let recovered_path = quarantine_corrupt_identity(&path)?;
-                let identity = DeviceIdentity::generate(display_name)?;
-                write_json_atomically(&path, &identity)?;
-                Ok(Self {
-                    identity,
-                    diagnostics: vec![DeviceDiagnostic {
-                        code: "device_identity_rebuilt".to_string(),
-                        message: format!(
-                            "device identity was invalid and was safely rebuilt: {error}"
-                        ),
-                        path,
-                        recovered_path: Some(recovered_path),
-                    }],
-                })
-            }
-        }
+        let mut db = crate::storage::open(&path)?;
+        let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(crate::storage::error)?;
+        let saved = tx.query_row("SELECT device_id,display_name,created_at FROM host_identity WHERE id=1", [], |r| Ok(DeviceIdentity {
+            version: DEVICE_IDENTITY_VERSION, device_id:r.get(0)?,display_name:r.get(1)?,created_at:r.get(2)?,
+        })).optional().map_err(crate::storage::error)?;
+        let mut identity = match saved { Some(identity) => identity, None => DeviceIdentity::generate(&display_name)? };
+        identity.validate()?;
+        identity.update_display_name(display_name)?;
+        tx.execute("INSERT INTO host_identity VALUES(1,?1,?2,?3) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name WHERE display_name!=excluded.display_name",
+            params![identity.device_id,identity.display_name,identity.created_at]).map_err(crate::storage::error)?;
+        tx.commit().map_err(crate::storage::error)?;
+        Ok(Self { identity, diagnostics:Vec::new() })
     }
 
     pub fn identity(&self) -> &DeviceIdentity {
@@ -131,36 +106,6 @@ impl DeviceRegistry {
     pub fn diagnostics(&self) -> &[DeviceDiagnostic] {
         &self.diagnostics
     }
-}
-
-fn read_identity(path: &Path) -> HostResult<DeviceIdentity> {
-    let payload = fs::read(path).map_err(|error| persistence_io("read device identity", path, error))?;
-    let identity: DeviceIdentity = serde_json::from_slice(&payload).map_err(|error| {
-        HostError::new(
-            "invalid_device_identity",
-            format!("decode device identity {}: {error}", path.display()),
-        )
-        .with_detail("path", path.display().to_string())
-    })?;
-    identity.validate()?;
-    Ok(identity)
-}
-
-fn quarantine_corrupt_identity(path: &Path) -> HostResult<PathBuf> {
-    let parent = path.parent().ok_or_else(|| {
-        HostError::new(
-            "invalid_persistence_path",
-            format!("device identity path has no parent: {}", path.display()),
-        )
-    })?;
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("device-identity.json");
-    let recovered_path = parent.join(format!("{file_name}.corrupt-{}", now_ms()));
-    fs::rename(path, &recovered_path)
-        .map_err(|error| persistence_io("quarantine corrupt device identity", path, error))?;
-    Ok(recovered_path)
 }
 
 fn now_ms() -> u64 {

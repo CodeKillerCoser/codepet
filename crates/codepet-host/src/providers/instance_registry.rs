@@ -1,5 +1,5 @@
 use crate::providers::catalog::{PluginCatalog, PluginDescriptor, PluginInstanceConfig};
-use crate::persistence::{persistence_io, write_json_atomically};
+use rusqlite::{params, OptionalExtension};
 use crate::{HostError, HostResult};
 use codepet_provider_sdk::{
     DeviceId, JsonObject, ProviderInstanceId, ProviderInstanceRoute, ProviderPluginId,
@@ -7,12 +7,9 @@ use codepet_provider_sdk::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
-
-const INSTANCE_REGISTRY_VERSION: u32 = 1;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ProviderInstanceRecord {
@@ -45,15 +42,6 @@ struct InstanceIdentity {
     display_name: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-struct InstanceRegistryDocument {
-    version: u32,
-    device_id: DeviceId,
-    instances: Vec<InstanceIdentity>,
-}
-
 #[derive(Clone, Debug, Default)]
 struct InstanceRegistryState {
     identities: BTreeMap<ProviderInstanceId, InstanceIdentity>,
@@ -71,13 +59,7 @@ impl ProviderInstanceRegistry {
     pub fn open(path: impl Into<PathBuf>, device_id: DeviceId) -> HostResult<Self> {
         validate_device_id(&device_id)?;
         let path = path.into();
-        let identities = if path.exists() {
-            load_registry(&path, &device_id)?
-        } else {
-            let identities = BTreeMap::new();
-            persist_registry(&path, &device_id, &identities)?;
-            identities
-        };
+        let identities = load_registry(&path, &device_id)?;
         Ok(Self {
             device_id,
             path,
@@ -87,6 +69,8 @@ impl ProviderInstanceRegistry {
             })),
         })
     }
+
+    pub(crate) fn database_path(&self) -> &Path { &self.path }
 
     pub(crate) fn device_id(&self) -> &str {
         &self.device_id
@@ -108,7 +92,7 @@ impl ProviderInstanceRegistry {
         if append && catalog.descriptors().any(|descriptor| state.records.values().any(|record| record.plugin_id == descriptor.plugin_id)) {
             return Err(HostError::new("duplicate_plugin_id", "Provider instance records already exist"));
         }
-        let previous = state.identities.clone();
+        let previous = load_registry(&self.path,&self.device_id)?;
         let mut identities = if append { state.identities.clone() } else { BTreeMap::new() };
         let mut records = if append { state.records.clone() } else { BTreeMap::new() };
         let mut configured_keys = BTreeSet::new();
@@ -190,7 +174,7 @@ impl ProviderInstanceRegistry {
             }
         }
 
-        persist_registry(&self.path, &self.device_id, &identities)?;
+        persist_registry(&self.path, catalog, &identities)?;
         state.identities = identities;
         state.records = records;
         Ok(state.records.values().cloned().collect())
@@ -339,63 +323,46 @@ impl ProviderInstanceRegistry {
     }
 }
 
-fn load_registry(
-    path: &Path,
-    device_id: &str,
-) -> HostResult<BTreeMap<ProviderInstanceId, InstanceIdentity>> {
-    let payload = fs::read(path)
-        .map_err(|error| persistence_io("read Provider instance registry", path, error))?;
-    let document: InstanceRegistryDocument = serde_json::from_slice(&payload).map_err(|error| {
-        HostError::new(
-            "invalid_provider_instance_registry",
-            format!("decode Provider instance registry {}: {error}", path.display()),
-        )
-        .with_detail("path", path.display().to_string())
-    })?;
-    if document.version != INSTANCE_REGISTRY_VERSION {
-        return Err(HostError::new(
-            "unsupported_provider_instance_registry_version",
-            format!(
-                "unsupported Provider instance registry version: {}",
-                document.version
-            ),
-        ));
+fn load_registry(path: &Path, device_id: &str) -> HostResult<BTreeMap<ProviderInstanceId, InstanceIdentity>> {
+    let mut db = crate::storage::open(path)?;
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(crate::storage::error)?;
+    let owner:Option<String> = tx.query_row("SELECT device_id FROM registry_identity WHERE id=1",[],|r|r.get(0)).optional().map_err(crate::storage::error)?;
+    if owner.as_deref().is_some_and(|id|id!=device_id) {
+        return Err(HostError::new("provider_instance_registry_device_mismatch", "Provider registry belongs to a different device"));
     }
-    if document.device_id != device_id {
-        return Err(HostError::new(
-            "provider_instance_registry_device_mismatch",
-            "Provider instance registry belongs to a different device",
-        )
-        .with_detail("expectedDeviceId", device_id.to_string())
-        .with_detail("actualDeviceId", document.device_id));
-    }
+    tx.execute("INSERT OR IGNORE INTO registry_identity VALUES(1,?1)",[device_id]).map_err(crate::storage::error)?;
     let mut identities = BTreeMap::new();
-    for identity in document.instances {
-        validate_identity(&identity)?;
-        if identities
-            .insert(identity.instance_id.clone(), identity)
-            .is_some()
-        {
-            return Err(HostError::new(
-                "duplicate_provider_instance",
-                "Provider instance registry contains duplicate ids",
-            ));
+    {
+        let mut statement = tx.prepare("SELECT id,provider_id,instance_kind,display_name FROM provider_instances").map_err(crate::storage::error)?;
+        let rows = statement.query_map([], |r| Ok(InstanceIdentity { instance_id:r.get(0)?,plugin_id:r.get(1)?,instance_kind:r.get(2)?,display_name:r.get(3)? })).map_err(crate::storage::error)?;
+        for identity in rows {
+            let identity = identity.map_err(crate::storage::error)?;
+            validate_identity(&identity)?;
+            identities.insert(identity.instance_id.clone(),identity);
         }
     }
+    tx.commit().map_err(crate::storage::error)?;
     Ok(identities)
 }
-
-fn persist_registry(
-    path: &Path,
-    device_id: &str,
-    identities: &BTreeMap<ProviderInstanceId, InstanceIdentity>,
-) -> HostResult<()> {
-    let document = InstanceRegistryDocument {
-        version: INSTANCE_REGISTRY_VERSION,
-        device_id: device_id.to_string(),
-        instances: identities.values().cloned().collect(),
-    };
-    write_json_atomically(path, &document)
+fn persist_registry(path: &Path, catalog: &PluginCatalog, identities: &BTreeMap<ProviderInstanceId, InstanceIdentity>) -> HostResult<()> {
+    let mut db = crate::storage::open(path)?;
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(crate::storage::error)?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+    for descriptor in catalog.descriptors() {
+        tx.execute("INSERT INTO providers(id,display_name,created_at,updated_at) VALUES(?1,?2,?3,?3) ON CONFLICT(id) DO UPDATE SET display_name=excluded.display_name,updated_at=excluded.updated_at WHERE display_name!=excluded.display_name",
+            params![descriptor.plugin_id,descriptor.display_name,now]).map_err(crate::storage::error)?;
+    }
+    for identity in identities.values() {
+        let existing:Option<(String,String,String)>=tx.query_row("SELECT provider_id,instance_kind,display_name FROM provider_instances WHERE id=?1",[&identity.instance_id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).optional().map_err(crate::storage::error)?;
+        if existing.is_some_and(|e|e!=(identity.plugin_id.clone(),identity.instance_kind.clone(),identity.display_name.clone())) {
+            return Err(HostError::new("provider_instance_identity_conflict","Provider instance ID already belongs to another identity"));
+        }
+        tx.execute("INSERT OR IGNORE INTO providers(id,display_name,created_at,updated_at) VALUES(?1,?1,?2,?2)",params![identity.plugin_id,now]).map_err(crate::storage::error)?;
+        tx.execute("INSERT INTO provider_instances VALUES(?1,?2,?3,?4) ON CONFLICT(id) DO NOTHING",params![identity.instance_id,identity.plugin_id,identity.instance_kind,identity.display_name]).map_err(crate::storage::error)?;
+    }
+    // An absent/disabled plugin must not delete conversations or its stable identity.
+    tx.commit().map_err(crate::storage::error)?;
+    Ok(())
 }
 
 fn validate_config(plugin_id: &str, config: &PluginInstanceConfig) -> HostResult<()> {

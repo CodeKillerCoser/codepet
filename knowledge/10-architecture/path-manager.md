@@ -61,14 +61,9 @@ code-pet/
   config/settings.json                  # 固定在默认系统目录的引导设置
   config/pet-sources.json                # 实际数据根下的来源偏好
   config/hooks/                         # 托管脚本与 Node 路径适配器
-  connections/device-identity.json       # 本机稳定身份
-  connections/lan-tls-identity.json
-  connections/remote-credentials.json
-  connections/rtc-cloud.json
   connections/spool/events.jsonl         # 尚未消费的 Hook 事件
-  providers/provider-instances.json
-  providers/conversation-state.sqlite    # Host 共享/回退业务状态
-  providers/<pluginId>/provider.sqlite   # Provider 私有业务状态
+  app-state.sqlite                      # 身份、Provider、会话活动/已读与连接状态
+  providers/<pluginId>/usage.sqlite      # Provider 用量及冻结查询快照
   tasks/skills/<name>/SKILL.md
   tasks/v1/<sourceHash>/                 # 任务记录、抽取设置及锁
   pets/
@@ -86,7 +81,7 @@ code-pet/
 
 Provider Host 分别指定 provider_data_root 和 provider_logs_root，将业务数据库与日志分配给插件；数据根启用时必须同时提供绝对日志根。独立调用者不配置数据根时仍可使用原来的无磁盘配置。Provider 程序使用 Host 下发的目录，不自行拼接旧目录。
 
-风险与验证：默认根误变成 config、Node/Rust 分叉通过路径及 Hook 测试覆盖；旧配置误读通过放置无效旧文件验证；Provider 数据/日志路由通过真实 fixture 子进程回传目录并检查 SQLite 文件与日志；资源安装和加载分别验证新 versions 路径；任务执行/持久化分离沿用 Layout 测试。旧文件不自动删除，安装版不会因仅修改源码而改变运行路径。实际 Windows/macOS 安装验收不等于测试通过。
+风险与验证：默认根误变成 config、Node/Rust 分叉通过路径及 Hook 测试覆盖；旧配置误读通过放置无效旧文件验证；Provider 数据/日志路由通过真实 fixture 子进程回传目录并检查 SQLite 文件与日志；资源安装和加载分别验证新 versions 路径；任务执行/持久化分离沿用 Layout 测试。旧文件不自动删除，安装版不会因仅修改源码而改变运行路径。2026-11-08 存储改造采用全新 SQLite，不读取上述身份/实例/连接的旧 JSON 和旧 provider.sqlite；详见 [桌面存储](desktop-storage-objects-proposal.md)。实际 Windows/macOS 安装验收不等于测试通过。
 
 ## 本次目录调整验证
 

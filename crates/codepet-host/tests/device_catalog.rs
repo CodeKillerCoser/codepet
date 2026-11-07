@@ -6,9 +6,9 @@ use serde_json::json;
 use std::fs;
 
 #[test]
-fn device_identity_persists_and_corruption_is_rebuilt_with_diagnostics() {
+fn device_identity_persists_and_corruption_does_not_erase_the_database() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("device-identity.json");
+    let path = directory.path().join("app-state.sqlite");
     let first = DeviceRegistry::open(&path, "Test Device").unwrap();
     let first_id = first.identity().device_id.clone();
     let first_created_at = first.identity().created_at;
@@ -18,21 +18,13 @@ fn device_identity_persists_and_corruption_is_rebuilt_with_diagnostics() {
     assert_eq!(reopened.identity().device_id, first_id);
     assert_eq!(reopened.identity().display_name, "Renamed Device");
     assert_eq!(reopened.identity().created_at, first_created_at);
-    let persisted: serde_json::Value =
-        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
-    assert_eq!(persisted["deviceId"], first_id);
-    assert_eq!(persisted["displayName"], "Renamed Device");
-
-    fs::write(&path, b"not-json").unwrap();
-    let rebuilt = DeviceRegistry::open(&path, "Recovered Device").unwrap();
-    assert_ne!(rebuilt.identity().device_id, first_id);
-    assert_eq!(rebuilt.diagnostics().len(), 1);
-    assert_eq!(rebuilt.diagnostics()[0].code, "device_identity_rebuilt");
-    assert!(rebuilt.diagnostics()[0]
-        .recovered_path
-        .as_ref()
-        .unwrap()
-        .exists());
+    let db=rusqlite::Connection::open(&path).unwrap();
+    let persisted:(String,String)=db.query_row("SELECT device_id,display_name FROM host_identity WHERE id=1",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+    assert_eq!(persisted,(first_id,"Renamed Device".into()));
+    drop(db);
+    fs::write(&path,b"invalid database").unwrap();
+    assert!(DeviceRegistry::open(&path,"Recovered Device").is_err());
+    assert_eq!(fs::read(&path).unwrap(),b"invalid database");
 }
 
 #[tokio::test]
@@ -67,8 +59,8 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
     ));
     assert!(catalog.diagnostics().is_empty());
 
-    let registry_path = directory.path().join("provider-instances.json");
-    let device = DeviceRegistry::open(directory.path().join("device.json"), "Device Test").unwrap();
+    let registry_path = directory.path().join("app-state.sqlite");
+    let device = DeviceRegistry::open(&registry_path, "Device Test").unwrap();
     let device_id = device.identity().device_id.clone();
     let registry = ProviderInstanceRegistry::open(&registry_path, device_id.clone()).unwrap();
     let first = registry.synchronize_catalog(&catalog).unwrap();
@@ -110,10 +102,9 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
         .unwrap_err();
     assert_eq!(plugin_mismatch.code, "provider_instance_plugin_mismatch");
 
-    let persisted: serde_json::Value =
-        serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
-    assert!(persisted["instances"][0].get("settings").is_none());
-    assert!(persisted["instances"][0].get("enabled").is_none());
+    let db=rusqlite::Connection::open(&registry_path).unwrap();
+    let columns=db.prepare("PRAGMA table_info(provider_instances)").unwrap().query_map([],|r|r.get::<_,String>(1)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+    assert_eq!(columns,vec!["id","provider_id","instance_kind","display_name"]);
 
     let mut manifest: serde_json::Value =
         serde_json::from_slice(&fs::read(&manifest_path).unwrap()).unwrap();
@@ -126,6 +117,10 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
         .synchronize_catalog(&catalog_without_instances)
         .unwrap();
     assert!(reopened.list().unwrap().is_empty());
+    // Removing a manifest must not erase identities referenced by conversations.
+    // Reusing the same handle must also rediscover the retained identity.
+    assert_eq!(reopened.synchronize_catalog(&catalog).unwrap()[0].instance_id, first_id);
+    reopened.synchronize_catalog(&catalog_without_instances).unwrap();
     let reopened = ProviderInstanceRegistry::open(&registry_path, device_id).unwrap();
     let manager = PluginManager::new(
         device,
@@ -174,7 +169,7 @@ fn catalog_rejects_unsafe_provider_icons() {
 #[test]
 fn instance_registry_rejects_a_different_device() {
     let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("instances.json");
+    let path = directory.path().join("app-state.sqlite");
     ProviderInstanceRegistry::open(&path, "device-a".to_string()).unwrap();
     let error = ProviderInstanceRegistry::open(&path, "device-b".to_string()).unwrap_err();
     assert_eq!(error.code, "provider_instance_registry_device_mismatch");

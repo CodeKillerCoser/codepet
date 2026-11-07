@@ -539,10 +539,9 @@ fn configured_provider_runtime(
 > {
     let settings = load_app_settings().map_err(HostError::from)?;
     let data_directory = crate::paths::data(&settings);
-    let connections_directory = data_directory.join("connections");
-    let providers_directory = data_directory.join("providers");
+    let state_database = data_directory.join(codepet_host::APP_STATE_DATABASE);
     let device = Arc::new(DeviceRegistry::open(
-        connections_directory.join("device-identity.json"),
+        state_database.clone(),
         computer_name(),
     )?);
     for diagnostic in device.diagnostics() {
@@ -563,11 +562,11 @@ fn configured_provider_runtime(
     );
     let catalog = PluginCatalog::discover(catalog_config);
     let instances = ProviderInstanceRegistry::open(
-        providers_directory.join("provider-instances.json"),
+        state_database.clone(),
         device.identity().device_id.clone(),
     )?;
     let local_device_descriptor = local_device_descriptor(&device.identity().display_name);
-    let mut remote_config = RemoteAccessConfig::for_data_directory(connections_directory.clone());
+    let mut remote_config = RemoteAccessConfig::for_data_directory(&data_directory);
     remote_config.signaling_service = settings.connection.signaling_service.clone();
     let remote_access = Arc::new(RemoteAccessManager::open(
         remote_config,
@@ -594,7 +593,7 @@ fn configured_provider_runtime(
                 descriptor: identity.descriptor,
             }
         },
-        providers_directory.join("conversation-state.sqlite"),
+        state_database,
     )?);
     Ok((manager, gateway, remote_access))
 }

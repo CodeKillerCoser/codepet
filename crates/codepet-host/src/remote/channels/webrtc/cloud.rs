@@ -16,7 +16,6 @@ use serde_json::{json, Value};
 pub use service::SignalingServiceController;
 use std::{
     collections::{BTreeMap, HashSet},
-    io::Write,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -168,15 +167,9 @@ impl Cloud {
                         token: B64.encode(token),
                     },
                 );
-                let mut file =
-                    tempfile::NamedTempFile::new_in(self.path.parent().ok_or_else(error)?)
-                        .map_err(|_| error())?;
-                file.write_all(&serde_json::to_vec(&*config).map_err(|_| error())?)
-                    .map_err(|_| error())?;
-                file.as_file().sync_all().map_err(|_| error())?;
-                if file.persist(&self.path).is_err() {
+                if let Err(error) = registration::persist_peer(&self.path, &config.service_url, &credential.credential_id, &config.peers[&credential.credential_id]) {
                     config.peers.remove(&credential.credential_id);
-                    return Err(error());
+                    return Err(error);
                 }
             }
             let peer = &config.peers[&credential.credential_id];

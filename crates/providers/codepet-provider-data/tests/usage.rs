@@ -263,3 +263,26 @@ fn requested_empty_peak_is_explicitly_null() {
     let result = run(&data, query());
     assert_eq!(result["summaries"].get("peakDaily"), Some(&Value::Null));
 }
+
+#[test]
+fn frozen_native_summary_and_query_binding_survive_database_reopen() {
+    let (dir,data)=setup();
+    data.import_codex_daily("account",&json!({"summary":{"lifetimeTokens":100},"dailyUsageBuckets":[{"startDate":"2026-01-01","tokens":10},{"startDate":"2026-01-02","tokens":20}]})).unwrap();
+    let q=json!({"datasetId":CODEX_DATASET,"filter":{"time":{"kind":"all"}},"aggregation":{"timeBucket":"day","timeZone":"UTC","groupBy":[]},"metrics":["totalTokens"],"summaries":["totals","peakDaily"],"page":{"limit":1}});
+    let first=serde_json::to_value(data.query("account",serde_json::from_value(q.clone()).unwrap(),true).unwrap()).unwrap();
+    data.import_codex_daily("account",&json!({"summary":{"lifetimeTokens":999}})).unwrap();
+    drop(data);
+    let data=ProviderData::default();
+    data.initialize(Some(&ProviderDirectories { data:dir.path().to_str().unwrap().into(),logs:dir.path().join("logs").to_str().unwrap().into(),database_path:dir.path().join("provider.sqlite").to_str().unwrap().into() })).unwrap();
+    let mut next=q; next["page"]["cursor"]=first["nextCursor"].clone();
+    let second=serde_json::to_value(data.query("account",serde_json::from_value(next.clone()).unwrap(),true).unwrap()).unwrap();
+    assert_eq!(second["nativeAccountSummary"]["lifetimeTokens"],100);
+    assert_eq!(second["summaries"],first["summaries"]);
+    assert_eq!(second["rows"][0]["values"]["totalTokens"]["value"],20);
+    assert_eq!(data.query("another-account",serde_json::from_value(next).unwrap(),true).unwrap_err().code,"invalid_cursor");
+    let db=data.connection().unwrap();
+    for table in ["usage_records","usage_buckets","usage_snapshots","usage_inbox","usage_native_summary"] {
+        let cols=db.prepare(&format!("PRAGMA table_info({table})")).unwrap().query_map([],|r|r.get::<_,String>(1)).unwrap().collect::<Result<Vec<_>,_>>().unwrap();
+        assert!(!cols.iter().any(|c|["payload","result","values_json","known_json"].contains(&c.as_str())));
+    }
+}

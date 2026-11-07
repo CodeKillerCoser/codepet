@@ -75,7 +75,7 @@ async fn codepet_usage_routes_to_provider_and_host_assigns_private_storage_and_l
     let JsonRpcResponsePayload::Ok{result:empty}=empty.response else{panic!("empty usage failed")};
     assert_eq!(empty["result"]["summaries"].get("peakDaily"),Some(&serde_json::Value::Null));
     let assigned:codepet_provider_sdk::ProviderDirectories=serde_json::from_slice(&std::fs::read(marker).unwrap()).unwrap();
-    assert_eq!(std::path::Path::new(&assigned.database_path),data_root.join("dev.codepet.usage-fixture/provider.sqlite"));
+    assert_eq!(std::path::Path::new(&assigned.database_path),data_root.join("dev.codepet.usage-fixture/usage.sqlite"));
     assert_eq!(std::path::Path::new(&assigned.logs), directory.path().join("logs/providers/dev.codepet.usage-fixture"));
     assert!(std::fs::read(&assigned.database_path).unwrap().starts_with(b"SQLite format 3"));
     assert!(!result.to_string().contains(&assigned.data));
@@ -140,20 +140,17 @@ fn build_manager_with_options(
     event_capacity: usize,
     process: PluginProcessOptions,
 ) -> Arc<PluginManager> {
+    build_manager_at(device_id,descriptors,event_capacity,process,None)
+}
+thread_local! {
+    static TEST_DATABASE_DIRS: std::cell::RefCell<Vec<tempfile::TempDir>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+fn build_manager_at(device_id: &str,descriptors: Vec<PluginDescriptor>,event_capacity: usize,process: PluginProcessOptions,state_path: Option<&std::path::Path>) -> Arc<PluginManager> {
     let directory = tempfile::tempdir().unwrap();
-    let device_path = directory.path().join("device.json");
-    std::fs::write(
-        &device_path,
-        serde_json::to_vec(&serde_json::json!({
-            "version": 1,
-            "deviceId": device_id,
-            "displayName": format!("Device {device_id}"),
-            "createdAt": 1
-        }))
-        .unwrap(),
-    )
-    .unwrap();
-    let device = DeviceRegistry::open(device_path, format!("Device {device_id}")).unwrap();
+    let device_path = state_path.map(std::path::Path::to_owned).unwrap_or_else(||directory.path().join("app-state.sqlite"));
+    codepet_provider_data::app_state::open_app_state(&device_path).unwrap().execute(
+        "INSERT OR IGNORE INTO host_identity VALUES(1,?1,?2,1)",rusqlite::params![device_id,format!("Device {device_id}")]).unwrap();
+    let device = DeviceRegistry::open(&device_path, format!("Device {device_id}")).unwrap();
     let plugin_directory = directory.path().join("providers");
     for (index, descriptor) in descriptors.into_iter().enumerate() {
         let directory = plugin_directory.join(index.to_string());
@@ -173,10 +170,11 @@ fn build_manager_with_options(
         PluginCatalogConfig::default().with_directory(plugin_directory),
     );
     let instances = ProviderInstanceRegistry::open(
-        directory.path().join("instances.json"),
+        device_path,
         device_id.to_string(),
     )
     .unwrap();
+    TEST_DATABASE_DIRS.with(|directories|directories.borrow_mut().push(directory));
     Arc::new(
         PluginManager::new(
             device,

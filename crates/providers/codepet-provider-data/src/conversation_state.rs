@@ -3,51 +3,46 @@
 use crate as gateway;
 use crate as provider;
 use crate::ProtocolError;
-use fs2::FileExt;
+use rusqlite::{params, Connection};
 
 use std::ops::{Deref, DerefMut};
 type StateResult<T> = Result<T, ProtocolError>;
 pub const CONVERSATION_STATE_PATH_ENV: &str = "CODEPET_CONVERSATION_STATE_DATABASE";
 use ring::digest::{digest, SHA256};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-const DOCUMENT_VERSION: u32 = 1;
 const ACTIVITY_VERSION_PREFIX: &str = "activity-";
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq)]
 struct ConversationActivityRecord {
     resource: gateway::RoutedResourceId,
     latest_version: u64,
+    title: Option<String>,
     summary_fingerprint: Option<String>,
     detail_fingerprint: Option<String>,
-    event_fingerprint: Option<String>,
+    last_activity_event_key: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Default, PartialEq)]
 struct ClientReadRecord {
     baseline_version: u64,
     reads: BTreeMap<String, u64>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ConversationStateDocument {
-    version: u32,
+#[derive(Clone, Debug, PartialEq)]
+struct ConversationStateSnapshot {
     latest_version: u64,
     conversations: BTreeMap<String, ConversationActivityRecord>,
     clients: BTreeMap<String, ClientReadRecord>,
 }
 
-impl Default for ConversationStateDocument {
+impl Default for ConversationStateSnapshot {
     fn default() -> Self {
         Self {
-            version: DOCUMENT_VERSION,
             latest_version: 0,
             conversations: BTreeMap::new(),
             clients: BTreeMap::new(),
@@ -57,14 +52,14 @@ impl Default for ConversationStateDocument {
 
 pub struct SharedConversationStateStore {
     path: Option<PathBuf>,
-    document: Mutex<ConversationStateDocument>,
+    document: Mutex<ConversationStateSnapshot>,
 }
 
 impl SharedConversationStateStore {
     pub fn memory() -> Self {
         Self {
             path: None,
-            document: Mutex::new(ConversationStateDocument::default()),
+            document: Mutex::new(ConversationStateSnapshot::default()),
         }
     }
 
@@ -72,9 +67,9 @@ impl SharedConversationStateStore {
         let path = path.as_ref().to_path_buf();
         let store = Self {
             path: Some(path),
-            document: Mutex::new(ConversationStateDocument::default()),
+            document: Mutex::new(ConversationStateSnapshot::default()),
         };
-        // Acquire the stable sidecar lock before validating or backing up v1.
+        // Validate the fresh schema and read state under a SQLite transaction.
         {
             let _guard = store.lock()?;
         }
@@ -192,6 +187,10 @@ impl SharedConversationStateStore {
             ));
         }
         let baseline_version = document.latest_version;
+        document.conversations.entry(key.clone()).or_insert_with(|| ConversationActivityRecord {
+            resource: conversation.clone(), latest_version: latest, title: None,
+            summary_fingerprint: None, detail_fingerprint: None, last_activity_event_key: None,
+        });
         let client = document
             .clients
             .entry(caller_scope.to_string())
@@ -214,11 +213,11 @@ impl SharedConversationStateStore {
         conversation: &gateway::Conversation,
     ) -> StateResult<Option<u64>> {
         let fingerprint = summary_fingerprint(conversation);
-        self.observe_fingerprint(
-            &conversation.resource,
-            FingerprintKind::Summary,
-            fingerprint,
-        )
+        let mut document = self.lock()?;
+        let (version, mut dirty) = observe_in_document(&mut document, &conversation.resource, FingerprintKind::Summary, fingerprint.expect("summary always exists"))?;
+        dirty |= update_title(&mut document, conversation);
+        if dirty { self.persist(&document)?; }
+        Ok(version)
     }
 
     /// Whether summary observation changed any stored fact (including a new
@@ -231,12 +230,13 @@ impl SharedConversationStateStore {
             return Ok(false);
         };
         let mut document = self.lock()?;
-        let (_, dirty) = observe_in_document(
+        let (_, mut dirty) = observe_in_document(
             &mut document,
             &conversation.resource,
             FingerprintKind::Summary,
             value,
         )?;
+        dirty |= update_title(&mut document, conversation);
         if dirty {
             self.persist(&document)?;
         }
@@ -371,6 +371,7 @@ impl SharedConversationStateStore {
                 )?
                 .1;
             }
+            dirty |= update_title(&mut document, row);
             decorate_from_document(&document, scope, row);
         }
         if dirty {
@@ -393,6 +394,7 @@ impl SharedConversationStateStore {
                 observed = observe_in_document(&mut document, &row.resource, FingerprintKind::Summary, value)?.1;
                 dirty |= observed;
             }
+            dirty |= update_title(&mut document, row);
             decorate_from_document(&document, scope, row);
             changed |= observed && (existed || row.read_state.as_ref().is_some_and(|state| state.unread));
         }
@@ -442,37 +444,22 @@ impl SharedConversationStateStore {
                 "conversation state lock is poisoned",
             )
         })?;
-        let file = if let Some(path) = &self.path {
-            let parent = path
-                .parent()
-                .filter(|p| !p.as_os_str().is_empty())
-                .unwrap_or(Path::new("."));
-            fs::create_dir_all(parent).map_err(|e| persistence_io("create parent", path, e))?;
-            let mut lock_path = path.as_os_str().to_os_string();
-            lock_path.push(".lock");
-            let file = fs::OpenOptions::new()
-                .read(true)
-                .write(true)
-                .create(true)
-                .open(PathBuf::from(lock_path))
-                .map_err(|e| persistence_io("open state lock", path, e))?;
-            FileExt::lock_exclusive(&file).map_err(|e| persistence_io("lock state", path, e))?;
-            *document = read_document(path)?;
-            Some(file)
-        } else {
-            None
-        };
-        Ok(StateGuard {
-            document,
-            _file: file,
-        })
+        let db = if let Some(path) = &self.path {
+            let db = crate::app_state::open_app_state(path)?;
+            db.execute_batch("BEGIN IMMEDIATE").map_err(crate::db_error)?;
+            *document = read_document(&db)?;
+            Some(db)
+        } else { None };
+        let original = document.clone();
+        Ok(StateGuard { document, original, db })
     }
 
-    fn persist(&self, document: &ConversationStateDocument) -> StateResult<()> {
-        match self.path.as_deref() {
-            Some(path) => write_state_document(path, document),
-            None => Ok(()),
+    fn persist(&self, document: &StateGuard<'_>) -> StateResult<()> {
+        if let Some(db) = &document.db {
+            write_state_document(db, document, &document.original)?;
+            db.execute_batch("COMMIT").map_err(crate::db_error)?;
         }
+        Ok(())
     }
 }
 
@@ -488,7 +475,7 @@ impl FingerprintKind {
         match self {
             Self::Summary => &record.summary_fingerprint,
             Self::Detail => &record.detail_fingerprint,
-            Self::Event => &record.event_fingerprint,
+            Self::Event => &record.last_activity_event_key,
         }
     }
 
@@ -496,7 +483,7 @@ impl FingerprintKind {
         match self {
             Self::Summary => &mut record.summary_fingerprint,
             Self::Detail => &mut record.detail_fingerprint,
-            Self::Event => &mut record.event_fingerprint,
+            Self::Event => &mut record.last_activity_event_key,
         }
     }
 }
@@ -510,11 +497,11 @@ pub fn summary_fingerprint(conversation: &gateway::Conversation) -> Option<Strin
         gateway::ConversationStatus::Error => "error",
         gateway::ConversationStatus::Archived => "archived",
     };
-    Some(fingerprint([
+    Some(format!("s1:{}", fingerprint([
         "summary",
-        conversation.preview.as_deref().unwrap_or("").trim(),
+        bounded_preview(conversation.preview.as_deref().unwrap_or("")),
         status,
-    ]))
+    ])))
 }
 
 pub fn detail_fingerprint(items: &[gateway::ConversationItem]) -> Option<String> {
@@ -523,6 +510,7 @@ pub fn detail_fingerprint(items: &[gateway::ConversationItem]) -> Option<String>
             || item_approval(item)
                 .is_some_and(|approval| approval.status == gateway::ApprovalStatus::Pending)
     })?;
+    if item_resource(item).native_resource_id.len()>512 || item_turn(item).native_resource_id.len()>512 { return None; }
     Some(fingerprint([
         "detail",
         item_resource(item).native_resource_id.as_str(),
@@ -635,6 +623,22 @@ fn parse_activity_version(value: &str) -> StateResult<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn open_store(path: impl AsRef<Path>) -> StateResult<SharedConversationStateStore> {
+        let db = crate::app_state::open_app_state(path.as_ref())?;
+        db.execute("INSERT OR IGNORE INTO providers(id,display_name,created_at,updated_at) VALUES('codex','Codex',0,0)",[]).unwrap();
+        db.execute("INSERT OR IGNORE INTO provider_instances VALUES('codex-work','codex','local','work')",[]).unwrap();
+        SharedConversationStateStore::open(path)
+    }
+    #[test]
+    fn summary_hash_input_is_bounded_and_utf8_safe() {
+        let mut row = conversation(&format!("{}tail-a", "界".repeat(200)));
+        let before = summary_fingerprint(&row);
+        row.preview = Some(format!("{}tail-b", "界".repeat(200)));
+        assert_eq!(before, summary_fingerprint(&row));
+        assert_eq!(bounded_preview(row.preview.as_deref().unwrap()).len(), 510);
+        row.status = gateway::ConversationStatus::Running;
+        assert_ne!(before, summary_fingerprint(&row));
+    }
 
     #[test]
     fn content_invalidations_advance_unread_once_per_source_update() {
@@ -737,12 +741,12 @@ mod tests {
     fn shared_database_handles_preserve_scopes_versions_and_fingerprints() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("conversation-state.sqlite");
-        let first = SharedConversationStateStore::open(&path).unwrap();
+        let first = open_store(&path).unwrap();
         first.ensure_client("mobile").unwrap();
         first.ensure_client("desktop").unwrap();
         let mut row = conversation("baseline");
         first.observe_summary(&row).unwrap();
-        let second = SharedConversationStateStore::open(&path).unwrap();
+        let second = open_store(&path).unwrap();
         row.preview = Some("new response".into());
         assert_eq!(second.observe_summary(&row).unwrap(), Some(1));
         assert_eq!(first.observe_summary(&row).unwrap(), None);
@@ -752,7 +756,7 @@ mod tests {
         assert!(second.unread("mobile", "codex-work").unwrap().is_empty());
         assert_eq!(second.unread("desktop", "codex-work").unwrap().len(), 1);
         drop(first);
-        let reopened = SharedConversationStateStore::open(&path).unwrap();
+        let reopened = open_store(&path).unwrap();
         assert!(reopened.unread("mobile", "codex-work").unwrap().is_empty());
         assert_eq!(
             reopened.unread("desktop", "codex-work").unwrap()[0]
@@ -772,7 +776,7 @@ mod tests {
             br#"{"version":2,"latestVersion":0,"conversations":{},"clients":{}}"#.as_slice(),
         ] {
             fs::write(&path, bytes).unwrap();
-            assert!(SharedConversationStateStore::open(&path).is_err());
+            assert!(open_store(&path).is_err());
             assert_eq!(fs::read(&path).unwrap(), bytes);
         }
     }
@@ -781,15 +785,15 @@ mod tests {
     fn identical_fingerprints_and_batches_do_not_replace_the_file() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("state.json");
-        let store = SharedConversationStateStore::open(&path).unwrap();
+        let store = open_store(&path).unwrap();
         let mut rows = vec![conversation("baseline")];
         store
             .observe_and_decorate_summaries("mobile", &mut rows)
             .unwrap();
-        let before: String = state_database(&path)
+        let before: String = crate::app_state::open_app_state(&path)
             .unwrap()
             .query_row(
-                "SELECT document FROM conversation_state WHERE id=1",
+                "SELECT group_concat(coalesce(summary_fingerprint,''),'|') FROM conversations",
                 [],
                 |r| r.get(0),
             )
@@ -798,10 +802,10 @@ mod tests {
         assert!(!store
             .observe_and_decorate_summaries("mobile", &mut rows)
             .unwrap());
-        let after: String = state_database(&path)
+        let after: String = crate::app_state::open_app_state(&path)
             .unwrap()
             .query_row(
-                "SELECT document FROM conversation_state WHERE id=1",
+                "SELECT group_concat(coalesce(summary_fingerprint,''),'|') FROM conversations",
                 [],
                 |r| r.get(0),
             )
@@ -902,74 +906,91 @@ mod tests {
     }
 }
 
-// The lock file is never renamed or removed. Dropping its handle releases the OS
-// lock, including after process failure; atomic data-file replacement is separate.
+// The SQLite write transaction coordinates Host and Provider processes. A read or
+// failed mutation rolls back on drop; only persist commits a complete state change.
 struct StateGuard<'a> {
-    document: std::sync::MutexGuard<'a, ConversationStateDocument>,
-    _file: Option<fs::File>,
+    document: std::sync::MutexGuard<'a, ConversationStateSnapshot>,
+    original: ConversationStateSnapshot,
+    db: Option<Connection>,
 }
 impl Deref for StateGuard<'_> {
-    type Target = ConversationStateDocument;
-    fn deref(&self) -> &Self::Target {
-        &self.document
-    }
+    type Target = ConversationStateSnapshot;
+    fn deref(&self) -> &Self::Target { &self.document }
 }
 impl DerefMut for StateGuard<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.document
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.document }
+}
+impl Drop for StateGuard<'_> {
+    fn drop(&mut self) {
+        if let Some(db) = &self.db {
+            if !db.is_autocommit() { let _ = db.execute_batch("ROLLBACK"); }
+        }
     }
 }
 fn state_error(code: &str, message: impl Into<String>) -> ProtocolError {
-    ProtocolError {
-        code: code.into(),
-        message: message.into(),
-        retryable: false,
-        details: None,
+    crate::error(code, message.into())
+}
+fn bounded_preview(preview: &str) -> &str {
+    let mut end = preview.len().min(512);
+    while !preview.is_char_boundary(end) { end -= 1; }
+    preview[..end].trim()
+}
+fn update_title(document: &mut ConversationStateSnapshot, row: &gateway::Conversation) -> bool {
+    if let Some(record) = document.conversations.get_mut(&resource_key(&row.resource)) {
+        if record.title.as_ref() != Some(&row.title) {
+            record.title = Some(row.title.clone());
+            return true;
+        }
     }
+    false
 }
-fn persistence_io(action: &str, path: &Path, error: std::io::Error) -> ProtocolError {
-    let mut error = state_error(
-        "conversation_state_unavailable",
-        format!("{action} {}: {error}", path.display()),
-    );
-    error.retryable = true;
-    error
-}
-fn state_database(path: &Path) -> StateResult<rusqlite::Connection> {
-    let db = crate::open(path)?;
-    db.execute_batch("CREATE TABLE IF NOT EXISTS conversation_state (id INTEGER PRIMARY KEY CHECK(id=1), document TEXT NOT NULL)").map_err(crate::db_error)?;
-    Ok(db)
-}
-fn read_document(path: &Path) -> StateResult<ConversationStateDocument> {
-    use rusqlite::OptionalExtension;
-    let db = state_database(path)?;
-    let value: Option<String> = db
-        .query_row(
-            "SELECT document FROM conversation_state WHERE id=1",
-            [],
-            |r| r.get(0),
-        )
-        .optional()
-        .map_err(crate::db_error)?;
-    let document: ConversationStateDocument = match value {
-        Some(value) => serde_json::from_str(&value).map_err(crate::db_error)?,
-        None => ConversationStateDocument::default(),
-    };
-    if document.version != DOCUMENT_VERSION {
-        return Err(state_error(
-            "conversation_state_invalid",
-            "Unsupported database state version",
-        ));
+fn read_document(db: &Connection) -> StateResult<ConversationStateSnapshot> {
+    let mut document = ConversationStateSnapshot::default();
+    document.latest_version = db.query_row("SELECT last_version FROM activity_scopes WHERE id='host'", [], |r|r.get(0)).map_err(crate::db_error)?;
+    let mut statement = db.prepare("SELECT provider_instance_id,native_conversation_id,activity_version,title,summary_fingerprint,detail_fingerprint,last_activity_event_key FROM conversations WHERE activity_scope_id='host'").map_err(crate::db_error)?;
+    let rows = statement.query_map([], |r| Ok(ConversationActivityRecord {
+        resource: gateway::RoutedResourceId { provider_id:r.get(0)?, native_resource_id:r.get(1)? },
+        latest_version:r.get(2)?, title:r.get(3)?, summary_fingerprint:r.get(4)?, detail_fingerprint:r.get(5)?, last_activity_event_key:r.get(6)?,
+    })).map_err(crate::db_error)?;
+    for row in rows { let row = row.map_err(crate::db_error)?; document.conversations.insert(resource_key(&row.resource),row); }
+    let mut statement = db.prepare("SELECT reader_id,baseline_version FROM reader_baselines WHERE scope_id='host'").map_err(crate::db_error)?;
+    for row in statement.query_map([], |r| Ok((r.get::<_,String>(0)?,r.get(1)?))).map_err(crate::db_error)? {
+        let (reader, baseline_version) = row.map_err(crate::db_error)?;
+        document.clients.insert(reader,ClientReadRecord { baseline_version, reads:BTreeMap::new() });
+    }
+    let mut statement = db.prepare("SELECT c.provider_instance_id,c.native_conversation_id,r.reader_id,r.read_version FROM conversation_reads r JOIN conversations c ON c.id=r.conversation_id WHERE c.activity_scope_id='host'").map_err(crate::db_error)?;
+    for row in statement.query_map([], |r| Ok((gateway::RoutedResourceId { provider_id:r.get(0)?,native_resource_id:r.get(1)? },r.get::<_,String>(2)?,r.get(3)?))).map_err(crate::db_error)? {
+        let (resource,reader,version) = row.map_err(crate::db_error)?;
+        if let Some(client) = document.clients.get_mut(&reader) { client.reads.insert(resource_key(&resource),version); }
     }
     Ok(document)
 }
-fn write_state_document(path: &Path, document: &ConversationStateDocument) -> StateResult<()> {
-    let db = state_database(path)?;
-    db.execute("INSERT INTO conversation_state VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET document=excluded.document",[serde_json::to_string(document).map_err(crate::db_error)?]).map_err(crate::db_error)?;
+fn write_state_document(db: &Connection, document: &ConversationStateSnapshot, original: &ConversationStateSnapshot) -> StateResult<()> {
+    let now = chrono::Utc::now().timestamp_millis();
+    db.execute("UPDATE activity_scopes SET last_version=?1 WHERE id='host' AND last_version!=?1", [document.latest_version]).map_err(crate::db_error)?;
+    for (key,record) in &document.conversations {
+        if original.conversations.get(key)==Some(record) { continue; }
+        db.execute("INSERT INTO conversations(provider_instance_id,native_conversation_id,title,activity_scope_id,activity_version,summary_fingerprint,detail_fingerprint,last_activity_event_key,created_at,updated_at)
+            VALUES(?1,?2,?3,'host',?4,?5,?6,?7,?8,?8)
+            ON CONFLICT(provider_instance_id,native_conversation_id) DO UPDATE SET title=excluded.title,activity_version=excluded.activity_version,summary_fingerprint=excluded.summary_fingerprint,detail_fingerprint=excluded.detail_fingerprint,last_activity_event_key=excluded.last_activity_event_key,updated_at=excluded.updated_at
+            WHERE title IS NOT excluded.title OR activity_version!=excluded.activity_version OR summary_fingerprint IS NOT excluded.summary_fingerprint OR detail_fingerprint IS NOT excluded.detail_fingerprint OR last_activity_event_key IS NOT excluded.last_activity_event_key",
+            params![record.resource.provider_id,record.resource.native_resource_id,record.title,record.latest_version,record.summary_fingerprint,record.detail_fingerprint,record.last_activity_event_key,now]).map_err(crate::db_error)?;
+    }
+    for (reader, client) in &document.clients {
+        if original.clients.get(reader)==Some(client) { continue; }
+        db.execute("INSERT OR IGNORE INTO reader_baselines(scope_id,reader_id,baseline_version) VALUES('host',?1,?2)",params![reader,client.baseline_version]).map_err(crate::db_error)?;
+        for (key, version) in &client.reads {
+            if original.clients.get(reader).and_then(|c|c.reads.get(key))==Some(version) { continue; }
+            let Some(record) = document.conversations.get(key) else { continue };
+            db.execute("INSERT INTO conversation_reads(conversation_id,reader_id,read_version,updated_at) SELECT id,?3,?4,?5 FROM conversations WHERE provider_instance_id=?1 AND native_conversation_id=?2
+                ON CONFLICT(conversation_id,reader_id) DO UPDATE SET read_version=excluded.read_version,updated_at=excluded.updated_at WHERE read_version<excluded.read_version",
+                params![record.resource.provider_id,record.resource.native_resource_id,reader,version,now]).map_err(crate::db_error)?;
+        }
+    }
     Ok(())
 }
 
-fn ensure_scope(document: &mut ConversationStateDocument, scope: &str) -> bool {
+fn ensure_scope(document: &mut ConversationStateSnapshot, scope: &str) -> bool {
     if document.clients.contains_key(scope) {
         return false;
     }
@@ -983,7 +1004,7 @@ fn ensure_scope(document: &mut ConversationStateDocument, scope: &str) -> bool {
     true
 }
 fn decorate_from_document(
-    document: &ConversationStateDocument,
+    document: &ConversationStateSnapshot,
     scope: &str,
     row: &mut gateway::Conversation,
 ) {
@@ -1005,7 +1026,7 @@ fn decorate_from_document(
     });
 }
 fn observe_in_document(
-    document: &mut ConversationStateDocument,
+    document: &mut ConversationStateSnapshot,
     resource: &gateway::RoutedResourceId,
     kind: FingerprintKind,
     fingerprint: String,
@@ -1042,9 +1063,10 @@ fn observe_in_document(
     let mut record = ConversationActivityRecord {
         resource: resource.clone(),
         latest_version: version,
+        title: None,
         summary_fingerprint: None,
         detail_fingerprint: None,
-        event_fingerprint: None,
+        last_activity_event_key: None,
     };
     *kind.slot(&mut record) = Some(fingerprint);
     document.conversations.insert(key, record);

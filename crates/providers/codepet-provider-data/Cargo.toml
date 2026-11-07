@@ -5,7 +5,6 @@ edition = "2021"
 publish = false
 
 [dependencies]
-fs2 = "0.4"
 ring = "0.17"
 tokio = { version = "1", features = ["rt", "sync", "time"] }
 codepet-provider-sdk = { path = "../../../sdk/rust/codepet-provider-sdk" }

@@ -1,6 +1,4 @@
-use crate::persistence::{
-    persistence_io, protect_secret_file, write_secret_json_atomically,
-};
+use rusqlite::params;
 use crate::{DeviceRegistry, HostError, HostResult};
 use codepet_lan_channel_sdk::{
     DeviceDescriptor, LanHostIdentity, PairingExchangeRequest, PairingRequestCreateRequest,
@@ -14,6 +12,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::{Debug, Formatter};
+#[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -22,8 +21,6 @@ use subtle::ConstantTimeEq;
 use tokio::sync::watch;
 use x509_parser::parse_x509_certificate;
 
-const LAN_TLS_IDENTITY_VERSION: u32 = 1;
-const REMOTE_CREDENTIAL_STORE_VERSION: u32 = 2;
 const RANDOM_SECRET_BYTES: usize = 32;
 const RANDOM_ID_BYTES: usize = 16;
 const SHA256_HEX_LENGTH: usize = 64;
@@ -31,8 +28,6 @@ const MAX_CLIENT_ID_LENGTH: usize = 256;
 const MAX_DEVICE_NAME_LENGTH: usize = 256;
 const MAX_OPERATING_SYSTEM_LENGTH: usize = 128;
 const MAX_SYSTEM_VERSION_LENGTH: usize = 128;
-const MAX_TLS_IDENTITY_FILE_BYTES: usize = 64 * 1024;
-const MAX_CREDENTIAL_STORE_FILE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_REMOTE_CREDENTIALS: usize = 4096;
 
 pub const PAIRING_SESSION_TTL: Duration = Duration::from_secs(5 * 60);
@@ -55,19 +50,13 @@ impl RemoteAccessConfig {
     pub fn for_data_directory(directory: impl AsRef<Path>) -> Self {
         let directory = directory.as_ref();
         Self {
-            tls_identity_path: directory.join("lan-tls-identity.json"),
-            credential_store_path: directory.join("remote-credentials.json"),
+            tls_identity_path: directory.join(crate::APP_STATE_DATABASE),
+            credential_store_path: directory.join(crate::APP_STATE_DATABASE),
             signaling_service: None,
         }
     }
 
     fn validate(&self) -> HostResult<()> {
-        if self.tls_identity_path == self.credential_store_path {
-            return Err(HostError::new(
-                "invalid_remote_access_config",
-                "LAN TLS identity and remote credential store paths must be different",
-            ));
-        }
         for path in [&self.tls_identity_path, &self.credential_store_path] {
             if path.parent().is_none() {
                 return Err(HostError::new(
@@ -128,17 +117,7 @@ impl Debug for LanTlsIdentity {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-struct LanTlsIdentityDocument {
-    version: u32,
-    certificate_der: String,
-    private_key_der: String,
-    certificate_sha256: String,
-    private_key_sha256: String,
-    created_at: TimestampMs,
-}
+
 
 /// Client metadata bound to every issued remote credential.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -299,14 +278,7 @@ impl StoredRemoteCredential {
     }
 }
 
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-struct RemoteCredentialStoreDocument {
-    version: u32,
-    tls_certificate_sha256: String,
-    credentials: Vec<StoredRemoteCredential>,
-}
+
 
 /// Durable hashed bearer records bound to one LAN TLS certificate fingerprint.
 pub struct RemoteCredentialStore {
@@ -338,35 +310,17 @@ impl RemoteCredentialStore {
             "tlsCertificateSha256",
             &tls_certificate_fingerprint,
         )?;
-        let (credentials, diagnostics) = if path.exists() {
-            protect_secret_file(&path)?;
-            match load_credentials(&path, &tls_certificate_fingerprint) {
-                Ok(credentials) => (credentials, Vec::new()),
-                Err(error) => {
-                    let recovered_path = quarantine_corrupt_file(&path, clock())?;
-                    let credentials = BTreeMap::new();
-                    persist_credentials(
-                        &path,
-                        &tls_certificate_fingerprint,
-                        &credentials,
-                    )?;
-                    (
-                        credentials,
-                        vec![RemoteAccessDiagnostic {
-                            code: "remote_credentials_rebuilt".to_string(),
-                            message: format!(
-                                "remote credentials were invalid and were safely reset: {error}"
-                            ),
-                            path: path.clone(),
-                            recovered_path: Some(recovered_path),
-                        }],
-                    )
-                }
-            }
-        } else {
-            let credentials = BTreeMap::new();
-            persist_credentials(&path, &tls_certificate_fingerprint, &credentials)?;
-            (credentials, Vec::new())
+        let (credentials, diagnostics) = match load_credentials(&path, &tls_certificate_fingerprint) {
+            Ok(credentials) => (credentials, Vec::new()),
+            Err(error) if error.code == "remote_credential_tls_identity_mismatch" => {
+                let credentials = BTreeMap::new();
+                persist_credentials(&path, &tls_certificate_fingerprint, &credentials)?;
+                (credentials, vec![RemoteAccessDiagnostic {
+                    code:"remote_credentials_rebuilt".into(), message:"TLS identity changed; clients must pair again".into(),
+                    path:path.clone(), recovered_path:None,
+                }])
+            },
+            Err(error) => return Err(error),
         };
         Ok(Self {
             path,
@@ -713,7 +667,7 @@ pub struct RemoteAccessManager {
 
 impl RemoteAccessManager {
     pub(crate) fn rtc_cloud_config_path(&self) -> PathBuf {
-        self.credential_store.path.with_file_name("rtc-cloud.json")
+        self.credential_store.path.clone()
     }
 
     pub fn open(
@@ -1411,31 +1365,14 @@ fn open_tls_identity(
     path: &Path,
     clock: Clock,
 ) -> HostResult<(LanTlsIdentity, Vec<RemoteAccessDiagnostic>)> {
-    if !path.exists() {
+    let db = crate::storage::open(path)?;
+    let exists:bool = db.query_row("SELECT EXISTS(SELECT 1 FROM host_tls_identity WHERE id=1)",[],|r|r.get(0)).map_err(crate::storage::error)?;
+    if !exists {
         let identity = generate_tls_identity(clock())?;
         persist_tls_identity(path, &identity)?;
-        return Ok((identity, Vec::new()));
     }
-    protect_secret_file(path)?;
-    match load_tls_identity(path) {
-        Ok(identity) => Ok((identity, Vec::new())),
-        Err(error) => {
-            let recovered_path = quarantine_corrupt_file(path, clock())?;
-            let identity = generate_tls_identity(clock())?;
-            persist_tls_identity(path, &identity)?;
-            Ok((
-                identity,
-                vec![RemoteAccessDiagnostic {
-                    code: "lan_tls_identity_rebuilt".to_string(),
-                    message: format!(
-                        "LAN TLS identity was invalid and was safely rebuilt; clients must pair again: {error}"
-                    ),
-                    path: path.to_path_buf(),
-                    recovered_path: Some(recovered_path),
-                }],
-            ))
-        }
-    }
+    // A corrupt current database is an error, not a reason to erase unrelated data.
+    Ok((load_tls_identity(path)?, Vec::new()))
 }
 
 fn generate_tls_identity(created_at: TimestampMs) -> HostResult<LanTlsIdentity> {
@@ -1475,73 +1412,22 @@ fn generate_tls_identity(created_at: TimestampMs) -> HostResult<LanTlsIdentity> 
 }
 
 fn load_tls_identity(path: &Path) -> HostResult<LanTlsIdentity> {
-    let payload = fs::read(path)
-        .map_err(|error| persistence_io("read LAN TLS identity", path, error))?;
-    if payload.len() > MAX_TLS_IDENTITY_FILE_BYTES {
-        return Err(HostError::new(
-            "invalid_lan_tls_identity",
-            "LAN TLS identity exceeds the persisted size limit",
-        ));
+    let db = crate::storage::open(path)?;
+    let (identity, private_hash) = db.query_row("SELECT certificate_der,private_key_der,certificate_sha256,private_key_sha256,created_at FROM host_tls_identity WHERE id=1", [], |r| Ok((LanTlsIdentity {
+        certificate_der:r.get(0)?,private_key_der:r.get(1)?,certificate_fingerprint:r.get(2)?,created_at:r.get(4)?,
+    },r.get::<_,String>(3)?))).map_err(crate::storage::error)?;
+    validate_sha256_hex("certificateSha256", &identity.certificate_fingerprint)?;
+    validate_sha256_hex("privateKeySha256", &private_hash)?;
+    if sha256_hex(&identity.certificate_der) != identity.certificate_fingerprint || sha256_hex(&identity.private_key_der) != private_hash {
+        return Err(HostError::new("invalid_lan_tls_identity", "LAN TLS identity checksum validation failed"));
     }
-    let document: LanTlsIdentityDocument = serde_json::from_slice(&payload).map_err(|error| {
-        HostError::new(
-            "invalid_lan_tls_identity",
-            format!("decode LAN TLS identity {}: {error}", path.display()),
-        )
-        .with_detail("path", path.display().to_string())
-    })?;
-    if document.version != LAN_TLS_IDENTITY_VERSION {
-        return Err(HostError::new(
-            "unsupported_lan_tls_identity_version",
-            format!(
-                "unsupported LAN TLS identity version: {}",
-                document.version
-            ),
-        ));
-    }
-    validate_sha256_hex("certificateSha256", &document.certificate_sha256)?;
-    validate_sha256_hex("privateKeySha256", &document.private_key_sha256)?;
-    let certificate_der = decode_hex(&document.certificate_der).map_err(|message| {
-        HostError::new("invalid_lan_tls_identity", message)
-            .with_detail("field", "certificateDer")
-    })?;
-    let private_key_der = decode_hex(&document.private_key_der).map_err(|message| {
-        HostError::new("invalid_lan_tls_identity", message)
-            .with_detail("field", "privateKeyDer")
-    })?;
-    if certificate_der.is_empty() || private_key_der.is_empty() {
-        return Err(HostError::new(
-            "invalid_lan_tls_identity",
-            "LAN TLS certificate and private key DER must not be empty",
-        ));
-    }
-    if sha256_hex(&certificate_der) != document.certificate_sha256
-        || sha256_hex(&private_key_der) != document.private_key_sha256
-    {
-        return Err(HostError::new(
-            "invalid_lan_tls_identity",
-            "LAN TLS identity checksum validation failed",
-        ));
-    }
-    validate_certificate_and_key(&certificate_der, &private_key_der)?;
-    Ok(LanTlsIdentity {
-        certificate_der,
-        private_key_der,
-        certificate_fingerprint: document.certificate_sha256,
-        created_at: document.created_at,
-    })
+    validate_certificate_and_key(&identity.certificate_der, &identity.private_key_der)?;
+    Ok(identity)
 }
-
 fn persist_tls_identity(path: &Path, identity: &LanTlsIdentity) -> HostResult<()> {
-    let document = LanTlsIdentityDocument {
-        version: LAN_TLS_IDENTITY_VERSION,
-        certificate_der: encode_hex(&identity.certificate_der),
-        private_key_der: encode_hex(&identity.private_key_der),
-        certificate_sha256: identity.certificate_fingerprint.clone(),
-        private_key_sha256: sha256_hex(&identity.private_key_der),
-        created_at: identity.created_at,
-    };
-    write_secret_json_atomically(path, &document)
+    crate::storage::open(path)?.execute("INSERT OR IGNORE INTO host_tls_identity VALUES(1,?1,?2,?3,?4,?5)",
+        params![identity.certificate_der,identity.private_key_der,identity.certificate_fingerprint,sha256_hex(&identity.private_key_der),identity.created_at]).map_err(crate::storage::error)?;
+    Ok(())
 }
 
 fn validate_certificate_and_key(certificate_der: &[u8], private_key_der: &[u8]) -> HostResult<()> {
@@ -1580,102 +1466,37 @@ fn validate_certificate_and_key(certificate_der: &[u8], private_key_der: &[u8]) 
     Ok(())
 }
 
-fn load_credentials(
-    path: &Path,
-    expected_tls_fingerprint: &str,
-) -> HostResult<BTreeMap<String, StoredRemoteCredential>> {
-    let payload = fs::read(path)
-        .map_err(|error| persistence_io("read remote credential store", path, error))?;
-    if payload.len() > MAX_CREDENTIAL_STORE_FILE_BYTES {
-        return Err(HostError::new(
-            "invalid_remote_credential_store",
-            "remote credential store exceeds the persisted size limit",
-        ));
-    }
-    let document: RemoteCredentialStoreDocument =
-        serde_json::from_slice(&payload).map_err(|error| {
-            HostError::new(
-                "invalid_remote_credential_store",
-                format!("decode remote credential store {}: {error}", path.display()),
-            )
-            .with_detail("path", path.display().to_string())
-        })?;
-    if document.version != REMOTE_CREDENTIAL_STORE_VERSION {
-        return Err(HostError::new(
-            "unsupported_remote_credential_store_version",
-            format!(
-                "unsupported remote credential store version: {}",
-                document.version
-            ),
-        ));
-    }
-    validate_sha256_hex(
-        "tlsCertificateSha256",
-        &document.tls_certificate_sha256,
-    )?;
-    if document.tls_certificate_sha256 != expected_tls_fingerprint {
-        return Err(HostError::new(
-            "remote_credential_tls_identity_mismatch",
-            "remote credentials belong to a different LAN TLS identity",
-        ));
-    }
-    if document.credentials.len() > MAX_REMOTE_CREDENTIALS {
-        return Err(HostError::new(
-            "invalid_remote_credential_store",
-            "remote credential store contains too many credentials",
-        ));
-    }
+fn load_credentials(path: &Path, expected_tls_fingerprint: &str) -> HostResult<BTreeMap<String, StoredRemoteCredential>> {
+    let db = crate::storage::open(path)?;
+    let mut statement = db.prepare("SELECT id,client_id,device_name,operating_system,system_version,bearer_sha256,tls_certificate_sha256,created_at,last_seen_at,revoked_at FROM remote_credentials").map_err(crate::storage::error)?;
+    let rows = statement.query_map([], |r| Ok((StoredRemoteCredential {
+        credential_id:r.get(0)?,client_id:r.get(1)?,
+        descriptor:DeviceDescriptor { device_name:r.get(2)?,operating_system:r.get(3)?,system_version:r.get(4)? },
+        bearer_sha256:r.get(5)?,created_at:r.get(7)?,last_seen_at:r.get(8)?,revoked_at:r.get(9)?,
+    },r.get::<_,String>(6)?))).map_err(crate::storage::error)?;
     let mut credentials = BTreeMap::new();
-    let mut bearer_hashes = BTreeSet::new();
-    for credential in document.credentials {
+    for row in rows {
+        let (credential, fingerprint) = row.map_err(crate::storage::error)?;
+        if fingerprint != expected_tls_fingerprint {
+            return Err(HostError::new("remote_credential_tls_identity_mismatch", "Credentials belong to a different TLS identity"));
+        }
         credential.validate()?;
-        if !bearer_hashes.insert(credential.bearer_sha256.clone()) {
-            return Err(HostError::new(
-                "duplicate_remote_credential",
-                "remote credential store contains duplicate bearer hashes",
-            ));
-        }
-        if credentials
-            .insert(credential.credential_id.clone(), credential)
-            .is_some()
-        {
-            return Err(HostError::new(
-                "duplicate_remote_credential",
-                "remote credential store contains duplicate credential ids",
-            ));
-        }
+        credentials.insert(credential.credential_id.clone(),credential);
+    }
+    if credentials.len()>MAX_REMOTE_CREDENTIALS {
+        return Err(HostError::new("invalid_remote_credential_store", "Too many credentials"));
     }
     Ok(credentials)
 }
-
-fn persist_credentials(
-    path: &Path,
-    tls_certificate_fingerprint: &str,
-    credentials: &BTreeMap<String, StoredRemoteCredential>,
-) -> HostResult<()> {
-    let document = RemoteCredentialStoreDocument {
-        version: REMOTE_CREDENTIAL_STORE_VERSION,
-        tls_certificate_sha256: tls_certificate_fingerprint.to_string(),
-        credentials: credentials.values().cloned().collect(),
-    };
-    write_secret_json_atomically(path, &document)
-}
-
-fn quarantine_corrupt_file(path: &Path, timestamp: TimestampMs) -> HostResult<PathBuf> {
-    let parent = path.parent().ok_or_else(|| {
-        HostError::new(
-            "invalid_persistence_path",
-            format!("remote access persistence path has no parent: {}", path.display()),
-        )
-    })?;
-    let file_name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("remote-access-data");
-    let recovered_path = parent.join(format!("{file_name}.corrupt-{timestamp}"));
-    fs::rename(path, &recovered_path)
-        .map_err(|error| persistence_io("quarantine corrupt remote access data", path, error))?;
-    Ok(recovered_path)
+fn persist_credentials(path: &Path, tls_certificate_fingerprint: &str, credentials: &BTreeMap<String, StoredRemoteCredential>) -> HostResult<()> {
+    let mut db = crate::storage::open(path)?;
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(crate::storage::error)?;
+    tx.execute("DELETE FROM remote_credentials",[]).map_err(crate::storage::error)?;
+    for credential in credentials.values() {
+        tx.execute("INSERT INTO remote_credentials VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+            params![credential.credential_id,credential.client_id,credential.descriptor.device_name,credential.descriptor.operating_system,credential.descriptor.system_version,credential.bearer_sha256,tls_certificate_fingerprint,credential.created_at,credential.last_seen_at,credential.revoked_at]).map_err(crate::storage::error)?;
+    }
+    tx.commit().map_err(crate::storage::error)
 }
 
 fn validate_text_field(field: &str, value: &str, maximum_length: usize) -> HostResult<()> {
@@ -2203,25 +2024,18 @@ mod tests {
         drop(reopened);
 
         let mismatched_identity = generate_tls_identity(15_000).unwrap();
-        let mut mismatched_document: serde_json::Value = serde_json::from_slice(
-            &fs::read(&config.tls_identity_path).unwrap(),
-        )
-        .unwrap();
-        mismatched_document["privateKeyDer"] =
-            serde_json::json!(encode_hex(mismatched_identity.private_key_der()));
-        mismatched_document["privateKeySha256"] =
-            serde_json::json!(sha256_hex(mismatched_identity.private_key_der()));
-        fs::write(
-            &config.tls_identity_path,
-            serde_json::to_vec_pretty(&mismatched_document).unwrap(),
-        )
-        .unwrap();
+        crate::storage::open(&config.tls_identity_path).unwrap().execute(
+            "UPDATE host_tls_identity SET private_key_der=?1,private_key_sha256=?2 WHERE id=1",
+            params![mismatched_identity.private_key_der(),sha256_hex(mismatched_identity.private_key_der())]).unwrap();
         assert_eq!(
             load_tls_identity(&config.tls_identity_path)
                 .unwrap_err()
                 .code,
             "invalid_lan_tls_identity"
         );
+        // Corrupt credentials fail closed; an explicit TLS rotation only removes its row.
+        assert!(RemoteAccessManager::open_with_clock(config.clone(),renamed_device.clone(),renamed_descriptor.clone(),clock.clock()).is_err());
+        crate::storage::open(&config.tls_identity_path).unwrap().execute("DELETE FROM host_tls_identity",[]).unwrap();
         clock.set(20_000);
         let recovered = RemoteAccessManager::open_with_clock(
             config.clone(),
@@ -2240,7 +2054,7 @@ mod tests {
                 .iter()
                 .map(|diagnostic| diagnostic.code.as_str())
                 .collect::<Vec<_>>(),
-            vec!["lan_tls_identity_rebuilt", "remote_credentials_rebuilt"]
+            vec!["remote_credentials_rebuilt"]
         );
         assert_eq!(
             recovered
@@ -2249,13 +2063,6 @@ mod tests {
                 .code,
             "invalid_remote_credential"
         );
-        assert!(recovered
-            .diagnostics()
-            .iter()
-            .all(|diagnostic| diagnostic
-                .recovered_path
-                .as_ref()
-                .is_some_and(|path| path.exists())));
 
         #[cfg(unix)]
         {
@@ -2327,7 +2134,8 @@ mod tests {
             client_id: "client-once".to_string(),
             device: device_descriptor("Once", "iOS", "18.0"),
         };
-        clock.set(u64::MAX);
+        // A wall-clock jump within SQLite's signed millisecond domain.
+        clock.set(i64::MAX as u64);
         let mut wrong_request = request.clone();
         let replacement = if wrong_request.pairing_secret.starts_with('0') {
             "1"
@@ -2429,7 +2237,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_device_descriptor_persists_refreshes_and_rejects_v1_store() {
+    fn remote_device_descriptor_persists_refreshes_without_rewriting_unchanged_rows() {
         let directory = tempfile::tempdir().unwrap();
         let clock = TestClock::new(1_000);
         let (config, device, manager) = open_manager(directory.path(), &clock);
@@ -2450,8 +2258,9 @@ mod tests {
                 .descriptor,
             refreshed
         );
-        let persisted_after_refresh =
-            fs::read_to_string(&config.credential_store_path).unwrap();
+        let db = crate::storage::open(&config.credential_store_path).unwrap();
+        let snapshot = || db.query_row("PRAGMA data_version",[],|r|r.get::<_,u64>(0)).unwrap();
+        let persisted_after_refresh = snapshot();
         manager
             .update_credential_descriptor(
                 &issued.credential.credential_id,
@@ -2459,7 +2268,7 @@ mod tests {
             )
             .unwrap();
         assert_eq!(
-            fs::read_to_string(&config.credential_store_path).unwrap(),
+            snapshot(),
             persisted_after_refresh
         );
         drop(manager);
@@ -2477,31 +2286,6 @@ mod tests {
         );
         drop(reopened);
 
-        let mut legacy_document: serde_json::Value = serde_json::from_slice(
-            &fs::read(&config.credential_store_path).unwrap(),
-        )
-        .unwrap();
-        legacy_document["version"] = serde_json::json!(1);
-        fs::write(
-            &config.credential_store_path,
-            serde_json::to_vec_pretty(&legacy_document).unwrap(),
-        )
-        .unwrap();
-        let reset = RemoteAccessManager::open_with_clock(
-            config,
-            device,
-            device_descriptor("Remote Test Device", "TestOS", "1.0"),
-            clock.clock(),
-        )
-        .unwrap();
-        assert!(reset.list_credentials().unwrap().is_empty());
-        assert_eq!(
-            reset.diagnostics()
-                .iter()
-                .map(|diagnostic| diagnostic.code.as_str())
-                .collect::<Vec<_>>(),
-            vec!["remote_credentials_rebuilt"]
-        );
     }
 
     #[test]
@@ -2596,13 +2380,10 @@ mod tests {
             &current.bearer_token,
             RANDOM_SECRET_BYTES * 2
         ));
-        let persisted = fs::read_to_string(&config.credential_store_path).unwrap();
-        assert!(!persisted.contains(&current.bearer_token));
-        assert!(persisted.contains(&sha256_hex(current.bearer_token.as_bytes())));
-        assert_eq!(
-            serde_json::from_str::<serde_json::Value>(&persisted).unwrap()["version"],
-            REMOTE_CREDENTIAL_STORE_VERSION
-        );
+        let db = crate::storage::open(&config.credential_store_path).unwrap();
+        let persisted:String = db.query_row("SELECT bearer_sha256 FROM remote_credentials WHERE id=?1",[&current.credential.credential_id],|r|r.get(0)).unwrap();
+        assert_ne!(persisted,current.bearer_token);
+        assert_eq!(persisted,sha256_hex(current.bearer_token.as_bytes()));
 
         clock.set(2_000);
         let validated = manager.validate_bearer(&current.bearer_token).unwrap();

@@ -57,7 +57,7 @@ fn setup(
             .env
             .insert("CODEPET_FAKE_RECENT_ACTIVE_FAIL".into(), "1".into());
     }
-    let manager = build_manager("recent-device", vec![descriptor]);
+    let manager = build_manager_at("recent-device",vec![descriptor],PluginManagerConfig::default().event_capacity,PluginProcessOptions::default(),Some(path));
     let gateway = Arc::new(
         ProviderGatewayService::with_remote_identity_and_state_path(
             manager.clone(),
@@ -74,6 +74,9 @@ fn setup(
 async fn complete_global_recent_pages_preserve_scope_and_ordinary_list() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("conversation-state.sqlite");
+    let db=codepet_provider_data::app_state::open_app_state(&path).unwrap();
+    db.execute("INSERT INTO providers(id,display_name,created_at,updated_at) VALUES('recent-plugin','Fake recent-plugin',0,0)",[]).unwrap();
+    db.execute("INSERT INTO provider_instances VALUES('recent-instance','recent-plugin','fake','Instance recent-instance')",[]).unwrap();
     let store = SharedConversationStateStore::open(&path).unwrap();
     store.ensure_client("reader-a").unwrap();
     // Existing read records predate the one unread change, as in an existing database.
@@ -238,7 +241,7 @@ async fn memory_authority_never_advertises_recent() {
     descriptor
         .env
         .insert("CODEPET_FAKE_RECENT".into(), "1".into());
-    let manager = build_manager("recent-device", vec![descriptor]);
+    let manager = build_manager("recent-device",vec![descriptor]);
     let service = ProviderGatewayService::new(manager.clone()).unwrap();
     for (_, result) in manager.start_enabled().await {
         result.unwrap();

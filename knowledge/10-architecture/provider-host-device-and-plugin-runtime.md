@@ -45,12 +45,14 @@ Tauri Catalog 合并以下目录来源：
 - App Resources 的 `provider-plugins/`：发行包内置的三个默认 Provider adapter；
 - 应用数据目录的 `versions/providers/`：导入的 Provider 包和既有本地 manifest 目录；
 - `settings.providerPlugins.directories`：附加显式目录，绝对路径保持不变，相对路径按应用数据目录解析；
-- `provider-host/device-identity.json`：稳定本机设备身份；
-- `provider-host/provider-instances.json`：manifest 实例的稳定身份映射。
 
-`RemoteAccessConfig::for_data_directory` 在调用方指定的 App 数据目录下使用 `lan-tls-identity.json` 与 `remote-credentials.json`。`RemoteAccessManager` 持有 `Arc<DeviceRegistry>` 并只转发其 identity；它不生成、复制或持久化第二份 `deviceId/displayName`。TLS 文件包含 leaf certificate DER 与 PKCS#8 private key DER，Unix 原子替换后的权限为 `0600`；证书 SHA-256 指纹使用 64 位小写 hex。载入时会校验证书 DER、自签签名、私钥 DER、证书/私钥匹配与 checksum，损坏文件先隔离为 `.corrupt-<timestamp>` 再重建。
+设备、实例和连接状态位于实际应用数据根的 `app-state.sqlite`。`RemoteAccessConfig::for_data_directory` 的 TLS 与 credential 路径指向同一库；`RemoteAccessManager` 仍持有 `Arc<DeviceRegistry>`，不另存第二份 deviceId/displayName。DDL 和对象边界见 [桌面业务状态的 SQLite 存储](desktop-storage-objects-proposal.md)。
 
-远程 credential 文档绑定当前 TLS certificate fingerprint。TLS identity 丢失、损坏或变化时，旧 credential 文档会被隔离并重建为空，因此必须重新配对。credential store v2 只保存 opaque 256-bit bearer 的 SHA-256，不保存 bearer 本身；每条记录保存 `credentialId/clientId/descriptor/createdAt/lastSeenAt/revokedAt`，descriptor 使用 Gateway 生成的 `deviceName/operatingSystem/systemVersion`。旧 v1 文档不做字段兼容，会被隔离并要求重新配对。pairing 成功写入初始 descriptor；同一 credential 的已认证 handshake 在发送成功响应前原子刷新 descriptor，相同值不重写文件。配对 session 只存在于 Host 内存：本地显式开启后生成随机 pairing id 与 32-byte secret，五分钟过期，重启即失效，并在一次成功 credential 交换后由同一互斥区原子作废。
+host_tls_identity 按 BLOB 保存 leaf certificate DER 和 PKCS#8 private key DER，另存校验值与创建时间。Unix 数据库权限 0600。载入时继续校验 DER、自签签名、私钥匹配与 checksum；损坏时报错，不隔离或重建整个共享库。首次初始化通过事务和唯一键保证身份稳定。
+
+remote_credentials 按列保存 credentialId/clientId、deviceName/operatingSystem/systemVersion、bearer SHA-256、TLS 指纹和各时间，不保存 bearer 明文。TLS 明确更换导致指纹不匹配时仅重置凭据并要求重新配对。已认证 handshake 在成功响应前事务更新 descriptor，相同值不写入。signaling_identity、signaling_services、signaling_peers 分别保存 Host 签名种子、按服务 URL 的注册状态、peer 公钥和 token。
+
+配对 session 仍仅在内存：本地显式开启后生成随机 pairing id 与 32-byte secret，五分钟过期，重启失效；成功交换后同一互斥区原子作废。2026-11-08 用户要求全新数据格式，旧身份、实例、TLS、credential、rtc-cloud JSON 不迁移、不回退读取，也不自动删除。
 
 Catalog 只接受目录，不接受运行时 descriptor 注入。每个目录可包含根 `codepet-provider.json`、子目录中的 `codepet-provider.json`，或 `*.codepet-provider.json`。`read_dir` 的目录错误和逐项读取错误都会形成诊断；不会静默丢弃条目。相对 executable 按 manifest 所在目录解析。
 
@@ -79,7 +81,7 @@ manifest 是插件进程和普通实例设置的配置权威：
 
 `icon` 是可选、不含凭据的绝对 HTTPS URL，不接受本地路径、`file://`、明文 HTTP 或 URL userinfo。Host 从 manifest catalog 将它带入 runtime snapshot，并投影到 Gateway v1 的每个 `ProviderInstance.icon`；Gateway client 负责异步加载、缓存，并在地址缺失、无效或加载失败时回退到通用 Provider 图标。内置 Provider 使用各产品官方站点提供的图片地址。
 
-`provider-instances.json` 只镜像 `instanceId + pluginId + instanceKind + displayName`，用于在重启后复用未显式给出的 `instanceId`。`settings` 与 `enabled` 每次都来自当前 manifest，不作为第二配置源；manifest 删除的实例会从映射中 prune。registry 损坏或 device id 不匹配时 fail closed。设备身份损坏时，原文件先隔离为 `.corrupt-<timestamp>`，再生成新的 `device-<uuid>` 并保留诊断。macOS 的设备显示名由 Tauri 通过原生 ComputerName API 读取并在打开 registry 时刷新，但保留原 `deviceId/createdAt`；hostname 和 display name 都不充当稳定 ID。
+provider_instances 保存 `id + provider_id + instance_kind + display_name`，用于重启后复用未显式指定的实例 ID。settings 与 enabled 每次来自当前 manifest；catalog 移除实例时仅从运行时列表移除，数据库身份保留，恢复相同配置后可复用，不删除会话引用。registry_identity 的 device id 不匹配时报错；新格式库损坏也报错，不自动重新生成整个数据库。macOS 显示名由 Tauri 原生 ComputerName API 读取并刷新，保留 deviceId/createdAt；hostname 和 display name 不充当稳定 ID。
 
 Runtime 探测属于 Provider：插件级 `runtime.getInstalled` 不接收 Host 候选，由每个 Provider 自主搜索、验证并返回自己的安装项；`runtime.select` 校验并应用选择。Host 只按任意 `pluginId` 转发这两个 RPC、持久化 Provider 返回的选择，并在 Provider 重启后的 instance create 之前恢复选择，不包含 Codex、Claude、OpenCode 或未来 Helms 的路径/版本规则。Codex 与 OpenCode manifest 只保留固定 Server args，三个内置 Provider 分别实现自己的 PATH、登录 Shell、应用安装与版本兼容策略。详见 `codex-provider-plugin-runtime.md`、`claude-provider-plugin-runtime.md` 与 `opencode-provider-plugin-runtime.md`。
 

@@ -25,7 +25,6 @@ impl ConversationStateStore {
         } else {
             std::env::current_dir()?.join(path)
         };
-        let path=path.with_extension("sqlite");
         let shared = SharedConversationStateStore::open(&path).map_err(HostError::from)?;
         Ok(Self {
             shared: std::sync::Arc::new(shared),

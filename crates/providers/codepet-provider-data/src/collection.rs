@@ -48,7 +48,7 @@ impl UsageSink {
                                 .as_str()
                                 .filter(|p| std::path::Path::new(p).is_absolute())
                             {
-                                db.execute("INSERT INTO usage_sources(path,position,fingerprint) VALUES(?1,0,'') ON CONFLICT(path) DO UPDATE SET checked=0",[path]).map_err(db_error)?;
+                                db.execute("INSERT INTO usage_sources(path,position,prefix_fingerprint) VALUES(?1,0,'') ON CONFLICT(path) DO UPDATE SET checked=0",[path]).map_err(db_error)?;
                             }
                         }
                         self.data.wake.notify_one();
@@ -57,8 +57,9 @@ impl UsageSink {
                     if self.provider == "opencode" && raw["type"] != "message.updated" {
                         return Ok(());
                     }
-                    db.execute("INSERT OR IGNORE INTO usage_inbox(id,provider,payload,received) VALUES(?1,?2,?3,?4)",
-                        params![params.event_id,self.provider,raw.to_string(),params.received_at]).map_err(db_error)?;
+                    let Some(input) = observed_opencode_message(&raw) else { return Ok(()) };
+                    db.execute("INSERT OR IGNORE INTO usage_inbox VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+                        params![params.event_id,input.record_id,input.at,input.model,input.values[0],input.values[1],input.values[2],input.values[3],input.values[4],params.received_at]).map_err(db_error)?;
                     self.data.wake.notify_one();
                     Ok::<_, ProtocolError>(())
                 })();
@@ -113,34 +114,19 @@ impl ProviderData {
 
     pub fn collect(&self) -> Result<(), ProtocolError> {
         let db = self.connection()?;
-        let pending: Vec<(String, String, String)> = db
-            .prepare("SELECT id,provider,payload FROM usage_inbox ORDER BY received,id LIMIT 1000")
-            .map_err(db_error)?
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))
-            .map_err(db_error)?
-            .collect::<Result<_, _>>()
-            .map_err(db_error)?;
-        for (id, provider, payload) in pending {
-            let raw: Value = serde_json::from_str(&payload).map_err(db_error)?;
-            if provider == "claude" {
-                if let Some(path) = raw
-                    .get("transcript_path")
-                    .and_then(Value::as_str)
-                    .filter(|p| std::path::Path::new(p).is_absolute())
-                {
-                    db.execute("INSERT INTO usage_sources(path,position,fingerprint) VALUES(?1,0,'') ON CONFLICT(path) DO NOTHING",[path]).map_err(db_error)?;
-                }
-            } else if provider == "opencode" {
-                self.opencode_message(&raw)?;
-            }
-            db.execute("DELETE FROM usage_inbox WHERE id=?1", [id])
-                .map_err(db_error)?;
+        let pending = db.prepare("SELECT id,source_record_id,at,model,total_tokens,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens FROM usage_inbox ORDER BY received,id LIMIT 1000")
+            .map_err(db_error)?.query_map([], |r| Ok((r.get::<_,String>(0)?,ObservedUsage {
+                record_id:r.get(1)?,at:r.get(2)?,model:r.get(3)?,values:crate::usage::read_five(r,4)?,
+            }))).map_err(db_error)?.collect::<Result<Vec<_>,_>>().map_err(db_error)?;
+        for (id,input) in pending {
+            self.record("observation",HOOK_DATASET,&input.record_id,input.at,1800,input.model.as_deref(),input.values)?;
+            db.execute("DELETE FROM usage_inbox WHERE id=?1",[id]).map_err(db_error)?;
         }
         // Bounded per pass: at most 32 files and 4 MiB/file. Resume positions survive restart.
-        let sources:Vec<(String,u64,String)>=db.prepare("SELECT path,position,fingerprint FROM usage_sources ORDER BY checked,path LIMIT 32").map_err(db_error)?
-            .query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?))).map_err(db_error)?.collect::<Result<_,_>>().map_err(db_error)?;
-        for (path, position, fingerprint) in sources {
-            if let Err(e) = self.claude_source(&path, position, &fingerprint) {
+        let sources:Vec<(String,u64,String,bool)>=db.prepare("SELECT path,position,prefix_fingerprint,skip_partial_line FROM usage_sources ORDER BY checked,path LIMIT 32").map_err(db_error)?
+            .query_map([],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?))).map_err(db_error)?.collect::<Result<_,_>>().map_err(db_error)?;
+        for (path, position, fingerprint, discard) in sources {
+            if let Err(e) = self.claude_source(&path, position, &fingerprint, discard) {
                 eprintln!("usage.transcript failed: {}", e.message);
             }
             db.execute(
@@ -158,6 +144,7 @@ impl ProviderData {
         path: &str,
         mut position: u64,
         previous: &str,
+        mut discard: bool,
     ) -> Result<(), ProtocolError> {
         let mut file = match std::fs::File::open(path) {
             Ok(file) => file,
@@ -175,8 +162,7 @@ impl ProviderData {
             .iter()
             .map(|b| format!("{b:02x}"))
             .collect::<String>();
-        let mut discard = previous.starts_with("skip:");
-        let old = previous.strip_prefix("skip:").unwrap_or(previous);
+        let old = previous;
         if position > metadata.len() || (!old.is_empty() && !signature.starts_with(old)) {
             position = 0;
             discard = false;
@@ -204,15 +190,10 @@ impl ProviderData {
             discard = true;
             eprintln!("usage.transcript oversized record skipped");
         }
-        let signature = if discard {
-            format!("skip:{signature}")
-        } else {
-            signature
-        };
         self.connection()?
             .execute(
-                "UPDATE usage_sources SET position=?2,fingerprint=?3 WHERE path=?1",
-                params![path, position + consumed as u64, signature],
+                "UPDATE usage_sources SET position=?2,prefix_fingerprint=?3,skip_partial_line=?4 WHERE path=?1",
+                params![path, position + consumed as u64, signature, discard],
             )
             .map_err(db_error)?;
         Ok(())
@@ -249,65 +230,12 @@ impl ProviderData {
             [total, input, output, read, write],
         )
     }
-    fn opencode_message(&self, raw: &Value) -> Result<(), ProtocolError> {
-        if raw["type"] != "message.updated" {
-            return Ok(());
-        }
-        let info = &raw["properties"]["info"];
-        if info["role"] != "assistant" {
-            return Ok(());
-        }
-        let (Some(id), Some(session), Some(at)) = (
-            info["id"].as_str(),
-            info["sessionID"].as_str(),
-            info["time"]["completed"].as_i64(),
-        ) else {
-            return Ok(());
-        };
-        let tokens = &info["tokens"];
-        let read = count(&tokens["cache"]["read"]);
-        let write = count(&tokens["cache"]["write"]);
-        let input = sum3(count(&tokens["input"]), read, write);
-        // OpenCode stores reasoning separately from visible output; our output includes both.
-        let output = count(&tokens["output"])
-            .zip(count(&tokens["reasoning"]))
-            .and_then(|(a, b)| a.checked_add(b));
-        let model = info["modelID"].as_str().map(|model| {
-            format!(
-                "{}/{model}",
-                info["providerID"].as_str().unwrap_or("unknown")
-            )
-        });
-        self.record(
-            "observation",
-            HOOK_DATASET,
-            &format!("{session}:{id}"),
-            (at / 1000).div_euclid(1800) * 1800,
-            1800,
-            model.as_deref(),
-            [
-                input.zip(output).and_then(|(a, b)| a.checked_add(b)),
-                input,
-                output,
-                read,
-                write,
-            ],
-        )
-    }
-
     pub fn import_codex_daily(&self, instance: &str, payload: &Value) -> Result<(), ProtocolError> {
         if payload["summary"].is_object() {
-            let mut summary = json!({});
-            for key in [
-                "lifetimeTokens",
-                "peakDailyTokens",
-                "longestRunningTurnSec",
-                "currentStreakDays",
-                "longestStreakDays",
-            ] {
-                summary[key] = json!(count(&payload["summary"][key]));
-            }
-            self.connection()?.execute("INSERT INTO usage_native_summary VALUES(?1,?2) ON CONFLICT(instance) DO UPDATE SET payload=excluded.payload",params![instance,summary.to_string()]).map_err(db_error)?;
+            let v = &payload["summary"];
+            self.connection()?.execute("INSERT INTO usage_native_summary VALUES(?1,?2,?3,?4,?5,?6)
+                ON CONFLICT(instance) DO UPDATE SET lifetime_tokens=excluded.lifetime_tokens,peak_daily_tokens=excluded.peak_daily_tokens,longest_running_turn_seconds=excluded.longest_running_turn_seconds,current_streak_days=excluded.current_streak_days,longest_streak_days=excluded.longest_streak_days",
+                params![instance,count(&v["lifetimeTokens"]),count(&v["peakDailyTokens"]),count(&v["longestRunningTurnSec"]),count(&v["currentStreakDays"]),count(&v["longestStreakDays"])]).map_err(db_error)?;
         }
         let Some(buckets) = payload["dailyUsageBuckets"].as_array() else {
             return if payload["summary"].is_object() {
@@ -351,4 +279,29 @@ fn sum3(a: Option<u64>, b: Option<u64>, c: Option<u64>) -> Option<u64> {
     a.zip(b)
         .zip(c)
         .and_then(|((a, b), c)| a.checked_add(b)?.checked_add(c))
+}
+
+struct ObservedUsage {
+    record_id: String,
+    at: i64,
+    model: Option<String>,
+    values: [Option<u64>;5],
+}
+fn observed_opencode_message(raw: &Value) -> Option<ObservedUsage> {
+    if raw["type"]!="message.updated" { return None }
+    let info = &raw["properties"]["info"];
+    if info["role"]!="assistant" { return None }
+    let id = info["id"].as_str()?;
+    let session = info["sessionID"].as_str()?;
+    let at = info["time"]["completed"].as_i64()?;
+    let tokens = &info["tokens"];
+    let read = count(&tokens["cache"]["read"]);
+    let write = count(&tokens["cache"]["write"]);
+    let input = sum3(count(&tokens["input"]),read,write);
+    let output = count(&tokens["output"]).zip(count(&tokens["reasoning"])).and_then(|(a,b)|a.checked_add(b));
+    Some(ObservedUsage {
+        record_id:format!("{session}:{id}"), at:(at/1000).div_euclid(1800)*1800,
+        model:info["modelID"].as_str().map(|m|format!("{}/{m}",info["providerID"].as_str().unwrap_or("unknown"))),
+        values:[input.zip(output).and_then(|(a,b)|a.checked_add(b)),input,output,read,write],
+    })
 }

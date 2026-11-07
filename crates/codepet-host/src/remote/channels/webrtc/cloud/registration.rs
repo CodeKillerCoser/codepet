@@ -6,76 +6,43 @@ fn random_secret() -> HostResult<String> {
     Ok(B64.encode(bytes))
 }
 
-// New files are private and installed atomically before the first network request.
-fn create_private(path: &std::path::Path, bytes: &[u8]) -> HostResult<()> {
-    let parent = path.parent().ok_or_else(error)?;
-    std::fs::create_dir_all(parent)?;
-    let mut file = tempfile::NamedTempFile::new_in(parent)?;
-    file.write_all(bytes)?;
-    file.as_file().sync_all()?;
-    match file.persist_noclobber(path) {
-        Ok(_) => Ok(()),
-        Err(failure) if failure.error.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-        Err(_) => Err(error()),
-    }
-}
-
-pub(super) fn load_or_create_config(
-    access: &RemoteAccessManager,
-) -> HostResult<Option<(PathBuf, Config)>> {
-    let legacy_path = access.rtc_cloud_config_path();
-    let selected = access
-        .signaling_service
-        .lock()
-        .map_err(|_| error())?
-        .clone();
-    let legacy: Option<Config> = if legacy_path.exists() {
-        Some(serde_json::from_slice(&std::fs::read(&legacy_path)?)?)
-    } else {
-        None
+pub(super) fn load_or_create_config(access: &RemoteAccessManager) -> HostResult<Option<(PathBuf, Config)>> {
+    use rusqlite::{params, OptionalExtension};
+    let Some(service) = access.signaling_service.lock().map_err(|_| error())?.clone() else { return Ok(None) };
+    let service = authorized_service_url(&service, Some(&service))?;
+    let path = access.rtc_cloud_config_path();
+    let mut db = crate::storage::open(&path)?;
+    let tx = db.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate).map_err(crate::storage::error)?;
+    let seed: Option<Vec<u8>> = tx.query_row("SELECT signing_seed FROM signaling_identity WHERE id=1",[],|r|r.get(0)).optional().map_err(crate::storage::error)?;
+    let seed = match seed {
+        Some(seed) => seed,
+        None => {
+            let mut seed = vec![0;32];
+            SystemRandom::new().fill(&mut seed).map_err(|_| error())?;
+            tx.execute("INSERT INTO signaling_identity VALUES(1,?1)",[&seed]).map_err(crate::storage::error)?;
+            seed
+        }
     };
-    let Some(service) = selected else {
-        return Ok(legacy.map(|config| (legacy_path, config)));
-    };
-    if let Some(config) = &legacy {
-        if authorized_service_url(&config.service_url, Some(&service)).is_ok() {
-            let mut config = config.clone();
-            config.service_url = service;
-            config.auto_register = true;
-            return Ok(Some((legacy_path, config)));
+    signature::Ed25519KeyPair::from_seed_unchecked(&seed).map_err(|_| error())?;
+    tx.execute("INSERT OR IGNORE INTO signaling_services VALUES(?1,?2,1)",params![service,random_secret()?]).map_err(crate::storage::error)?;
+    let (host_token, auto_register) = tx.query_row("SELECT host_token,auto_register FROM signaling_services WHERE service_url=?1",[&service],|r|Ok((r.get(0)?,r.get(1)?))).map_err(crate::storage::error)?;
+    let mut peers = BTreeMap::new();
+    {
+        let mut statement = tx.prepare("SELECT credential_id,public_key,token FROM signaling_peers WHERE service_url=?1").map_err(crate::storage::error)?;
+        for row in statement.query_map([&service],|r|Ok((r.get::<_,String>(0)?,r.get::<_,Vec<u8>>(1)?,r.get::<_,String>(2)?))).map_err(crate::storage::error)? {
+            let (id,public_key,token) = row.map_err(crate::storage::error)?;
+            if public_key.len()!=32 { return Err(error()) }
+            peers.insert(id,Peer { public_key:B64.encode(public_key),token });
         }
     }
-    let parent = legacy_path.parent().ok_or_else(error)?;
-    let identity_path = parent.join("rtc-device-key.json");
-    if !identity_path.exists() {
-        let seed = match legacy.as_ref() {
-            Some(c) => c.seed.clone(),
-            None => random_secret()?,
-        };
-        signature::Ed25519KeyPair::from_seed_unchecked(&B64.decode(&seed).map_err(|_| error())?)
-            .map_err(|_| error())?;
-        create_private(&identity_path, &serde_json::to_vec(&json!({"seed": seed}))?)?;
-    }
-    let identity: Value = serde_json::from_slice(&std::fs::read(&identity_path)?)?;
-    let seed = identity["seed"].as_str().ok_or_else(error)?.to_owned();
-    let path = parent
-        .join("rtc-services")
-        .join(format!("{}.json", hash(service.as_bytes())));
-    if !path.exists() {
-        let config = Config {
-            service_url: service.clone(),
-            host_token: random_secret()?,
-            seed: seed.clone(),
-            peers: BTreeMap::new(),
-            auto_register: true,
-        };
-        create_private(&path, &serde_json::to_vec(&config)?)?;
-    }
-    let config: Config = serde_json::from_slice(&std::fs::read(&path)?)?;
-    if config.service_url != service || config.seed != seed {
-        return Err(error());
-    }
-    Ok(Some((path, config)))
+    tx.commit().map_err(crate::storage::error)?;
+    Ok(Some((path,Config { service_url:service,host_token,seed:B64.encode(seed),peers,auto_register })))
+}
+
+pub(super) fn persist_peer(path: &std::path::Path, service: &str, id: &str, peer: &Peer) -> HostResult<()> {
+    let public_key = B64.decode(&peer.public_key).map_err(|_| error())?;
+    crate::storage::open(path)?.execute("INSERT INTO signaling_peers VALUES(?1,?2,?3,?4)", rusqlite::params![service,id,public_key,peer.token]).map_err(crate::storage::error)?;
+    Ok(())
 }
 
 impl Cloud {
@@ -194,35 +161,19 @@ mod tests {
         );
     }
     #[test]
-    fn legacy_identity_is_preserved_when_registering_another_service() {
-        let directory = tempfile::tempdir().unwrap();
-        let manager = access(directory.path());
-        let legacy = Config {
-            service_url: "https://old.example.com".into(),
-            host_token: random_secret().unwrap(),
-            seed: random_secret().unwrap(),
-            peers: BTreeMap::new(),
-            auto_register: false,
-        };
-        create_private(
-            &manager.rtc_cloud_config_path(),
-            &serde_json::to_vec(&legacy).unwrap(),
-        )
-        .unwrap();
-        assert!(
-            !load_or_create_config(&manager)
-                .unwrap()
-                .unwrap()
-                .1
-                .auto_register
-        );
-        *manager.signaling_service.lock().unwrap() = Some("https://new.example.com".into());
-        let (_, new) = load_or_create_config(&manager).unwrap().unwrap();
-        assert_eq!(new.seed, legacy.seed);
-        assert_ne!(new.host_token, legacy.host_token);
-        let old: Config =
-            serde_json::from_slice(&std::fs::read(manager.rtc_cloud_config_path()).unwrap())
-                .unwrap();
-        assert_eq!(old.host_token, legacy.host_token);
+    fn legacy_files_are_ignored_and_peer_rows_survive_reopen() {
+        let directory=tempfile::tempdir().unwrap();
+        let manager=access(directory.path());
+        let legacy_path=manager.rtc_cloud_config_path().with_file_name("rtc-cloud.json");
+        std::fs::write(&legacy_path,b"invalid legacy JSON").unwrap();
+        assert!(load_or_create_config(&manager).unwrap().is_none());
+        *manager.signaling_service.lock().unwrap()=Some("https://new.example.com".into());
+        let (path,config)=load_or_create_config(&manager).unwrap().unwrap();
+        let peer=Peer { public_key:B64.encode([1;32]),token:random_secret().unwrap() };
+        persist_peer(&path,&config.service_url,"credential-test",&peer).unwrap();
+        let (_,restored)=load_or_create_config(&manager).unwrap().unwrap();
+        assert_eq!(restored.peers["credential-test"].token,peer.token);
+        assert_eq!(restored.peers["credential-test"].public_key,peer.public_key);
+        assert_eq!(std::fs::read(&legacy_path).unwrap(),b"invalid legacy JSON");
     }
 }

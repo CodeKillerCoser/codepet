@@ -26,9 +26,11 @@ OpenCode 的 [Session.getUsage](https://github.com/anomalyco/opencode/blob/dev/p
 
 ### 存储和目录
 
-生产 Host 使用 `<AppData>/providers/<pluginId>/data/provider.sqlite`，日志放同级 `logs/provider.log`。这是 Provider 目录，不修改 Harness 配置目录。stderr 仍进入内存诊断环，同时落 JSON 行日志；5 MiB 轮换，保留一份旧文件。
+生产 Host 使用 `<AppData>/providers/<pluginId>/usage.sqlite`，日志位于 `<AppData>/logs/providers/<pluginId>/provider.log`。这是应用分配的目录，不修改 Harness 配置目录。stderr 同时进入内存诊断环与 JSON 行日志；5 MiB 轮换，保留一份旧文件。
 
-每个插件持有一个 SQLite 文件，Host 只分配路径。`codepet-provider-data` 是共享业务库，负责 WAL、5 秒 busy timeout、建表和查询；它位于 Providers 目录，不属于 SDK transport runtime。用量保存来源记录、预聚合桶、已知文件游标、待处理事件及分页快照。记录修正与桶增减在同一事务中完成。未读状态保存在 `conversation_state` 表的结构化文档行中；Host facade 按实例路由至插件 DB，沿用业务库执行读写。未配置 Provider 根目录的独立测试/兼容 Host 可使用独立 SQLite 或内存。旧文件不导入。
+`codepet-provider-data` 是共享业务库，负责 WAL、5 秒 busy timeout、外键、建表和查询，不属于 SDK transport runtime。每插件保留独立用量库；运行时选择、Host 身份、会话活动和已读状态使用实际数据根的 `app-state.sqlite`。Host 与持久会话 Provider 使用同库事务，不再在 Provider 用量库里复制 conversation_state JSON 行。未配置持久会话路径的独立测试可用内存，不能广告持久未读能力。
+
+2026-11-08 按用户要求全新初始化，不迁移或兼容旧 JSON、provider.sqlite、conversation-state.sqlite，也不自动删除旧文件。对象、路径和生命周期见 [桌面业务状态的 SQLite 存储](desktop-storage-objects-proposal.md)。
 
 ### 采集和时间桶
 
@@ -56,7 +58,7 @@ Agent schema 是共享定义。请求指定 datasetId、filter.time（all 或 fr
 - `crates/providers/codepet-provider-data`：计量、SQLite、未读业务，不依赖 Host。
 - 三个 Provider：接入各自原生来源及 usage 查询方法，同时保留独立的 `ProviderInstance.usage` 摘要，由 Gateway 转发为 `runtime.usage`。摘要是 Provider 来源范围内的账户/用量概览，不是详情查询结果，不受查询时间筛选、分页影响。Codex 读取额度与账户摘要，OpenCode 保留近 30 天 CLI 统计，Claude 保留最近一轮结果用量；不可把后两者宣称为账户全历史总量。
 - `crates/codepet-host`：注入目录、日志落盘、Gateway 路由和未读存储路由。
-- `src-tauri`：配置生产 Provider 根目录及 SQLite fallback 文件名。
+- `src-tauri`：配置生产 Provider 用量目录和共享状态库路径。
 
 ## 风险
 
@@ -82,53 +84,28 @@ Claude 机器接口规约补充 usage 专用的只读 transcript 例外。SDK �
 
 Codex 原生每日数据保留范围、日期的上游时区及不同客户端版本支持度没有保证；Hook 漏报不能证明完整历史。真实账户端到端数据核对和完整安装包运行仍待验收。
 
-## 当前 SQLite 列定义
+## 当前 SQLite 列定义（2026-11-08）
 
-主表 token 值是 JSON 数组，顺序固定 `[total,input,output,cacheRead,cacheWrite]`，不是五个独立 INTEGER 列。记录表允许 null；聚合表保存已知部分之和，用 known_json 记录已知数量。input 包含缓存，total=input+output。
+完整 DDL 是 `crates/providers/codepet-provider-data/src/usage.sql`。五项指标为 `total_tokens、input_tokens、output_tokens、cache_read_tokens、cache_write_tokens`，各自使用 INTEGER 列；未提供值为 NULL。input 包含缓存，total=input+output。没有 values_json、known_json、payload、binding/result JSON 列。
 
-### usage_records：来源记录与幂等账本
-
-| 列 | SQL 类型 | 定义 |
-| --- | --- | --- |
-| instance | TEXT NOT NULL | 来源作用域；Codex 为实例 ID，Hook 使用 observation，表示插件共享来源 |
-| dataset | TEXT NOT NULL | observed-model-tokens 或 codex-account-daily |
-| record_id | TEXT NOT NULL | 稳定来源身份：消息 ID 或原生每日记录 ID，不是随机投递 ID |
-| at | INTEGER NOT NULL | 所属桶起点，Unix 秒，已向下对齐 |
-| duration | INTEGER NOT NULL | 桶宽秒数：Hook 1800，Codex 86400 |
-| model | TEXT NULL | 模型 ID，NULL 表示未知/不提供 |
-| values_json | TEXT NOT NULL | 五项可空 token 数组 |
-| updated | INTEGER NOT NULL | 最后更新时间，Unix 毫秒 |
-
-主键 `(instance,dataset,record_id)`；时间索引 `(instance,dataset,at)`。重复记录不累计，修正先减去旧桶贡献再加入新桶。
-
-### usage_buckets：查询预聚合
-
-| 列 | SQL 类型 | 定义 |
-| --- | --- | --- |
-| instance、dataset | TEXT NOT NULL | 同来源记录表 |
-| at | INTEGER NOT NULL | 桶起点，Unix 秒 |
-| duration | INTEGER NOT NULL | 桶宽，秒 |
-| model | TEXT NOT NULL | 模型 ID，未知使用空串参与主键 |
-| values_json | TEXT NOT NULL | 五项指标已知值之和，JSON 数组 |
-| known_json | TEXT NOT NULL | 每项指标有数值的来源记录数，五项整数数组 |
-| records | INTEGER NOT NULL | 桶内来源记录总数，不是 session 数 |
-| updated | INTEGER NOT NULL | 最后更新时间，Unix 毫秒 |
-
-主键 `(instance,dataset,at,model)`。某指标 known=0 返回 null；0<known<records 返回已知部分之和并标记 partial。最后一条记录移出后删除空桶。
-
-### 辅助表
-
-| 表 | 全部列及定义 |
+| 表 | 列与对象语义 |
 | --- | --- |
-| usage_sources | `path TEXT PRIMARY KEY`：注册的 transcript 绝对路径；`position INTEGER NOT NULL`：字节偏移；`fingerprint TEXT NOT NULL`：前缀指纹/尾行跳过状态；`checked INTEGER NOT NULL DEFAULT 0`：最近检查 Unix 毫秒，0 表示优先检查 |
-| usage_inbox | `id TEXT PRIMARY KEY`：投递事件 ID；`provider TEXT NOT NULL`：来源适配器；`payload TEXT NOT NULL`：待处理事件 JSON；`received INTEGER NOT NULL`：接收 Unix 毫秒，成功消费后删除该行 |
-| usage_snapshots | `id TEXT PRIMARY KEY`：快照 UUID；`binding TEXT NOT NULL`：序列化查询和实例绑定；`result TEXT NOT NULL`：完整查询结果 JSON；`expires INTEGER NOT NULL`：过期 Unix 秒 |
-| usage_native_summary | `instance TEXT PRIMARY KEY`：Codex 实例；`payload TEXT NOT NULL`：原生账户累计、每日峰值等摘要 JSON，不受查询过滤影响 |
-| conversation_state | `id INTEGER PRIMARY KEY CHECK(id=1)`：唯一文档行；`document TEXT NOT NULL`：客户端已读版本、活动指纹等结构化 JSON，非 token 表 |
+| usage_records | 主键 `(instance,dataset,record_id)`；at 桶起点秒、duration 秒、model 可空、五项可空 token、updated 毫秒；原始来源身份用于幂等和修正 |
+| usage_buckets | 主键 `(instance,dataset,at,model)`；duration、五项 token 之和、五项 `<metric>_known_count`、records、updated；未知模型使用空串参与主键 |
+| usage_native_summary | instance 主键；lifetime_tokens、peak_daily_tokens、longest_running_turn_seconds、current_streak_days、longest_streak_days，均可空 |
+| usage_sources | path 主键；position 字节偏移、prefix_fingerprint、skip_partial_line 布尔、checked 毫秒；尾行状态不再编码进指纹 |
+| usage_inbox | id 投递 UUID 主键；source_record_id、at、model、五项可空 token、received 毫秒；OpenCode 输入在入队前解析，不保存原始事件正文 |
+| usage_snapshots | id 快照 UUID 主键；dataset、generated_at、updated_at、scope、available_from、complete_through、coverage_status、summary_flags、expires 秒 |
+| usage_snapshot_queries | snapshot_id 主外键；instance、dataset、time_kind、range_from/to、time_zone、time_bucket、grouped、include_unknown、page_limit；has_models/summaries/orders 区分缺省与显式空列表 |
+| usage_snapshot_query_options | `(snapshot_id,kind,ordinal)` 主键；kind 为 model/metric/summary/order，value 和可空 direction；保存查询选项与顺序 |
+| usage_snapshot_entries | `(snapshot_id,kind,ordinal)` 主键；kind 为 row/total/group_total/peak/group_peak；model_present/model_id、bucket_from/to、provisional、completeness、date、peak_total、五项 token 和五项 completeness |
+| usage_snapshot_accounts | snapshot_id 主外键；冻结查询时的五项原生账户摘要，避免后续页读到新摘要 |
 
-本次清理未改列、未迁移旧统计文件。前端查询/API/样式 49 项测试、Host manager_gateway 29 项、采集和查询 13 项、协议生成器 20 项通过，前端生产构建通过。预览使用模拟 Gateway 响应，验证 1280px 与 390px 布局、键盘焦点、空结果和 Codex 能力限制；尚未代替真实账户验收。全量 tsc 暴露原有 Node 类型缺失及 activity、sound 等测试类型错误，新查询模块无报错。
+来源作用域保持现有语义：Codex 使用实例 ID，Hook 使用插件库内的 observation。重复来源记录不累计；修正先减去旧桶贡献，再加入新桶，两者同一事务。known_count=0 返回 null；0<known_count<records 返回已知部分并标记 partial；空桶删除。
 
-清理后补充验证：OpenCode account_probes_are_parallel_notify_later_and_cancel_on_stop 通过，确认移除 stats 后初始化与 stop 取消行为正常；git diff --check 通过。
+冻结快照按关联表保存，子表随头部级联删除。保存和读取均用事务；重开库后的 cursor 按完整查询字段、选项顺序与实例核对，不计算完整请求哈希。`summary_flags` 保存结果对象的可选字段存在性，避免重建时混淆缺省、空数组与 null。协议时间字符串原样保存；桶秒/更新时间毫秒单位不混用。
+
+本轮验证：Provider 数据层 35 项通过，涵盖计量修正、来源尾行、NULL/partial、快照冻结、查询绑定、重启和会话并发。Host/桌面验证见 [存储实施记录](desktop-storage-objects-proposal.md)。以下日期章节保留此前功能交付记录，不代表本轮重新执行过前端、协议、真实账户或 Windows 验收。
 
 ## 合并主工作区验证（2026-09-09）
 

@@ -18,11 +18,13 @@
 
 ## 存储
 
+2026-11-08 决定继续使用 JSON 配置，不建立数据库副本；会话/Provider 的业务记录另存 SQLite，详见 [桌面存储](desktop-storage-objects-proposal.md)。本轮未调整设置服务的保存、热加载或外部编辑冲突行为。
+
 设置统一保存到默认系统数据目录的 `code-pet/config/settings.json`。Windows 为 `%LOCALAPPDATA%/code-pet/config/settings.json`，macOS 为 `~/Library/Application Support/code-pet/config/settings.json`。读取只认新路径，不兼容根目录旧 settings.json。
 
 共享 `crates/codepet-paths` 解析该引导文件，`data.dataDirectory` 仅覆盖业务数据根，设置入口和 `~/.codepet` 执行工作区保持固定。默认根的计算不能从 config 文件父目录直接推导，否则会误把 config 当成数据根。
 
-实际目录及各模块职责见 [Path Manager](path-manager.md)。来源偏好保存于实际数据根的 config/pet-sources.json；Provider 数据为 providers/<pluginId>/provider.sqlite；远程身份凭据为 connections/；任务和技能为 tasks/；日志集中到 logs/；前端更新为 versions/webcontent/。自定义宠物目录仍优先于数据根下 pets/。
+实际目录及各模块职责见 [Path Manager](path-manager.md)。来源偏好保存于实际数据根的 config/pet-sources.json；Provider 用量为 providers/<pluginId>/usage.sqlite；设备身份、实例、会话状态和远程凭据统一在 app-state.sqlite；任务和技能为 tasks/；日志集中到 logs/；前端更新为 versions/webcontent/。自定义宠物目录仍优先于数据根下 pets/。
 
 切换数据目录只保存路径并创建目标，不执行复制、清空、迁移或旧路径回退。需要重启才能让启动期资源全部使用新路径。用户选择的外部项目、Harness 安装及原生 Agent 自有数据目录保持自身语义。
 
@@ -32,7 +34,7 @@
 
 `agentRuntimes` 旧字段仍不能由通用 `update_app_settings` 改写。当前 `set_agent_runtime_executable` 将选择交给 Provider 校验，验证成功后由 Provider 写入其数据库的 runtime_selection 表，不写 App 设置，也不重启 Provider 来恢复选择。`clear_agent_runtime_executable` 重启 Provider 触发全新自动扫描，并清除旧配置项。Host 只消费 Provider 的本次 harnessList、selected 与扫描诊断，App 历史路径不参与启动。Provider 自己根据数据库 lastSelected 匹配扫描结果，缺失或不兼容时选择最高语义版本。
 
-`providerPlugins.directories` 是 Plugin Catalog 的显式附加目录。相对路径按已解析应用数据目录解析，绝对路径保持不变。Host 始终同时检查该数据目录下的 `versions/providers/`；设备身份和实例注册分别保存在同一目录下的 `connections/device-identity.json` 与 `providers/provider-instances.json`。这些记录不进入 pet activity 数据。
+`providerPlugins.directories` 是 Plugin Catalog 的显式附加目录。相对路径按已解析应用数据目录解析，绝对路径保持不变。Host 始终同时检查该数据目录下的 `versions/providers/`；设备身份和实例注册保存在实际数据根的 `app-state.sqlite` 的 host_identity、provider_instances 表中。这些记录不进入 pet activity 数据。
 
 `update_app_settings` 在后端接收完整 JSON 值并先检查字段是否出现，再反序列化为 `AppSettings`。`providerPlugins` 缺失表示旧 caller 没有发送该字段，后端保留当前目录；显式发送 `providerPlugins.directories: []` 才表示清空。前端 `AppSettings.providerPlugins` 是必填字段，保存完整设置时总会带上当前值。该区分避免旧前端或局部设置更新误清插件目录。
 
