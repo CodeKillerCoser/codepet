@@ -7,7 +7,7 @@ import type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject,
 export type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
 
 export const PROTOCOL_VERSION = 1 as const;
-export const PROTOCOL_METHODS = ["conversation.releaseInteraction", "conversation.active.list", "conversation.unread.list", "conversation.markRead", "provider.ping", "provider.initialize", "provider.describe", "runtime.getInstalled", "runtime.select", "instance.create", "instance.start", "instance.stop", "instance.destroy", "instance.capabilities", "conversation.list", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.search", "conversation.get", "conversation.acquireInteraction", "conversation.create", "turn.start", "turn.steer", "turn.interrupt", "approval.resolve", "provider.shutdown", "event.subscribe", "event.unsubscribe", "usage.query"] as const;
+export const PROTOCOL_METHODS = ["instance.releaseControl", "conversation.releaseInteraction", "conversation.active.list", "conversation.unread.list", "conversation.markRead", "provider.ping", "provider.initialize", "provider.describe", "runtime.getInstalled", "runtime.select", "instance.create", "instance.start", "instance.stop", "instance.destroy", "instance.capabilities", "conversation.list", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.search", "conversation.get", "conversation.acquireInteraction", "conversation.create", "turn.start", "turn.steer", "turn.interrupt", "approval.resolve", "provider.shutdown", "event.subscribe", "event.unsubscribe", "usage.query"] as const;
 export const PROTOCOL_EVENTS = ["event.conversationActiveChanged", "event.conversationUnreadChanged", "event.conversationDeleted", "event.projectChanged", "event.instanceStatusChanged", "event.conversationUpserted", "event.conversationItemUpserted", "event.turnUpserted", "event.turnOutputDelta", "event.approvalRequested", "event.approvalResolved", "event.notification", "runtime.inventoryChanged"] as const;
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -272,6 +272,17 @@ export interface InstanceDestroyResponse {
   destroyed: boolean;
 }
 
+export type InstanceReleaseControlOutcome = "released" | "busy" | "notIdle" | "unavailable" | "unsupported";
+
+export interface InstanceReleaseControlRequest {
+  route: ProviderInstanceRoute;
+  idleTimeoutSeconds: number;
+}
+
+export interface InstanceReleaseControlResponse {
+  outcome: InstanceReleaseControlOutcome;
+}
+
 export interface InstanceStartRequest {
   route: ProviderInstanceRoute;
 }
@@ -360,7 +371,7 @@ export interface ProviderCapabilities {
   usageDatasets?: Array<UsageDataset>;
 }
 
-export type ProviderCapability = "project.list" | "project.get" | "project.create" | "project.update" | "project.delete" | "conversation.list" | "conversation.search" | "conversation.get" | "conversation.releaseInteraction" | "conversation.create" | "turn.start" | "turn.steer" | "turn.interrupt" | "approval.resolve" | "conversation.active.list" | "conversation.unread.list" | "conversation.markRead" | "usage.query";
+export type ProviderCapability = "project.list" | "project.get" | "project.create" | "project.update" | "project.delete" | "conversation.list" | "conversation.search" | "conversation.get" | "conversation.releaseInteraction" | "conversation.create" | "turn.start" | "turn.steer" | "turn.interrupt" | "approval.resolve" | "conversation.active.list" | "conversation.unread.list" | "conversation.markRead" | "usage.query" | "instance.releaseControl";
 
 export interface ProviderDescribeRequest {
 
@@ -581,6 +592,7 @@ export interface UsageQueryResponse {
 }
 
 export interface ProtocolRequestMap {
+  "instance.releaseControl": InstanceReleaseControlRequest;
   "conversation.releaseInteraction": ConversationReleaseInteractionRequest;
   "conversation.active.list": ConversationActiveListRequest;
   "conversation.unread.list": ConversationUnreadListRequest;
@@ -616,6 +628,7 @@ export interface ProtocolRequestMap {
 }
 
 export interface ProtocolResponseMap {
+  "instance.releaseControl": InstanceReleaseControlResponse;
   "conversation.releaseInteraction": ConversationReleaseInteractionResponse;
   "conversation.active.list": ConversationActiveListResponse;
   "conversation.unread.list": ConversationUnreadListResponse;

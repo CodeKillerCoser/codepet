@@ -1696,7 +1696,7 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
                 Some(gateway::GatewayCapability::TurnSend)
             }
             provider::ProviderCapability::UsageQuery => Some(gateway::GatewayCapability::CodepetUsageQuery),
-            provider::ProviderCapability::TurnSteer => None,
+            provider::ProviderCapability::TurnSteer | provider::ProviderCapability::InstanceReleaseControl => None,
             provider::ProviderCapability::ConversationActiveList
             | provider::ProviderCapability::ConversationUnreadList
             | provider::ProviderCapability::ConversationMarkRead => None,

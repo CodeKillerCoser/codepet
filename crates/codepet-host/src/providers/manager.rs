@@ -80,6 +80,8 @@ pub struct PluginManagerConfig {
     pub supported_versions: VersionRange,
     pub process: PluginProcessOptions,
     pub event_capacity: usize,
+    /// Continuous business-idle requirement, enforced by capable Providers at admission.
+    pub release_control_idle_timeout: Duration,
 }
 
 impl Default for PluginManagerConfig {
@@ -95,6 +97,7 @@ impl Default for PluginManagerConfig {
             },
             process: PluginProcessOptions::default(),
             event_capacity: 256,
+            release_control_idle_timeout: Duration::from_secs(300),
         }
     }
 }
@@ -184,6 +187,7 @@ pub struct PluginManager {
 }
 
 mod heartbeat;
+mod release_control;
 mod import;
 mod runtime_inventory;
 pub use import::ProviderImportResult;
@@ -207,6 +211,10 @@ impl PluginManager {
         instances: ProviderInstanceRegistry,
         config: PluginManagerConfig,
     ) -> HostResult<Self> {
+        if !(1..=86400).contains(&config.release_control_idle_timeout.as_secs())
+            || config.release_control_idle_timeout.subsec_nanos() != 0 {
+            return Err(HostError::new("invalid_release_control_window", "release_control_idle_timeout must be 1..86400 whole seconds"));
+        }
         if device.identity().device_id != instances.device_id() {
             return Err(HostError::new(
                 "provider_host_device_mismatch",
@@ -700,6 +708,7 @@ impl PluginManager {
             exit,
             diagnostics,
         );
+        self.spawn_release_control(plugin_id.to_string(), generation, Arc::downgrade(&process));
         if self.inner.heartbeat_enabled.load(Ordering::SeqCst) {
             self.spawn_heartbeat(plugin_id.to_string(), generation, Arc::downgrade(&process));
         }

@@ -2,7 +2,7 @@
 
 ## 规则
 
-共享 start_runtime_owned 是 Codex 唯一 App Server 创建路径，由 instance.start（含 SDK 自动空闲重启）、手动释放后的自动重启和显式 acquire 调用。spawn 前登记 generation 占位，spawn 后立即登记真实 session，initialize/discovery 在锁外等待；stop/fail/shutdown 先取消并取走当前代的槽，等 spawn 收敛并回收进程后再发布 stopped。
+共享 start_runtime_owned 是 Codex 唯一 App Server 创建路径，由 instance.start、Host instance.releaseControl 触发的空闲重启、手动释放后的自动重启和显式 acquire 调用。spawn 前登记 generation 占位，spawn 后立即登记真实 session，initialize/discovery 在锁外等待；stop/fail/shutdown 先取消并取走当前代的槽，等 spawn 收敛并回收进程后再发布 stopped。
 
 ## 适用场景
 

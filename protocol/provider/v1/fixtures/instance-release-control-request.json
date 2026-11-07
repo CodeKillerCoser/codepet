@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": "release-1",
+  "method": "instance.releaseControl",
+  "params": {
+    "route": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work"
+    },
+    "idleTimeoutSeconds": 300
+  }
+}

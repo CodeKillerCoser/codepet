@@ -39,7 +39,7 @@ Provider crate 的生产依赖只包含生成的 Provider SDK 和 Server adapter
 
 ### 生命周期与进程树
 
-实例继续只持有一个 OpenCode Server，多会话共享。公共 Provider SDK 心跳只表达连通性，不因手机离线或心跳过期停止任务。OpenCode 沿用 SDK 默认 `idle_timeout=None`，不参与 Codex 专用的空闲回收/重启，启动后保持 Server 就绪。页面退出不控制生命周期；显式 stop/shutdown 和真实 IPC 退出仍回收自有 Server。两段心跳、状态归属及 Host 目录分组见 [连接架构](remote-and-provider-connections.md)。三个内置 Provider 的 Host 集成测试覆盖连接及正常停止路径。
+实例继续只持有一个 OpenCode Server，多会话共享。公共 Provider SDK 心跳只表达连通性，不因手机离线或心跳过期停止任务。OpenCode 不声明 `instance.releaseControl`，Host 不向它调度释放，不参与 Codex 专用的空闲回收/重启，启动后保持 Server 就绪。页面退出不控制生命周期；显式 stop/shutdown 和真实 IPC 退出仍回收自有 Server。两段心跳、状态归属及 Host 目录分组见 [连接架构](remote-and-provider-connections.md)。三个内置 Provider 的 Host 集成测试覆盖连接及正常停止路径。
 
 Server startup 带当前 attempt/generation 的取消检查；stop/shutdown 使 attempt 失效，健康检查轮询会停止并回收尚未登记的 child。spawn blocking task 在返回前登记 session，模型、账号、用量和版本在 Starting 期间并行探测，汇总后一次发布 Ready，stop 仍能找到并关闭 Server，并使旧探测 epoch 失效；旧 future 不得覆盖新代状态。`cancelling_start_before_health_or_during_discovery_cannot_orphan_server` 覆盖这两个窗口，断言 PID 退出且无晚到 Ready。
 

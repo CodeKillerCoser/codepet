@@ -16,7 +16,7 @@
 
 ## 现状理解
 
-三个内置 Provider 共用 Rust SDK 的 mux、活动投影与空闲回收器，并发布标准 turn/approval 事件。运行实例各自管理原生 session generation，负责拒绝旧代事件。SDK 不直接访问 Codex 内部 active turn 槽。
+三个内置 Provider 共用 Rust SDK 的 mux 与活动投影，并发布标准 turn/approval 事件；Host 仅向声明 instance.releaseControl 的 Codex 调度空闲释放。运行实例各自管理原生 session generation，负责拒绝旧代事件。SDK 不直接访问 Codex 内部 active turn 槽。
 
 ## 实现路径
 

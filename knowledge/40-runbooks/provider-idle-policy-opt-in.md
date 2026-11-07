@@ -1,5 +1,7 @@
 # 默认空闲回收误停 Claude 与 OpenCode
 
+> 历史修复记录：本文记录 ad5c0f6 的 SDK opt-in 过渡方案。2026-11-08 用户进一步要求迁至 Host，当前实现见 [Host release-control 调度](../10-architecture/host-provider-release-control.md)；下文的 idle_timeout / idle.rs 不再是现行接口。
+
 ## 现象
 
 2026-11-08，用户补充另一台电脑上 Claude/OpenCode 可以启动，但过一会自动停止；同时明确空闲重启是 Codex 会话锁适配策略，其他 Provider 不应参与。

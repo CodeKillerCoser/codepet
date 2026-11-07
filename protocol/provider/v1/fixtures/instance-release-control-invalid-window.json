@@ -1,0 +1,8 @@
+{
+  "route": {
+    "deviceId": "device-macbook-1",
+    "providerPluginId": "dev.codepet.codex",
+    "providerInstanceId": "codex-work"
+  },
+  "idleTimeoutSeconds": 0
+}

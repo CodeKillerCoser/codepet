@@ -298,5 +298,21 @@
     "kind": "type",
     "name": "UsageQueryRequest",
     "valid": false
+  },
+  {
+    "file": "instance-release-control-request.json",
+    "kind": "request",
+    "name": "instance.releaseControl"
+  },
+  {
+    "file": "instance-release-control-response.json",
+    "kind": "response",
+    "name": "instance.releaseControl"
+  },
+  {
+    "file": "instance-release-control-invalid-window.json",
+    "kind": "type",
+    "name": "InstanceReleaseControlRequest",
+    "valid": false
   }
 ]

@@ -1852,6 +1852,35 @@ impl Provider for CodexProvider {
         Box::pin(async move { self.start_runtime(self.instance(&request.route)?, false).await })
     }
 
+    fn instance_release_control<'a>(&'a self, request: codepet_provider_sdk::InstanceReleaseControlRequest)
+        -> ProtocolFuture<'a, codepet_provider_sdk::InstanceReleaseControlResponse> {
+        Box::pin(async move {
+            use codepet_provider_sdk::{InstanceReleaseControlOutcome as Outcome, InstanceReleaseControlResponse};
+            let runtime = self.instance(&request.route)?;
+            // The SDK holds exclusive request admission and verifies the full idle window.
+            // This adapter check also protects native activity which has not yet emitted events.
+            let _release = runtime.release_transition.lock().await;
+            {
+                let state = lock(&runtime.mutable);
+                if self.shutdown.load(Ordering::SeqCst) || state.destroyed || state.status != InstanceStatus::Ready {
+                    return Ok(InstanceReleaseControlResponse { outcome: Outcome::Unavailable });
+                }
+                if !state.pending_approvals.is_empty() || state.executions.values().any(|slot| match &*lock(&slot.state) {
+                    ExecutionSlotState::Creating(_) => true,
+                    ExecutionSlotState::Ready(execution) => execution.active_turn_id.is_some(),
+                    _ => false,
+                }) {
+                    return Ok(InstanceReleaseControlResponse { outcome: Outcome::Busy });
+                }
+            }
+            runtime.stop().await?;
+            // No conversation acquire/resume: the replacement only restores service availability.
+            self.start_runtime(runtime.clone(), false).await.map_err(|error| protocol_error(
+                "release_control_restart_failed", format!("Control released, but clean runtime restart failed: {}", error.message), true))?;
+            Ok(InstanceReleaseControlResponse { outcome: Outcome::Released })
+        })
+    }
+
     fn instance_stop<'a>(
         &'a self,
         request: InstanceStopRequest,
