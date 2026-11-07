@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import base64
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 import os
 from pathlib import Path
@@ -105,6 +105,8 @@ class SigningTest(unittest.TestCase):
             self.assertEqual(signing.verify(Path("fixture.app"), identity, "com.codepet.desktop"), requirement)
             requirement = f'designated => identifier "com.codepet.desktop" and anchor = H"{identity}"'
             self.assertEqual(signing.verify(Path("fixture.app"), identity, "com.codepet.desktop"), requirement)
+            requirement = f'designated => identifier "com.codepet.desktop" and certificate root = H"{identity.lower()}"'
+            self.assertEqual(signing.verify(Path("fixture.app"), identity, "com.codepet.desktop"), requirement)
             with self.assertRaisesRegex(ValueError, "pinned certificate"):
                 signing.verify(Path("fixture.app"), "B" * 40, "com.codepet.desktop")
             requirement = 'designated => identifier "com.codepet.desktop" and certificate leaf = H"' + "B" * 40 + '"'
@@ -125,6 +127,14 @@ class SigningTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "120-second") as error:
                 signing.run(["security", "import", "file.p12", "-P", "secret"])
             self.assertNotIn("secret", str(error.exception))
+
+    def test_public_verification_failure_reports_the_reason(self):
+        diagnostics = StringIO()
+        with patch.object(signing.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, b"", b"fixture.app: No such file or directory")), \
+                redirect_stderr(diagnostics):
+            with self.assertRaisesRegex(RuntimeError, "public verification"):
+                signing.run(["codesign", "--verify", "fixture.app"], public_errors=True)
+        self.assertIn("No such file or directory", diagnostics.getvalue())
 
     def test_generated_archive_roundtrip_and_existing_identity_preserved(self):
         with tempfile.TemporaryDirectory() as temporary, redirect_stdout(StringIO()):

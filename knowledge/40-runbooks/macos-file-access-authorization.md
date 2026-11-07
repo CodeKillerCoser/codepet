@@ -4,7 +4,7 @@
 
 2026-11-07，用户反馈通过 Code Pet 使用 Agent 访问 Documents、Downloads 时出现授权弹窗。本轮检查当前安装包、源码和系统设置，未主动触发目录访问或更改授权；未复现同一版本对同一目录重复弹窗。
 
-## 证据
+## 修改前的证据
 
 - `sw_vers`：macOS 27.0，26A428。运行进程来自 `/Applications/Code Pet.app/Contents/MacOS/code-pet`；Info.plist 版本为 `0.3.9-beta+4bda6b3`，标识为 `com.codepet.desktop`。
 - 系统设置 → 隐私与安全 → 文件与文件夹 → Code Pet：文稿、下载开关均为 on；完全磁盘访问权限页面没有 Code Pet 条目。这是当前 UI 状态，不能据此推断此前每次弹窗的授权结果。
@@ -21,9 +21,9 @@
 - `crates/providers/codepet-provider-codex/src/provider.rs::create_managed_worktree`：Git 仓库探测仍使用同步 `output()`；授权等待可能表现为上层请求超时，不能直接认定项目损坏。
 - macOS 打包配置：临时签名的 cdhash 随构建变化，需要验证替换安装后的授权稳定性。
 
-## 当前判断与已排除方向
+## 诊断判断与已排除方向
 
-访问受保护目录时由 macOS 按需处理文件夹授权，与用户描述相符。Documents 和 Downloads 属于不同授权类别，分别提示并不表示重复授权故障。当前实现缺少应用层提前解释、失败反馈和设置入口。
+访问受保护目录时由 macOS 按需处理文件夹授权，与用户描述相符。Documents 和 Downloads 属于不同授权类别，分别提示并不表示重复授权故障。修改前的实现缺少应用层提前解释、失败反馈和设置入口。
 
 完整磁盘访问是另一个权限类别，需要用户在系统设置明确授予；仅访问项目所在 Documents/Downloads，不能据此认定必须开启完整磁盘访问。缺少 usage description 也不代表系统不会弹窗，历史日志已有反证。
 
@@ -40,7 +40,9 @@
 
 ## 已执行与未知项
 
-已执行 `git status --short`、源码检索、`ps -axo pid,ppid,comm`、`sw_vers`、Info.plist 读取、codesign 检查及系统设置只读检查；通过 GitHub connector 读取远端配置与实际 job 日志，`gh run list` 核对最近运行，`git diff --check` 检查文档修改。未修改功能代码或权限，未运行编译测试。尚未验证重复弹窗、签名升级迁移或历史 Worktree 请求在授权后的恢复情况，也未验证用户另行保存的证书是否存在。
+初次排查执行了 `git status --short`、源码检索、`ps -axo pid,ppid,comm`、`sw_vers`、Info.plist 读取、codesign 检查及系统设置只读检查；通过 GitHub connector 读取远端配置与实际 job 日志，`gh run list` 核对最近运行。
+
+随后按用户要求新增设置 → 权限 → 完全磁盘访问入口和操作引导，原生接口只打开系统设置、定位当前 App，不写入授权状态。实现和构建、组件、原生测试结果见 [设置模型](../30-domains/settings-and-personalization/settings-model.md)。固定开发证书和流水线改动见 [固定开发签名](macos-stable-development-signing.md)。未更改本机文件权限，未替换当前安装包；重复弹窗、签名升级迁移和历史 Worktree 请求授权后的恢复仍需通过实际 App 验收。
 
 平台依据：[Apple 文件访问控制](https://support.apple.com/en-ie/guide/security/secddd1d86a6/web)、[文件与文件夹权限设置](https://support.apple.com/en-au/guide/mac-help/mchld5a35146/mac)、[文稿目录用途说明](https://developer.apple.com/documentation/bundleresources/information-property-list/nsdocumentsfolderusagedescription)。
 
