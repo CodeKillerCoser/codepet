@@ -314,6 +314,12 @@ fn perform_on_main(handle: &AppHandle, action: Action) -> Result<View, String> {
                 return Err("invalid pet layout".into());
             }
             if layout.revision == s.revision {
+                let available = s.view();
+                if layout.width > available.available_width + 1.
+                    || layout.height > available.available_height + 1.
+                {
+                    return Err("pet layout exceeds current display".into());
+                }
                 s.layout = Some(layout);
             }
         }
@@ -568,6 +574,8 @@ mod tests {
         assert!(s.revision > old);
         assert!(s.display().unwrap().work.contains(s.anchor.unwrap()));
         assert!(!s.view().can_dock);
+        assert_eq!(s.view().available_width, 960.);
+        assert_eq!(s.view().available_height, 720.);
     }
     #[test]
     fn saves_only_surface_preferences_as_normalized_coordinates() {

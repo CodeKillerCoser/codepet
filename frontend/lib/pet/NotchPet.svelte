@@ -6,6 +6,8 @@
   import type { AppSettings, TaskStatus } from '../types';
   import type { PetData } from './model';
   import type { SurfaceView } from './surface';
+  import type { petSizing } from './sizing';
+  export let sizing: ReturnType<typeof petSizing>;
   import type { PresentationEvent } from './presentation';
   export let data: PetData;
   export let settings: AppSettings | null;
@@ -38,12 +40,12 @@
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <section class="notch-panel dark theme-dark" class:expanded aria-label="顶部任务面板"
-  style={`--notch-max-height: ${Math.max(100, Math.min(560, surface.availableHeight))}px`}
+  style={`--notch-max-height: ${sizing.expandedHeight}px`}
   on:mouseenter={() => dispatch({ type: 'enter' })} on:mouseleave={() => dispatch({ type: 'leave' })}
   on:focusin={focusIn} on:focusout={focusOut} on:keydown={keyDown}>
   <div class="notch-header">
     <PetAvatar petId={settings?.pet.selectedPetId ?? 'default'} kind={settings?.pet.kind} imagePath={settings?.pet.imagePath}
-      portrait interactive label="桌宠头像" status={avatarStatus} onDrag={dragWindow} dragging={surface.dragging} />
+      portrait width={sizing.portraitWidth} interactive label="桌宠头像" status={avatarStatus} onDrag={dragWindow} dragging={surface.dragging} />
     <button class="notch-summary" bind:this={header} type="button" aria-expanded={expanded} aria-controls="notch-details"
       aria-label={expanded ? '收起任务面板' : '展开任务面板'}
       title={data.error || (latest ? `${petStatusLabel(latest.status)} · ${latest.title}` : '就绪')}
@@ -102,7 +104,7 @@
   .notch-panel::before { left: -16px; mask-image: radial-gradient(circle at 0 100%, transparent 15.5px, black 16px); }
   .notch-panel::after { right: -16px; mask-image: radial-gradient(circle at 100% 100%, transparent 15.5px, black 16px); }
   .notch-panel.expanded { width: 100%; border-radius: 0 0 28px 28px; }
-  .notch-header { height: 44px; padding: 6px 12px 6px 8px; display: flex; gap: 6px; align-items: center; }
+  .notch-header { height: var(--notch-header-height); padding: 6px 12px 6px 8px; display: flex; gap: 6px; align-items: center; }
   button { color: inherit; border: 0; background: transparent; }
   button:focus-visible, .notch-task-list:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; border-radius: 6px; }
   .notch-summary { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1; text-align: left; padding: 4px 0; font-size: 12px; }
@@ -111,7 +113,7 @@
   .status-dot.attention { background: var(--amber-9); }
   .status-dot.error, .connection-error { color: var(--red-11); }
   .status-dot.error { background: var(--red-9); }
-  .latest-title { max-width: 144px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+  .latest-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
   .expanded .notch-header { width: 100%; padding-left: 16px; padding-right: 16px; }
   .expanded .latest-title { max-width: none; flex: 1; }
   .task-count { color: var(--gray-11); font-size: 11px; font-variant-numeric: tabular-nums; flex: none; }
@@ -119,8 +121,8 @@
   .notch-summary :global(.chevron.open) { transform: rotate(180deg); }
   .panel-actions { display: flex; flex: none; gap: 2px; }
   .panel-actions button { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px; color: var(--gray-10); }
-  .notch-details { padding-bottom: 14px; animation: reveal 140ms ease-out; }
-  .notch-task-list { max-height: calc(var(--notch-max-height) - 58px); overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--gray-7) transparent; padding: 10px 24px 2px; }
+  .notch-details { display: flex; flex-direction: column; max-height: calc(var(--notch-max-height) - var(--notch-header-height)); padding-bottom: 14px; animation: reveal 140ms ease-out; }
+  .notch-task-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--gray-7) transparent; padding: 10px 24px 2px; }
   .notch-task { position: relative; display: flex; gap: 14px; align-items: flex-start; padding: 8px 0; }
   .provider-icon { width: 28px; height: 32px; flex: none; display: grid; place-items: center; color: var(--gray-11); }
   .provider-icon img { width: 26px; height: 26px; object-fit: contain; border-radius: 6px; }
@@ -147,6 +149,7 @@
   .empty-state { display: grid; justify-items: center; gap: 10px; padding: 28px 0; color: var(--gray-11); font-size: 11px; }
   .empty-state strong { color: var(--gray-12); font-size: 13px; font-weight: 500; }
   .connection-error, .action-notice { margin: 8px 16px; font-size: 12px; }
+  .action-notice { flex: none; }
   @keyframes pulse { 50% { opacity: .45; } }
   @keyframes reveal { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { .notch-details, .status-dot.busy { animation: none; } }

@@ -63,9 +63,10 @@ impl Layout {
             .iter()
             .all(|x| x.is_finite())
             && self.width >= 40.
-            && self.width <= 1200.
+            // Numeric sanity only; the owner checks against the current display.
+            && self.width <= 32768.
             && self.height >= 20.
-            && self.height <= 4000.
+            && self.height <= 32768.
             && self.pet_width > 0.
             && self.pet_width <= self.width
             && self.pet_height > 0.
@@ -248,6 +249,12 @@ mod tests {
     }
     #[test]
     fn rejects_invalid_measurements() {
+        // A screen-relative panel on a large logical display can exceed 1200px.
+        assert!(Layout {
+            width: 1690.,
+            height: 1296.,
+            ..layout()
+        }.valid());
         assert!(!Layout {
             height: f64::NAN,
             ..layout()

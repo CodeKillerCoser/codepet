@@ -32,7 +32,7 @@ const qa = {
   },
   move: (x: number, y: number) => { native.position = { x, y };
     if (lastLayout) anchor = { x: x + lastLayout.anchor.x * native.scale, y: y + lastLayout.anchor.y * native.scale };
-    qa.surface = { ...qa.surface, availableHeight: native.monitors[0].workArea.size.height / native.scale, revision: qa.surface.revision + 1 };
+    qa.surface = { ...qa.surface, availableWidth: native.monitors[0].workArea.size.width / native.scale, availableHeight: native.monitors[0].workArea.size.height / native.scale, revision: qa.surface.revision + 1 };
     fire('pet-surface-changed', qa.surface); },
   tasks: [] as { id: string; title: string; status: string; providerId: string; updatedAt: number }[],
   settings,

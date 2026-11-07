@@ -17,6 +17,7 @@
   import { isPointOnOpaquePetImage } from './lib/pet/hitTest';
   import { taskStatusForPet } from './lib/pet/animation';
   import { PetSurfaceController } from './lib/pet/surface';
+  import { petSizing } from './lib/pet/sizing';
   import { themeClassNames } from './lib/theme';
   import type { AppSettings } from './lib/types';
   let settings: AppSettings | null = null;
@@ -48,6 +49,7 @@
   $: petWindowOpacity = clampPetOpacity(settings?.pet.opacity);
   $: petDragging = surface.dragging;
   $: railHeight = (2 + Number(activities.length > 0) + Number(activities.some(a => a.status === 'completed')) + Number(surface.canDock)) * 28;
+  $: sizing = petSizing(surface, settings?.pet.scale, railHeight);
   $: if (ready) surfaceController?.schedule();
   function dispatch(event: PresentationEvent) {
     presentation = present(presentation, event);
@@ -215,14 +217,14 @@
 <main bind:this={petWindowElement}
   class={`pet-window ${themeClass}${devMode ? " dev-mode" : ""}`}
   class:docked={surface.mode === 'docked'} class:snap-candidate={surface.snapCandidate}
-  style={`--pet-window-opacity: ${petWindowOpacity}; --pet-rail-height: ${railHeight}px; --notch-width: ${Math.min(presentation.expanded ? 640 : 280, surface.availableWidth ?? 640)}px;`}
+  style={`--pet-window-opacity: ${petWindowOpacity}; --pet-rail-height: ${railHeight}px; --pet-desktop-width: ${sizing.desktopWidth}px; --pet-stage-height: ${sizing.stageHeight}px; --notch-header-height: ${sizing.headerHeight}px; --notch-width: ${presentation.expanded ? sizing.expandedWidth : sizing.collapsedWidth}px;`}
   on:dblclick={preventPetWindowDoubleClick}>
   <div class="pet-content" bind:this={petContentElement}>
     {#if surface.mode === 'docked'}
-      <NotchPet data={$petData} {settings} {avatarStatus} {surface} expanded={presentation.expanded}
+      <NotchPet data={$petData} {settings} {avatarStatus} {surface} {sizing} expanded={presentation.expanded}
         {dispatch} {dragWindow} {toggleSurface} {openMain} {dismissActivity} {actionNotice} />
     {:else}
-      <DesktopPet {activities} sources={$petData.sources} gatewayError={$petData.error} {settings} {avatarStatus} {surface}
+      <DesktopPet {activities} sources={$petData.sources} gatewayError={$petData.error} {settings} {avatarStatus} {surface} {sizing}
         tasksCollapsed={presentation.tasksCollapsed} bind:expandedGroups {actionNotice}
         {dismissActivity} {clearCompletedActivities} {dragWindow} {toggleSurface} {toggleTasks} {openMain} />
     {/if}

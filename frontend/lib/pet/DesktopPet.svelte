@@ -8,6 +8,8 @@
   import type { PetTask, PetSource } from '../petGateway';
   import type { ActivityGroupId } from '../activityGroups';
   import type { SurfaceView } from './surface';
+  import type { petSizing } from './sizing';
+  export let sizing: ReturnType<typeof petSizing>;
   export let settings: AppSettings | null;
   export let activities: PetTask[];
   export let sources: PetSource[];
@@ -32,7 +34,7 @@
   $: hasActivities = activities.length > 0;
   $: hasCompletedActivities = activities.some(a => a.status === 'completed');
   $: runningBubble = settings?.appearance.runningBubble ?? defaultRunningBubbleSettings;
-  $: activityStackHeightLimit = Math.max(0, Math.min(368, surface.availableHeight - 190));
+  $: activityStackHeightLimit = sizing.desktopListHeight;
   $: topActivityId = activities[0]?.id ?? null;
   $: if (activityStack && topActivityId !== lastTopActivityId) { lastTopActivityId = topActivityId; void tick().then(() => { if (activityStack) activityStack.scrollTop = 0; }); }
   onDestroy(clearWhipTimer);
@@ -69,7 +71,7 @@
       <PetActivityGroups {activities} {sources} {runningBubble} bind:expanded={expandedGroups} dismiss={dismissActivity} />
     </section>
   {/if}
-  <section class="pet-stage" aria-label="拖动移动桌宠">
+  <section class="pet-stage" aria-label="拖动移动桌宠" style={`--pet-actor-width: ${sizing.petWidth}px`}>
     <div class="pet-action-rail">
       {#if surface.canDock}
         <button class="pet-action-button dock-button" type="button"
@@ -188,7 +190,7 @@
       kind={settings?.pet.kind}
       imagePath={settings?.pet.imagePath}
       status={avatarStatus}
-      scale={Math.min(Math.max(settings?.pet.scale ?? 3, 2), 4) * 0.9}
+      width={sizing.petWidth}
     />
     {#if surface.snapCandidate}
       <span class="pet-snap-hint" aria-live="polite">{surface.physicalNotch ? '松开吸附到刘海' : '松开吸附到顶部'}</span>
@@ -199,7 +201,7 @@
   </section>
 
 <style>
-  .pet-stage { min-height: max(104px, var(--pet-rail-height)); }
+  .pet-stage { min-height: var(--pet-stage-height); }
   .pet-snap-hint { position: absolute; bottom: 0; white-space: nowrap; background: var(--pet-pill-bg); color: var(--pet-message); border-radius: 12px; padding: 3px 8px; font-size: 11px; pointer-events: none; }
   .dock-button span { font-size: 17px; line-height: 1; }
   .status-pill { cursor: default; }

@@ -31,17 +31,17 @@ try {
   await page.waitForSelector('.activity-group');
   await page.getByRole('button', { name: '吸附到刘海', exact: true }).click();
   await page.waitForSelector('.notch-panel'); await page.mouse.move(-20, -20);
-  await page.waitForFunction(() => innerHeight === 44);
+  await page.waitForFunction(() => innerHeight === 38);
   assert.equal(await page.locator('.pet-avatar.portrait').count(), 1);
   assert.equal(await page.locator('.pet-action-rail').count(), 0);
   assert.match(await page.locator('.latest-title').innerText(), /调整顶部/);
   assert.equal(await page.locator('.notch-task').count(), 0);
   assert.equal(await page.locator('.notch-panel').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)');
-  assert.ok(await page.evaluate(() => innerWidth <= 280));
+  assert.ok(await page.evaluate(() => innerWidth <= 200));
   assert.ok(await page.locator('.pet-avatar').evaluate(el => { const frame = el.querySelector('[data-pet-frame]').getBoundingClientRect(), box = el.getBoundingClientRect(); return frame.left >= box.left && frame.right <= box.right && frame.top >= box.top; }));
   await page.screenshot({ path: resolve(output, 'collapsed.png') });
   await page.locator('.notch-header').hover(); await page.waitForSelector('.notch-task');
-  await page.waitForFunction(() => innerHeight > 200 && innerWidth === 640);
+  await page.waitForFunction(() => innerHeight > 200 && innerWidth === 440);
   await page.locator('.notch-task').first().hover();
   await page.waitForTimeout(300); assert.equal(await page.locator('.notch-task').count(), 3);
   assert.ok(await page.locator('.notch-header').evaluate(el => Math.abs(el.getBoundingClientRect().width - el.closest('.notch-panel').getBoundingClientRect().width) < 1), 'expanded activity bar must span the same container as the list');
@@ -55,11 +55,11 @@ try {
   // A brief exit and reentry must cancel the delayed close.
   await page.mouse.move(-20, -20); await page.waitForTimeout(80); await page.locator('.notch-header').hover();
   await page.waitForTimeout(300); assert.equal(await page.locator('.notch-task').count(), 3);
-  await page.mouse.move(-20, -20); await page.waitForFunction(() => innerHeight === 44);
+  await page.mouse.move(-20, -20); await page.waitForFunction(() => innerHeight === 38);
   // Keyboard entry opens the same panel; Escape returns focus to the bar.
   await page.keyboard.press('Tab'); await page.waitForSelector('.notch-details');
   await page.getByRole('button', { name: '打开主窗口', exact: true }).focus();
-  await page.keyboard.press('Escape'); await page.waitForFunction(() => innerHeight === 44);
+  await page.keyboard.press('Escape'); await page.waitForFunction(() => innerHeight === 38);
   assert.equal(await page.getByRole('button', { name: '展开任务面板', exact: true }).evaluate(el => el === document.activeElement), true);
   await page.keyboard.press('Enter'); await page.waitForSelector('.notch-details');
   await page.getByRole('button', { name: '隐藏 完成窗口尺寸回归检查', exact: true }).click();
@@ -70,7 +70,7 @@ try {
   assert.equal(await page.locator('[data-asset-error]').count(), 0);
   await page.screenshot({ path: resolve(output, 'desktop.png') });
   await page.getByRole('button', { name: '吸附到刘海', exact: true }).click(); await page.waitForSelector('.notch-panel');
-  await page.mouse.move(-20, -20); await page.waitForFunction(() => innerHeight === 44);
+  await page.mouse.move(-20, -20); await page.waitForFunction(() => innerHeight === 38);
   // Portrait drag uses the same native transaction and restores the full character.
   await page.evaluate(() => { window.__petQa.manualDrag = true; });
   const portrait = await page.locator('.pet-avatar').boundingBox();
@@ -80,7 +80,7 @@ try {
   assert.equal(await page.locator('.activity-stack').count(), 0);
   await page.mouse.up(); await page.evaluate(() => window.__petQa.finishDrag(true));
   await page.waitForSelector('.notch-panel'); await page.mouse.move(-20, -20);
-  await page.waitForFunction(() => innerHeight === 44);
+  await page.waitForFunction(() => innerHeight === 38);
   // Narrow display, long text and many tasks still fit and scroll within the panel.
   await page.evaluate(() => {
     const q = window.__petQa;
@@ -98,6 +98,42 @@ try {
   assert.equal(await page.locator('.notch-header').evaluate(el => el.getBoundingClientRect().top), headerTop, 'activity bar must remain fixed while tasks scroll');
   await page.getByRole('button', { name: '切换为悬浮', exact: true }).focus();
   await page.screenshot({ path: resolve(output, 'narrow.png') });
+  // Native display changes must resize both views without using the old webview size.
+  const matrix = [];
+  for (const [width, height] of [[1024, 640], [1440, 860], [2560, 1440], [3840, 2160]]) {
+    await page.mouse.move(-20, -20);
+    await page.keyboard.press('Escape');
+    await page.evaluate(({ width, height }) => {
+      const q = window.__petQa;
+      q.native.scale = 1;
+      q.native.monitors = [{ name: 'Responsive', scaleFactor: 1, position: { x: 0, y: 0 }, size: { width, height }, workArea: { position: { x: 0, y: 0 }, size: { width, height } } }];
+      q.surface.availableWidth = width; q.surface.availableHeight = height;
+      q.finishDrag(true);
+    }, { width, height });
+    await page.waitForFunction(h => innerHeight === Math.round(Math.min(44, Math.max(36, 38 * Math.sqrt(h / 860)))), height);
+    assert.ok(await page.evaluate(w => innerWidth <= Math.round(Math.min(260, Math.max(160, 200 * Math.sqrt(w / 1440)))), width));
+    await page.locator('.notch-header').hover();
+    await page.waitForFunction(w => innerWidth === Math.round(Math.min(640, Math.max(340, 440 * Math.sqrt(w / 1440)))), width);
+    await page.keyboard.press('Tab');
+    assert.ok(await page.evaluate(h => innerHeight <= Math.min(h, 440) + 1, height));
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    const expandedSize = await page.evaluate(() => [innerWidth, innerHeight]);
+    await page.screenshot({ path: resolve(output, `screen-${width}-expanded.png`) });
+    await page.getByRole('button', { name: '切换为悬浮', exact: true }).click();
+    await page.waitForSelector('.pet-stage');
+    await page.waitForFunction(w => innerWidth === Math.round(Math.min(360, Math.max(240, 280 * Math.sqrt(w / 1440)))), width);
+    await page.waitForTimeout(200);
+    assert.ok(await page.evaluate(h => innerHeight <= Math.min(h, 440) + 1, height));
+    assert.ok(await page.locator('.pet-action-rail').evaluate(el => el.getBoundingClientRect().bottom <= innerHeight));
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    const desktopSize = await page.evaluate(() => [innerWidth, innerHeight]);
+    await page.screenshot({ path: resolve(output, `screen-${width}-desktop.png`) });
+    const count = await page.evaluate(() => window.__petQa.native.resizeCount);
+    await page.waitForTimeout(300);
+    assert.equal(await page.evaluate(() => window.__petQa.native.resizeCount), count, 'screen sizing must not feed back from viewport');
+    matrix.push({ screen: [width, height], expanded: expandedSize, desktop: desktopSize });
+  }
+  console.log('Responsive display matrix:', JSON.stringify(matrix));
   assert.deepEqual(errors, []);
-  console.log('Notch UI QA passed: compact/hover, leave delay, keyboard/Escape, shared dismissals, imported atlas, detach/redock, 280px width, capped scrolling and visible actions.');
+  console.log('Notch UI QA passed: compact/hover, leave delay, keyboard/Escape, shared dismissals, imported atlas, detach/redock, screen-relative widths/heights, capped scrolling and visible actions.');
 } finally { await browser?.close(); await new Promise(resolve => server.httpServer.close(resolve)); }

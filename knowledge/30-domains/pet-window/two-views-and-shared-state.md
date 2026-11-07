@@ -14,15 +14,15 @@
 
 - `frontend/lib/pet/model.ts`：两套 UI 共用一个 Svelte store、快照请求与关闭历史。按更新时间排序选出最新状态；断连时将活动任务标为 unknown；拒绝组件销毁后的迟到响应。每秒刷新仍由宿主启动，视图不自行请求 Gateway。宿主另读取并监听已有 Provider identity 信息（不触发运行时探测），统一将 `dev.codepet.*` 标识与 Pet source 短 ID 对齐，供图标与名称展示。
 - `frontend/lib/pet/presentation.ts`：纯状态转换管理展开、hover、键盘焦点、桌面任务收起；接收原生 Surface 状态，原生仍是吸附/悬浮/拖动事务的权威。切换模式清理临时展开，不清空任务。
-- `NotchPet.svelte`：收起条按内容宽度自适应，含装饰边距最多 280px，高 44px；头像、状态点、最新任务标题和数量同排。展开宽最多 640px，顶部当前活动栏与列表同宽、共用容器，只有下方任务区域滚动。两种宽度都受原生 availableWidth 限制。hover 或键盘进入展开，离开 240ms 后收起，重新进入取消收起，键盘焦点在面板内时保持展开。Escape 收起并将焦点移回状态条。
+- `NotchPet.svelte`：收起条按内容宽度自适应，最大宽度和条高由当前屏幕比例计算；头像、状态点、最新任务标题和数量同排。展开宽度由当前屏幕比例计算，顶部当前活动栏与列表同宽、共用容器，只有下方任务区域滚动。两种宽度都受原生 availableWidth 限制。hover 或键盘进入展开，离开 240ms 后收起，重新进入取消收起，键盘焦点在面板内时保持展开。Escape 收起并将焦点移回状态条。
 - `DesktopPet.svelte`：独立保留完整角色、分组气泡、操作栏和鞭子交互；任务折叠与分组展开状态由宿主保存，切换 UI 后可恢复。
 - `PetApp.svelte`：装配两套具体组件，处理设置、共享订阅、计时器与原生命令，不再包含两套视图的具体布局。
-- `PetAvatar.svelte`：复用相同资源加载器与动画帧，portrait 将完整帧缩放到 48px 宽，在 48×32px 视口内显示上部，取消旧的左右裁切和负向顶部偏移，给耳朵与脸部留空间。静态图、8×9 图集和错误回退沿用现有能力；没有新 UI 接口。
+- `PetAvatar.svelte`：复用相同资源加载器与动画帧，portrait 按状态条高缩放完整帧，在同宽、2/3 宽高比的视口内显示上部，取消旧的左右裁切和负向顶部偏移，给耳朵与脸部留空间。静态图、8×9 图集和错误回退沿用现有能力；没有新 UI 接口。
 - `pet/surface/geometry.rs`：停靠窗口以整个面板居中，头像锚点仍负责拖动抓取与浮窗尺寸变化。否则左侧头像会把整个顶部面板推偏。
 
 顶部列表对标 Ping Island：左侧真实 Provider 图标，右侧单行标题、Agent 名称胶囊与最多两行消息。没有运行时长数据，不显示运行时长；时间取 `updatedAt`，作为最近更新时间（HH:mm）展示，并提供完整日期提示；运行状态独立显示。移除分隔线、进度条、列表标题和底部栏。悬浮/主窗口入口收进固定顶栏的图标按钮。图标缺失或加载失败时使用 Plug 图标，不杜撰品牌素材。顶部两侧使用 16px 外侧圆角，原生 frame 为装饰各留 16px 边距。它不沿用桌面气泡的颜色、自定义透明度和叠层，固定使用深色主题 token 与黑色背景。真实任务区域内部滚动，收起不保留透明占位。
 
-原生面板居中语义与旧 API 5 的角色居中不同，当前 webcontent 契约升为 6，防止新 UI 被装进旧预览二进制后整体偏移；这次需更新完整应用。
+原生面板居中语义与旧 API 5 的角色居中不同，当时 webcontent 契约升为 6，防止新 UI 被装进旧预览二进制后整体偏移；这次需更新完整应用。
 
 ## 风险与验证
 
@@ -89,3 +89,23 @@ DMG SHA-256：`5566a77de0d407c61a8a5aeb088117b282606256d182ff9223ce7e7555418ad2`
 - 旧模块与函数引用检索未发现生产消费者；保留的 `PetEvent.shouldRing` 是主窗口事件协议字段，不是旧通知函数。
 
 清理没有改变已验收的面板布局和原生拖动逻辑；物理刘海、混合 DPI 与其他平台的实机覆盖仍沿用上面的未知项。本次生成前端构建用于验证，没有再次制作或安装完整应用。
+
+
+## 屏幕比例尺寸修订
+
+固定 280/640/320 宽度和 560/368 高度上限已改为当前屏幕比例，统一计算在 `pet/sizing.ts`，未新增 UI 抽象层。具体比例、可读下限与 DPI 约定见 [布局与尺寸](layout-and-sizing.md)。API 7 放开旧原生 1200 宽度限制，同时按当前显示工作区校验；旧 API 6 应用不能仅替换本版前端。
+
+相关模块：宿主传入 sizing；两套 UI 消费各自尺寸；PetAvatar 接受计算后的帧宽以保留自定义图集比例；原生继续负责屏幕选择、DPI 和位置，不把前端 viewport 当作屏幕。窗口 QA 的模拟显示尺寸与真实视口分开，避免旧测试只改变视口却没切屏。
+
+风险与验证：窗口尺寸自反馈用稳定 resize 次数断言；负坐标与 125% DPI 用窗口 QA 和 Rust 单测；小屏动作/焦点与大屏布局用顶部 QA 的 1024×640、1440×860、2560×1440、3840×2160 逻辑工作区矩阵。实测展开宽分别 451、634、1126、1690，浮窗宽 280、317、563、845；内容较少时仍收缩高度。物理刘海和真实多屏拖动仍需用户设备验收，模拟器结果不能替代。
+
+验证命令：`npx --no-install vitest run frontend`（33 文件/170 项）、`TAURI_CONFIG='{"app":{"macOSPrivateApi":false}}' cargo test --manifest-path src-tauri/Cargo.toml --lib pet::surface`（10 项）、`npm run protocol:check`（22 项）、`TMPDIR=/private/tmp npm run test:webcontent`（11 项）。UI 使用 `CODEPET_QA_NODE_MODULES=/tmp/codepet-pet-qa/node_modules` 运行 `pet_notch_ui_qa.mjs`、`pet_window_frame_ui_qa.mjs`、`pet_module_ui_qa.mjs`；最后的鞭子溢出修订另跑角色 QA 与 40 项相关单测通过。完整 app 为本地 ad-hoc 签名预览构建，不生成自动更新签名包。
+
+交付 `0.3.9-beta+responsive.20261108.1`（macOS arm64、API 7）位于 `/Users/wangxin/Downloads/codepet-responsive-preview-20261108/Code Pet.app`。完整应用构建通过，`codesign --verify --deep --strict` 与内置 16 个 webcontent 文件哈希校验通过。构建显式使用 `bundle.createUpdaterArtifacts=false`，因为本地预览不具备发布用 updater 私钥；没有发布自动更新。Tauri CLI 临时添加的全局 macOS feature 已恢复，保留原有平台条件依赖。本轮没有重启当前运行的应用，需运行完整预览版生效。
+
+
+## 大屏占比过大后的修正（responsive .2）
+
+用户指出 44% 展开宽度与 60% 高度预算在 4K 上过大。原始比例方案被新的缓慢增长策略替代：屏幕尺寸相对 1440×860 的平方根缩放，加可读下限和紧凑上限；展开最大 640×440，浮窗最大宽 360，收起最大宽 260，条高最高 44（均为逻辑单位）。内容仍自然收缩，不填满高度预算。具体基准见布局与尺寸文档；前面的矩阵属于 .1 历史验证。API 7 不变，本次仅布局策略变化。
+
+修订验收：sizing 4 项单测、顶部多屏 QA 与窗口 QA 通过。完整应用 `0.3.9-beta+responsive.20261108.2` 位于 `/Users/wangxin/Downloads/codepet-responsive-preview-20261108-2/Code Pet.app`，签名与内置 16 个资源哈希验证通过。API 7 未变；本轮未重启用户正在运行的应用。

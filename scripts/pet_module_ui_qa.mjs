@@ -72,7 +72,10 @@ try {
     await page.waitForTimeout(100);
     for (const width of [280, 320, 360]) {
       await page.setViewportSize({ width, height: 600 });
-      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      await page.evaluate(width => { const q = window.__petQa; q.surface.availableWidth = width; q.finishDrag(false); }, width);
+      await page.waitForFunction(() => document.querySelector('.pet-window').getBoundingClientRect().width <= innerWidth);
+      await page.waitForTimeout(100);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), JSON.stringify(await page.evaluate(() => ({ viewport: innerWidth, scroll: document.documentElement.scrollWidth, overflow: [...document.querySelectorAll('*')].filter(el => el.getBoundingClientRect().right > innerWidth + 1).slice(0, 12).map(el => ({ tag: el.tagName, cls: el.className, right: el.getBoundingClientRect().right })) }))));
       const avatar = await page.locator('.pet-avatar').boundingBox();
       const rail = await page.locator('.pet-action-rail').boundingBox();
       assert.ok(avatar.x >= 0 && avatar.x + avatar.width <= width && rail.x + rail.width <= width);

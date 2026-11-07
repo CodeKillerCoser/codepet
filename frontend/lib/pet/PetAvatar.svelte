@@ -9,6 +9,7 @@
   export let imagePath: string | null | undefined = null;
   export let status: TaskStatus = "idle";
   export let scale = 3;
+  export let width: number | undefined = undefined;
   export let label = "桌宠";
   export let interactive = false;
   export let animated = true;
@@ -31,7 +32,9 @@
   let press: { x: number; y: number; id: number; element: HTMLElement } | null = null;
   let dragged = false;
 
-  $: size = petSize(portrait ? 1.5 : scale);
+  $: size = width && Number.isFinite(width) && width > 0
+    ? { width, height: Math.round(width * atlas.frameHeight / atlas.frameWidth) }
+    : petSize(portrait ? 1.5 : scale);
   $: if (dragging && press) { dragged = true; releasePress(); }
   $: action = actionFor(status, dragging ? 'drag-right' : interaction, startled);
   $: emotion = startled || status === "failed" ? "!" : status === "waiting-approval" ? "?" : interaction === "pet" ? "♡" : status === "done" ? "✓" : "";
@@ -168,7 +171,7 @@
 
 <style>
   .pet-avatar { position: relative; display: block; flex: none; width: var(--pet-width); height: var(--pet-height); padding: 0; border: 0; background: transparent; color: var(--pet-message); isolation: isolate; }
-  .portrait { width: 48px; height: 32px; overflow: hidden; }
+  .portrait { height: calc(var(--pet-width) * 2 / 3); overflow: hidden; }
   .portrait .pet-frame { width: var(--pet-width); height: var(--pet-height); left: 0; top: 0; filter: none; }
   .portrait .pet-emotion { display: none; }
   .interactive { cursor: grab; pointer-events: auto; touch-action: none; }
