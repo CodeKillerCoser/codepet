@@ -65,6 +65,39 @@ use codepet_provider_sdk::ProviderEventSink;
 const DEFAULT_CONVERSATION_GET_MESSAGE_LIMIT: u64 = 40;
 const MAX_CONVERSATION_GET_MESSAGE_LIMIT: u64 = 100;
 
+#[derive(Deserialize)]
+struct NativePrompted {
+    #[serde(rename = "sessionID")]
+    session_id: String,
+    #[serde(rename = "messageID")]
+    message_id: String,
+    prompt: OpenCodePrompt,
+}
+
+#[derive(Deserialize)]
+struct NativeInboxRef {
+    #[serde(rename = "sessionID")]
+    session_id: String,
+    #[serde(rename = "inboxID")]
+    inbox_id: String,
+}
+
+#[derive(Deserialize)]
+struct NativeInboxEnqueued {
+    #[serde(rename = "sessionID")]
+    session_id: String,
+    #[serde(rename = "inboxID")]
+    inbox_id: String,
+    item: NativeInboxItem,
+}
+
+#[derive(Deserialize)]
+struct NativeInboxItem {
+    #[serde(rename = "type")]
+    kind: String,
+    payload: Value,
+}
+
 #[derive(Clone)]
 struct PendingApproval {
     session_generation: String,
@@ -97,6 +130,7 @@ struct InstanceMutable {
     sessions: HashMap<String, OpenCodeSession>,
     active_turns: HashMap<String, ActiveTurnState>,
     pending_approvals: HashMap<String, PendingApproval>,
+    pending_native_inputs: HashMap<(String, String), String>,
     metadata_epoch: u64,
     metadata_task: Option<tokio::task::JoinHandle<()>>,
     version: Option<String>,
@@ -148,6 +182,7 @@ impl OpenCodeInstanceRuntime {
                 sessions: HashMap::new(),
                 active_turns: HashMap::new(),
                 pending_approvals: HashMap::new(),
+                pending_native_inputs: HashMap::new(),
                 metadata_epoch: 0,
                 metadata_task: None,
                 version: (!settings.server_version.is_empty()).then(|| settings.server_version.clone()),
@@ -465,6 +500,58 @@ impl OpenCodeInstanceRuntime {
         event: OpenCodeEvent,
     ) -> Result<Vec<ProtocolEvent>, ProtocolError> {
         match event.kind.as_str() {
+            "session.next.prompted" => {
+                // 1.x's prompted event, not prompt.admitted, is the durable
+                // boundary that appends the user message to native history.
+                let data: NativePrompted = decode_event(&event)?;
+                let turn = lock(&self.mutable).active_turns.get(&data.session_id)
+                    .map(|a| a.turn.clone());
+                let conversation = self.mapper.resource(data.session_id);
+                let item = turn.map(|turn| self.mapper.user_message_item(
+                    &conversation, &turn, data.message_id, data.prompt.text));
+                Ok(vec![ProtocolEvent::EventConversationItemUpserted {
+                    jsonrpc: "2.0".into(),
+                    params: codepet_provider_sdk::ConversationItemUpsertedEvent {
+                        conversation: Some(conversation), update_id: Some(event.id), item,
+                    },
+                }])
+            }
+            "session.inbox.enqueued" => {
+                let data: NativeInboxEnqueued = decode_event(&event)?;
+                if data.item.kind == "user" {
+                    let text = data.item.payload.get("text").and_then(Value::as_str)
+                        .ok_or_else(|| event_shape_error(&event, "user inbox payload has no text"))?;
+                    let mut mutable = lock(&self.mutable);
+                    if mutable.pending_native_inputs.len() >= 1024 {
+                        return Err(event_shape_error(&event, "pending native input limit exceeded"));
+                    }
+                    mutable.pending_native_inputs.insert((data.session_id, data.inbox_id), text.to_string());
+                }
+                Ok(Vec::new())
+            }
+            "session.inbox.cancelled" | "session.inbox.delivered" => {
+                let data: NativeInboxRef = decode_event(&event)?;
+                let mut mutable = lock(&self.mutable);
+                let text = mutable.pending_native_inputs.remove(&(data.session_id.clone(), data.inbox_id.clone()));
+                if event.kind == "session.inbox.cancelled" { return Ok(Vec::new()); }
+                let turn = mutable.active_turns.get(&data.session_id).map(|a| a.turn.clone());
+                drop(mutable);
+                let conversation = self.mapper.resource(data.session_id);
+                let item = match (text, turn) {
+                    (Some(text), Some(turn)) => Some(self.mapper.user_message_item(
+                        &conversation, &turn, data.inbox_id, text)),
+                    // A delivered item outside an owned turn, or one admitted
+                    // before subscription, invalidates history without inventing
+                    // its text or native turn identity.
+                    _ => None,
+                };
+                Ok(vec![ProtocolEvent::EventConversationItemUpserted {
+                    jsonrpc: "2.0".into(),
+                    params: codepet_provider_sdk::ConversationItemUpsertedEvent {
+                        conversation: Some(conversation), update_id: Some(event.id), item,
+                    },
+                }])
+            }
             "session.next.prompt.admitted" => {
                 let data: OpenCodePromptAdmittedEventData = decode_event(&event)?;
                 if data.delivery != "queue" && data.delivery != "steer" {
@@ -1318,6 +1405,7 @@ impl Provider for OpenCodeProvider {
                 mutable.session_generation = Some(generation.clone());
                 mutable.sessions.clear();
                 mutable.active_turns.clear();
+                mutable.pending_native_inputs.clear();
                 mutable.pending_approvals.clear();
 
             }
@@ -1348,6 +1436,7 @@ impl Provider for OpenCodeProvider {
                 mutable.atomic_facts_ready = false;
                 if let Some(task) = mutable.atomic_task.take() { task.abort(); }
                 mutable.active_turns.clear();
+                mutable.pending_native_inputs.clear();
                 mutable.pending_approvals.clear();
                 mutable.session.take()
             };
@@ -2233,6 +2322,7 @@ impl Provider for OpenCodeProvider {
                 mutable.atomic_facts_ready = false;
                 if let Some(task) = mutable.atomic_task.take() { task.abort(); }
                     mutable.active_turns.clear();
+                mutable.pending_native_inputs.clear();
                     mutable.pending_approvals.clear();
                     mutable.session.take()
                 };
@@ -2912,6 +3002,54 @@ mod tests {
         turn_resource_id,
     };
     use serde_json::json;
+
+    #[test]
+    fn native_inbox_delivery_streams_user_items_but_not_admission_or_cancellation() {
+        use super::*;
+        let route = ProviderInstanceRoute { device_id: "device".into(),
+            provider_plugin_id: OPENCODE_PLUGIN_ID.into(), provider_instance_id: "opencode".into() };
+        let runtime = Arc::new(OpenCodeInstanceRuntime::new(InstanceCreateRequest {
+            route, instance_kind: OPENCODE_INSTANCE_KIND.into(), display_name: "test".into(),
+            settings: Default::default(),
+        }, OpenCodeInstanceSettings { server_executable: "/unused".into(),
+            server_version: "2.2.6".into(), server_args: vec![], workspace_root: None,
+            data_directory: None }, "boot".into(), Arc::new(|_| Ok(()))));
+        let turn = runtime.mapper.turn("session", "turn", TurnStatus::Running, Some(1), Some(1), None);
+        lock(&runtime.mutable).active_turns.insert("session".into(), ActiveTurnState {
+            epoch: 1, turn: turn.clone(), prompt_message_id: "first".into(),
+            assistant_message_id: None, wait_started: false, wait_confirmed: false,
+            latest_step_ended_at: None,
+        });
+        let event = |kind: &str, data| OpenCodeEvent { created: Some(2), id: "event".into(),
+            kind: kind.into(), data, location: None };
+        for id in ["first", "steering", "cancelled"] {
+            let admitted = runtime.map_event("generation", event("session.inbox.enqueued", json!({
+                "sessionID":"session", "inboxID":id,
+                "item":{"type":"user", "delivery":"queue", "payload":{"text":id}}
+            }))).unwrap();
+            assert!(admitted.is_empty(), "enqueued is not delivered");
+        }
+        for id in ["first", "steering"] {
+            let events = runtime.map_event("generation", event("session.inbox.delivered",
+                json!({"sessionID":"session","inboxID":id}))).unwrap();
+            let ProtocolEvent::EventConversationItemUpserted { params, .. } = &events[0] else { panic!() };
+            let Some(codepet_provider_sdk::ConversationItem::MessageConversationItem(item)) = &params.item else { panic!() };
+            assert_eq!(item.resource.native_resource_id, id);
+            assert_eq!(item.turn, turn.resource);
+            assert_eq!(item.role, codepet_provider_sdk::ConversationItemRole::User);
+        }
+        assert!(runtime.map_event("generation", event("session.inbox.cancelled",
+            json!({"sessionID":"session","inboxID":"cancelled"}))).unwrap().is_empty());
+        assert!(lock(&runtime.mutable).pending_native_inputs.is_empty());
+        let events = runtime.map_event("generation", event("session.next.prompted",
+            json!({"sessionID":"session", "messageID":"legacy", "timestamp":2,
+                "delivery":"steer", "prompt":{"text":"legacy input"}}))).unwrap();
+        let ProtocolEvent::EventConversationItemUpserted { params, .. } = &events[0] else { panic!() };
+        let Some(codepet_provider_sdk::ConversationItem::MessageConversationItem(item)) = &params.item else { panic!() };
+        assert_eq!(item.resource.native_resource_id, "legacy");
+        assert_eq!(item.turn, turn.resource);
+
+    }
 
     #[test]
     fn creates_a_missing_standalone_workspace() {

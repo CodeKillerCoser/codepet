@@ -1,5 +1,8 @@
 # OpenCode 2.2.6 兼容修复与旧版验证
 
+> 2026-11-08 后续勘误：本记录最初把 2.x ordinal 当作 content 数组全局下标，这一假设不成立。正文和推理各有独立计数器；原测试未覆盖混合输出。当前修复及两版原生验证见 [用户消息流与身份碰撞](opencode-input-stream-and-content-identity.md)。
+
+
 ## 现象
 
 2026-11-08，macOS 用户安装 `@opencode/cli 2.2.6` 后，Code Pet 无法启动 OpenCode instance。本轮完成工作区修复与真实隔离验证，未替换已安装 App、升级用户 Runtime 或修改用户配置和会话。

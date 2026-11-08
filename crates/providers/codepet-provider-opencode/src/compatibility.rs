@@ -50,19 +50,25 @@ pub(crate) fn messages(mut value: Value) -> Result<OpenCodeMessagePage, OpenCode
                 continue;
             }
             if let Some(contents) = message.get_mut("content").and_then(Value::as_array_mut) {
-                for (ordinal, content) in contents.iter_mut().enumerate() {
+                let mut ordinals = std::collections::HashMap::<String, usize>::new();
+                for content in contents.iter_mut() {
                     if let Some(content) = content.as_object_mut() {
-                        // 2.x text/reasoning have no ID. SSE's ordinal is the
-                        // position in this same content array (including tools).
-                        if content.get("type").and_then(Value::as_str) == Some("tool") {
-                            let id = content
-                                .get("id")
-                                .and_then(Value::as_str)
-                                .ok_or_else(|| invalid("OpenCode 2 tool content has no id"))?
-                                .to_string();
-                            content.insert("callID".into(), id.into());
-                        }
-                        content.insert("id".into(), Value::String(format!("ordinal:{ordinal}")));
+                        let kind = content.get("type").and_then(Value::as_str)
+                            .ok_or_else(|| invalid("OpenCode 2 content has no type"))?.to_string();
+                        // Native text and reasoning publishers each own an ordinal
+                        // counter. Tools do not consume either counter.
+                        let id = if kind == "tool" {
+                            let id = content.get("id").and_then(Value::as_str)
+                                .ok_or_else(|| invalid("OpenCode 2 tool content has no id"))?.to_string();
+                            content.insert("callID".into(), id.clone().into());
+                            id
+                        } else {
+                            let ordinal = ordinals.entry(kind.clone()).or_default();
+                            let id = format!("{kind}:ordinal:{ordinal}");
+                            *ordinal += 1;
+                            id
+                        };
+                        content.insert("id".into(), Value::String(id));
                     }
                 }
             }
@@ -109,7 +115,8 @@ pub(crate) fn event(mut event: OpenCodeEvent) -> Result<OpenCodeEvent, OpenCodeS
         } else {
             "reasoningID"
         };
-        data.insert(key.into(), format!("ordinal:{ordinal}").into());
+        let kind = if key == "textID" { "text" } else { "reasoning" };
+        data.insert(key.into(), format!("{kind}:ordinal:{ordinal}").into());
     }
     if event.kind == "permission.asked" {
         if let Some(source) = data.get_mut("source").and_then(Value::as_object_mut) {
@@ -179,16 +186,18 @@ mod tests {
         .unwrap();
         let contents = page.data[0].content.as_ref().unwrap();
         assert_eq!(contents[1].call_id.as_deref(), Some("call"));
-        for (ordinal, kind, key) in [
-            (0, "session.text.delta", "textID"),
-            (2, "session.reasoning.delta", "reasoningID"),
-            (3, "session.text.delta", "textID"),
+        for (index, ordinal, kind, key) in [
+            (0, 0, "session.text.delta", "textID"),
+            (2, 0, "session.reasoning.delta", "reasoningID"),
+            (3, 1, "session.text.delta", "textID"),
         ] {
             let event = event(wire(kind,json!({"sessionID":"ses","assistantMessageID":"msg","ordinal":ordinal,"delta":"same"}))).unwrap();
-            assert_eq!(event.data[key], contents[ordinal].id);
+            assert_eq!(event.data[key], contents[index].id);
             assert_eq!(event.data["timestamp"], 200);
         }
         assert_ne!(contents[0].id, contents[3].id);
+        assert_ne!(contents[0].id, contents[2].id);
+        assert_eq!(contents[1].id, "call");
     }
 
     #[test]

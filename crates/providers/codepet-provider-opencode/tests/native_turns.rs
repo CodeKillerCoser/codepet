@@ -135,6 +135,8 @@ async fn native_remote_turns_keep_the_instance_ready() {
             }
             let mut approvals = 0;
             let mut deltas = Vec::new();
+            let mut user_items = Vec::new();
+            let mut steered = false;
             let response = provider
                 .turn_start(TurnStartRequest {
                     conversation: resource.clone(),
@@ -183,11 +185,28 @@ async fn native_remote_turns_keep_the_instance_ready() {
                         assert!(params.turn.started_at.is_some());
                         break;
                     }
+                    ProtocolEvent::EventConversationItemUpserted { params, .. } => {
+                        if let Some(ConversationItem::MessageConversationItem(item)) = params.item {
+                            if item.role == ConversationItemRole::User && item.turn == response.turn.resource {
+                                user_items.push(item);
+                            }
+                        }
+                    }
                     ProtocolEvent::EventTurnOutputDelta { params, .. } => {
                         deltas.push((params.content_id, params.delta));
                     }
                     ProtocolEvent::EventApprovalRequested { params, .. } => {
                         approvals += 1;
+                        if index == 0 && !steered {
+                            let mut turn = resource.clone();
+                            turn.native_resource_id = response.turn.resource.native_resource_id.clone();
+                            provider.turn_steer(TurnSteerRequest {
+                                conversation: resource.clone(), turn,
+                                client_message_id: "native-steer".into(), message: "steer-smoke".into(),
+                            }).await.unwrap();
+                            steered = true;
+                        }
+
                         provider
                             .approval_resolve(ApprovalResolveRequest {
                                 approval: ProviderResourceId {
@@ -240,8 +259,24 @@ async fn native_remote_turns_keep_the_instance_ready() {
                 "permission decision did not control tool execution"
             );
             assert!(approvals > 0, "turn {index} never requested permission");
+            {
+                assert_eq!(user_items.len(), if steered { 2 } else { 1 }, "every native delivered input must be streamed once");
+                let Some(ConversationItem::MessageConversationItem(receipt)) = &response.user_item else {
+                    panic!("expected canonical user receipt");
+                };
+                assert_eq!(user_items[0].resource, receipt.resource);
+                assert_eq!(user_items[0].contents, receipt.contents);
+                if steered {
+                    assert_ne!(user_items[0].resource, user_items[1].resource);
+                    assert!(serde_json::to_string(&user_items[1]).unwrap().contains("steer-smoke"));
+                }
+            }
+
             if !denied {
                 assert!(!deltas.is_empty(), "turn {index} emitted no streaming text");
+                assert!(deltas.iter().any(|(_, text)| text.contains("Smoke reasoning")),
+                    "the local fixture must exercise reasoning and text together");
+                assert_eq!(deltas.iter().map(|(id, _)| id).collect::<std::collections::HashSet<_>>().len(), 2);
                 assert!(deltas
                     .iter()
                     .any(|(_, text)| text.contains("Smoke complete")));

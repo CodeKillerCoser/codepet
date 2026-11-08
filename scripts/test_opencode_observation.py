@@ -74,7 +74,10 @@ def main():
             if body.get('stream'):
                 self.send_header('Content-Type', 'text/event-stream')
                 self.end_headers()
-                for data, reason in [(delta, None), ({}, finish)]:
+                chunks = [(delta, None), ({}, finish)]
+                if not permission:
+                    chunks.insert(0, ({'role': 'assistant', 'reasoning_content': 'Smoke reasoning'}, None))
+                for data, reason in chunks:
                     chunk = {'id': 'chatcmpl-smoke', 'object': 'chat.completion.chunk', 'created': int(time.time()),
                         'model': 'smoke', 'choices': [{'index': 0, 'delta': data, 'finish_reason': reason}]}
                     self.wfile.write(('data: ' + json.dumps(chunk) + '\n\n').encode())
@@ -109,7 +112,7 @@ def main():
                 'permission': {'bash': 'ask'},
                 'provider': {'codepet-smoke': {'npm': '@ai-sdk/openai-compatible', 'name': 'Local fixture',
                     'options': {'baseURL': 'http://127.0.0.1:%d/v1' % server.server_port, 'apiKey': 'smoke-only'},
-                    'models': {'smoke': {'name': 'Smoke', 'tool_call': True, 'limit': {'context': 8192, 'output': 128}}}}}}))
+                    'models': {'smoke': {'name': 'Smoke', 'reasoning': True, 'interleaved': {'field': 'reasoning_content'}, 'tool_call': True, 'limit': {'context': 8192, 'output': 128}}}}}}))
             env = dict(os.environ)
             for key in ['OPENCODE_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_CONFIG_DIR']:
                 env.pop(key, None)
