@@ -1304,6 +1304,7 @@ impl ProtocolServer for ProviderGatewayService {
         request: gateway::ConversationGetRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ConversationGetResponse> {
         Box::pin(async move {
+            let initial_page = request.cursor.is_none();
             let snapshot_cursor = self.current_event_cursor();
             let conversation = self.resolve_resource(request.conversation).await?;
             let response = self
@@ -1326,7 +1327,9 @@ impl ProtocolServer for ProviderGatewayService {
             self.conversation_state
                 .decorate(DEFAULT_TURN_SEND_CALLER_SCOPE, &mut conversation)
                 .map_err(gateway_error)?;
+            let turns = if initial_page { Some(self.conversation_state.recent_turn_failures(&conversation.resource).map_err(gateway_error)?) } else { None };
             Ok(gateway::ConversationGetResponse {
+                turns,
                 conversation,
                 items,
                 page_info: response.page_info.map(|page_info| gateway::PageInfo {

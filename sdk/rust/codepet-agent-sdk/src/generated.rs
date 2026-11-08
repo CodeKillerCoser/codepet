@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 
-pub use codepet_core_sdk::{JsonObject, NativeResourceId, RoutedResourceId, TimestampMs};
+pub use codepet_core_sdk::{JsonObject, NativeResourceId, ProtocolError, RoutedResourceId, TimestampMs};
 
 pub const AGENT_SCHEMA_VERSION: u64 = 1;
 
@@ -1004,6 +1004,8 @@ pub struct TurnTask {
     pub updated_at: Option<TimestampMs>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completed_at: Option<TimestampMs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<ProtocolError>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

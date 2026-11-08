@@ -529,6 +529,13 @@ fn run_prompt_scenario(
     );
 
     match prompt {
+        "quota failure" => {
+            lock(state).active.remove(session_id);
+            broadcast(state, json!({"id":format!("evt_failure_{message_id}"), "type":"session.next.step.failed",
+                "data":{"sessionID":session_id,"assistantMessageID":assistant_message_id,"timestamp":timestamp+3,
+                    "error":{"_tag":"AI.Error.QuotaExceeded","message":"Free usage limit reached","apiKey":"must-not-leak"}}}));
+        }
+
         "needs approval" => broadcast(
             state,
             json!({

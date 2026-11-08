@@ -1,5 +1,32 @@
 [
-  { "file": "invalid-tool-input-mixed.json", "kind": "type", "name": "ToolInput", "valid": false },
-  { "file": "invalid-tool-outcome-mixed.json", "kind": "type", "name": "ToolOutcome", "valid": false },
-  { "file": "invalid-command-item-duplicate-content.json", "kind": "type", "name": "ConversationItem", "valid": false }
+  {
+    "file": "invalid-tool-input-mixed.json",
+    "kind": "type",
+    "name": "ToolInput",
+    "valid": false
+  },
+  {
+    "file": "invalid-tool-outcome-mixed.json",
+    "kind": "type",
+    "name": "ToolOutcome",
+    "valid": false
+  },
+  {
+    "file": "invalid-command-item-duplicate-content.json",
+    "kind": "type",
+    "name": "ConversationItem",
+    "valid": false
+  },
+  {
+    "file": "valid-failed-turn.json",
+    "kind": "type",
+    "name": "TurnTask",
+    "valid": true
+  },
+  {
+    "file": "invalid-turn-error.json",
+    "kind": "type",
+    "name": "TurnTask",
+    "valid": false
+  }
 ]

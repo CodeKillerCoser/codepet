@@ -9,6 +9,7 @@ pub use collection::UsageSink;
 pub use usage::*;
 pub mod conversation_atoms;
 pub mod conversation_state;
+pub mod turn_failures;
 use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;

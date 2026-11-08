@@ -580,6 +580,7 @@ impl OpenCodeInstanceRuntime {
                         epoch,
                         TurnStatus::Completed,
                         Some(data.timestamp),
+                        None,
                     );
                     return Ok(events);
                 } else if should_start_waiter {
@@ -611,6 +612,7 @@ impl OpenCodeInstanceRuntime {
                     epoch,
                     TurnStatus::Failed,
                     Some(data.timestamp),
+                    Some(OpenCodeProtocolMapper::execution_error(&data.error)),
                 ))
             }
             "permission.v2.asked" => {
@@ -777,6 +779,7 @@ impl OpenCodeInstanceRuntime {
                         epoch,
                         TurnStatus::Completed,
                         completed_at,
+                        None,
                     );
                     for event in events {
                         if let Err(error) = runtime.events.publish(event) {
@@ -813,6 +816,7 @@ impl OpenCodeInstanceRuntime {
         expected_epoch: u64,
         status: TurnStatus,
         completed_at: Option<u64>,
+        error: Option<ProtocolError>,
     ) -> Vec<ProtocolEvent> {
         let (turn, approvals) = {
             let mut mutable = lock(&self.mutable);
@@ -825,6 +829,8 @@ impl OpenCodeInstanceRuntime {
             let turn = mutable.active_turns.remove(session_id).map(|active| {
                 let mut turn = active.turn;
                 turn.status = status;
+                turn.display_summary = error.as_ref().map(|error| error.message.clone());
+                turn.error = error;
                 if completed_at.is_some() {
                     turn.updated_at = completed_at;
                 }
@@ -876,6 +882,8 @@ impl OpenCodeInstanceRuntime {
                 .map(|(_, active)| {
                     let mut turn = active.turn;
                     turn.status = TurnStatus::Failed;
+                    turn.display_summary = Some(error.message.clone());
+                    turn.error = Some(error.clone());
                     turn.updated_at = Some(now);
                     turn.completed_at = Some(now);
                     turn

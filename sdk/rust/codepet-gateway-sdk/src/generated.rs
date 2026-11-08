@@ -112,6 +112,8 @@ pub struct ConversationGetResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub page_info: Option<PageInfo>,
     pub snapshot_cursor: EventCursor,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turns: Option<Vec<TurnTask>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

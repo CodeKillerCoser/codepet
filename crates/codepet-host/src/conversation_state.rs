@@ -12,6 +12,10 @@ pub(crate) struct ConversationStateStore {
 }
 
 impl ConversationStateStore {
+    pub(crate) fn recent_turn_failures(&self, conversation: &gateway::RoutedResourceId) -> HostResult<Vec<gateway::TurnTask>> {
+        self.store(&conversation.provider_id)?.recent_turn_failures(conversation).map_err(HostError::from)
+    }
+
     pub(crate) fn memory() -> Self {
         Self {
             shared: std::sync::Arc::new(SharedConversationStateStore::memory()),

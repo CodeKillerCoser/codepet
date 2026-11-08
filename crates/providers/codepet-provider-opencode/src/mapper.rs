@@ -363,14 +363,14 @@ impl OpenCodeProtocolMapper {
                             items.push(item);
                         }
                     }
-                    if message.content.as_ref().is_none_or(Vec::is_empty) {
+                    if message.error.is_some() || message.content.as_ref().is_none_or(Vec::is_empty) {
                         let contents = message.error.as_ref().map(|error| ContentBlock::ActivitySummaryContentBlock(ActivitySummaryContentBlock {
                             content_id: format!("{}:error", message.id),
                             kind: ActivitySummaryContentBlockKind::ActivitySummary,
-                            text: error.to_string(), truncation: None,
+                            text: Self::execution_error(error).message, truncation: None,
                         })).into_iter().collect();
                         items.push(self.message_item(
-                            message.id.clone(), turn.clone(), conversation, status,
+                            if message.error.is_some() { format!("{}:error", message.id) } else { message.id.clone() }, turn.clone(), conversation, status,
                             ConversationItemRole::Assistant, contents,
                         ));
                     }
@@ -481,6 +481,7 @@ impl OpenCodeProtocolMapper {
             resource: self.resource(turn_id.to_string()),
             conversation: self.resource(conversation_id.to_string()),
             status,
+            error: None,
             display_summary: None,
             started_at,
             updated_at,
@@ -598,6 +599,40 @@ impl OpenCodeProtocolMapper {
             provider_instance_id: self.route.provider_instance_id.clone(),
             native_resource_id,
         }
+    }
+
+    pub(crate) fn execution_error(value: &Value) -> ProtocolError {
+        let original_message = value.get("message").or_else(|| value.pointer("/data/message"))
+            .and_then(Value::as_str).or_else(|| value.as_str()).filter(|s| !s.trim().is_empty())
+            .unwrap_or("OpenCode execution failed without an error message");
+        // 1.x wraps model API errors in a message string. Extract only the
+        // documented error fields, rather than displaying the entire response.
+        let legacy = original_message.strip_prefix("Provider request failed with HTTP ")
+            .and_then(|message| message.split_once(": "));
+        let body = legacy.and_then(|(_,body)| serde_json::from_str::<Value>(body).ok());
+        let native = body.as_ref().and_then(|body| body.pointer("/error/code")).and_then(Value::as_str)
+            .or_else(|| ["name", "_tag", "type", "code"].iter().find_map(|key| value.get(key).and_then(Value::as_str)));
+        let status = legacy.and_then(|(status,_)| status.parse::<u64>().ok())
+            .or_else(|| value.get("statusCode").or_else(|| value.pointer("/data/statusCode")).and_then(Value::as_u64));
+        let (code, retryable) = match native.unwrap_or("").rsplit('.').next().unwrap_or("") {
+            "QuotaExceeded" | "QuotaExceededError" | "insufficient_quota" => ("quota_exceeded", false),
+            "RateLimit" | "RateLimitError" | "RateLimitExceeded" | "rate_limit_exceeded" => ("rate_limited", true),
+            "ProviderAuthError" | "AuthenticationError" | "invalid_api_key" => ("authentication_failed", false),
+            "ContextOverflowError" => ("context_window_exceeded", false),
+            _ => match status {
+                Some(401) => ("authentication_failed", false),
+                Some(402) => ("payment_required", false),
+                Some(429) => ("rate_limited", true),
+                _ => ("provider_execution_failed", value.get("isRetryable").or_else(|| value.pointer("/data/isRetryable")).and_then(Value::as_bool).unwrap_or(false)),
+            },
+        };
+        let message = body.as_ref().and_then(|body| body.pointer("/error/message")).and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty()).unwrap_or(original_message);
+        let mut details = std::collections::BTreeMap::new();
+        if let Some(code) = native { details.insert("nativeCode".into(), Value::String(code.chars().take(128).collect())); }
+        if let Some(status) = status { details.insert("httpStatusCode".into(), Value::from(status)); }
+        ProtocolError { code: code.into(), message: message.chars().take(4096).collect(), retryable,
+            details: (!details.is_empty()).then_some(details) }
     }
 
     pub fn error(error: OpenCodeServerError) -> ProtocolError {

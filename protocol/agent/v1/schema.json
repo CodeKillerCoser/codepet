@@ -1670,6 +1670,9 @@
         },
         "completedAt": {
           "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "error": {
+          "$ref": "../../core/v1/schema.json#/$defs/ProtocolError"
         }
       },
       "required": [
@@ -1677,7 +1680,8 @@
         "conversation",
         "status"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "Terminal execution failure, present only for failed turns. retryable indicates a new user-initiated attempt may succeed; never automatically resubmit accepted input. Omitted by older providers."
     },
     "UsageMetric": {
       "type": "string",

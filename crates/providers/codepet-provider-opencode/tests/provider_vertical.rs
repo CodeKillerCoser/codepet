@@ -337,6 +337,15 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         TurnStatus::Completed,
     );
 
+    let failed = provider.turn_start(turn_start_request(fixture_conversation.clone(), "quota-test", "quota failure")).await.unwrap();
+    let terminal = wait_for_turn_status(&event_receiver, &failed.turn.resource, TurnStatus::Failed);
+    let error = terminal.error.as_ref().unwrap();
+    assert_eq!(error.code, "quota_exceeded");
+    assert_eq!(error.message, "Free usage limit reached");
+    assert!(!error.retryable);
+    assert_eq!(terminal.display_summary.as_deref(), Some(error.message.as_str()));
+    assert!(!serde_json::to_string(&terminal).unwrap().contains("must-not-leak"));
+
     let created_conversation = new_conversation.conversation.resource.clone();
     let same_client_other_session = provider
         .turn_start(turn_start_request(

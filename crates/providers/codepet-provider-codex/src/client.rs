@@ -1415,6 +1415,7 @@ fn incoming_thread_id(incoming: &CodexIncoming) -> Option<&str> {
             CodexNotification::ThreadNameUpdated { thread_id, .. }
             | CodexNotification::ThreadStatusChanged { thread_id, .. }
             | CodexNotification::TurnStarted { thread_id, .. }
+            | CodexNotification::TurnError { thread_id, .. }
             | CodexNotification::TurnCompleted { thread_id, .. }
             | CodexNotification::ItemUpserted { thread_id, .. }
             | CodexNotification::OutputDelta { thread_id, .. }
@@ -1597,6 +1598,11 @@ fn parse_notification(
         "turn/started" => Ok(CodexNotification::TurnStarted {
             thread_id: required_string(&params, "threadId")?,
             turn: deserialize_field(&params, "turn")?,
+        }),
+        "error" => Ok(CodexNotification::TurnError {
+            thread_id: required_string(&params, "threadId")?,
+            turn_id: required_string(&params, "turnId")?,
+            error: deserialize_field(&params, "error")?,
         }),
         "turn/completed" => Ok(CodexNotification::TurnCompleted {
             thread_id: required_string(&params, "threadId")?,

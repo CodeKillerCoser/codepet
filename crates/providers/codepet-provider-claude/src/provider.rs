@@ -75,6 +75,7 @@ struct ClaudeInstanceSettings {
 use codepet_provider_sdk::ProviderEventSink;
 
 struct ManagedTurn {
+    native_error: Option<String>,
     turn: TurnTask,
     control: ClaudeProcessControl,
     saw_text_delta: bool,
@@ -745,6 +746,7 @@ impl ClaudeInstanceRuntime {
                 resource: self.resource(turn_id.clone()),
                 conversation: self.resource(conversation_id.clone()),
                 status: TurnStatus::Running,
+                error: None,
                 display_summary: None,
                 started_at: Some(now),
                 updated_at: Some(now),
@@ -752,6 +754,7 @@ impl ClaudeInstanceRuntime {
             };
             let finished = Arc::new(TurnFinished::default());
             managed.active_turn = Some(ManagedTurn {
+                native_error: None,
                 turn: turn.clone(),
                 control: spawned.control(),
                 saw_text_delta: false,
@@ -964,7 +967,15 @@ impl ClaudeInstanceRuntime {
                     },
                 )
             }
+            ClaudeOutput::Assistant { session_id, error: Some(error), .. } => {
+                validate_claude_session(conversation_id, session_id.as_deref())?;
+                let mut mutable = lock(&self.mutable);
+                let managed = active_conversation_mut(&mut mutable, conversation_id, turn_id)?;
+                managed.active_turn.as_mut().expect("active turn checked").native_error = Some(error);
+                Ok(())
+            }
             ClaudeOutput::Result {
+                errors,
                 subtype,
                 is_error,
                 session_id,
@@ -977,6 +988,16 @@ impl ClaudeInstanceRuntime {
                 validate_claude_session(conversation_id, session_id.as_deref())?;
                 self.update_usage(usage, total_cost_usd);
                 let status = result_status(&subtype, is_error, terminal_reason.as_deref());
+                let result = if status == TurnStatus::Failed {
+                    let mut reasons = result.into_iter().chain(errors).filter(|s| !s.trim().is_empty()).collect::<Vec<_>>();
+                    reasons.dedup();
+                    (!reasons.is_empty()).then(|| reasons.join("\n"))
+                } else { result };
+                let terminal_reason = if status == TurnStatus::Failed {
+                    let mutable = lock(&self.mutable);
+                    mutable.conversations.get(conversation_id).and_then(|managed| managed.active_turn.as_ref())
+                        .and_then(|active| active.native_error.clone()).or(terminal_reason).or(Some(subtype))
+                } else { terminal_reason };
                 self.set_pending_completion(
                     conversation_id,
                     turn_id,
@@ -2423,6 +2444,24 @@ fn terminal_snapshot(
 ) -> (TurnTask, Conversation) {
     let now = now_ms();
     turn.status = completion.status;
+    turn.error = (completion.status == TurnStatus::Failed).then(|| {
+        let reason = completion.terminal_reason.as_deref().unwrap_or("unknown");
+        let code = match reason {
+            "authentication_failed" => "authentication_failed",
+            "rate_limit" => "rate_limited",
+            "error_max_turns" => "turn_limit_exceeded",
+            "error_max_budget_usd" => "budget_exceeded",
+            "claude_stream_failed" | "process_exit" => "provider_process_failed",
+            _ => "provider_execution_failed",
+        };
+        ProtocolError { code: code.into(),
+            message: completion.result.as_deref().filter(|s| !s.trim().is_empty())
+                .unwrap_or("Claude execution failed without an error message").chars().take(4096).collect(),
+            retryable: reason == "rate_limit",
+            details: Some([("nativeCode".into(), json!(reason))].into_iter().collect()),
+        }
+    });
+    turn.display_summary = turn.error.as_ref().map(|error| error.message.clone());
     turn.updated_at = Some(now);
     turn.completed_at = Some(now);
     conversation.status = match completion.status {

@@ -135,6 +135,17 @@ mod tests {
     }
 
     #[test]
+    fn modern_failure_retains_error_payload_for_terminal_mapping() {
+        let converted = event(wire("session.step.failed", json!({"sessionID":"s", "assistantMessageID":"m",
+            "error":{"_tag":"AI.Error.QuotaExceeded","message":"Free usage limit reached"}}))).unwrap();
+        assert_eq!(converted.kind,"session.next.step.failed");
+        let data: crate::protocol::OpenCodeStepFailedEventData = decode(converted.data).unwrap();
+        assert_eq!(data.timestamp,200);
+        let error = crate::mapper::OpenCodeProtocolMapper::execution_error(&data.error);
+        assert_eq!(error.code,"quota_exceeded"); assert_eq!(error.message,"Free usage limit reached");
+    }
+
+    #[test]
     fn modern_admission_uses_upstream_identity_delivery_and_time() {
         let result = admission(
             json!({"id":"msg", "sessionID":"ses", "time":{"created":123},

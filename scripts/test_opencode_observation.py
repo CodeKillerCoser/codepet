@@ -33,6 +33,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--executable', default='opencode')
     parser.add_argument('--remote-turns', action='store_true', help='Exercise Provider remote sends instead of observation checks')
+    parser.add_argument('--test-error', action='store_true', help='Inject a local model API error after successful remote turns')
     parser.add_argument('--test-deny', action='store_true', help='Also exercise denial on older releases (automatic on OpenCode 2)')
     args = parser.parse_args()
     version = subprocess.check_output([args.executable, '--version'], text=True).strip()
@@ -52,6 +53,12 @@ def main():
             assert self.path == '/v1/chat/completions', self.path
             model_calls.append(body)
             messages = body.get('messages', [])
+            if args.test_error and 'terminal-error-smoke' in json.dumps(messages):
+                self.send_response(402)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': {'message': 'CodePet test quota exhausted', 'type': 'insufficient_quota', 'code': 'insufficient_quota'}}).encode())
+                return
             permission = 'permission-smoke' in json.dumps(messages) and not any(m['role'] == 'tool' for m in messages)
             remote = 'remote-smoke' in json.dumps(messages)
             permission = permission or (remote and messages[-1]['role'] == 'user')
@@ -152,6 +159,10 @@ def main():
                 env.pop('CODEPET_OPENCODE_TEST_DENY', None)
                 if re.search(r'(?:^|\s)v?2\.', version) or args.test_deny:
                     env['CODEPET_OPENCODE_TEST_DENY'] = '1'
+                if args.test_error:
+                    env['CODEPET_OPENCODE_TEST_ERROR'] = '1'
+                else:
+                    env.pop('CODEPET_OPENCODE_TEST_ERROR', None)
                 env['CODEPET_OPENCODE_TEST_VERSION'] = version
                 env['CODEPET_OPENCODE_EXECUTABLE'] = str(Path(shutil.which(args.executable) or args.executable).resolve())
                 env['CODEPET_OPENCODE_TEST_WORKSPACE'] = str(workspace)

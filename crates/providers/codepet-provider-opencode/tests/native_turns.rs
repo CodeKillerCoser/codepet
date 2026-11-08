@@ -271,6 +271,30 @@ async fn native_remote_turns_keep_the_instance_ready() {
                 .await
                 .unwrap();
         }
+        if std::env::var_os("CODEPET_OPENCODE_TEST_ERROR").is_some() {
+            let failed = provider.turn_start(TurnStartRequest {
+                conversation: resource.clone(), client_request_id: "terminal-error-smoke".into(),
+                capability_revision: started.instance.capabilities.revision.clone(),
+                input: TurnInput { kind: TurnInputKind::Text, text: "terminal-error-smoke".into() },
+                selection: TurnSelection { access_mode_id: None, reasoning_effort_id: None, model: None },
+            }).await.unwrap();
+            let deadline = Instant::now() + Duration::from_secs(30);
+            loop {
+                let event = receiver.recv_timeout(deadline.saturating_duration_since(Instant::now())).expect("native failure missing");
+                if let ProtocolEvent::EventTurnUpserted { params, .. } = event {
+                    if params.turn.resource == failed.turn.resource && params.turn.status == TurnStatus::Failed {
+                        let error = params.turn.error.as_ref().expect("structured native error missing");
+                        assert!(error.message.contains("CodePet test quota exhausted"), "native failure reason lost: {error:?}");
+                        assert!(!error.retryable);
+                        assert_eq!(params.turn.display_summary.as_deref(), Some(error.message.as_str()));
+                        println!("native terminal failure preserved: {} / {}", error.code, error.message);
+                        break;
+                    }
+                }
+            }
+            let history = provider.conversation_get(ConversationGetRequest { conversation: resource.clone(), cursor: None, limit: Some(100) }).await.unwrap();
+            assert!(serde_json::to_string(&history).unwrap().contains("CodePet test quota exhausted"));
+        }
         provider
             .instance_stop(InstanceStopRequest { route })
             .await

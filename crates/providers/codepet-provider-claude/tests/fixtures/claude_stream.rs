@@ -269,7 +269,12 @@ fn main() {
             "uuid": "88888888-8888-4888-8888-888888888888"
         }),
     );
-    write_result(&mut writer, &options.session_id, output, false);
+    if message == "partial then failure" {
+        write_json(&mut writer, json!({"type":"result","subtype":"error_during_execution","is_error":true,
+            "session_id": options.session_id, "errors":["Model service unavailable"]}));
+    } else {
+        write_result(&mut writer, &options.session_id, output, false);
+    }
 }
 
 fn parse_options() -> Options {

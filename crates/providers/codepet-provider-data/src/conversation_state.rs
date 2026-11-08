@@ -51,13 +51,19 @@ impl Default for ConversationStateSnapshot {
 }
 
 pub struct SharedConversationStateStore {
+    failures: crate::turn_failures::TurnFailureStore,
     path: Option<PathBuf>,
     document: Mutex<ConversationStateSnapshot>,
 }
 
 impl SharedConversationStateStore {
+    pub fn recent_turn_failures(&self, conversation: &gateway::RoutedResourceId) -> StateResult<Vec<gateway::TurnTask>> {
+        self.failures.recent(conversation)
+    }
+
     pub fn memory() -> Self {
         Self {
+            failures: Default::default(),
             path: None,
             document: Mutex::new(ConversationStateSnapshot::default()),
         }
@@ -66,6 +72,7 @@ impl SharedConversationStateStore {
     pub fn open(path: impl AsRef<Path>) -> StateResult<Self> {
         let path = path.as_ref().to_path_buf();
         let store = Self {
+            failures: crate::turn_failures::TurnFailureStore::at(path.clone()),
             path: Some(path),
             document: Mutex::new(ConversationStateSnapshot::default()),
         };
@@ -256,6 +263,12 @@ impl SharedConversationStateStore {
         &self,
         event: &provider::ProtocolEvent,
     ) -> StateResult<Option<(gateway::RoutedResourceId, u64)>> {
+        if let provider::ProtocolEvent::EventTurnUpserted { params, .. } = event {
+            self.failures.observe(&params.turn)?;
+        } else if let provider::ProtocolEvent::EventConversationDeleted { params, .. } = event {
+            self.failures.remove(&gateway::RoutedResourceId { provider_id: params.conversation.provider_instance_id.clone(),
+                native_resource_id: params.conversation.native_resource_id.clone() })?;
+        }
         let observed = match event {
             provider::ProtocolEvent::EventConversationItemUpserted { params, .. }
                 if params.item.is_none() && params.conversation.is_some() && params.update_id.is_some() => Some((

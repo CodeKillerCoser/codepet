@@ -35,12 +35,13 @@ use codepet_provider_sdk::{
 use serde_json::{json, Value};
 
 pub struct CodexProtocolMapper {
+    turn_errors: std::sync::Mutex<std::collections::HashMap<(String, String), Value>>,
     route: ProviderInstanceRoute,
 }
 
 impl CodexProtocolMapper {
     pub fn new(route: ProviderInstanceRoute) -> Self {
-        Self { route }
+        Self { route, turn_errors: Default::default() }
     }
 
     pub fn unavailable_capabilities(revision: String) -> ProviderCapabilities {
@@ -420,13 +421,15 @@ impl CodexProtocolMapper {
         conversation_id: &str,
         turn: &CodexTurn,
     ) -> TurnTask {
+        let error = (turn.status == CodexTurnStatus::Failed).then(|| Self::turn_error(turn.error.as_ref()));
         let started_at = turn.started_at.and_then(seconds_to_ms);
         let completed_at = turn.completed_at.and_then(seconds_to_ms);
         TurnTask {
             resource: self.resource(turn.id.clone()),
             conversation: self.resource(conversation_id.to_string()),
             status: turn_status(turn.status),
-            display_summary: None,
+            display_summary: error.as_ref().map(|error| error.message.clone()),
+            error,
             started_at,
             updated_at: None,
             completed_at,
@@ -481,6 +484,20 @@ impl CodexProtocolMapper {
                 items.push(self.approval_item(related_item_id, approval));
                 emitted_approvals[index] = true;
             }
+        }
+
+        if turn.status == CodexTurnStatus::Failed {
+            let error = Self::turn_error(turn.error.as_ref());
+            items.push(ConversationItem::MessageConversationItem(MessageConversationItem {
+                meta: None, resource: self.resource(format!("{}:error", turn.id)),
+                turn: self.resource(turn.id.clone()), conversation: self.resource(conversation_id.to_string()),
+                kind: MessageConversationItemKind::Message, status: ConversationItemStatus::Failed,
+                role: ConversationItemRole::Assistant,
+                contents: vec![ContentBlock::ActivitySummaryContentBlock(ActivitySummaryContentBlock {
+                    content_id: format!("{}:error:summary", turn.id), kind: ActivitySummaryContentBlockKind::ActivitySummary,
+                    text: error.message, truncation: None,
+                })],
+            }));
         }
     }
 
@@ -780,6 +797,27 @@ impl CodexProtocolMapper {
         (approval, event)
     }
 
+    pub(crate) fn turn_error(value: Option<&Value>) -> ProtocolError {
+        let native = value.and_then(|v| v.get("codexErrorInfo"));
+        let native_code = native.and_then(Value::as_str)
+            .or_else(|| native.and_then(Value::as_object).and_then(|v| v.keys().next().map(String::as_str)));
+        let (code, retryable) = match native_code {
+            Some("usageLimitExceeded") => ("quota_exceeded", false),
+            Some("contextWindowExceeded") => ("context_window_exceeded", false),
+            Some("httpConnectionFailed" | "responseStreamConnectionFailed" | "responseStreamDisconnected" | "responseTooManyFailedAttempts") => ("provider_connection_failed", true),
+            Some("serverOverloaded") => ("provider_overloaded", true),
+            _ => ("provider_execution_failed", false),
+        };
+        ProtocolError {
+            code: code.into(),
+            message: value.and_then(|v| v.get("message")).and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty()).unwrap_or("Codex execution failed without an error message")
+                .chars().take(4096).collect(),
+            retryable,
+            details: native_code.map(|code| object([("nativeCode", json!(code))])),
+        }
+    }
+
     pub fn error(error: CodexAppServerError) -> ProtocolError {
         match error {
             CodexAppServerError::RejectedMessage { error, .. } => Self::error(*error),
@@ -837,8 +875,19 @@ impl CodexProtocolMapper {
                     },
                 }
             }
-            CodexNotification::TurnStarted { thread_id, turn }
-            | CodexNotification::TurnCompleted { thread_id, turn } => {
+            CodexNotification::TurnError { thread_id, turn_id, error } => {
+                let mut errors = self.turn_errors.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                // Errors may precede a successful retry. Only a failed terminal
+                // turn consumes this reason; never emit failed from this notice.
+                if errors.len() >= 1024 { errors.clear(); }
+                errors.insert((thread_id, turn_id), error);
+                return Ok(Vec::new());
+            }
+            CodexNotification::TurnStarted { thread_id, mut turn }
+            | CodexNotification::TurnCompleted { thread_id, mut turn } => {
+                let error = self.turn_errors.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(&(thread_id.clone(), turn.id.clone()));
+                if turn.status == CodexTurnStatus::Failed && turn.error.is_none() { turn.error = error; }
                 ProtocolEvent::EventTurnUpserted {
                     jsonrpc: "2.0".to_string(),
                     params: TurnUpsertedEvent {
@@ -853,6 +902,7 @@ impl CodexProtocolMapper {
                 item,
             } => {
                 let turn = CodexTurn {
+                    error: None,
                     id: turn_id,
                     status: turn_status,
                     started_at: None,
@@ -915,7 +965,7 @@ impl CodexProtocolMapper {
         }
     }
 
-    fn resource(&self, native_resource_id: String) -> RoutedResourceId {
+    pub(crate) fn resource(&self, native_resource_id: String) -> RoutedResourceId {
         RoutedResourceId {
             provider_id: self.route.provider_instance_id.clone(),
             native_resource_id,
@@ -1251,6 +1301,42 @@ fn extension<const N: usize>(entries: [(&str, Value); N]) -> ProviderExtension {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn intermediate_error_waits_for_terminal_and_cannot_poison_success() {
+        let mapper = super::CodexProtocolMapper::new(codepet_provider_sdk::ProviderInstanceRoute {
+            device_id:"d".into(),provider_plugin_id:"p".into(),provider_instance_id:"i".into() });
+        for (id,status) in [("success", crate::protocol::CodexTurnStatus::Completed), ("failure", crate::protocol::CodexTurnStatus::Failed)] {
+            let notice = crate::protocol::CodexNotification::TurnError { thread_id:"c".into(), turn_id:id.into(),
+                error: serde_json::json!({"message":"Upstream disconnected","codexErrorInfo":"responseStreamDisconnected"}) };
+            assert!(mapper.notification_events(notice).unwrap().is_empty());
+            let turn = crate::protocol::CodexTurn { id:id.into(), status, error:None,
+                started_at:None, completed_at:None, items_view:Default::default(), items:vec![] };
+            let events = mapper.notification_events(crate::protocol::CodexNotification::TurnCompleted { thread_id:"c".into(),turn }).unwrap();
+            let codepet_provider_sdk::ProtocolEvent::EventTurnUpserted { params, .. } = &events[0] else { panic!("missing terminal") };
+            if id == "failure" { assert_eq!(params.turn.error.as_ref().unwrap().message,"Upstream disconnected"); assert!(params.turn.error.as_ref().unwrap().retryable); }
+            else { assert!(params.turn.error.is_none()); }
+        }
+    }
+
+    #[test]
+    fn failed_native_turn_preserves_reason_after_partial_output() {
+        let turn: crate::protocol::CodexTurn = serde_json::from_value(serde_json::json!({
+            "id":"t", "status":"failed", "items":[{"type":"agentMessage","id":"m","text":"Partial response"}], "error":{
+                "message":"Usage limit reached", "codexErrorInfo":"usageLimitExceeded", "additionalDetails":"secret-body"}
+        })).unwrap();
+        let mapper = super::CodexProtocolMapper::new(codepet_provider_sdk::ProviderInstanceRoute {
+            device_id:"d".into(),provider_plugin_id:"p".into(),provider_instance_id:"i".into() });
+        let mapped = mapper.turn("c", &turn);
+        let error = mapped.error.unwrap();
+        assert_eq!(error.code,"quota_exceeded"); assert_eq!(error.message,"Usage limit reached"); assert!(!error.retryable);
+        assert!(!serde_json::to_string(&error).unwrap().contains("secret-body"));
+        let mut successful = turn.clone(); successful.status = crate::protocol::CodexTurnStatus::Completed;
+        assert!(mapper.turn("c", &successful).error.is_none());
+        let mut items = Vec::new();
+        mapper.append_conversation_turn_items("c", &turn, &[], &mut [], &mut items);
+        assert!(serde_json::to_string(&items).unwrap().contains("Usage limit reached"));
+    }
+
     use super::*;
     use crate::protocol::CodexThread;
     use std::collections::BTreeMap;
@@ -1281,6 +1367,7 @@ mod tests {
             provider_instance_id: "codex".to_string(),
         });
         let turn = CodexTurn {
+                    error: None,
             id: "turn-test".to_string(),
             status: CodexTurnStatus::Completed,
             started_at: Some(1),
@@ -1708,6 +1795,7 @@ mod tests {
                 CodexThreadStatus::Idle
             },
             turns: vec![CodexTurn {
+                    error: None,
                 id: "turn-history".to_string(),
                 status,
                 started_at: Some(1),

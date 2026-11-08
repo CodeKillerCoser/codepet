@@ -363,6 +363,8 @@ async fn provider_maps_claude_stream_json_and_fails_closed_for_missing_methods()
     let failed = terminal_turn(&events, &failed_turn.resource.native_resource_id);
     assert_eq!(failed.status, TurnStatus::Failed);
     assert_eq!(failed.output, "Not logged in");
+    assert_eq!(failed.error.as_ref().unwrap().code, "authentication_failed");
+    assert_eq!(failed.error.as_ref().unwrap().message, "Not logged in");
     assert_eq!(failed.deltas.len(), 1);
     let failed_item_id = format!("{}:result", failed_turn.resource.native_resource_id);
     assert_eq!(failed.deltas[0].item_id, failed_item_id);
@@ -1149,6 +1151,7 @@ fn provider_runtime_dependency_boundary_excludes_host_gateway_pet_and_tauri() {
         .collect::<BTreeSet<_>>();
     let expected = [
         "codepet-observation",
+        "codepet-paths",
         "codepet-provider-data",
         "codepet-provider-sdk",
         "libc",
@@ -1166,7 +1169,23 @@ fn provider_runtime_dependency_boundary_excludes_host_gateway_pet_and_tauri() {
     }
 }
 
+#[tokio::test]
+async fn partial_output_does_not_hide_terminal_error_array() {
+    let workspace = tempfile::tempdir().unwrap();
+    let (provider, events, route, conversation) = ready_provider(workspace.path()).await;
+    let turn = ProviderProtocolServer::turn_start(provider.as_ref(), turn_start_request(
+        provider_resource(&route, &conversation.resource), "partial-failure".into(), "partial then failure".into()))
+        .await.unwrap().turn;
+    let terminal = terminal_turn(&events, &turn.resource.native_resource_id);
+    assert_eq!(terminal.status, TurnStatus::Failed);
+    assert!(!terminal.output.is_empty());
+    let error = terminal.error.unwrap();
+    assert_eq!(error.message, "Model service unavailable");
+    assert_eq!(error.details.unwrap()["nativeCode"], "error_during_execution");
+}
+
 struct TerminalTurn {
+    error: Option<codepet_provider_sdk::ProtocolError>,
     status: TurnStatus,
     output: String,
     max_chunk_bytes: usize,
@@ -1207,6 +1226,7 @@ fn terminal_turn(events: &mpsc::Receiver<ProtocolEvent>, turn_id: &str) -> Termi
                     ) =>
             {
                 return TerminalTurn {
+                    error: params.turn.error,
                     status: params.turn.status,
                     output,
                     max_chunk_bytes,

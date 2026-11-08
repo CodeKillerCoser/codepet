@@ -161,6 +161,8 @@ pub enum CodexThreadActiveFlag {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CodexTurn {
+    #[serde(default)]
+    pub error: Option<Value>,
     pub id: String,
     pub status: CodexTurnStatus,
     pub started_at: Option<i64>,
@@ -714,6 +716,7 @@ pub fn approval_generation(resource_id: &str) -> Option<&str> {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum CodexNotification {
+    TurnError { thread_id: String, turn_id: String, error: Value },
     ProjectChanged {
         project_id: String,
         change_type: CodexProjectChangeType,

@@ -1,0 +1,16 @@
+{
+  "resource": {
+    "providerId": "p",
+    "nativeResourceId": "t"
+  },
+  "conversation": {
+    "providerId": "p",
+    "nativeResourceId": "c"
+  },
+  "status": "failed",
+  "error": {
+    "code": "quota_exceeded",
+    "message": "Free usage limit reached",
+    "retryable": false
+  }
+}

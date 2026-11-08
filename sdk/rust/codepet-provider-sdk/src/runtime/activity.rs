@@ -213,7 +213,7 @@ mod tests {
     fn turn(id: &str, status: TurnStatus) -> TurnTask {
         TurnTask { resource: RoutedResourceId { provider_id: "instance".into(), native_resource_id: id.into() },
             conversation: RoutedResourceId { provider_id: "instance".into(), native_resource_id: "thread".into() },
-            status, display_summary: None, started_at: None, updated_at: None, completed_at: None }
+            status, error: None, display_summary: None, started_at: None, updated_at: None, completed_at: None }
     }
 
     #[test]

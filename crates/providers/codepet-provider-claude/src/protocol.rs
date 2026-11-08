@@ -71,6 +71,8 @@ pub enum ClaudeOutput {
     },
     #[serde(rename = "result")]
     Result {
+        #[serde(default)]
+        errors: Vec<String>,
         subtype: String,
         #[serde(default)]
         is_error: bool,

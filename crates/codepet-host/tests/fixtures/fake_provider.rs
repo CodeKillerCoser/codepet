@@ -476,7 +476,7 @@ impl ProtocolServer for FakeProvider {
             }
             Ok(ConversationGetResponse {
                 conversation: configured,
-                items: history_items(&response_route, native_id),
+                items: if native_id == "failure-conversation" { Vec::new() } else { history_items(&response_route, native_id) },
                 page_info: None,
             })
         })
@@ -564,6 +564,18 @@ impl ProtocolServer for FakeProvider {
                         completed.status=TurnStatus::Completed;turns.insert(conversation_id,completed.clone());
                         let _=events.publish(ProtocolEvent::EventTurnUpserted{jsonrpc:"2.0".into(),params:TurnUpsertedEvent{turn:completed}});
                     }
+                });
+            }
+            if request.input.text == "fail with quota" {
+                let mut failed = turn.clone();
+                failed.status = TurnStatus::Failed;
+                failed.completed_at = Some(4);
+                failed.error = Some(codepet_provider_sdk::ProtocolError { code:"quota_exceeded".into(), message:"Free usage limit reached".into(),
+                    retryable:false, details:Some([("nativeCode".into(),serde_json::json!("QuotaExceeded"))].into_iter().collect()) });
+                let events = self.events.as_ref().unwrap().clone();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    events.publish(ProtocolEvent::EventTurnUpserted { jsonrpc:"2.0".into(), params: codepet_provider_sdk::TurnUpsertedEvent { turn: failed } }).unwrap();
                 });
             }
             let user_item_conversation = if wrong_user_item_conversation {
@@ -960,7 +972,8 @@ fn turn(
         resource: resource(route, native_id),
         conversation,
         status: TurnStatus::Running,
-        display_summary: Some("fixture turn".to_string()),
+        error: None,
+            display_summary: Some("fixture turn".to_string()),
         started_at: Some(2),
         updated_at: Some(3),
         completed_at: None,

@@ -69,6 +69,7 @@ export interface ConversationGetResponse {
   items: Array<ConversationItem>;
   pageInfo?: PageInfo;
   snapshotCursor: EventCursor;
+  turns?: Array<TurnTask>;
 }
 
 export interface ConversationItemUpsertedEvent {

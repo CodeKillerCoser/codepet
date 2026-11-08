@@ -500,16 +500,19 @@ final class ConversationGetResponse {
     required List<ConversationItem> items,
     PageInfo? pageInfo,
     required EventCursor snapshotCursor,
+    List<TurnTask>? turns,
   }) {
     final validatedConversation = conversation;
     final validatedItems = _freezeList<ConversationItem>(items, 'ConversationGetResponse.items', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     final validatedPageInfo = pageInfo == null ? null : pageInfo;
     final validatedSnapshotCursor = _string(snapshotCursor, 'ConversationGetResponse.snapshotCursor', minLength: 1);
+    final validatedTurns = turns == null ? null : _freezeList<TurnTask>(turns, 'ConversationGetResponse.turns', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     return ConversationGetResponse._(
       conversation: validatedConversation,
       items: validatedItems,
       pageInfo: validatedPageInfo,
       snapshotCursor: validatedSnapshotCursor,
+      turns: validatedTurns,
     );
   }
 
@@ -518,21 +521,24 @@ final class ConversationGetResponse {
     required this.items,
     required this.pageInfo,
     required this.snapshotCursor,
+    required this.turns,
   });
 
   final Conversation conversation;
   final List<ConversationItem> items;
   final PageInfo? pageInfo;
   final EventCursor snapshotCursor;
+  final List<TurnTask>? turns;
 
   factory ConversationGetResponse.fromJson(Object? value, {String path = 'ConversationGetResponse'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'conversation', 'items', 'pageInfo', 'snapshotCursor'}, path);
+    _expectKeys(json, const {'conversation', 'items', 'pageInfo', 'snapshotCursor', 'turns'}, path);
     return ConversationGetResponse(
       conversation: Conversation.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
       items: _decodeList<ConversationItem>(_required(json, 'items', path), '$path.items', (item, itemPath) => ConversationItem.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
       pageInfo: json.containsKey('pageInfo') && json['pageInfo'] != null ? PageInfo.fromJson(json['pageInfo'], path: '$path.pageInfo') : null,
       snapshotCursor: _string(_required(json, 'snapshotCursor', path), '$path.snapshotCursor', minLength: 1),
+      turns: json.containsKey('turns') && json['turns'] != null ? _decodeList<TurnTask>(json['turns'], '$path.turns', (item, itemPath) => TurnTask.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()) : null,
     );
   }
 
@@ -541,10 +547,11 @@ final class ConversationGetResponse {
     'items': items.map((item) => item.toJson()).toList(growable: false),
     if (pageInfo != null) 'pageInfo': pageInfo!.toJson(),
     'snapshotCursor': snapshotCursor,
+    if (turns != null) 'turns': turns!.map((item) => item.toJson()).toList(growable: false),
   };
 
   @override
-  String toString() => 'ConversationGetResponse(conversation: $conversation, items: $items, pageInfo: $pageInfo, snapshotCursor: $snapshotCursor)';
+  String toString() => 'ConversationGetResponse(conversation: $conversation, items: $items, pageInfo: $pageInfo, snapshotCursor: $snapshotCursor, turns: $turns)';
 }
 
 final class ConversationItemUpsertedEvent {

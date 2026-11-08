@@ -3662,6 +3662,7 @@ final class TurnTask {
     TimestampMs? startedAt,
     TimestampMs? updatedAt,
     TimestampMs? completedAt,
+    ProtocolError? error,
   }) {
     final validatedResource = resource;
     final validatedConversation = conversation;
@@ -3670,6 +3671,7 @@ final class TurnTask {
     final validatedStartedAt = startedAt == null ? null : _integer(startedAt, 'TurnTask.startedAt', minimum: 0, maximum: 9007199254740991);
     final validatedUpdatedAt = updatedAt == null ? null : _integer(updatedAt, 'TurnTask.updatedAt', minimum: 0, maximum: 9007199254740991);
     final validatedCompletedAt = completedAt == null ? null : _integer(completedAt, 'TurnTask.completedAt', minimum: 0, maximum: 9007199254740991);
+    final validatedError = error == null ? null : error;
     return TurnTask._(
       resource: validatedResource,
       conversation: validatedConversation,
@@ -3678,6 +3680,7 @@ final class TurnTask {
       startedAt: validatedStartedAt,
       updatedAt: validatedUpdatedAt,
       completedAt: validatedCompletedAt,
+      error: validatedError,
     );
   }
 
@@ -3689,6 +3692,7 @@ final class TurnTask {
     required this.startedAt,
     required this.updatedAt,
     required this.completedAt,
+    required this.error,
   });
 
   final RoutedResourceId resource;
@@ -3698,10 +3702,11 @@ final class TurnTask {
   final TimestampMs? startedAt;
   final TimestampMs? updatedAt;
   final TimestampMs? completedAt;
+  final ProtocolError? error;
 
   factory TurnTask.fromJson(Object? value, {String path = 'TurnTask'}) {
     final json = _object(value, path);
-    _expectKeys(json, const {'resource', 'conversation', 'status', 'displaySummary', 'startedAt', 'updatedAt', 'completedAt'}, path);
+    _expectKeys(json, const {'resource', 'conversation', 'status', 'displaySummary', 'startedAt', 'updatedAt', 'completedAt', 'error'}, path);
     return TurnTask(
       resource: RoutedResourceId.fromJson(_required(json, 'resource', path), path: '$path.resource'),
       conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
@@ -3710,6 +3715,7 @@ final class TurnTask {
       startedAt: json.containsKey('startedAt') && json['startedAt'] != null ? _integer(json['startedAt'], '$path.startedAt', minimum: 0, maximum: 9007199254740991) : null,
       updatedAt: json.containsKey('updatedAt') && json['updatedAt'] != null ? _integer(json['updatedAt'], '$path.updatedAt', minimum: 0, maximum: 9007199254740991) : null,
       completedAt: json.containsKey('completedAt') && json['completedAt'] != null ? _integer(json['completedAt'], '$path.completedAt', minimum: 0, maximum: 9007199254740991) : null,
+      error: json.containsKey('error') && json['error'] != null ? ProtocolError.fromJson(json['error'], path: '$path.error') : null,
     );
   }
 
@@ -3721,10 +3727,11 @@ final class TurnTask {
     if (startedAt != null) 'startedAt': startedAt!,
     if (updatedAt != null) 'updatedAt': updatedAt!,
     if (completedAt != null) 'completedAt': completedAt!,
+    if (error != null) 'error': error!.toJson(),
   };
 
   @override
-  String toString() => 'TurnTask(resource: $resource, conversation: $conversation, status: $status, displaySummary: $displaySummary, startedAt: $startedAt, updatedAt: $updatedAt, completedAt: $completedAt)';
+  String toString() => 'TurnTask(resource: $resource, conversation: $conversation, status: $status, displaySummary: $displaySummary, startedAt: $startedAt, updatedAt: $updatedAt, completedAt: $completedAt, error: $error)';
 }
 
 final class UnknownConversationItem extends ConversationItem {

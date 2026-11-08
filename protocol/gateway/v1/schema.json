@@ -281,6 +281,13 @@
         },
         "snapshotCursor": {
           "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
+        },
+        "turns": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
+          },
+          "description": "Recent terminal failures observed by this Host, up to 100, oldest first. Included on the initial history page so accepted-turn failures survive reconnects, even when the native history has no message. Merge by routed turn identity."
         }
       },
       "required": [

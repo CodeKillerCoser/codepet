@@ -37,7 +37,7 @@ use codepet_provider_sdk::{
     ProviderInstanceRoute, ProviderPluginDescriptor, ProviderResourceId, ProviderShutdownRequest,
     ProviderShutdownResponse, RuntimeCandidate, RuntimeGetInstalledRequest,
     RuntimeGetInstalledResponse, RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse,
-    TurnInterruptRequest, TurnInterruptResponse,
+    TurnTask, TurnStatus, TurnInterruptRequest, TurnInterruptResponse,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse,
     VersionRange, PROTOCOL_VERSION,
 };
@@ -1307,6 +1307,18 @@ impl CodexInstanceRuntime {
         };
         let _ = Self::cancel_sessions(sessions);
         for (conversation_id, slot) in execution_slots {
+            let active_turn_id = match &*lock(&slot.state) {
+                ExecutionSlotState::Ready(execution) => execution.active_turn_id.clone(),
+                _ => None,
+            };
+            if let Some(id) = active_turn_id {
+                let mapper = lock(&self.mapper);
+                let turn = TurnTask { resource: mapper.resource(id), conversation: mapper.resource(conversation_id.clone()),
+                    status: TurnStatus::Failed, display_summary: Some(error.message.clone()), error: Some(error.clone()),
+                    started_at: None, updated_at: Some(now_ms()), completed_at: Some(now_ms()) };
+                drop(mapper);
+                let _ = self.events.publish(ProtocolEvent::EventTurnUpserted { jsonrpc: "2.0".into(), params: codepet_provider_sdk::TurnUpsertedEvent { turn } });
+            }
             let session = slot.force_close();
             self.lifecycle_hook
                 .after_execution_cancelled(&conversation_id);
@@ -3501,6 +3513,7 @@ fn incoming_conversation_id(incoming: &CodexIncoming) -> Option<&str> {
             CodexNotification::ThreadNameUpdated { thread_id, .. }
             | CodexNotification::ThreadStatusChanged { thread_id, .. }
             | CodexNotification::TurnStarted { thread_id, .. }
+            | CodexNotification::TurnError { thread_id, .. }
             | CodexNotification::TurnCompleted { thread_id, .. }
             | CodexNotification::ItemUpserted { thread_id, .. }
             | CodexNotification::OutputDelta { thread_id, .. }

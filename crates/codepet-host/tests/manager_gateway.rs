@@ -2139,3 +2139,33 @@ async fn handshake_list_and_ping_hide_undetected_builtins_but_keep_custom_provid
     }
     manager.shutdown().await;
 }
+
+
+#[tokio::test]
+async fn failed_turn_error_survives_provider_event_and_gateway_history_without_items() {
+    let manager = build_manager("device-failure", vec![plugin("dev.codepet.failure", &["failure-instance"])]);
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    gateway.start_event_forwarding();
+    assert!(manager.start_enabled().await[0].1.is_ok());
+    let conversation = gateway_resource("device-failure", "dev.codepet.failure", "failure-instance", "failure-conversation");
+    let mut events = gateway.subscribe_events(Some(&gateway.current_event_cursor())).unwrap();
+    let receipt = gateway.turn_send(GatewayTurnSendRequest {
+        conversation: conversation.clone(), client_request_id:"quota-input".into(),
+        capability_revision:"fake-capabilities-v1".into(),
+        input:GatewayTurnInput { kind:GatewayTurnInputKind::Text, text:"fail with quota".into() },
+        selection:GatewayTurnSelection { access_mode_id:None, reasoning_effort_id:None, model:None },
+    }).await.unwrap();
+    let terminal = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let GatewayEvent::TurnUpserted { params, .. } = events.next_event().await.unwrap() {
+                let turn = params.payload.turn;
+                if turn.resource == receipt.turn.resource && turn.status == codepet_gateway_sdk::TurnStatus::Failed { break turn; }
+            }
+        }
+    }).await.unwrap();
+    assert_eq!(terminal.error.as_ref().unwrap().code,"quota_exceeded");
+    let history = gateway.conversation_get(GatewayConversationGetRequest { conversation, cursor:None,limit:Some(10) }).await.unwrap();
+    assert!(history.items.is_empty());
+    assert_eq!(history.turns.unwrap(),vec![terminal]);
+    manager.shutdown().await;
+}
