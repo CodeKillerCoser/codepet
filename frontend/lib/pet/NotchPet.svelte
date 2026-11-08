@@ -22,15 +22,33 @@
   export let dismissActivity: (event: MouseEvent, task: PetTask) => void;
   let header: HTMLButtonElement;
   let failedIcons = new Set<string>();
-  let completedExpanded = false;
+  let expandedCompleted = new Set<string>();
   const attention = (task: PetTask) => ['waiting-approval', 'waiting-input'].includes(task.status);
   const live = (task: PetTask) => task.status === 'running' || attention(task);
-  $: completedTasks = data.tasks.filter(task => task.status === 'completed');
+  function completedByProvider(tasks: PetTask[]) {
+    const groups = new Map<string, { id: string; providerId: string; completed: boolean; tasks: PetTask[] }>();
+    for (const task of tasks) {
+      if (task.status !== 'completed') continue;
+      const providerId = task.providerId || '';
+      const id = `completed-${encodeURIComponent(providerId)}`;
+      if (!groups.has(id)) groups.set(id, { id, providerId, completed: true, tasks: [] });
+      groups.get(id)!.tasks.push(task);
+    }
+    return [...groups.values()];
+  }
+  $: completedGroups = completedByProvider(data.tasks);
   $: taskGroups = [
-    { id: 'active', tasks: data.tasks.filter(task => task.status !== 'completed').sort((a, b) => Number(live(b)) - Number(live(a))) },
-    { id: 'completed', tasks: completedTasks },
+    { id: 'active', providerId: '', completed: false, tasks: data.tasks.filter(task => task.status !== 'completed').sort((a, b) => Number(live(b)) - Number(live(a))) },
+    ...completedGroups,
   ].filter(group => group.tasks.length > 0);
-  $: if (!completedTasks.length) completedExpanded = false;
+  $: if ([...expandedCompleted].some(id => !completedGroups.some(group => group.id === id))) {
+    expandedCompleted = new Set([...expandedCompleted].filter(id => completedGroups.some(group => group.id === id)));
+  }
+  function toggleCompleted(id: string) {
+    const next = new Set(expandedCompleted);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    expandedCompleted = next;
+  }
   $: latest = data.tasks[0];
   function focusIn(event: FocusEvent) {
     if ((event.target as HTMLElement).matches(':focus-visible')) dispatch({ type: 'focus' });
@@ -44,29 +62,31 @@
       header?.focus(); dispatch({ type: 'collapse' });
     }
   }
-  function expandCompleted(event: MouseEvent) {
-    if (!completedExpanded && !(event.target as Element).closest('button, a')) completedExpanded = true;
+  function expandCompleted(event: MouseEvent, id: string) {
+    if (!expandedCompleted.has(id) && !(event.target as Element).closest('button, a')) toggleCompleted(id);
   }
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <section class="notch-panel dark theme-dark" class:expanded class:physical-notch={surface.physicalNotch} aria-label="顶部任务面板"
-  style={`--notch-max-height: ${sizing.expandedHeight}px`}
+  style={`--notch-max-height: ${sizing.expandedHeight}px; --portrait-width: ${sizing.portraitWidth}px; --task-icon-size: ${sizing.portraitWidth * 2 / 3}px`}
   on:mouseenter={() => dispatch({ type: 'enter' })} on:mouseleave={() => dispatch({ type: 'leave' })}
   on:focusin={focusIn} on:focusout={focusOut} on:keydown={keyDown}>
   <div class="notch-header">
-    <PetAvatar petId={settings?.pet.selectedPetId ?? 'default'} kind={settings?.pet.kind} imagePath={settings?.pet.imagePath}
-      portrait width={sizing.portraitWidth} interactive label="桌宠头像" status={avatarStatus} onDrag={dragWindow} dragging={surface.dragging} />
-    <button class="notch-summary" bind:this={header} type="button" aria-expanded={expanded} aria-controls="notch-details"
-      aria-label={expanded ? '收起任务面板' : '展开任务面板'}
-      title={data.error || (latest ? `${petStatusLabel(latest.status)} · ${latest.title}` : '就绪')}
-      on:click={() => dispatch({ type: expanded ? 'collapse' : 'enter' })}>
-      <span class="status-dot" class:busy={latest?.status === 'running'} class:attention={latest && attention(latest)} class:error={Boolean(data.error) || latest?.status === 'failed'}></span>
-      {#if expanded}<span class="latest-status">{data.error ? '连接中断' : latest ? petStatusLabel(latest.status) : '就绪'}</span>{/if}
-      <span class="latest-title">{data.error ? '连接中断' : latest?.title || '就绪'}</span>
-      {#if data.tasks.length > 1}<span class="task-count" aria-label={`${data.tasks.length} 项任务`}>{data.tasks.length}</span>{/if}
-      <ChevronDown size={13} class={expanded ? 'chevron open' : 'chevron'} aria-hidden="true" />
-    </button>
+    <div class="notch-heading">
+      <PetAvatar petId={settings?.pet.selectedPetId ?? 'default'} kind={settings?.pet.kind} imagePath={settings?.pet.imagePath}
+        portrait width={sizing.portraitWidth} interactive label="桌宠头像" status={avatarStatus} onDrag={dragWindow} dragging={surface.dragging} />
+      <button class="notch-summary" bind:this={header} type="button" aria-expanded={expanded} aria-controls="notch-details"
+        aria-label={expanded ? '收起任务面板' : '展开任务面板'}
+        title={data.error || (latest ? `${petStatusLabel(latest.status)} · ${latest.title}` : '就绪')}
+        on:click={() => dispatch({ type: expanded ? 'collapse' : 'enter' })}>
+        <span class="status-dot" class:busy={latest?.status === 'running'} class:attention={latest && attention(latest)} class:error={Boolean(data.error) || latest?.status === 'failed'}></span>
+        {#if expanded}<span class="latest-status">{data.error ? '连接中断' : latest ? petStatusLabel(latest.status) : '就绪'}</span>{/if}
+        <span class="latest-title">{data.error ? '连接中断' : latest?.title || '就绪'}</span>
+        {#if data.tasks.length > 1}<span class="task-count" aria-label={`${data.tasks.length} 项任务`}>{data.tasks.length}</span>{/if}
+        <ChevronDown size={13} class={expanded ? 'chevron open' : 'chevron'} aria-hidden="true" />
+      </button>
+    </div>
     {#if expanded}
       <div class="panel-actions">
         <button type="button" aria-label="切换为悬浮" title="切换为悬浮" on:click={toggleSurface}><PanelTop size={14} /></button>
@@ -80,20 +100,17 @@
       <div class="notch-task-list" tabindex="0" role="region" aria-label="任务列表">
         {#if data.error}<p class="connection-error" role="status">活动连接暂不可用，正在重试</p>{/if}
         {#each taskGroups as group (group.id)}
-          {@const stacked = group.id === 'completed' && !completedExpanded}
-          {#if group.id === 'completed'}
-            <button class="completed-toggle" type="button" aria-expanded={completedExpanded}
-              aria-controls="notch-completed" on:click={() => completedExpanded = !completedExpanded}>
-              <span>已完成 <span class="completed-count">{group.tasks.length}</span></span>
-              <ChevronDown size={13} class={completedExpanded ? 'completed-chevron open' : 'completed-chevron'} />
-            </button>
+          {@const completedExpanded = expandedCompleted.has(group.id)}
+          {@const stacked = group.completed && !completedExpanded && group.tasks.length > 1}
+          {#if group.completed && group.id === completedGroups[0]?.id}
+            <h2 class="completed-heading">已完成 <span class="completed-count">{completedGroups.reduce((count, item) => count + item.tasks.length, 0)}</span></h2>
           {/if}
-          <!-- The group toggle provides the keyboard equivalent of clicking the top card. -->
+          <!-- The first provider icon toggles its group with pointer or keyboard. -->
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
-          <div class="task-group" class:stacked role="group" aria-label={group.id === 'completed' ? '已完成任务' : '当前任务'}
-            id={group.id === 'completed' ? 'notch-completed' : undefined}
+          <div class="task-group" class:stacked class:completed={group.completed} role="group" aria-label={group.completed ? `${group.providerId || 'Agent'} 已完成任务` : '当前任务'}
+            id={`notch-${group.id}`}
             style={`--stack-count: ${Math.min(group.tasks.length - 1, 2)}`}
-            on:click={event => { if (group.id === 'completed') expandCompleted(event); }}>
+            on:click={event => { if (group.completed) expandCompleted(event, group.id); }}>
             {#each stacked ? group.tasks.slice(0, 3) : group.tasks as task, index (task.id)}
               {@const provider = data.providers.find(item => item.providerId === task.providerId)}
               {@const providerName = provider?.displayName || data.sources.find(source => source.id === task.providerId)?.displayName || task.providerId || 'Agent'}
@@ -102,9 +119,18 @@
                 style={stacked ? `--stack-depth: ${index}; z-index: ${3 - index}` : undefined}
                 aria-label={`${task.title}，${petStatusLabel(task.status)}`}>
                 <div class="provider-icon" title={providerName}>
-                  {#if provider?.icon && !failedIcons.has(provider.icon)}
+                  {#if group.completed && index === 0}
+                    <button class="completed-toggle" type="button" aria-expanded={completedExpanded}
+                      aria-label={`${providerName} 已完成任务（${group.tasks.length}）`}
+                      title={`${completedExpanded ? '收起' : '展开'} ${providerName} 的已完成任务`}
+                      aria-controls={`notch-${group.id}`} on:click={() => toggleCompleted(group.id)}>
+                      {#if provider?.icon && !failedIcons.has(provider.icon)}
+                        <img src={provider.icon} alt={providerName} referrerpolicy="no-referrer" on:error={() => { failedIcons = new Set([...failedIcons, provider.icon!]); }} />
+                      {:else}<Plug size={sizing.portraitWidth * 2 / 3} aria-label={providerName} />{/if}
+                    </button>
+                  {:else if provider?.icon && !failedIcons.has(provider.icon)}
                     <img src={provider.icon} alt={providerName} referrerpolicy="no-referrer" on:error={() => { failedIcons = new Set([...failedIcons, provider.icon!]); }} />
-                  {:else}<Plug size={24} aria-label={providerName} />{/if}
+                  {:else}<Plug size={sizing.portraitWidth * 2 / 3} aria-label={providerName} />{/if}
                 </div>
                 <div class="task-content">
                   <div class="task-topline">
@@ -115,8 +141,8 @@
                     {#if attention(task)}<span class="task-attention" title={petStatusLabel(task.status)}><Bell size={13} aria-label={petStatusLabel(task.status)} /></span>{/if}
                   </div>
                   <div class="task-progress"><MarkdownMessage compact message={task.summary?.trim() || '尚未收到回复内容'} /></div>
+                  <button class="dismiss-task" type="button" aria-label={`隐藏 ${task.title}`} title="隐藏任务" on:click={event => dismissActivity(event, task)}><X size={13} /></button>
                 </div>
-                <button class="dismiss-task" type="button" aria-label={`隐藏 ${task.title}`} title="隐藏任务" on:click={event => dismissActivity(event, task)}><X size={13} /></button>
               </article>
             {/each}
           </div>
@@ -135,39 +161,46 @@
   .physical-notch::before, .physical-notch::after { content: ''; position: absolute; top: 0; width: 6px; height: 6px; background: var(--color-black); pointer-events: none; }
   .physical-notch::before { left: -6px; mask-image: radial-gradient(circle at 0 100%, transparent 5.5px, black 6px); }
   .physical-notch::after { right: -6px; mask-image: radial-gradient(circle at 100% 100%, transparent 5.5px, black 6px); }
-  .notch-panel.expanded { width: 100%; border-radius: 12px; }
+  .notch-panel.expanded { width: 100%; border-radius: 12px; padding: 12px; }
   .notch-panel.expanded.physical-notch { border-radius: 0 0 12px 12px; }
   .notch-header { height: var(--notch-header-height); padding: 2px 10px 2px 6px; display: flex; gap: 6px; align-items: center; }
+  .notch-heading { min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px; }
   button { color: inherit; border: 0; background: transparent; }
   button:focus-visible, .notch-task-list:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; border-radius: 6px; }
-  .notch-summary { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1; text-align: left; padding: 4px 0; font-size: 12px; }
+  .notch-summary { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; text-align: left; padding: 0; font-size: 12px; line-height: 1.4; }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green-9); flex: none; }
   .status-dot.busy { background: var(--blue-9); animation: pulse 1.6s ease-in-out infinite; }
   .status-dot.attention { background: var(--amber-9); }
   .status-dot.error, .connection-error { color: var(--red-11); }
   .status-dot.error { background: var(--red-9); }
   .latest-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-  .expanded .notch-header { width: 100%; padding-left: 16px; padding-right: 16px; }
+  .expanded .notch-header { width: 100%; padding: 0; }
   .expanded .latest-title { max-width: none; flex: 1; }
   .task-count { color: var(--gray-11); font-size: 11px; font-variant-numeric: tabular-nums; flex: none; }
   .notch-summary :global(.chevron) { color: var(--gray-10); flex: none; }
   .notch-summary :global(.chevron.open) { transform: rotate(180deg); }
   .panel-actions { display: flex; flex: none; gap: 2px; }
   .panel-actions button { display: grid; place-items: center; width: 22px; height: min(22px, calc(var(--notch-header-height) - 4px)); border-radius: 6px; color: var(--gray-10); }
-  .notch-details { display: flex; flex-direction: column; max-height: calc(var(--notch-max-height) - var(--notch-header-height)); padding-bottom: 14px; animation: reveal 140ms ease-out; }
-  .notch-task-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--gray-7) transparent; padding: 10px 24px 2px; }
-  .notch-task { position: relative; display: flex; gap: 14px; align-items: flex-start; padding: 8px 0; }
-  .completed-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding: 7px 0; color: var(--gray-11); font-size: 11px; text-align: left; }
+  .notch-details { display: flex; flex-direction: column; max-height: calc(var(--notch-max-height) - var(--notch-header-height) - 36px); margin-top: 12px; animation: reveal 140ms ease-out; }
+  .notch-task-list { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--gray-7) transparent; padding: 0; }
+  .task-group { display: grid; gap: 12px; }
+  .notch-task { position: relative; min-width: 0; display: grid; grid-template-columns: var(--task-icon-size) minmax(0, 1fr); gap: 8px; align-items: start; }
+  .completed-heading { margin: 12px 0 8px; color: var(--gray-11); font-size: 11px; font-weight: 400; line-height: 20px; }
   .completed-count { margin-left: 4px; color: var(--gray-10); font-variant-numeric: tabular-nums; }
-  .completed-toggle :global(.completed-chevron.open) { transform: rotate(180deg); }
-  .task-group.stacked { display: grid; grid-template-columns: minmax(0, 1fr); isolation: isolate; padding-bottom: calc(var(--stack-count) * 5px); margin-bottom: 4px; cursor: pointer; }
-  .stacked .notch-task { grid-area: 1 / 1; padding: 8px; border: 1px solid var(--gray-4); border-radius: 8px; background: var(--gray-2); transform: translateY(calc(var(--stack-depth) * 5px)) scaleX(calc(1 - var(--stack-depth) * 0.025)); transform-origin: bottom center; }
-  .stacked .stack-back > * { visibility: hidden; }
-  .stacked .dismiss-task { right: 2px; top: 0; }
-  .provider-icon { width: 28px; height: 32px; flex: none; display: grid; place-items: center; color: var(--gray-11); }
-  .provider-icon img { width: 26px; height: 26px; object-fit: contain; border-radius: 6px; }
-  .task-content { flex: 1; min-width: 0; }
-  .task-topline { display: flex; align-items: center; gap: 8px; min-height: 24px; }
+  .completed-toggle { display: grid; place-items: center; width: 100%; height: 100%; padding: 0; border-radius: 4px; cursor: pointer; }
+  .completed + .completed { margin-top: 12px; }
+  .task-group.stacked { grid-template-columns: minmax(0, 1fr); gap: 0; isolation: isolate; padding-bottom: calc(var(--stack-count) * 7px + 1px); cursor: pointer; }
+  .stacked .notch-task { grid-area: 1 / 1; perspective: 600px; perspective-origin: 50% 0; }
+  .stacked .stack-back { pointer-events: none; }
+  .completed .task-content::before { content: ''; position: absolute; inset: -4px 0 0 -3px; z-index: -1; background: color-mix(in srgb, var(--color-black) 70%, var(--gray-2)); border-radius: 6px; }
+  .stacked .stack-back .task-content::before { background: color-mix(in srgb, var(--color-black) 55%, var(--gray-2)); box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--color-black) 40%, var(--gray-5)); }
+  .completed .task-content { isolation: isolate; }
+  .stacked .task-content { align-self: stretch; transform: translate3d(0, calc(var(--stack-depth) * 7px), calc(var(--stack-depth) * -18px)); transform-origin: center top; }
+  .stacked .stack-back .provider-icon, .stacked .stack-back .task-content > * { visibility: hidden; }
+  .provider-icon { margin-top: max(0px, calc((24px - var(--task-icon-size)) / 2)); width: var(--task-icon-size); height: var(--task-icon-size); display: grid; place-items: center; color: var(--gray-11); }
+  .provider-icon img { width: var(--task-icon-size); height: var(--task-icon-size); object-fit: contain; border-radius: 4px; }
+  .task-content { position: relative; min-width: 0; padding: 0 4px 4px 0; }
+  .task-topline { display: flex; align-items: center; gap: 8px; min-height: 24px; padding-right: 18px; }
   h3 { flex: 1; min-width: 0; margin: 0; font-size: 14px; font-weight: 600; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .provider-badge { flex: none; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 9px; border-radius: 16px; font: 600 11px/1.3 var(--font-family-mono, monospace); color: var(--gray-12); background: var(--gray-3); }
   .provider-badge.codex { background: var(--blue-4); color: var(--blue-12); }
@@ -179,19 +212,19 @@
   .task-state.attention { color: var(--amber-11); }
   .task-state.failed { color: var(--red-11); }
   .task-attention { display: grid; place-items: center; color: var(--amber-11); flex: none; }
-  .task-progress { margin-top: 1px; color: var(--gray-11); font-size: 12px; line-height: 1.5; }
+  .task-progress { margin-top: 8px; color: var(--gray-11); font-size: 12px; line-height: 1.5; }
   .task-progress :global(.markdown-message) { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; max-height: 3em; color: inherit; line-height: inherit; overflow-wrap: anywhere; }
   .task-progress :global(.markdown-message p) { margin: 0; }
-  .dismiss-task { position: absolute; right: -20px; top: 13px; display: grid; place-items: center; color: var(--gray-10); width: 20px; height: 20px; padding: 0; border-radius: 5px; opacity: 0; }
+  .dismiss-task { position: absolute; right: 4px; top: 2px; display: grid; place-items: center; color: var(--gray-10); width: 16px; height: 20px; padding: 0; border-radius: 4px; opacity: 0; }
   .notch-task:hover .dismiss-task, .notch-task:focus-within .dismiss-task { opacity: 1; }
   button:hover { color: var(--gray-12); background: var(--gray-3); }
   .notch-summary:hover { background: transparent; }
   .empty-state { display: grid; justify-items: center; gap: 10px; padding: 28px 0; color: var(--gray-11); font-size: 11px; }
   .empty-state strong { color: var(--gray-12); font-size: 13px; font-weight: 500; }
-  .connection-error, .action-notice { margin: 8px 16px; font-size: 12px; }
+  .connection-error, .action-notice { margin: 8px 0; font-size: 12px; }
   .action-notice { flex: none; }
   @keyframes pulse { 50% { opacity: .45; } }
   @keyframes reveal { from { opacity: 0; } to { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { .notch-details, .status-dot.busy { animation: none; } }
-  @media (max-width: 380px) { .notch-task-list { padding-left: 12px; padding-right: 20px; } .notch-task { gap: 8px; } .provider-icon { width: 22px; } .provider-icon img { width: 22px; height: 22px; } .task-topline { flex-wrap: wrap; gap: 4px; } h3 { flex-basis: 100%; } .provider-badge { max-width: 80%; padding: 3px 7px; font-size: 10px; } }
+  @media (max-width: 380px) { .provider-icon { margin-top: max(0px, calc((21px - var(--task-icon-size)) / 2)); } .task-topline { flex-wrap: wrap; gap: 4px; } h3 { flex-basis: 100%; } .provider-badge { max-width: 80%; padding: 3px 7px; font-size: 10px; } }
 </style>
