@@ -12,6 +12,8 @@ export interface SurfaceView {
   availableWidth?: number;
   nativeDrag: boolean;
   physicalNotch: boolean;
+  menuBar?: boolean;
+  panelOpen?: boolean;
 }
 export const initialSurface: SurfaceView = {
   revision: 0, mode: 'floating', dragging: false, snapCandidate: false,
@@ -73,6 +75,9 @@ export class PetSurfaceController {
       if (layout) this.accept(await invoke<SurfaceView>('pet_surface_layout', { layout }));
     } catch (error) { this.failed(error); }
     finally { this.inFlight = false; if (this.pending) this.schedule(); }
+  }
+  async setPanel(open: boolean) {
+    this.accept(await invoke<SurfaceView>('pet_surface_panel', { open }));
   }
   async setMode(mode: SurfaceView['mode']) {
     this.accept(await invoke<SurfaceView>('pet_surface_mode', { mode }));

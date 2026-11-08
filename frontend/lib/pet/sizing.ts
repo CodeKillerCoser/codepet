@@ -12,7 +12,7 @@ export function petSizing(surface: SurfaceView, scale = 3, railHeight = 56) {
   const heightScale = Math.sqrt(height / 860);
   const bounded = (value: number, min: number, max: number) => Math.round(Math.min(max, Math.max(min, value)));
   const fitWidth = (base: number, min: number, max: number) => Math.min(width, bounded(base * widthScale, min, max));
-  const headerHeight = Math.min(height, bounded(38 * heightScale, 36, 44));
+  const headerHeight = Math.min(height, bounded(24 * heightScale, 22, 26));
   const desktopWidth = fitWidth(280, 240, 360);
   const petWidth = Math.max(1, Math.round(Math.min(desktopWidth - 60,
     bounded(80 * Math.min(widthScale, heightScale), 64, 104) * Math.min(4, Math.max(2, Number.isFinite(scale) ? scale : 3)) / 3)));
@@ -22,7 +22,7 @@ export function petSizing(surface: SurfaceView, scale = 3, railHeight = 56) {
     expandedWidth: fitWidth(440, 340, 640),
     expandedHeight: Math.min(height, bounded(340 * heightScale, headerHeight + 80, 440)),
     headerHeight,
-    portraitWidth: (headerHeight - 12) * 1.5,
+    portraitWidth: (headerHeight - 4) * 1.5,
     desktopWidth,
     petWidth,
     stageHeight,

@@ -1,0 +1,12 @@
+{
+  "productName": "CodePet Surface QA",
+  "version": "0.0.0",
+  "identifier": "com.codepet.surface-qa",
+  "build": { "frontendDist": "../../../webcontent" },
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [{ "label": "pet", "title": "CodePet UI QA · 示例任务", "url": "pet.html", "width": 360, "height": 126, "decorations": false, "transparent": true, "shadow": false, "alwaysOnTop": true, "skipTaskbar": true }],
+    "security": { "csp": null, "capabilities": [{"identifier":"surface-qa","windows":["pet"],"permissions":["core:default","core:window:allow-set-resizable","core:window:allow-set-ignore-cursor-events","core:window:allow-start-dragging"]}] }
+  },
+  "bundle": { "active": false, "icon": ["../../icons/icon.png"] }
+}

@@ -92,7 +92,7 @@ try {
   await page.getByRole('button', { name: '吸附到刘海', exact: true }).click();
   await page.waitForSelector('.notch-panel');
   await page.mouse.move(-20, -20); await page.waitForTimeout(350); await settled();
-  assert.equal((await geometry()).height, 38);
+  assert.equal((await geometry()).height, 24);
   assert.equal(await page.locator('.pet-stage').count(), 0);
   await page.locator('.notch-header').hover(); await page.waitForSelector('.notch-task'); await settled();
   assert.equal(await page.locator('.notch-task').count(), taskCount);

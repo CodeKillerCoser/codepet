@@ -24,7 +24,8 @@ const native = {
 };
 const qa = {
   native,
-  surface: { revision: 1, mode: 'floating' as 'floating' | 'docked', dragging: false, snapCandidate: false, canDock: true, availableHeight: 860, availableWidth: 1440, nativeDrag: true, physicalNotch: true },
+  surface: { revision: 1, mode: 'floating' as 'floating' | 'docked', dragging: false, snapCandidate: false, canDock: true, availableHeight: 860, availableWidth: 1440, nativeDrag: true, physicalNotch: true, menuBar: false, panelOpen: false },
+  menuSummary: null as any,
   manualDrag: false,
   finishDrag: (docked = false) => {
     qa.surface = { ...qa.surface, revision: qa.surface.revision + 1, dragging: false, snapCandidate: false, mode: docked ? 'docked' : 'floating' };
@@ -65,6 +66,8 @@ mockIPC((command, args: any) => {
     return { ...request, response: { status: "ok", result: { snapshot: { tasks: qa.tasks, sources: [] } } } };
   }
   if (command === "plugin:event|listen") { listeners.set(args.event, args.handler); return args.handler; }
+  if (command === 'pet_menu_summary') { qa.menuSummary = args.summary; return; }
+  if (command === 'pet_surface_panel') { qa.surface.panelOpen = args.open; qa.surface.revision++; fire('pet-surface-changed', qa.surface); return qa.surface; }
   if (command === 'pet_surface_state') return qa.surface;
   if (command === 'pet_surface_pointer') return qa.cursor;
   if (command === 'pet_surface_mode') {

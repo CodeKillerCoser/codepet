@@ -1,9 +1,13 @@
 //! A single writer for pet geometry. UI supplies natural layout; native owns placement and drag lifetime.
 pub mod geometry;
-use crate::platform::pet_surface as platform;
+use crate::platform::{pet_menu, pet_surface as platform};
 use geometry::*;
 use serde::{Deserialize, Serialize};
-use std::{path::PathBuf, sync::Mutex, time::Duration};
+use std::{
+    path::PathBuf,
+    sync::Mutex,
+    time::{Duration, Instant},
+};
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -31,6 +35,8 @@ pub struct View {
     can_dock: bool,
     available_height: f64,
     available_width: f64,
+    menu_bar: bool,
+    panel_open: bool,
     native_drag: bool,
     physical_notch: bool,
 }
@@ -55,11 +61,57 @@ struct Surface {
     path: Option<PathBuf>,
     last_frame: Option<Rect>,
     last_view: Option<View>,
+    menu_rect: Option<Rect>,
+    panel_open: bool,
+    pinned: bool,
+    menu_down: Option<Point>,
+    outside_since: Option<Instant>,
+    was_pressed: bool,
+    menu_ready: bool,
 }
 #[derive(Default)]
 pub struct SurfaceState(Mutex<Surface>, tokio::sync::Notify);
 
 impl Surface {
+    fn open_panel(&mut self, pinned: bool) {
+        if !self.panel_open {
+            if let Some(menu) = self.menu_rect {
+                if let Some(d) = display_for(menu.center(), &self.displays) {
+                    self.display_id = d.id.clone();
+                }
+            }
+            self.panel_open = true;
+            self.revision += 1;
+        }
+        self.pinned |= pinned;
+        self.outside_since = None;
+    }
+    fn close_panel(&mut self) {
+        if self.panel_open {
+            self.panel_open = false;
+            self.revision += 1;
+        }
+        self.pinned = false;
+        self.outside_since = None;
+    }
+    fn finish_menu_press(&mut self, pointer: Point) -> bool {
+        let Some(origin) = self.menu_down.take() else {
+            return false;
+        };
+        if (pointer.x - origin.x).hypot(pointer.y - origin.y) >= 5. {
+            self.anchor = Some(origin);
+            self.begin_drag(origin);
+            return self.move_drag(pointer, false, false);
+        }
+        if self.menu_rect.is_some_and(|r| r.contains(pointer)) {
+            if self.panel_open && self.pinned {
+                self.close_panel();
+            } else {
+                self.open_panel(true);
+            }
+        }
+        false
+    }
     fn display(&self) -> Option<&Display> {
         self.displays
             .iter()
@@ -134,7 +186,13 @@ impl Surface {
             .display()
             .map(|d| {
                 let top = if self.mode == Mode::Docked {
-                    d.notch.map(Rect::bottom).unwrap_or(d.work.y)
+                    if self.menu_ready {
+                        self.menu_rect
+                            .map(|r| menu_area(d, r).y)
+                            .unwrap_or(d.work.y)
+                    } else {
+                        d.notch.map(Rect::bottom).unwrap_or(d.work.y)
+                    }
                 } else {
                     d.work.y
                 };
@@ -152,6 +210,8 @@ impl Surface {
                 .display()
                 .map(|d| d.work.width / d.unit)
                 .unwrap_or(400.),
+            menu_bar: self.menu_ready,
+            panel_open: self.panel_open,
             native_drag: platform::TRACKS_DRAG,
             physical_notch: self.display().is_some_and(|d| d.physical_notch),
         }
@@ -169,6 +229,7 @@ impl Surface {
                     display_id: self.display_id.clone(),
                 });
                 self.mode = Mode::Floating;
+                self.panel_open = false;
                 self.revision += 1;
             }
         }
@@ -192,8 +253,14 @@ impl Surface {
                 self.revision += 1;
             }
         }
-        self.candidate =
-            dock_target(anchor, &self.displays, self.candidate.as_deref()).map(|d| d.id.clone());
+        self.candidate = self
+            .menu_rect
+            .filter(|r| r.expanded(24., 28.).contains(anchor))
+            .and_then(|r| display_for(r.center(), &self.displays))
+            .map(|d| d.id.clone())
+            .or_else(|| {
+                dock_target(anchor, &self.displays, self.candidate.as_deref()).map(|d| d.id.clone())
+            });
         if !pressed {
             if let Some(id) = self.candidate.take() {
                 self.display_id = id;
@@ -241,12 +308,25 @@ impl Surface {
         }
     }
     fn apply(&mut self, app: &AppHandle) -> Result<(), String> {
+        if self.menu_ready {
+            pet_menu::set_visible(app, self.mode == Mode::Docked || self.drag.is_some())?;
+            if self.mode == Mode::Docked
+                && (!self.panel_open || self.layout.is_none_or(|l| l.revision != self.revision))
+            {
+                pet_menu::show_panel(app, false)?;
+                return Ok(());
+            }
+        }
         let (Some(layout), Some(d), Some(anchor)) = (self.layout, self.display(), self.anchor)
         else {
             return Ok(());
         };
         let frame = if self.mode == Mode::Docked && d.notch.is_some() {
-            dock_frame(d, layout)
+            if let Some(menu) = self.menu_rect.filter(|_| self.menu_ready) {
+                menu_frame(menu_area(d, menu), menu, layout, d.unit)
+            } else {
+                dock_frame(d, layout)
+            }
         } else {
             let f = frame_at(anchor, layout, d.unit);
             if self.drag.is_some() {
@@ -259,6 +339,9 @@ impl Surface {
         platform::apply(app, frame, self.mode == Mode::Docked || self.drag.is_some())?;
         self.anchor = Some(anchor);
         self.last_frame = Some(frame);
+        if self.menu_ready {
+            pet_menu::show_panel(app, true)?;
+        }
         Ok(())
     }
 }
@@ -271,6 +354,9 @@ enum Action {
     Begin,
     Cancel,
     Tick,
+    Menu(pet_menu::Input),
+    Panel(bool),
+    Outside(Point),
     NativeDrag {
         origin: Point,
         point: Point,
@@ -295,8 +381,50 @@ fn perform_on_main(handle: &AppHandle, action: Action) -> Result<View, String> {
         s.initialize(&env);
     }
     s.update_environment(&env);
+    if s.menu_ready {
+        pet_menu::set_visible(handle, s.mode == Mode::Docked || s.drag.is_some())?;
+        s.menu_rect = pet_menu::anchor(handle);
+    }
     let mut save = false;
     match action {
+        Action::Outside(point) => {
+            if s.panel_open
+                && !s.menu_rect.is_some_and(|r| r.contains(point))
+                && !s.last_frame.is_some_and(|r| r.contains(point))
+            {
+                s.close_panel();
+            } else if s.panel_open && s.last_frame.is_some_and(|r| r.contains(point)) {
+                s.pinned = true;
+            }
+        }
+        Action::Menu(input) => {
+            if s.mode == Mode::Docked && s.drag.is_none() {
+                match input {
+                    pet_menu::Input::Enter => {
+                        // AppKit can emit Enter while rebuilding a status item's
+                        // tracking area. Only a real pointer hover opens the panel.
+                        if !env.pressed && s.menu_rect.is_some_and(|r| r.contains(env.pointer)) {
+                            s.open_panel(false);
+                        }
+                    }
+                    pet_menu::Input::Down(point) => {
+                        s.menu_down = Some(point);
+                    }
+                    pet_menu::Input::Up(point) => {
+                        save |= s.finish_menu_press(point);
+                    }
+                }
+            }
+        }
+        Action::Panel(open) => {
+            if s.menu_ready && s.mode == Mode::Docked {
+                if open {
+                    s.open_panel(true);
+                } else {
+                    s.close_panel();
+                }
+            }
+        }
         Action::NativeDrag {
             origin,
             point,
@@ -333,6 +461,8 @@ fn perform_on_main(handle: &AppHandle, action: Action) -> Result<View, String> {
                 .ok_or("当前显示器不支持顶部停靠")?;
             s.display_id = d.id.clone();
             s.mode = Mode::Docked;
+            s.panel_open = false;
+            s.pinned = false;
             s.revision += 1;
             save = true;
         }
@@ -340,6 +470,7 @@ fn perform_on_main(handle: &AppHandle, action: Action) -> Result<View, String> {
             s.drag = None;
             s.candidate = None;
             s.mode = Mode::Floating;
+            s.panel_open = false;
             s.revision += 1;
             save = true;
             if let (Some(d), Some(mut a)) = (s.display(), s.anchor) {
@@ -364,6 +495,30 @@ fn perform_on_main(handle: &AppHandle, action: Action) -> Result<View, String> {
             save = true;
         }
         Action::Tick => {
+            if let Some(origin) = s.menu_down {
+                if env.pressed && (env.pointer.x - origin.x).hypot(env.pointer.y - origin.y) >= 5. {
+                    s.anchor = Some(origin);
+                    s.begin_drag(origin);
+                    s.menu_down = None;
+                } else if !env.pressed && s.was_pressed {
+                    save |= s.finish_menu_press(env.pointer);
+                }
+            }
+            if s.menu_ready && s.panel_open && s.drag.is_none() {
+                let in_menu = s.menu_rect.is_some_and(|r| r.contains(env.pointer));
+                let in_panel = s.last_frame.is_some_and(|r| r.contains(env.pointer));
+                if env.cancel || (env.pressed && !s.was_pressed && !in_menu && !in_panel) {
+                    s.close_panel();
+                } else if !s.pinned && !in_menu && !in_panel {
+                    if s.outside_since.get_or_insert_with(Instant::now).elapsed()
+                        >= Duration::from_millis(450)
+                    {
+                        s.close_panel();
+                    }
+                } else {
+                    s.outside_since = None;
+                }
+            }
             if s.drag.is_some() {
                 save = s.move_drag(env.pointer, env.pressed, env.cancel);
             } else if s.mode == Mode::Floating && s.last_frame.is_some_and(|f| f != env.frame) {
@@ -381,6 +536,7 @@ fn perform_on_main(handle: &AppHandle, action: Action) -> Result<View, String> {
             }
         }
     }
+    s.was_pressed = env.pressed;
     s.apply(&handle)?;
     if save {
         s.persist()?;
@@ -395,12 +551,19 @@ fn perform_on_main(handle: &AppHandle, action: Action) -> Result<View, String> {
 
 pub fn start(app: AppHandle) {
     platform::install_drag_monitor(&app);
+    match pet_menu::install(&app) {
+        Ok(()) => app.state::<SurfaceState>().0.lock().unwrap().menu_ready = pet_menu::SUPPORTED,
+        Err(error) => crate::app_log::error("pet.menu", &error),
+    }
     tauri::async_runtime::spawn(async move {
         loop {
             let (initialized, dragging) = {
                 let state = app.state::<SurfaceState>();
                 let s = state.0.lock().unwrap();
-                (s.initialized, s.drag.is_some())
+                (
+                    s.initialized,
+                    s.drag.is_some() || s.panel_open || s.menu_down.is_some(),
+                )
             };
             {
                 let state = app.state::<SurfaceState>();
@@ -589,6 +752,46 @@ mod tests {
         assert_eq!(saved.x_ratio, 0.5);
         assert_eq!(saved.display_id, "screen");
     }
+    #[test]
+    fn fast_menu_drag_finishes_even_before_the_next_pointer_poll() {
+        let mut s = surface();
+        s.menu_ready = true;
+        s.menu_rect = Some(Rect {
+            x: 750.,
+            y: 0.,
+            width: 100.,
+            height: 24.,
+        });
+        s.menu_down = Some(Point { x: 800., y: 12. });
+        assert!(s.finish_menu_press(Point { x: 400., y: 400. }));
+        assert_eq!(s.mode, Mode::Floating);
+        assert_eq!(s.anchor, Some(Point { x: 400., y: 400. }));
+        assert!(s.drag.is_none());
+        assert!(!s.finish_menu_press(Point { x: 400., y: 400. }));
+    }
+    #[test]
+    fn dropping_on_actual_menu_entry_redocks_and_collapse_is_not_persisted_as_floating() {
+        let mut s = surface();
+        s.menu_ready = true;
+        s.menu_rect = Some(Rect {
+            x: 750.,
+            y: 0.,
+            width: 100.,
+            height: 24.,
+        });
+        s.mode = Mode::Floating;
+        s.begin_drag(Point { x: 500., y: 90. });
+        assert!(s.move_drag(Point { x: 800., y: 20. }, false, false));
+        assert_eq!(s.mode, Mode::Docked);
+        s.panel_open = true;
+        s.pinned = true;
+        let revision = s.revision;
+        s.close_panel();
+        assert_eq!(s.saved().mode, Mode::Docked);
+        assert!(!s.panel_open && !s.pinned);
+        assert!(s.revision > revision);
+        assert!(s.view().menu_bar);
+    }
 }
 
 /// Called only by the platform event adapter, on the main thread.
@@ -620,4 +823,40 @@ pub fn native_drag(app: &AppHandle, origin: Point, point: Point, released: bool)
 }
 pub fn native_cancel(app: &AppHandle) {
     let _ = perform_on_main(app, Action::Cancel);
+}
+
+/// Menu events enter the same geometry/state writer as the webview and drag adapter.
+pub fn menu_input(app: &AppHandle, input: pet_menu::Input) {
+    // Queue rather than reenter the state lock while NSStatusItem changes visibility.
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(error) = perform(app, Action::Menu(input)).await {
+            crate::app_log::error("pet.menu", &error);
+        }
+    });
+}
+pub fn menu_outside(app: &AppHandle, point: Point) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let _ = perform(app, Action::Outside(point)).await;
+    });
+}
+pub fn should_show_window(app: &AppHandle) -> bool {
+    let state = app.state::<SurfaceState>();
+    let s = state.0.lock().unwrap();
+    !s.menu_ready || s.mode != Mode::Docked || s.panel_open
+}
+#[tauri::command]
+pub async fn pet_surface_panel(app: AppHandle, open: bool) -> Result<View, String> {
+    perform(app, Action::Panel(open)).await
+}
+#[tauri::command]
+pub async fn pet_menu_summary(app: AppHandle, summary: pet_menu::Summary) -> Result<(), String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(pet_menu::update(&handle, &summary));
+    })
+    .map_err(|e| e.to_string())?;
+    rx.await.map_err(|e| e.to_string())?
 }

@@ -12,7 +12,7 @@ it('grows gently across screens and stays compact on a 4K logical work area', ()
   expect(large.expandedHeight).toBeLessThanOrEqual(440);
   expect(large.desktopWidth).toBeLessThanOrEqual(360);
   expect(large.collapsedWidth).toBeLessThanOrEqual(260);
-  expect(large.headerHeight).toBeLessThanOrEqual(44);
+  expect(large.headerHeight).toBeLessThanOrEqual(26);
   expect(large.expandedWidth / 3840).toBeLessThan(normal.expandedWidth / 1440);
 });
 
@@ -22,7 +22,7 @@ it('keeps tiny displays bounded and reserves actual rail space before scrolling'
   expect(size.desktopWidth).toBeLessThanOrEqual(280);
   expect(size.stageHeight).toBeGreaterThanOrEqual(140);
   expect(size.stageHeight + size.desktopListHeight + 30).toBeLessThanOrEqual(340);
-  expect(size.portraitWidth * 2 / 3).toBeLessThanOrEqual(size.headerHeight - 11);
+  expect(size.portraitWidth * 2 / 3).toBeLessThanOrEqual(size.headerHeight - 3);
 });
 
 it('fits ultrawide characters by height and keeps user pet scale meaningful', () => {
@@ -36,4 +36,10 @@ it('fits ultrawide characters by height and keeps user pet scale meaningful', ()
 it('uses safe startup defaults for missing or nonfinite display data', () => {
   const size = petSizing({ ...initialSurface, availableWidth: NaN, availableHeight: Infinity }, NaN);
   expect(Object.values(size).every(value => Number.isFinite(value) && value > 0)).toBe(true);
+});
+
+it('keeps the compact detail header readable without depending on the system menu height', () => {
+  const size = petSizing({ ...initialSurface, menuBar: true, availableWidth: 3840, availableHeight: 2160 });
+  expect(size.headerHeight).toBe(26);
+  expect(size.portraitWidth * 2 / 3 + 4).toBeLessThanOrEqual(26);
 });

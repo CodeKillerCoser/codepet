@@ -17,9 +17,11 @@
   import { isPointOnOpaquePetImage } from './lib/pet/hitTest';
   import { taskStatusForPet } from './lib/pet/animation';
   import { PetSurfaceController } from './lib/pet/surface';
+  import { PetMenuController } from './lib/pet/menu';
   import { petSizing } from './lib/pet/sizing';
   import { themeClassNames } from './lib/theme';
   import type { AppSettings } from './lib/types';
+  const menuController = new PetMenuController();
   let settings: AppSettings | null = null;
   let presentation = initialPresentation;
   const petData = createPetData(() => dispatch({ type: 'new-task' }));
@@ -51,7 +53,12 @@
   $: railHeight = (2 + Number(activities.length > 0) + Number(activities.some(a => a.status === 'completed')) + Number(surface.canDock)) * 28;
   $: sizing = petSizing(surface, settings?.pet.scale, railHeight);
   $: if (ready) surfaceController?.schedule();
+  $: if (ready && surface.menuBar && settings) void menuController.update(settings, activities, $petData.error).catch(error => console.warn('Pet menu update failed', error));
   function dispatch(event: PresentationEvent) {
+    if (surface.menuBar && surface.mode === 'docked' && event.type === 'collapse') {
+      void surfaceController?.setPanel(false).catch(error => showNotice(String(error)));
+    }
+    if (surface.menuBar && surface.mode === 'docked' && event.type === 'focus') void surfaceController?.setPanel(true).catch(error => showNotice(String(error)));
     presentation = present(presentation, event);
     if (event.type === 'enter' || event.type === 'focus' || event.type === 'surface') clearTimeout(closeTimer);
     if (event.type === 'leave' || event.type === 'blur') {
@@ -82,7 +89,7 @@
     const windowHandle = getCurrentWindow();
     void windowHandle.setResizable(false);
     if (petContentElement) {
-      surfaceController = new PetSurfaceController(petContentElement, value => { dispatch({ type: 'surface', surface: value }); }, error => showNotice(String(error)));
+      surfaceController = new PetSurfaceController(petContentElement, value => { dispatch({ type: 'surface', surface: value }); if (value.menuBar && value.panelOpen) void setPetWindowCursorEventsIgnored(false); }, error => showNotice(String(error)));
       void surfaceController.start().catch(error => showNotice(String(error)));
       cleanup.push(() => surfaceController?.dispose());
     }
@@ -92,7 +99,7 @@
     const poll = window.setInterval(() => void petData.refresh(), 1000);
     return () => {
       disposed = true; window.clearInterval(poll); cleanup.forEach(fn => fn()); media.removeEventListener('change', syncTheme);
-      petData.dispose(); clearTimeout(closeTimer); clearNoticeTimer(); clearCursorPassthroughTimer(); void setPetWindowCursorEventsIgnored(false);
+      menuController.dispose(); petData.dispose(); clearTimeout(closeTimer); clearNoticeTimer(); clearCursorPassthroughTimer(); void setPetWindowCursorEventsIgnored(false);
     };
   });
   function dismissActivity(event: MouseEvent, task: PetTask) { event.stopPropagation(); petData.dismiss(task); }
@@ -121,7 +128,7 @@
   }
 
   async function syncCursorPassthrough() {
-    if (!petWindowElement || cursorPassthroughInFlight) {
+    if (!petWindowElement || cursorPassthroughInFlight || (surface.menuBar && surface.mode === 'docked' && !surface.panelOpen)) {
       return;
     }
 
@@ -234,7 +241,7 @@
 <style>
   .pet-window { justify-content: flex-start; -webkit-user-select: none; }
   .pet-window.docked { width: max-content; max-width: var(--notch-width); opacity: 1; cursor: default; }
-  .docked .pet-content { width: max-content; max-width: var(--notch-width); padding: 0 16px; }
+  .docked .pet-content { width: max-content; max-width: var(--notch-width); padding: 0 6px; }
   .docked:has(:global(.notch-panel.expanded)) .pet-content { width: var(--notch-width); }
   .snap-candidate :global(.pet-stage) { filter: drop-shadow(0 0 6px var(--color-focus-ring)); }
 </style>

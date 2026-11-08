@@ -14,6 +14,7 @@ let browser;
 try {
   browser = await chromium.launch({ channel: process.env.CODEPET_QA_BROWSER ?? 'chrome', headless: true });
   const page = await browser.newPage({ viewport: { width: 320, height: 584 } });
+  page.setDefaultTimeout(15000);
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.exposeFunction('__resizeNativeWindow', size => page.setViewportSize(size));
   await page.goto('http://127.0.0.1:1435/frontend/qa/pet-module.html?frame');
@@ -31,7 +32,7 @@ try {
   await page.waitForSelector('.activity-group');
   await page.getByRole('button', { name: '吸附到刘海', exact: true }).click();
   await page.waitForSelector('.notch-panel'); await page.mouse.move(-20, -20);
-  await page.waitForFunction(() => innerHeight === 38);
+  await page.waitForFunction(() => innerHeight === 24);
   assert.equal(await page.locator('.pet-avatar.portrait').count(), 1);
   assert.equal(await page.locator('.pet-action-rail').count(), 0);
   assert.match(await page.locator('.latest-title').innerText(), /调整顶部/);
@@ -51,15 +52,17 @@ try {
   assert.equal(await page.locator('.task-time').first().getAttribute('datetime'), await page.evaluate(() => new Date(window.__petQa.tasks[0].updatedAt).toISOString()));
   assert.equal(await page.locator('.progress-track, .list-heading, footer').count(), 0);
   assert.equal(await page.locator('.provider-icon img').count(), 3);
+  assert.equal(await page.locator('.notch-panel').evaluate(el => getComputedStyle(el).borderTopLeftRadius), '0px');
+  assert.equal(await page.locator('.notch-panel').evaluate(el => getComputedStyle(el, '::before').content), '""');
   await page.screenshot({ path: resolve(output, 'expanded.png') });
   // A brief exit and reentry must cancel the delayed close.
   await page.mouse.move(-20, -20); await page.waitForTimeout(80); await page.locator('.notch-header').hover();
   await page.waitForTimeout(300); assert.equal(await page.locator('.notch-task').count(), 3);
-  await page.mouse.move(-20, -20); await page.waitForFunction(() => innerHeight === 38);
+  await page.mouse.move(-20, -20); await page.waitForFunction(() => innerHeight === 24);
   // Keyboard entry opens the same panel; Escape returns focus to the bar.
   await page.keyboard.press('Tab'); await page.waitForSelector('.notch-details');
   await page.getByRole('button', { name: '打开主窗口', exact: true }).focus();
-  await page.keyboard.press('Escape'); await page.waitForFunction(() => innerHeight === 38);
+  await page.keyboard.press('Escape'); await page.waitForFunction(() => innerHeight === 24);
   assert.equal(await page.getByRole('button', { name: '展开任务面板', exact: true }).evaluate(el => el === document.activeElement), true);
   await page.keyboard.press('Enter'); await page.waitForSelector('.notch-details');
   await page.getByRole('button', { name: '隐藏 完成窗口尺寸回归检查', exact: true }).click();
@@ -70,7 +73,7 @@ try {
   assert.equal(await page.locator('[data-asset-error]').count(), 0);
   await page.screenshot({ path: resolve(output, 'desktop.png') });
   await page.getByRole('button', { name: '吸附到刘海', exact: true }).click(); await page.waitForSelector('.notch-panel');
-  await page.mouse.move(-20, -20); await page.waitForFunction(() => innerHeight === 38);
+  await page.mouse.move(-20, -20); await page.waitForFunction(() => innerHeight === 24);
   // Portrait drag uses the same native transaction and restores the full character.
   await page.evaluate(() => { window.__petQa.manualDrag = true; });
   const portrait = await page.locator('.pet-avatar').boundingBox();
@@ -80,7 +83,7 @@ try {
   assert.equal(await page.locator('.activity-stack').count(), 0);
   await page.mouse.up(); await page.evaluate(() => window.__petQa.finishDrag(true));
   await page.waitForSelector('.notch-panel'); await page.mouse.move(-20, -20);
-  await page.waitForFunction(() => innerHeight === 38);
+  await page.waitForFunction(() => innerHeight === 24);
   // Narrow display, long text and many tasks still fit and scroll within the panel.
   await page.evaluate(() => {
     const q = window.__petQa;
@@ -110,7 +113,7 @@ try {
       q.surface.availableWidth = width; q.surface.availableHeight = height;
       q.finishDrag(true);
     }, { width, height });
-    await page.waitForFunction(h => innerHeight === Math.round(Math.min(44, Math.max(36, 38 * Math.sqrt(h / 860)))), height);
+    await page.waitForFunction(h => innerHeight === Math.round(Math.min(26, Math.max(22, 24 * Math.sqrt(h / 860)))), height);
     assert.ok(await page.evaluate(w => innerWidth <= Math.round(Math.min(260, Math.max(160, 200 * Math.sqrt(w / 1440)))), width));
     await page.locator('.notch-header').hover();
     await page.waitForFunction(w => innerWidth === Math.round(Math.min(640, Math.max(340, 440 * Math.sqrt(w / 1440)))), width);
@@ -133,7 +136,90 @@ try {
     assert.equal(await page.evaluate(() => window.__petQa.native.resizeCount), count, 'screen sizing must not feed back from viewport');
     matrix.push({ screen: [width, height], expanded: expandedSize, desktop: desktopSize });
   }
+  // The native menu owns visibility: leaving the webview cannot trigger its old
+  // hover close timer. Escape requests native dismissal.
+  await page.evaluate(() => { const q = window.__petQa; q.surface.menuBar = true; q.surface.panelOpen = true; q.surface.physicalNotch = false; q.finishDrag(true); });
+  await page.waitForSelector('.notch-details');
+  const corners = () => page.locator('.notch-panel').evaluate(el => {
+    const css = getComputedStyle(el);
+    return [css.borderTopLeftRadius, css.borderTopRightRadius, css.borderBottomLeftRadius, css.borderBottomRightRadius, getComputedStyle(el, '::before').content, getComputedStyle(el, '::after').content];
+  });
+  assert.deepEqual(await corners(), ['12px', '12px', '12px', '12px', 'none', 'none']);
+  await page.waitForFunction(() => innerWidth === 640 && innerHeight === 440);
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: resolve(output, 'menu-expanded-rounded.png') });
+  // Moving an open panel between display types must update the corners without remounting.
+  await page.evaluate(() => { window.__petQa.surface.physicalNotch = true; window.__petQa.finishDrag(true); });
+  await page.waitForFunction(() => document.querySelector('.notch-panel.physical-notch'));
+  assert.deepEqual(await corners(), ['0px', '0px', '12px', '12px', '""', '""']);
+  await page.evaluate(() => { window.__petQa.surface.physicalNotch = false; window.__petQa.finishDrag(true); });
+  await page.waitForFunction(() => !document.querySelector('.notch-panel.physical-notch'));
+  assert.deepEqual(await corners(), ['12px', '12px', '12px', '12px', 'none', 'none']);
+  await page.waitForFunction(() => window.__petQa.menuSummary?.count === 14);
+  assert.match(await page.evaluate(() => window.__petQa.menuSummary.portrait), /^data:image\/png;base64,/);
+  await page.mouse.move(-20, -20); await page.waitForTimeout(600);
+  assert.equal(await page.locator('.notch-task').count(), 14);
+  await page.getByRole('button', { name: '打开主窗口', exact: true }).focus();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => window.__petQa.surface.panelOpen === false);
+  await page.waitForFunction(() => !document.querySelector('.notch-details'));
+  await page.evaluate(() => { window.__petQa.surface.panelOpen = true; window.__petQa.finishDrag(true); });
+  await page.waitForSelector('.notch-details');
+  // Completed history stays below live/approval tasks even when it is newer.
+  await page.evaluate(() => {
+    const q = window.__petQa, now = Date.now();
+    q.tasks = [
+      ...Array.from({ length: 18 }, (_, i) => ({ id: `done-${i}`, title: `已完成任务 ${i + 1}`, summary: '已完成检查，结果已保存', status: 'completed', providerId: 'codex', updatedAt: now - i })),
+      { id: 'running', title: '当前进行中的任务', summary: '正在处理最新请求', status: 'running', providerId: 'codex', updatedAt: now - 1000 },
+      { id: 'approval', title: '需要授权的任务', summary: '等待你确认后继续', status: 'waiting-approval', providerId: 'claude', updatedAt: now - 2000 },
+      { id: 'failed', title: '需要检查的失败任务', summary: '连接失败，请检查后重试', status: 'failed', providerId: 'codex', updatedAt: now + 1000 },
+    ];
+    q.surface.availableWidth = 1440; q.surface.availableHeight = 860; q.finishDrag(true);
+  });
+  await page.waitForFunction(() => document.querySelector('.completed-count')?.textContent === '18');
+  await page.waitForFunction(() => innerWidth === 440);
+  const completedToggle = page.locator('.completed-toggle');
+  assert.equal(await completedToggle.getAttribute('aria-expanded'), 'false');
+  assert.deepEqual(await page.locator('.notch-task:not([aria-hidden="true"]) h3').allTextContents(), ['当前进行中的任务', '需要授权的任务', '需要检查的失败任务', '已完成任务 1']);
+  assert.equal(await page.locator('#notch-completed .notch-task[inert]').count(), 2);
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: resolve(output, 'completed-stacked.png') });
+  await page.evaluate(() => { window.__petQa.surface.availableWidth = 280; window.__petQa.finishDrag(true); });
+  await page.waitForFunction(() => innerWidth === 280);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  assert.ok(await page.locator('#notch-completed').evaluate(el => el.getBoundingClientRect().right <= innerWidth));
+  await page.evaluate(() => { window.__petQa.surface.availableWidth = 1440; window.__petQa.finishDrag(true); });
+  await page.waitForFunction(() => innerWidth === 440);
+  await page.locator('#notch-completed h3').first().click();
+  assert.equal(await completedToggle.getAttribute('aria-expanded'), 'true');
+  assert.equal(await page.locator('#notch-completed .notch-task').count(), 18);
+  assert.equal(await page.locator('#notch-completed [inert]').count(), 0);
+  await page.waitForFunction(() => innerHeight === 340);
+  assert.ok(await page.locator('.notch-task-list').evaluate(el => el.scrollHeight > el.clientHeight));
+  await page.screenshot({ path: resolve(output, 'completed-expanded.png') });
+  await completedToggle.focus(); await page.keyboard.press('Space');
+  assert.equal(await completedToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(await completedToggle.evaluate(el => el === document.activeElement), true);
+  // A completed task that resumes must leave the pile immediately.
+  await page.evaluate(() => { window.__petQa.tasks[0].status = 'running'; });
+  await page.waitForFunction(() => document.querySelector('.completed-count')?.textContent === '17');
+  assert.equal(await page.locator('[aria-label="当前任务"] .notch-task').count(), 4);
+  // Dismissing the top card must not accidentally expand the group.
+  await page.getByRole('button', { name: '隐藏 已完成任务 2', exact: true }).click();
+  assert.equal(await completedToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(await page.locator('#notch-completed h3').first().innerText(), '已完成任务 3');
+  // Completed-only history remains available, and clearing it restores the empty state.
+  await page.evaluate(() => { window.__petQa.tasks = window.__petQa.tasks.filter(t => t.status === 'completed'); });
+  await page.waitForFunction(() => !document.querySelector('[aria-label="当前任务"]'));
+  assert.equal(await page.locator('.empty-state').count(), 0);
+  await page.evaluate(() => { window.__petQa.tasks = []; });
+  await page.waitForSelector('.empty-state');
+  assert.equal(await completedToggle.count(), 0);
+  await page.getByRole('button', { name: '切换为悬浮', exact: true }).click();
+  await page.waitForSelector('.pet-stage');
+  await page.getByRole('button', { name: '收起到菜单栏', exact: true }).click();
+  await page.waitForSelector('.notch-panel');
   console.log('Responsive display matrix:', JSON.stringify(matrix));
   assert.deepEqual(errors, []);
-  console.log('Notch UI QA passed: compact/hover, leave delay, keyboard/Escape, shared dismissals, imported atlas, detach/redock, screen-relative widths/heights, capped scrolling and visible actions.');
+  console.log('Notch UI QA passed: compact/hover, keyboard/Escape, shared dismissals, imported atlas, detach/redock, responsive bounds, corners, live-first order, completed stacking/toggle/resume, capped scrolling and visible actions.');
 } finally { await browser?.close(); await new Promise(resolve => server.httpServer.close(resolve)); }

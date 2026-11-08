@@ -26,3 +26,14 @@ it('new tasks do not force a top panel open and Escape can collapse a hovered pa
   const state = present(present(docked(), { type: 'enter' }), { type: 'collapse' });
   expect(present(state, { type: 'new-task' }).expanded).toBe(false);
 });
+it('native menu owns expansion across the gap, keyboard focus and delayed webview events', () => {
+  let state = present(initialPresentation, { type: 'surface', surface: { ...initialSurface, revision: 1, mode: 'docked', menuBar: true, panelOpen: true } });
+  for (const type of ['leave', 'blur', 'close-delay'] as const) state = present(state, { type });
+  expect(state.expanded).toBe(true);
+  state = present(state, { type: 'surface', surface: { ...state.surface, revision: 2, panelOpen: false } });
+  expect(present(state, { type: 'focus' }).expanded).toBe(false);
+  expect(present(state, { type: 'enter' }).expanded).toBe(false);
+  state = present(state, { type: 'surface', surface: { ...state.surface, revision: 3, panelOpen: true } });
+  state = present(state, { type: 'surface', surface: { ...state.surface, revision: 4, mode: 'floating', dragging: true, panelOpen: false } });
+  expect(state.expanded).toBe(false);
+});

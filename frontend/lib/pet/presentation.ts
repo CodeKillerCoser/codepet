@@ -16,11 +16,14 @@ export type PresentationEvent =
 
 // Native surface owns docking/drag transactions; this reducer owns presentation only.
 export function present(state: Presentation, event: PresentationEvent): Presentation {
+  if (state.surface.menuBar && state.surface.mode === 'docked' &&
+      ['enter', 'leave', 'focus', 'blur', 'close-delay'].includes(event.type)) return state;
   switch (event.type) {
     case 'surface': {
       if (event.surface.revision < state.surface.revision) return state;
       const changed = event.surface.mode !== state.surface.mode || event.surface.dragging !== state.surface.dragging;
-      return { ...state, surface: event.surface, ...(changed ? { expanded: false, hovered: false, focused: false } : {}) };
+      return { ...state, surface: event.surface, ...(changed ? { expanded: false, hovered: false, focused: false } : {}),
+        ...(event.surface.menuBar && event.surface.mode === 'docked' ? { expanded: Boolean(event.surface.panelOpen) } : {}) };
     }
     case 'enter': return { ...state, hovered: true, expanded: state.surface.mode === 'docked' && !state.surface.dragging };
     case 'focus': return { ...state, focused: true, expanded: state.surface.mode === 'docked' && !state.surface.dragging };

@@ -75,8 +75,8 @@
     <div class="pet-action-rail">
       {#if surface.canDock}
         <button class="pet-action-button dock-button" type="button"
-          aria-label={surface.physicalNotch ? '吸附到刘海' : '吸附到屏幕顶部'}
-          title="点击停靠，也可以拖动角色到屏幕顶部中央"
+          aria-label={surface.menuBar ? '收起到菜单栏' : surface.physicalNotch ? '吸附到刘海' : '吸附到屏幕顶部'}
+          title={surface.menuBar ? "收起到菜单栏，也可以拖回菜单栏头像或屏幕顶部中央" : "点击停靠，也可以拖动角色到屏幕顶部中央"}
           on:click={toggleSurface}><span aria-hidden="true">↑</span></button>
       {/if}
       {#if hasActivities}

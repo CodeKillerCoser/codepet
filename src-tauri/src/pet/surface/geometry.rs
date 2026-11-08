@@ -151,6 +151,26 @@ pub fn dock_frame(display: &Display, layout: Layout) -> Rect {
     }
 }
 
+/// Anchor directly below our own status item; other applications never affect placement.
+pub fn menu_area(display: &Display, menu: Rect) -> Rect {
+    let top = menu.bottom();
+    Rect {
+        y: top,
+        height: (display.work.bottom() - top).max(0.),
+        ..display.work
+    }
+}
+
+pub fn menu_frame(area: Rect, menu: Rect, layout: Layout, unit: f64) -> Rect {
+    let width = (layout.width * unit).min(area.width);
+    Rect {
+        x: (menu.center().x - width / 2.).clamp(area.x, (area.right() - width).max(area.x)),
+        y: area.y,
+        width,
+        height: (layout.height * unit).min(area.height),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,6 +245,19 @@ mod tests {
         assert_eq!(dock_frame(&display(), wider).center().x, -750.);
     }
     #[test]
+    fn fallback_dock_does_not_overlay_the_menu_bar() {
+        let mut d = display();
+        d.physical_notch = false;
+        let compact = Layout {
+            height: 22.,
+            pet_height: 18.,
+            ..layout()
+        };
+        assert_eq!(dock_frame(&d, compact).y, d.notch.unwrap().bottom());
+        d.unit = 2.;
+        assert_eq!(dock_frame(&d, compact).y, d.notch.unwrap().bottom());
+    }
+    #[test]
     fn negative_displays_and_scale_are_supported() {
         let mut d = display();
         d.unit = 1.25;
@@ -254,7 +287,8 @@ mod tests {
             width: 1690.,
             height: 1296.,
             ..layout()
-        }.valid());
+        }
+        .valid());
         assert!(!Layout {
             height: f64::NAN,
             ..layout()
@@ -265,5 +299,53 @@ mod tests {
             ..layout()
         }
         .valid());
+    }
+    #[test]
+    fn menu_panel_touches_status_item_and_caps_height_at_screen_bottom() {
+        let d = display();
+        let menu = Rect {
+            x: -850.,
+            y: -1000.,
+            width: 110.,
+            height: 40.,
+        };
+        let frame = menu_frame(
+            menu_area(&d, menu),
+            menu,
+            Layout {
+                height: 2000.,
+                ..layout()
+            },
+            d.unit,
+        );
+        assert_eq!(frame.y, menu.bottom());
+        assert_eq!(frame.center().x, menu.center().x);
+        assert_eq!(frame.bottom(), d.work.bottom());
+        // Even a different work-area top must not introduce a gap below the item.
+        let shifted_work = Display {
+            work: Rect {
+                y: -900.,
+                height: 860.,
+                ..d.work
+            },
+            ..d
+        };
+        assert_eq!(menu_area(&shifted_work, menu).y, menu.bottom());
+    }
+    #[test]
+    fn menu_panel_at_screen_edge_keeps_actions_visible_on_scaled_negative_display() {
+        let mut d = display();
+        d.unit = 1.25;
+        let menu = Rect {
+            x: -60.,
+            y: -1000.,
+            width: 50.,
+            height: 30.,
+        };
+        let area = menu_area(&d, menu);
+        let frame = menu_frame(area, menu, layout(), d.unit);
+        assert!(frame.x >= d.work.x && frame.right() <= d.work.right());
+        assert_eq!(frame.width, 400.);
+        assert_eq!(frame.y, menu.bottom());
     }
 }

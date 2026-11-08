@@ -22,8 +22,16 @@
   export let dismissActivity: (event: MouseEvent, task: PetTask) => void;
   let header: HTMLButtonElement;
   let failedIcons = new Set<string>();
-  $: latest = data.tasks[0];
+  let completedExpanded = false;
   const attention = (task: PetTask) => ['waiting-approval', 'waiting-input'].includes(task.status);
+  const live = (task: PetTask) => task.status === 'running' || attention(task);
+  $: completedTasks = data.tasks.filter(task => task.status === 'completed');
+  $: taskGroups = [
+    { id: 'active', tasks: data.tasks.filter(task => task.status !== 'completed').sort((a, b) => Number(live(b)) - Number(live(a))) },
+    { id: 'completed', tasks: completedTasks },
+  ].filter(group => group.tasks.length > 0);
+  $: if (!completedTasks.length) completedExpanded = false;
+  $: latest = data.tasks[0];
   function focusIn(event: FocusEvent) {
     if ((event.target as HTMLElement).matches(':focus-visible')) dispatch({ type: 'focus' });
   }
@@ -36,10 +44,13 @@
       header?.focus(); dispatch({ type: 'collapse' });
     }
   }
+  function expandCompleted(event: MouseEvent) {
+    if (!completedExpanded && !(event.target as Element).closest('button, a')) completedExpanded = true;
+  }
 </script>
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<section class="notch-panel dark theme-dark" class:expanded aria-label="顶部任务面板"
+<section class="notch-panel dark theme-dark" class:expanded class:physical-notch={surface.physicalNotch} aria-label="顶部任务面板"
   style={`--notch-max-height: ${sizing.expandedHeight}px`}
   on:mouseenter={() => dispatch({ type: 'enter' })} on:mouseleave={() => dispatch({ type: 'leave' })}
   on:focusin={focusIn} on:focusout={focusOut} on:keydown={keyDown}>
@@ -68,27 +79,47 @@
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div class="notch-task-list" tabindex="0" role="region" aria-label="任务列表">
         {#if data.error}<p class="connection-error" role="status">活动连接暂不可用，正在重试</p>{/if}
-        {#each data.tasks as task (task.id)}
-          {@const provider = data.providers.find(item => item.providerId === task.providerId)}
-          {@const providerName = provider?.displayName || data.sources.find(source => source.id === task.providerId)?.displayName || task.providerId || 'Agent'}
-          <article class="notch-task" aria-label={`${task.title}，${petStatusLabel(task.status)}`}>
-            <div class="provider-icon" title={providerName}>
-              {#if provider?.icon && !failedIcons.has(provider.icon)}
-                <img src={provider.icon} alt={providerName} referrerpolicy="no-referrer" on:error={() => { failedIcons = new Set([...failedIcons, provider.icon!]); }} />
-              {:else}<Plug size={24} aria-label={providerName} />{/if}
-            </div>
-            <div class="task-content">
-              <div class="task-topline">
-                <h3 title={task.title}>{task.title}</h3>
-                <span class="task-state" class:running={task.status === 'running'} class:attention={attention(task)} class:failed={task.status === 'failed'}>{petStatusLabel(task.status)}</span>
-                <time class="task-time" datetime={new Date(task.updatedAt).toISOString()} title={`最近更新：${new Date(task.updatedAt).toLocaleString()}`} aria-label={`最近更新 ${new Date(task.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}>{new Date(task.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
-                <span class="provider-badge" class:codex={task.providerId?.toLowerCase().includes('codex')} class:attention={attention(task)} title={providerName}>{providerName}</span>
-                {#if attention(task)}<span class="task-attention" title={petStatusLabel(task.status)}><Bell size={13} aria-label={petStatusLabel(task.status)} /></span>{/if}
-              </div>
-              <div class="task-progress"><MarkdownMessage compact message={task.summary?.trim() || '尚未收到回复内容'} /></div>
-            </div>
-            <button class="dismiss-task" type="button" aria-label={`隐藏 ${task.title}`} title="隐藏任务" on:click={event => dismissActivity(event, task)}><X size={13} /></button>
-          </article>
+        {#each taskGroups as group (group.id)}
+          {@const stacked = group.id === 'completed' && !completedExpanded}
+          {#if group.id === 'completed'}
+            <button class="completed-toggle" type="button" aria-expanded={completedExpanded}
+              aria-controls="notch-completed" on:click={() => completedExpanded = !completedExpanded}>
+              <span>已完成 <span class="completed-count">{group.tasks.length}</span></span>
+              <ChevronDown size={13} class={completedExpanded ? 'completed-chevron open' : 'completed-chevron'} />
+            </button>
+          {/if}
+          <!-- The group toggle provides the keyboard equivalent of clicking the top card. -->
+          <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
+          <div class="task-group" class:stacked role="group" aria-label={group.id === 'completed' ? '已完成任务' : '当前任务'}
+            id={group.id === 'completed' ? 'notch-completed' : undefined}
+            style={`--stack-count: ${Math.min(group.tasks.length - 1, 2)}`}
+            on:click={event => { if (group.id === 'completed') expandCompleted(event); }}>
+            {#each stacked ? group.tasks.slice(0, 3) : group.tasks as task, index (task.id)}
+              {@const provider = data.providers.find(item => item.providerId === task.providerId)}
+              {@const providerName = provider?.displayName || data.sources.find(source => source.id === task.providerId)?.displayName || task.providerId || 'Agent'}
+              <article class="notch-task" class:stack-back={stacked && index > 0}
+                inert={stacked && index > 0} aria-hidden={stacked && index > 0 ? 'true' : undefined}
+                style={stacked ? `--stack-depth: ${index}; z-index: ${3 - index}` : undefined}
+                aria-label={`${task.title}，${petStatusLabel(task.status)}`}>
+                <div class="provider-icon" title={providerName}>
+                  {#if provider?.icon && !failedIcons.has(provider.icon)}
+                    <img src={provider.icon} alt={providerName} referrerpolicy="no-referrer" on:error={() => { failedIcons = new Set([...failedIcons, provider.icon!]); }} />
+                  {:else}<Plug size={24} aria-label={providerName} />{/if}
+                </div>
+                <div class="task-content">
+                  <div class="task-topline">
+                    <h3 title={task.title}>{task.title}</h3>
+                    <span class="task-state" class:running={task.status === 'running'} class:attention={attention(task)} class:failed={task.status === 'failed'}>{petStatusLabel(task.status)}</span>
+                    <time class="task-time" datetime={new Date(task.updatedAt).toISOString()} title={`最近更新：${new Date(task.updatedAt).toLocaleString()}`} aria-label={`最近更新 ${new Date(task.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}>{new Date(task.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+                    <span class="provider-badge" class:codex={task.providerId?.toLowerCase().includes('codex')} class:attention={attention(task)} title={providerName}>{providerName}</span>
+                    {#if attention(task)}<span class="task-attention" title={petStatusLabel(task.status)}><Bell size={13} aria-label={petStatusLabel(task.status)} /></span>{/if}
+                  </div>
+                  <div class="task-progress"><MarkdownMessage compact message={task.summary?.trim() || '尚未收到回复内容'} /></div>
+                </div>
+                <button class="dismiss-task" type="button" aria-label={`隐藏 ${task.title}`} title="隐藏任务" on:click={event => dismissActivity(event, task)}><X size={13} /></button>
+              </article>
+            {/each}
+          </div>
         {:else}
           <div class="empty-state"><strong>暂时没有任务</strong><span>开始编码后，最新进展会显示在这里</span></div>
         {/each}
@@ -99,12 +130,14 @@
 </section>
 
 <style>
-  .notch-panel { position: relative; width: max-content; max-width: 100%; color: var(--color-text-primary); background: var(--color-black); border-radius: 0 0 18px 18px; cursor: default; color-scheme: dark; }
-  .notch-panel::before, .notch-panel::after { content: ''; position: absolute; top: 0; width: 16px; height: 16px; background: var(--color-black); pointer-events: none; }
-  .notch-panel::before { left: -16px; mask-image: radial-gradient(circle at 0 100%, transparent 15.5px, black 16px); }
-  .notch-panel::after { right: -16px; mask-image: radial-gradient(circle at 100% 100%, transparent 15.5px, black 16px); }
-  .notch-panel.expanded { width: 100%; border-radius: 0 0 28px 28px; }
-  .notch-header { height: var(--notch-header-height); padding: 6px 12px 6px 8px; display: flex; gap: 6px; align-items: center; }
+  .notch-panel { position: relative; width: max-content; max-width: 100%; color: var(--color-text-primary); background: var(--color-black); border-radius: 8px; cursor: default; color-scheme: dark; }
+  .notch-panel.physical-notch { border-radius: 0 0 8px 8px; }
+  .physical-notch::before, .physical-notch::after { content: ''; position: absolute; top: 0; width: 6px; height: 6px; background: var(--color-black); pointer-events: none; }
+  .physical-notch::before { left: -6px; mask-image: radial-gradient(circle at 0 100%, transparent 5.5px, black 6px); }
+  .physical-notch::after { right: -6px; mask-image: radial-gradient(circle at 100% 100%, transparent 5.5px, black 6px); }
+  .notch-panel.expanded { width: 100%; border-radius: 12px; }
+  .notch-panel.expanded.physical-notch { border-radius: 0 0 12px 12px; }
+  .notch-header { height: var(--notch-header-height); padding: 2px 10px 2px 6px; display: flex; gap: 6px; align-items: center; }
   button { color: inherit; border: 0; background: transparent; }
   button:focus-visible, .notch-task-list:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; border-radius: 6px; }
   .notch-summary { display: flex; align-items: center; gap: 7px; min-width: 0; flex: 1; text-align: left; padding: 4px 0; font-size: 12px; }
@@ -120,10 +153,17 @@
   .notch-summary :global(.chevron) { color: var(--gray-10); flex: none; }
   .notch-summary :global(.chevron.open) { transform: rotate(180deg); }
   .panel-actions { display: flex; flex: none; gap: 2px; }
-  .panel-actions button { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 6px; color: var(--gray-10); }
+  .panel-actions button { display: grid; place-items: center; width: 22px; height: min(22px, calc(var(--notch-header-height) - 4px)); border-radius: 6px; color: var(--gray-10); }
   .notch-details { display: flex; flex-direction: column; max-height: calc(var(--notch-max-height) - var(--notch-header-height)); padding-bottom: 14px; animation: reveal 140ms ease-out; }
   .notch-task-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--gray-7) transparent; padding: 10px 24px 2px; }
   .notch-task { position: relative; display: flex; gap: 14px; align-items: flex-start; padding: 8px 0; }
+  .completed-toggle { width: 100%; display: flex; align-items: center; justify-content: space-between; margin-top: 6px; padding: 7px 0; color: var(--gray-11); font-size: 11px; text-align: left; }
+  .completed-count { margin-left: 4px; color: var(--gray-10); font-variant-numeric: tabular-nums; }
+  .completed-toggle :global(.completed-chevron.open) { transform: rotate(180deg); }
+  .task-group.stacked { display: grid; grid-template-columns: minmax(0, 1fr); isolation: isolate; padding-bottom: calc(var(--stack-count) * 5px); margin-bottom: 4px; cursor: pointer; }
+  .stacked .notch-task { grid-area: 1 / 1; padding: 8px; border: 1px solid var(--gray-4); border-radius: 8px; background: var(--gray-2); transform: translateY(calc(var(--stack-depth) * 5px)) scaleX(calc(1 - var(--stack-depth) * 0.025)); transform-origin: bottom center; }
+  .stacked .stack-back > * { visibility: hidden; }
+  .stacked .dismiss-task { right: 2px; top: 0; }
   .provider-icon { width: 28px; height: 32px; flex: none; display: grid; place-items: center; color: var(--gray-11); }
   .provider-icon img { width: 26px; height: 26px; object-fit: contain; border-radius: 6px; }
   .task-content { flex: 1; min-width: 0; }

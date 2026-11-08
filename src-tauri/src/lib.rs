@@ -550,6 +550,8 @@ pub fn run() {
             pet::surface::pet_surface_mode,
             pet::surface::pet_surface_drag,
             pet::surface::pet_surface_pointer,
+            pet::surface::pet_surface_panel,
+            pet::surface::pet_menu_summary,
             provider_connection_status,
             runtime_gateway_request,
             codepet_gateway_request,
@@ -689,6 +691,9 @@ fn should_restore_main_on_reopen(_has_visible_windows: bool) -> bool {
 
 fn raise_existing_windows(app: &AppHandle) {
     for label in ["main", "pet"] {
+        if label == "pet" && !pet::surface::should_show_window(app) {
+            continue;
+        }
         if let Some(window) = app.get_webview_window(label) {
             let _ = window.show();
             let _ = window.unminimize();
