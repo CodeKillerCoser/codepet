@@ -18,11 +18,9 @@ function settingsFixture(): AppSettings {
     },
     pet: {
       selectedPetId: "default",
-      kind: "palette",
-      sprite: { body: "#ffffff", accent: "#111111", eyes: "#000000" },
+      kind: "builtin",
       imagePath: null,
       scale: 4,
-      imagePixelSize: 48,
       opacity: 1,
       alwaysOnTop: true,
       whipReactionSound: "none",

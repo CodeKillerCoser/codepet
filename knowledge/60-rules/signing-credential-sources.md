@@ -6,7 +6,7 @@
 
 ## 适用场景
 
-`scripts/package_signed.py` 的 macOS DMG 公证流程及后续签名辅助脚本；README 应同步说明实际凭据来源。
+`scripts/package_signed.py` 的 macOS DMG 公证流程，以及 `scripts/macos_signing.py` 的固定开发签名；发布文档应同步说明实际凭据来源。
 
 ## 反例
 
@@ -17,6 +17,11 @@
 - 调用前明确设置本项目的账号或 profile，先校验配置，再构建。
 - 环境变量仍会从父进程继承；调用方应核对账号归属，脚本不推断账号用途。
 - 示例使用虚构值，仓库不保存真实密码、私钥或公司证书。
+- 固定开发签名只从三个显式 `CODEPET_MACOS_CERTIFICATE_*` 环境变量导入；按证书指纹选择身份，缺失时失败，不回退到 ad-hoc，也不读取其他项目的证书。自签名证书仅在一次性托管 runner 上设置 codeSign 信任，退出删除私钥 keychain，信任记录随 runner 销毁。
+- 证书只生成一次并保存于仓库外；凭据上传使用标准输入，错误信息不得打印携带密码的命令参数。指纹是公有元数据，可用于日志验证。
+- 签名辅助命令必须有截止时间，清理失败不能掩盖原始失败。`codesign` 提取证书用 `--extract-certificates=<prefix>`；验证最终产物的证书和 DR，不仅检查签名命令退出码。
+- 自签名 DR 可以用 `certificate leaf = H"…"` 约束身份，不能只查找 `anchor` 关键字；同时核对应用标识和固定证书指纹，拒绝 cdhash 身份。
+- Tauri 只请求 `dmg` 会清理中间 App；后续需要验签 App 时请求 `app,dmg`，或验证挂载镜像里的 App。公有验签失败应保留具体原因，凭据导入等操作仍隐藏输出。
 
 ## 来源
 
@@ -25,3 +30,5 @@
 ## 验证方式
 
 运行 `python3.12 scripts/package_signed_test.py`：覆盖无凭据时不启动子进程、不清理产物，以及显式配置传入公证流程。单元测试模拟构建和公证，不执行真实签名或上传；真实 Apple 服务可用性需在发布时验证。
+
+运行 `python3.12 scripts/macos_signing_test.py`，覆盖固定证书参数校验、拒绝本机信任变更、失败清理和不泄露密码；真实 runner 上验证两个不同二进制的 DR 相同，并校验最终 App 的证书指纹。配置和人工 TCC 升级验收见 [固定开发签名](../40-runbooks/macos-stable-development-signing.md)。

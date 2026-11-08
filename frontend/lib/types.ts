@@ -1,5 +1,3 @@
-import type { Approval, Provider, TurnTask } from "./generated/runtimeGateway";
-
 export type AgentId = "codex" | "claude" | "qoder" | "cursor";
 export type AgentRuntimeProviderId = string;
 export type AgentRuntimeStatus = "loading" | "ready" | "unavailable" | "invalid-configured-executable";
@@ -63,20 +61,13 @@ export interface AgentRuntime {
   installed: AgentRuntimeInstallation[];
 }
 
-export interface PixelPetSprite {
-  body: string;
-  accent: string;
-  eyes: string;
-}
-
-export type PetKind = "palette" | "image" | "codex-atlas";
+export type PetKind = "builtin" | "image" | "codex-atlas";
 export type WhipReactionSound = "none" | "pa" | "scream" | "custom";
 
 export interface ConfiguredPet {
   id: string;
   name: string;
   kind: PetKind;
-  sprite?: PixelPetSprite | null;
   imagePath?: string | null;
   sourcePath?: string | null;
   createdAt: string;
@@ -117,10 +108,8 @@ export interface AppSettings {
   pet: {
     selectedPetId: string;
     kind: PetKind;
-    sprite: PixelPetSprite;
     imagePath?: string | null;
     scale: number;
-    imagePixelSize: number;
     opacity: number;
     alwaysOnTop: boolean;
     whipReactionSound: WhipReactionSound;
@@ -252,14 +241,6 @@ export interface PetEvent {
   endedAt?: string | null;
   raw: unknown;
   source?: ActivitySource | null;
-  runtimeGateway?: RuntimeGatewayActivityContext | null;
-}
-
-export interface RuntimeGatewayActivityContext {
-  provider: Provider;
-  conversationId: string;
-  turn?: TurnTask | null;
-  approval?: Approval | null;
 }
 
 export interface ActivitySource {

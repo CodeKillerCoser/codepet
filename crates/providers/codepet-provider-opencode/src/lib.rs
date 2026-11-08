@@ -1,5 +1,6 @@
 mod background_probe;
 mod client;
+mod compatibility;
 mod mapper;
 mod protocol;
 mod provider;

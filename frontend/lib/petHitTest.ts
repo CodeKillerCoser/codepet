@@ -18,22 +18,6 @@ export function containsPoint(rect: PetHitRect, point: PetWindowPoint) {
   return point.x >= rect.left && point.x <= rect.right && point.y >= rect.top && point.y <= rect.bottom;
 }
 
-export function isOpaqueCssColor(value: string) {
-  const color = value.trim().toLowerCase();
-  if (!color || color === "transparent") {
-    return false;
-  }
-
-  const rgba = color.match(/^rgba?\((.+)\)$/);
-  if (!rgba) {
-    return true;
-  }
-
-  const parts = rgba[1].split(",").map((part) => part.trim());
-  const alpha = parts[3];
-  return alpha === undefined || Number(alpha) > 0;
-}
-
 export function rectFromElementBounds(elementBounds: Pick<DOMRect, "left" | "top" | "right" | "bottom">, rootBounds: Pick<DOMRect, "left" | "top">, padding = 0): PetHitRect {
   return {
     left: elementBounds.left - rootBounds.left - padding,

@@ -14,8 +14,8 @@ export default defineConfig(({ command }) => {
 
   return {
     root: projectRoot,
-    // Component tests and the app both use the browser Svelte runtime.
-    resolve: { conditions: ["browser"] },
+    // Component tests run in jsdom and need Svelte's client lifecycle exports.
+    resolve: process.env.VITEST ? { conditions: ["browser"] } : undefined,
     define: { __WEB_BUILD_AT__: JSON.stringify(builtAt) },
     plugins: [svelte(), {
       name: "webcontent-build-info",

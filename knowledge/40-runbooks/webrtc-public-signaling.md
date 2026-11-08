@@ -12,7 +12,7 @@ Let's Encrypt IP 证书已申请成功；Certbot 5.8.0，自动续期模拟通�
 
 ## 身份与连接设计
 
-2026-11-06 新版支持在 App 设置填写 IP 后自动登记，详见 [信令服务地址设置](../20-product/signaling-service-settings.md)。不增加账号登录。以下手工方式仅用于旧版兼容：管理员在 VPS 运行 `services/signaling/provision_host.py`，
+2026-11-06 新版支持在 App 设置填写 IP 后自动登记，详见 [信令服务地址设置](../20-product/signaling-service-settings.md)。不增加账号登录。以下手工方式仅用于旧版兼容：管理员在 VPS 运行 `server/provision_host.py`，
 为指定 Host deviceId 签发独立信令 token，并将配置写入权限 600 的文件。
 当前 Host 数据目录 `connections/rtc-cloud.json` 保存 serviceUrl、hostToken、Ed25519
 seed 与已绑定 peer。配置不得进入源码仓库、APK 或日志；普通安装包不内置管理员凭据。
@@ -57,7 +57,7 @@ Gateway 业务握手只在赢家执行。云端故障不主动关闭健康 DataC
 
 普通 Nginx 默认 80 listener 改为 loopback 8080，原配置保存在
 `/etc/nginx/nginx.conf.before-codepet`。公网 80 专供 Certbot standalone 验证/续期。
-部署脚本见 `services/signaling/deploy.py`，不会关闭防火墙或改动 xray。
+部署脚本见 `server/deploy.py`，不会关闭防火墙或改动 xray。
 
 ## 服务协议与资源上限
 
@@ -74,7 +74,7 @@ Host GET `/v1/offers?limit=1..32` 只领取当前可并发处理的数量；不�
 
 ## 检查与验收
 
-- `services/signaling/test_server.py`：两个异步用例通过，覆盖角色隔离、跨 Host 信箱隔离、
+- `server/tests/test_server.py`：两个异步用例通过，覆盖角色隔离、跨 Host 信箱隔离、
   撤销、重复 offer/answer 拒绝、TURN 限流。测试使用临时 SQLite，不修改生产授权。
 - Host 原 61 单测与 2 个 LAN/RTC 集成测试通过；新增签名绑定定向测试通过。
 - Remote 原 RTC/设置/App/分层 21 项通过；新增 answer 签名、身份、attempt、offerHash、
@@ -124,9 +124,9 @@ pseudossl，并未给标准模式建立 TLS；libdatachannel 0.24.3 仅向该接
 
 ## 自动登记增量部署
 
-将 `services/signaling/` 中的 `server.py`、`registration.py`、`requirements.txt`、`test_server.py`、`test_registration.py`、`deploy_registration.py` 一起复制到服务器 staging 目录，再以 root 运行 `python3 deploy_registration.py <staging目录>`。脚本安装依赖（含 cryptography）、运行 13 项测试、备份配置/SQLite/原代码，启用 `deviceRegistration`，仅重启 codepet-signal 并校验 health；失败恢复原代码及配置。已有 nginx、coturn、xray 不变。后续更新必须同时携带 registration.py，不能只替换 server.py。
+2026-11-08 起使用统一维护包：复制整个独立项目 `server/` 到 staging，保留项目根目录中的 Python 模块及其 `config/`、`tests/`，以 root 运行 `/opt/codepet-venv/bin/python <staging>/server/deploy_management.py <staging>/server`。旧 `deploy_registration.py` 已转入同一入口，不再只更新单个模块。脚本先测试并备份，再校验配置、更新信令/TURN/nginx 及相关 unit；会短暂重启信令和 TURN，原数据库与授权保留，xray 不修改。具体见 [项目说明](../../server/README.md)。
 
-新建部署同样需安装 requirements 并部署两个 Python 模块；配置 `deviceRegistration: true` 才接受登记。默认 `maxDevices: 1024`，登记 30 次/分钟/后端来源。当前 nginx 回源 loopback 导致共享登记限额，不能宣称按客户端公网 IP 计数；扩容时应单独设计可信代理来源和账号准入。
+新建部署需先准备 requirements、nginx/coturn、有效证书等环境，再使用 `deploy.py` 读取同一套模板。登记开关、容量和限流在 `server/config/signaling.json`，端口及 TURN 资源策略在 `server/config/deployment.json`。共享 loopback 限流已修复为可信代理来源识别；当前验证与容量边界见 [多用户审计](vps-multiuser-turn-capacity-audit.md)。
 
 ## 2026-11-06 TURN 预留容量修复
 

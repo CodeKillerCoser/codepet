@@ -1,0 +1,20 @@
+{
+  "database": "/var/lib/codepet-signal/signal.db",
+  "deviceRegistration": true,
+  "maxDevices": 10000,
+  "trustedProxies": ["127.0.0.1/32", "::1/128"],
+  "limits": {
+    "pending_total": 2048,
+    "pending_per_pair": 12,
+    "pending_ttl_seconds": 60,
+    "invitations_total": 1024,
+    "invitations_per_host": 4,
+    "mailbox_bytes": 33554432,
+    "signal_per_minute": 600,
+    "turn_per_minute": 120,
+    "trickle_per_minute": 6000,
+    "registration_per_ip_minute": 300,
+    "rate_buckets": 32768,
+    "cleanup_interval_seconds": 5
+  }
+}

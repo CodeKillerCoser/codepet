@@ -12,7 +12,7 @@
 - `src-tauri/src/runtime_gateway/provider_host_compat.rs`：既有 remote 调用面到 Provider Gateway 的薄适配。
 - `src-tauri/src/agent/codex_desktop_ipc/`：私有 IPC transport、Owner/Follower bootstrap 和标准状态映射；私有 DTO 不得越过该边界。
 - `src-tauri/src/agent/runtime.rs`：Agent executable 检测、验证、配置和诊断。
-- `frontend/lib/agentInteractions.ts`：前端能力展示规则。
+- 桌宠旧 `agentInteractions.ts` 已移除，当前任务面板不提供 Agent 控制入口。
 - `src-tauri/src/app/state.rs`：待审批项存储和处理。
 
 ## 原则

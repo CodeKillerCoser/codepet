@@ -1,14 +1,11 @@
-use crate::settings::{
-    load_app_settings, save_app_settings, AppSettings, PixelPetSprite,
-};
-use crate::theme_defaults;
-use chrono::Utc;
-use image::imageops::FilterType;
-use image::{DynamicImage, Rgba, RgbaImage};
+pub use super::images::prepare_pet_image;
+pub use super::packages::discover_codex_pet_packages;
+pub use super::packages::install_pet_package;
+use crate::settings::{default_pet_profiles, load_app_settings, save_app_settings, AppSettings};
 pub use crate::settings::{ConfiguredPet, PetKind};
-use serde::{Deserialize, Serialize};
+use chrono::Utc;
+use serde::Serialize;
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -40,15 +37,12 @@ pub fn select_pet(settings: &mut AppSettings, pet_id: &str) -> Result<(), String
     settings.pet.selected_pet_id = pet.id.clone();
     settings.pet.kind = pet.kind.clone();
     settings.pet.image_path = pet.image_path.clone();
-    if let Some(sprite) = pet.sprite.clone() {
-        settings.pet.sprite = sprite;
-    }
     Ok(())
 }
 
 pub fn delete_pet(settings: &mut AppSettings, pet_id: &str) -> Result<(), String> {
-    if pet_id == "default" {
-        return Err("default pet cannot be deleted".to_string());
+    if default_pet_profiles().iter().any(|pet| pet.id == pet_id) {
+        return Err("built-in pet cannot be deleted".to_string());
     }
 
     settings.pet_library.pets = ensure_profiles(settings.pet_library.pets.clone());
@@ -58,8 +52,16 @@ pub fn delete_pet(settings: &mut AppSettings, pet_id: &str) -> Result<(), String
         return Err(format!("pet not found: {pet_id}"));
     }
 
-    if !settings.pet_library.deleted_pet_ids.iter().any(|id| id == pet_id) {
-        settings.pet_library.deleted_pet_ids.push(pet_id.to_string());
+    if !settings
+        .pet_library
+        .deleted_pet_ids
+        .iter()
+        .any(|id| id == pet_id)
+    {
+        settings
+            .pet_library
+            .deleted_pet_ids
+            .push(pet_id.to_string());
     }
 
     if settings.pet_library.selected_pet_id == pet_id || settings.pet.selected_pet_id == pet_id {
@@ -68,206 +70,11 @@ pub fn delete_pet(settings: &mut AppSettings, pet_id: &str) -> Result<(), String
     Ok(())
 }
 
-pub fn clamp_image_pixel_size(value: u32) -> u32 {
-    value.clamp(16, 128)
-}
-
-pub fn pixelate_image(source: &Path, output: &Path, max_side: u32) -> io::Result<()> {
-    let image = image::open(source).map_err(io::Error::other)?.to_rgba8();
-    let image = cut_out_flat_background(image);
-    let max_side = clamp_image_pixel_size(max_side);
-    let pixelated = DynamicImage::ImageRgba8(image).resize(max_side, max_side, FilterType::Nearest);
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    pixelated
-        .save_with_format(output, image::ImageFormat::Png)
-        .map_err(io::Error::other)
-}
-
-fn cut_out_flat_background(mut image: RgbaImage) -> RgbaImage {
-    if let Some(background) = flat_corner_background(&image) {
-        for pixel in image.pixels_mut() {
-            if close_to_background(*pixel, background) {
-                pixel[3] = 0;
-            }
-        }
-    }
-
-    let Some((min_x, min_y, max_x, max_y)) = opaque_bounds(&image) else {
-        return image;
-    };
-
-    image::imageops::crop_imm(
-        &image,
-        min_x,
-        min_y,
-        max_x - min_x + 1,
-        max_y - min_y + 1,
-    )
-    .to_image()
-}
-
-fn flat_corner_background(image: &RgbaImage) -> Option<Rgba<u8>> {
-    let width = image.width();
-    let height = image.height();
-    if width == 0 || height == 0 {
-        return None;
-    }
-
-    let corners = [
-        *image.get_pixel(0, 0),
-        *image.get_pixel(width - 1, 0),
-        *image.get_pixel(0, height - 1),
-        *image.get_pixel(width - 1, height - 1),
-    ];
-    let first = corners[0];
-    if corners
-        .iter()
-        .any(|corner| color_distance_squared(*corner, first) > 34 * 34)
-    {
-        return None;
-    }
-
-    let mut channels = [0u16; 4];
-    for corner in corners {
-        channels[0] += corner[0] as u16;
-        channels[1] += corner[1] as u16;
-        channels[2] += corner[2] as u16;
-        channels[3] += corner[3] as u16;
-    }
-
-    Some(Rgba([
-        (channels[0] / 4) as u8,
-        (channels[1] / 4) as u8,
-        (channels[2] / 4) as u8,
-        (channels[3] / 4) as u8,
-    ]))
-}
-
-fn close_to_background(pixel: Rgba<u8>, background: Rgba<u8>) -> bool {
-    pixel[3] > 0 && color_distance_squared(pixel, background) <= 42 * 42
-}
-
-fn color_distance_squared(first: Rgba<u8>, second: Rgba<u8>) -> i32 {
-    let red = first[0] as i32 - second[0] as i32;
-    let green = first[1] as i32 - second[1] as i32;
-    let blue = first[2] as i32 - second[2] as i32;
-    red * red + green * green + blue * blue
-}
-
-fn opaque_bounds(image: &RgbaImage) -> Option<(u32, u32, u32, u32)> {
-    let mut min_x = image.width();
-    let mut min_y = image.height();
-    let mut max_x = 0;
-    let mut max_y = 0;
-    let mut found = false;
-
-    for (x, y, pixel) in image.enumerate_pixels() {
-        if pixel[3] == 0 {
-            continue;
-        }
-        found = true;
-        min_x = min_x.min(x);
-        min_y = min_y.min(y);
-        max_x = max_x.max(x);
-        max_y = max_y.max(y);
-    }
-
-    found.then_some((min_x, min_y, max_x, max_y))
-}
-
 pub fn list_pet_library() -> Result<PetLibraryView, String> {
     let mut settings = load_app_settings().map_err(|error| error.to_string())?;
     normalize_pet_selection(&mut settings)?;
     save_app_settings(&settings).map_err(|error| error.to_string())?;
     Ok(pet_library_view(&settings))
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct CodexPetManifest {
-    id: Option<String>,
-    display_name: Option<String>,
-    spritesheet_path: String,
-}
-
-pub fn discover_codex_pet_packages(root: &Path) -> Vec<ConfiguredPet> {
-    let Ok(entries) = fs::read_dir(root) else {
-        return Vec::new();
-    };
-
-    entries
-        .filter_map(Result::ok)
-        .filter_map(|entry| codex_pet_package_from_dir(&entry.path()))
-        .collect()
-}
-
-fn codex_pet_package_from_dir(pet_dir: &Path) -> Option<ConfiguredPet> {
-    if !pet_dir.is_dir() {
-        return None;
-    }
-
-    let manifest_path = pet_dir.join("pet.json");
-    let manifest_text = fs::read_to_string(&manifest_path).ok()?;
-    let manifest: CodexPetManifest = serde_json::from_str(&manifest_text).ok()?;
-    let spritesheet = pet_dir.join(&manifest.spritesheet_path);
-    if !is_codex_spritesheet(&spritesheet) {
-        return None;
-    }
-
-    let folder_id = pet_dir.file_name().and_then(|name| name.to_str()).unwrap_or("pet");
-    let manifest_id = manifest
-        .id
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(folder_id);
-    let display_name = manifest
-        .display_name
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| titleize_pet_id(manifest_id));
-    let created_at = fs::metadata(&manifest_path)
-        .and_then(|metadata| metadata.modified())
-        .map(chrono::DateTime::<Utc>::from)
-        .unwrap_or_else(|_| Utc::now())
-        .to_rfc3339();
-
-    Some(ConfiguredPet {
-        id: format!("codex:{manifest_id}"),
-        name: display_name,
-        kind: PetKind::CodexAtlas,
-        sprite: None,
-        image_path: Some(spritesheet.to_string_lossy().to_string()),
-        source_path: Some(manifest_path.to_string_lossy().to_string()),
-        created_at,
-    })
-}
-
-fn is_codex_spritesheet(path: &Path) -> bool {
-    matches!(
-        path.extension()
-            .and_then(|extension| extension.to_str())
-            .map(|extension| extension.to_ascii_lowercase())
-            .as_deref(),
-        Some("webp" | "png")
-    ) && image::image_dimensions(path)
-        .map(|(width, height)| width == 1536 && height == 1872)
-        .unwrap_or(false)
-}
-
-fn titleize_pet_id(value: &str) -> String {
-    value
-        .split(['-', '_'])
-        .filter(|part| !part.is_empty())
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
-                None => String::new(),
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 pub fn switch_pet(pet_id: String) -> Result<PetLibraryView, String> {
@@ -297,7 +104,10 @@ pub fn remove_pet_from_library(pet_id: String) -> Result<PetLibraryView, String>
     Ok(pet_library_view(&settings))
 }
 
-pub fn import_pet_image(source_path: String, name: Option<String>, pixel_size: Option<u32>) -> Result<PetLibraryView, String> {
+pub fn import_pet_image(
+    source_path: String,
+    name: Option<String>,
+) -> Result<PetLibraryView, String> {
     let mut settings = load_app_settings().map_err(|error| error.to_string())?;
     normalize_pet_selection(&mut settings)?;
 
@@ -321,10 +131,11 @@ pub fn import_pet_image(source_path: String, name: Option<String>, pixel_size: O
     let copied_source = pet_dir.join(format!("source.{source_extension}"));
     fs::copy(&source, &copied_source).map_err(|error| error.to_string())?;
 
-    let pixel_size = clamp_image_pixel_size(pixel_size.unwrap_or(settings.pet.image_pixel_size));
-    settings.pet.image_pixel_size = pixel_size;
-    let pixelated = pixelated_image_path(&pet_dir, pixel_size);
-    pixelate_image(&copied_source, &pixelated, pixel_size).map_err(|error| error.to_string())?;
+    let prepared = pet_dir.join("portrait.png");
+    if let Err(error) = prepare_pet_image(&copied_source, &prepared) {
+        let _ = fs::remove_dir_all(&pet_dir);
+        return Err(error.to_string());
+    }
 
     let display_name = name
         .filter(|value| !value.trim().is_empty())
@@ -339,8 +150,7 @@ pub fn import_pet_image(source_path: String, name: Option<String>, pixel_size: O
         id: id.clone(),
         name: display_name,
         kind: PetKind::Image,
-        sprite: Some(settings.pet.sprite.clone()),
-        image_path: Some(pixelated.to_string_lossy().to_string()),
+        image_path: Some(prepared.to_string_lossy().to_string()),
         source_path: Some(copied_source.to_string_lossy().to_string()),
         created_at: Utc::now().to_rfc3339(),
     };
@@ -349,41 +159,6 @@ pub fn import_pet_image(source_path: String, name: Option<String>, pixel_size: O
     select_pet(&mut settings, &id)?;
     save_app_settings(&settings).map_err(|error| error.to_string())?;
     Ok(pet_library_view(&settings))
-}
-
-pub fn update_active_image_pet_pixel_size(pixel_size: u32) -> Result<PetLibraryView, String> {
-    let mut settings = load_app_settings().map_err(|error| error.to_string())?;
-    normalize_pet_selection(&mut settings)?;
-
-    let pixel_size = clamp_image_pixel_size(pixel_size);
-    settings.pet.image_pixel_size = pixel_size;
-    let selected_pet_id = settings.pet_library.selected_pet_id.clone();
-
-    if let Some(pet) = settings
-        .pet_library
-        .pets
-        .iter_mut()
-        .find(|candidate| candidate.id == selected_pet_id && candidate.kind == PetKind::Image)
-    {
-        if let Some(source_path) = pet.source_path.clone() {
-            let source = PathBuf::from(source_path);
-            if source.exists() {
-                let pet_dir = source.parent().unwrap_or_else(|| Path::new("."));
-                let pixelated = pixelated_image_path(pet_dir, pixel_size);
-                pixelate_image(&source, &pixelated, pixel_size).map_err(|error| error.to_string())?;
-                pet.image_path = Some(pixelated.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    let selected = settings.pet_library.selected_pet_id.clone();
-    select_pet(&mut settings, &selected)?;
-    save_app_settings(&settings).map_err(|error| error.to_string())?;
-    Ok(pet_library_view(&settings))
-}
-
-fn pixelated_image_path(pet_dir: &Path, pixel_size: u32) -> PathBuf {
-    pet_dir.join(format!("pixel-{}.png", clamp_image_pixel_size(pixel_size)))
 }
 
 fn normalize_pet_selection(settings: &mut AppSettings) -> Result<(), String> {
@@ -418,7 +193,13 @@ fn add_discovered_codex_pets(settings: &mut AppSettings) {
     for pet in roots
         .iter()
         .flat_map(|root| discover_codex_pet_packages(root))
-        .filter(|pet| !settings.pet_library.deleted_pet_ids.iter().any(|id| id == &pet.id))
+        .filter(|pet| {
+            !settings
+                .pet_library
+                .deleted_pet_ids
+                .iter()
+                .any(|id| id == &pet.id)
+        })
     {
         if let Some(existing) = settings
             .pet_library
@@ -434,38 +215,43 @@ fn add_discovered_codex_pets(settings: &mut AppSettings) {
 }
 
 fn managed_pet_directory(settings: &AppSettings, pet: &ConfiguredPet) -> Option<PathBuf> {
-    if pet.kind != PetKind::Image {
-        return None;
-    }
-    let data_dir = crate::paths::pets(settings);
-    pet.image_path
-        .as_deref()
-        .or(pet.source_path.as_deref())
-        .map(PathBuf::from)
-        .and_then(|path| path.parent().map(Path::to_path_buf))
-        .filter(|path| path.starts_with(data_dir))
+    let data_dir = crate::paths::pets(settings).canonicalize().ok()?;
+    let source = PathBuf::from(pet.source_path.as_ref()?);
+    let parent = source.parent()?.canonicalize().ok()?;
+    let folder = parent.file_name()?.to_str()?;
+    (parent.parent() == Some(data_dir.as_path())
+        && (folder.starts_with("image-") || folder.starts_with("package-")))
+    .then_some(parent)
 }
 
 fn ensure_profiles(mut pets: Vec<ConfiguredPet>) -> Vec<ConfiguredPet> {
-    if pets.iter().any(|pet| pet.id == "default") {
-        return pets;
-    }
+    let defaults = default_pet_profiles();
+    pets.retain(|pet| !defaults.iter().any(|default| default.id == pet.id));
+    defaults.into_iter().chain(pets).collect()
+}
 
-    pets.insert(
-        0,
-        ConfiguredPet {
-            id: "default".to_string(),
-            name: "Classic Pixel".to_string(),
-            kind: PetKind::Palette,
-            sprite: Some(PixelPetSprite {
-                body: theme_defaults::DEFAULT_PET_BODY.to_string(),
-                accent: theme_defaults::DEFAULT_PET_ACCENT.to_string(),
-                eyes: theme_defaults::DEFAULT_PET_EYES.to_string(),
-            }),
-            image_path: None,
-            source_path: None,
-            created_at: "2026-05-26T00:00:00Z".to_string(),
-        },
-    );
-    pets
+/// Restore built-in profiles and keep the active selection consistent with the library.
+pub fn normalize_active_pet(settings: &mut AppSettings) {
+    settings.pet_library.pets = ensure_profiles(std::mem::take(&mut settings.pet_library.pets));
+    let selected = settings.pet_library.selected_pet_id.clone();
+    if select_pet(settings, &selected).is_err() {
+        let _ = select_pet(settings, "default");
+    }
+}
+
+pub fn import_pet_package(source_path: String) -> Result<PetLibraryView, String> {
+    let mut settings = load_app_settings().map_err(|e| e.to_string())?;
+    normalize_pet_selection(&mut settings)?;
+    let pet = install_pet_package(&crate::paths::pets(&settings), Path::new(&source_path))?;
+    let removable_dir = managed_pet_directory(&settings, &pet);
+    let pet_id = pet.id.clone();
+    settings.pet_library.pets.push(pet);
+    select_pet(&mut settings, &pet_id)?;
+    if let Err(error) = save_app_settings(&settings) {
+        if let Some(directory) = removable_dir {
+            let _ = fs::remove_dir_all(directory);
+        }
+        return Err(error.to_string());
+    }
+    Ok(pet_library_view(&settings))
 }

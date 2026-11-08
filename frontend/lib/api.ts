@@ -94,12 +94,12 @@ export async function setPathManagerPets(path: string): Promise<PetLibraryView> 
   return invoke<PetLibraryView>("path_manager_set_pets", { path });
 }
 
-export async function importPetImage(sourcePath: string, name?: string, pixelSize?: number): Promise<PetLibraryView> {
-  return invoke<PetLibraryView>("import_pet_image", { sourcePath, name, pixelSize });
+export async function importPetImage(sourcePath: string, name?: string): Promise<PetLibraryView> {
+  return invoke<PetLibraryView>("import_pet_image", { sourcePath, name });
 }
 
-export async function updatePetImagePixelSize(pixelSize: number): Promise<PetLibraryView> {
-  return invoke<PetLibraryView>("update_pet_image_pixel_size", { pixelSize });
+export async function importPetPackage(sourcePath: string): Promise<PetLibraryView> {
+  return invoke<PetLibraryView>("import_pet_package", { sourcePath });
 }
 
 export async function cutOutImageSubject(sourcePath: string, outputPath?: string): Promise<SubjectCutoutResult> {
@@ -145,22 +145,8 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   });
 }
 
-
-
-export async function activateActivity(eventId: string): Promise<void> {
-  return invoke<void>("activate_activity", { eventId });
-}
-
 export async function openMainWindow(): Promise<void> {
   return invoke<void>("open_main_window");
-}
-
-export async function sendActivityReply(eventId: string, message: string): Promise<void> {
-  return invoke<void>("send_activity_reply", { eventId, message });
-}
-
-export async function resolveActivityApproval(eventId: string, behavior: "allow" | "deny", message?: string): Promise<void> {
-  return invoke<void>("resolve_activity_approval", { eventId, behavior, message });
 }
 
 export async function importProviderPlugin(manifestPath: string): Promise<{providerId: string; displayName: string; loaded: boolean; diagnostic?: string | null}> {

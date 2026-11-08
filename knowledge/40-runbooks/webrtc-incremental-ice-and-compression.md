@@ -33,7 +33,7 @@ SDP 使用 `a=x-codepet-compression:gzip` 双方协商。没有双方确认则�
 
 - Remote `gateway/webrtc/{signaling,cloud_signaling,webrtc_gateway_transport,path_policy,framing}.dart`：可选能力、签名批次、早发握手、兼容及有界解压；新增测试覆盖晚候选、真实签名绑定、旧路径与压缩边界。
 - Host `remote/channels/webrtc/{cloud,mod,path_policy,framing}.rs`：授权能力同步、验签和原生 add_ice_candidate、建连预算、压缩协商与发送。
-- `services/signaling/server.py`：只承担能力广告与有界候选邮箱，仍不解析 ICE 地址/转发业务流量。
+- `server/server.py`：只承担能力广告与有界候选邮箱，仍不解析 ICE 地址/转发业务流量。
 - Host `lan/websocket_diagnostics.rs` 与 Remote `MdnsBridge.kt`/discovery adapter：补足未知故障的关闭边界和原生阶段证据。
 
 ## 验证结果

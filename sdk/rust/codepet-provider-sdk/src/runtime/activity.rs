@@ -1,4 +1,4 @@
-//! One instance-wide activity projection owns automatic idle release decisions.
+//! Provider-local activity is the authoritative safety guard for Host release-control requests.
 use crate::generated::{Approval, ApprovalStatus, Conversation, ConversationStatus, InstanceStatus,
     JsonRpcResponse, JsonRpcResponsePayload, ProtocolEvent, ProtocolMethod, ProtocolRequest,
     ProviderInstance, ProviderInstanceRoute, TurnTask, TurnStatus};
@@ -11,6 +11,7 @@ use tokio::sync::RwLock;
 struct InstanceActivity {
     route: Option<ProviderInstanceRoute>,
     ready: bool,
+    release_control: bool,
     idle_since: Option<Instant>,
     // Terminal IDs survive until teardown; delayed start replies cannot resurrect work.
     turns: HashMap<(String, String), bool>,
@@ -18,7 +19,6 @@ struct InstanceActivity {
     conversations: HashMap<String, Option<String>>,
     uncertain: HashSet<String>,
     generation: u64,
-    status_revision: u64,
 }
 impl InstanceActivity {
     fn busy(&self) -> bool {
@@ -54,36 +54,35 @@ impl Activity {
         self.instances.lock().unwrap_or_else(|e| e.into_inner())
             .get(&route.provider_instance_id).is_some_and(InstanceActivity::busy)
     }
+    pub fn release_control_outcome(&self, route: &ProviderInstanceRoute, timeout: Duration) -> crate::generated::InstanceReleaseControlOutcome {
+        use crate::generated::InstanceReleaseControlOutcome as Outcome;
+        let states = self.instances.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(state) = states.get(&route.provider_instance_id) else { return Outcome::Unavailable; };
+        if state.route.as_ref() != Some(route) { return Outcome::Unavailable; }
+        if !state.release_control { return Outcome::Unsupported; }
+        if !state.ready { return Outcome::Unavailable; }
+        if state.busy() { return Outcome::Busy; }
+        if !state.idle_since.is_some_and(|at| (self.now)().saturating_duration_since(at) >= timeout) {
+            return Outcome::NotIdle;
+        }
+        Outcome::Released // Eligible; only the adapter's successful response confirms release.
+    }
+    #[cfg(test)]
     pub fn idle_routes(&self, timeout: Duration) -> Vec<ProviderInstanceRoute> {
-        let now = (self.now)();
-        self.instances.lock().unwrap_or_else(|e| e.into_inner()).values()
-            .filter(|state| state.ready && !state.busy()
-                && state.idle_since.is_some_and(|at| now.saturating_duration_since(at) >= timeout))
-            .filter_map(|state| state.route.clone()).collect()
+        let routes: Vec<_> = self.instances.lock().unwrap_or_else(|e| e.into_inner()).values()
+            .filter_map(|state| state.route.clone()).collect();
+        routes.into_iter().filter(|route| self.release_control_outcome(route, timeout) == crate::generated::InstanceReleaseControlOutcome::Released).collect()
     }
     pub(super) fn instance(&self, instance: &ProviderInstance) {
-        self.apply_instance(instance, None);
-    }
-    pub(super) fn status_revision(&self, id: &str) -> u64 {
-        self.instances.lock().unwrap_or_else(|e| e.into_inner()).get(id)
-            .map_or(0, |state| state.status_revision)
-    }
-    /// Lifecycle events are authoritative if they arrived during an async call.
-    pub(super) fn instance_response(&self, instance: &ProviderInstance, revision: u64) {
-        self.apply_instance(instance, Some(revision));
-    }
-    fn apply_instance(&self, instance: &ProviderInstance, expected: Option<u64>) {
         let mut instances = self.instances.lock().unwrap_or_else(|e| e.into_inner());
         let state = instances.entry(instance.route.provider_instance_id.clone()).or_default();
-        if expected.is_some_and(|revision| revision != state.status_revision) { return; }
-        let status_revision = state.status_revision.wrapping_add(1);
         if matches!(instance.status, InstanceStatus::Starting | InstanceStatus::Stopped | InstanceStatus::Error) {
             let generation = state.generation.wrapping_add(1);
             *state = InstanceActivity { generation, ..InstanceActivity::default() };
         }
-        state.status_revision = status_revision;
         state.route = Some(instance.route.clone());
         state.ready = instance.status == InstanceStatus::Ready;
+        state.release_control = instance.capabilities.methods.contains(&crate::generated::ProviderCapability::InstanceReleaseControl);
         if !state.ready { state.idle_since = None; }
         state.reconcile_idle((self.now)());
     }

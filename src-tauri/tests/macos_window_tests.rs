@@ -5,7 +5,7 @@ use tauri_nspanel::objc2_app_kit::{NSWindowCollectionBehavior, NSWindowStyleMask
 
 #[test]
 fn pet_overlay_panel_can_become_key_for_text_entry() {
-    let source = include_str!("../src/macos_window.rs");
+    let source = include_str!("../src/platform/macos_window.rs");
 
     assert!(source.contains("can_become_key_window: true"));
     assert!(!source.contains("can_become_key_window: false"));

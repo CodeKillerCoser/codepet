@@ -6,7 +6,7 @@ Agent transcript/session JSONL 路径只能作为元数据或排查线索，不�
 
 ## 适用场景
 
-修改 `frontend/lib/activity.ts`、事件归并、卡片标题/正文、Codex/Claude/Qoder/Cursor hook payload 解析或 Windows 路径处理时适用。
+修改 `crates/codepet-host/src/pet_gateway/projection.rs`、事件归并、卡片标题/正文、Codex/Claude/Qoder/Cursor hook payload 解析或 Windows 路径处理时适用。
 
 ## 反例
 

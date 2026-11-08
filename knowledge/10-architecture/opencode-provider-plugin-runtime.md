@@ -2,6 +2,8 @@
 
 ## 审计结论
 
+2026-11-08 补充 OpenCode 产品 2.2.6：Provider 内部支持新认证、`/api/info` 握手、扁平 prompt、inbox admission、`decision` 审批回复和新事件/ordinal 历史映射。旧 `/api/health` 路径保留，对外 Provider/Gateway 协议与 SDK 不变。下文的原始 V2 指 1.18.25 暴露的 `/api`，不是产品版本 2.x 的兼容承诺。当前验证、旧版拒绝限制和受影响模块见 [OpenCode 2 修复记录](../40-runbooks/opencode2-startup-compatibility.md)。
+
 2026-08-30 的验证基线是 OpenCode 正式发行版 `1.18.25`；2026-09-06 补充实际发送验证并修正完成等待，同日 Windows 实测 `1.18.29` 的发现、启动和会话列表。Provider 不再按 Harness 版本号限制准入，兼容性由实际接口探测判断。Provider 使用 `GET /api/health`、`/api/session` 的 list/get/create/active/prompt/interrupt、`/api/event` SSE 和 permission reply。正式二进制的 `/api/session/:id/wait` 虽存在于 schema，但实际返回 503 `Session wait is not available yet`，不能调用。它不调用 `/global/*`，不使用 V1 DTO fallback，也不把 `session.idle`、`session.error` 当作 V2 turn 终态。
 
 正式 V2 shape 对本实现有三项直接约束：
@@ -39,7 +41,7 @@ Provider crate 的生产依赖只包含生成的 Provider SDK 和 Server adapter
 
 ### 生命周期与进程树
 
-实例继续只持有一个 OpenCode Server，多会话共享。公共 Provider SDK 现按 Host 心跳的客户端集合协调幂等 start/stop：任一客户端在线时保持 Server，最后连接离线或 Host 心跳过期则停止，包括 active turn；插件仍继续服务。页面退出不控制该生命周期。两段心跳、状态归属及 Host 目录分组见 [连接架构](remote-and-provider-connections.md)。三个内置 Provider 的 Host 集成测试覆盖此路径。
+实例继续只持有一个 OpenCode Server，多会话共享。公共 Provider SDK 心跳只表达连通性，不因手机离线或心跳过期停止任务。OpenCode 不声明 `instance.releaseControl`，Host 不向它调度释放，不参与 Codex 专用的空闲回收/重启，启动后保持 Server 就绪。页面退出不控制生命周期；显式 stop/shutdown 和真实 IPC 退出仍回收自有 Server。两段心跳、状态归属及 Host 目录分组见 [连接架构](remote-and-provider-connections.md)。三个内置 Provider 的 Host 集成测试覆盖连接及正常停止路径。
 
 Server startup 带当前 attempt/generation 的取消检查；stop/shutdown 使 attempt 失效，健康检查轮询会停止并回收尚未登记的 child。spawn blocking task 在返回前登记 session，模型、账号、用量和版本在 Starting 期间并行探测，汇总后一次发布 Ready，stop 仍能找到并关闭 Server，并使旧探测 epoch 失效；旧 future 不得覆盖新代状态。`cancelling_start_before_health_or_during_discovery_cannot_orphan_server` 覆盖这两个窗口，断言 PID 退出且无晚到 Ready。
 
@@ -53,7 +55,7 @@ Server startup 使用总计 10 秒 deadline；每次 health probe 的 timeout �
 
 ### 身份与资源上限
 
-Basic auth 只认证 client，不能证明 server 身份。每次启动仍生成随机 `OPENCODE_SERVER_PASSWORD` 并显式注入 child，但端口所有权来自更直接的事实：Provider 不预选、不释放端口，也不传 `--port`；它只从自己刚启动 child 的有界 stdout pipe 接受正式 loopback listening URL，再对该 URL 做带认证的 `/api/health`。foreign process 即使先占候选端口、读取 Authorization 并返回 `200 {"healthy":true}`，也不会收到 Provider 请求；自有 child 会跳到下一端口并报告它实际持有的地址。
+Basic auth 只认证 client，不能证明 server 身份。每次启动仍生成随机密码，通过旧 `OPENCODE_SERVER_PASSWORD` 和新 `OPENCODE_PASSWORD` 显式注入 child，但端口所有权来自更直接的事实：Provider 不预选、不释放端口，也不传 `--port`；它只从自己刚启动 child 的有界 stdout pipe 接受正式 loopback listening URL，再对该 URL 做带认证的 `/api/health`。foreign process 即使先占候选端口、读取 Authorization 并返回 `200 {"healthy":true}`，也不会收到 Provider 请求；自有 child 会跳到下一端口并报告它实际持有的地址。
 
 资源上限保持固定且简单：
 
@@ -77,7 +79,7 @@ Provider 诚实声明 session list/get/create、turn start/steer/interrupt 和 a
 
 创建和发送都公开原生 build/plan、模型与 reasoning variant 选择。创建请求既有 `model` 为字符串，因此 create capability 使用 `<providerID>/<modelID>` 的 flat catalog，服务端拆分后传给原生 session.create；发送继续使用 grouped catalog。旧调用方的 `opencode-default` 保留原生默认行为。此次只更换 capability revision 指纹，Provider/Gateway 仍为 v1。
 
-当前不支持 create title、question 回答、历史 delta replay、断线恢复、自动重启、持久 `always` approval、V1 compatibility 或未来 OpenCode 版本。未知事件可忽略；已支持事件形状错误、SSE 断开、active 查询失败或资源超限会让 instance 进入 Error。升级到 `1.18.26+` 前必须重新验证正式 tag schema 与实际流程，不能按 semver 猜测兼容。
+当前不支持 create title、question 回答、历史 delta replay、断线恢复、自动重启、持久 `always` approval、旧 V1 HTTP compatibility 或未经验证的未来原生接口。未知事件可忽略；已支持事件形状错误、SSE 断开、active 查询失败或资源超限会让 instance 进入 Error。新增版本适配必须核对正式 tag schema 与实际流程，不能按 semver 猜测兼容。已验证版本见最新兼容记录。
 
 ## 受影响模块
 
@@ -116,6 +118,6 @@ fixture 覆盖正式 chunked SSE/framing、prompt response 在 SSE 前后两种�
 - fixture 对所有请求验证随机 Basic auth；foreign port fixture 即使读取该 header 并返回 200 healthy，也验证 Provider 只联系自有 child stdout 报告的端口。
 - Provider boundary test 扫描 production manifest/source，禁止 Host、Pet、Desktop、Tauri 依赖和数据链引用。
 - macOS/OpenCode 1.18.25 已验证发送路径；Windows/OpenCode 1.18.29 已验证发现、启动和列表，不能将后者扩展成真实模型发送已验证。
-- OpenCode V2 仍可能在未来版本变化；精确版本 fail closed 是当前安全边界，不是长期兼容承诺。
+- OpenCode 原生接口仍可能变化；接口探测与已支持形状验证是兼容边界，不以版本号限制准入。
 
 长期跨层约束继续以 `../60-rules/protocol-layer-and-channel-boundaries.md` 为准；Host lifecycle 与 manifest 事实见 `provider-host-device-and-plugin-runtime.md`。

@@ -24,11 +24,11 @@
 
 ## 引入历史
 
-配额来自仓库 `services/signaling/deploy.py` 的初始部署参数；具体首次引入提交未确认。此次并行连接及多设备后台重试暴露了预留容量与并发数量不一致。
+配额来自仓库 `server/deploy.py` 的初始部署参数；具体首次引入提交未确认。此次并行连接及多设备后台重试暴露了预留容量与并发数量不一致。
 
 ## 修复与涉及模块
 
-- `services/signaling/deploy.py`、`deploy_turn_capacity.py`：保留总容量 10,000,000 B/s，将单分配上限调整为 500,000 B/s（约 4 Mbit/s）、总分配数 20，单用户仍为 8。两项乘积与容量一致，支持两个用户各 8 条分配及余量。单分配峰值比旧值降低，后续如需大文件高吞吐应按 VPS 实际带宽统一调整；不取消总量、用户数、认证或私网访问限制。
+- `server/deploy.py`、`deploy_turn_capacity.py`：保留总容量 10,000,000 B/s，将单分配上限调整为 500,000 B/s（约 4 Mbit/s）、总分配数 20，单用户仍为 8。两项乘积与容量一致，支持两个用户各 8 条分配及余量。单分配峰值比旧值降低，后续如需大文件高吞吐应按 VPS 实际带宽统一调整；不取消总量、用户数、认证或私网访问限制。
 - `probe_turn_capacity.py`：在服务器生成短期测试身份，持有 12 条认证分配，并在 finally 释放；不输出密钥或口令。
 - Remote `diagnostic_report.dart`/`local_log_store.dart`：导出增加 `connection-summary.txt`，`codepet.log` 改为 UTC 有序文本时间线，完整候选/统计保留在 `raw/*.jsonl`；兼容旧嵌套日志。快照与写盘/轮转排队，避免导出时文件被重命名。
 - Remote `AppLog`/`RtcDiagnostics`：RTC 使用单层结构化字段；状态 INFO，候选统计 FINE，失败 WARNING。增加构建 SHA、模式、平台、时区，Android CI 注入实际 SHA。
@@ -38,7 +38,7 @@
 
 VPS 已于 21:17:39 更新，备份 `/opt/codepet-signal/backups/turn-capacity-20261106T131739Z`，仅重启 coturn。12 条同时认证分配（两个用户）通过并全部释放；真实 Rust relay 探针完成自动登记、信令、选中 relay、Gateway 握手、72 KB RPC、撤销关闭。该结果不能替代用户手机的实际网络复测。
 
-Python `unittest discover -s services/signaling -p 'test_*.py'` 16 项通过；Remote `flutter test --no-pub test/diagnostics test/gateway test/settings test/app test/pairing` 164 项通过，涵盖旧日志解码、排序、取消与失败分离、导出内容及日志分享入口；相关 Dart 分析通过。当前用户日志已通过生产转换器生成可读时间线/摘要，原目录未修改。转换验收还发现历史消息含 NUL/控制字符，已统一替换以避免文本被识别成二进制；相关新增回归及导出测试 7 项通过，原始 JSONL 仍完整保留。
+Python `unittest discover -s server -p 'test_*.py'` 16 项通过；Remote `flutter test --no-pub test/diagnostics test/gateway test/settings test/app test/pairing` 164 项通过，涵盖旧日志解码、排序、取消与失败分离、导出内容及日志分享入口；相关 Dart 分析通过。当前用户日志已通过生产转换器生成可读时间线/摘要，原目录未修改。转换验收还发现历史消息含 NUL/控制字符，已统一替换以避免文本被识别成二进制；相关新增回归及导出测试 7 项通过，原始 JSONL 仍完整保留。
 
 交付：Remote `5947136` 已由 GitHub Actions run `42226855471` 构建正式签名 Release，包内构建 SHA 与提交一致，无 debuggable 标记。安装包已部署 VPS 下载入口，完整下载后 SHA-256 与构建产物一致：`e8166c71c12fbb599ebc21cc6871c3e05170e1bd17ce2f7b0203cd7b6a55c854`。本次服务器修复无需更新手机即可复测；新版手机用于改进日志导出和取消状态记录，未改桌面二进制。
 

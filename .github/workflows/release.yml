@@ -72,6 +72,8 @@ jobs:
           echo "BASE_VERSION=$BASE_VERSION" >> "$GITHUB_ENV"
       - name: Validate release manifest generation
         run: node --test scripts/generate_latest_json.test.mjs
+      - name: Validate macOS signing helpers
+        run: python3 scripts/macos_signing_test.py
       - name: Commit synced source version
         shell: bash
         run: |
@@ -121,19 +123,14 @@ jobs:
         run: node scripts/release_version.mjs --sync-version "${{ needs.preflight.outputs.version }}" --allow-build-metadata
       - name: Build Tauri app
         shell: bash
-        run: |
-          for ATTEMPT in 1 2 3; do
-            if npm run tauri -- build --target aarch64-apple-darwin --bundles dmg --config src-tauri/tauri.macos-dmg.conf.json; then
-              exit 0
-            fi
-            if [ "$ATTEMPT" = "3" ]; then
-              exit 1
-            fi
-            sleep $((ATTEMPT * 20))
-          done
+        run: python3 scripts/macos_signing.py build
         env:
           CODEPET_PROVIDER_TARGET: aarch64-apple-darwin
+          CODEPET_MACOS_CERTIFICATE_BASE64: ${{ secrets.CODEPET_MACOS_CERTIFICATE_BASE64 }}
+          CODEPET_MACOS_CERTIFICATE_PASSWORD: ${{ secrets.CODEPET_MACOS_CERTIFICATE_PASSWORD }}
+          CODEPET_MACOS_CERTIFICATE_SHA1: ${{ secrets.CODEPET_MACOS_CERTIFICATE_SHA1 }}
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: macos-arm64-dmg
           if-no-files-found: error

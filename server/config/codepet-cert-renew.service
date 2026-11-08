@@ -1,0 +1,5 @@
+[Unit]
+Description=Renew CodePet short-lived IP certificate
+[Service]
+Type=oneshot
+ExecStart=/opt/codepet-venv/bin/certbot renew --quiet

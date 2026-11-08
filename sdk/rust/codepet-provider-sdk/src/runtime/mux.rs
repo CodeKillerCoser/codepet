@@ -63,7 +63,6 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
         Ok::<_, ProtocolError>(())
     });
     let heartbeat = super::heartbeat::HostHeartbeat::new();
-    let monitor = tokio::spawn(super::idle::run(provider.clone(), activity.clone(), options.idle_timeout, options.restart_after_idle));
     let initialized = Arc::new(AtomicBool::new(false));
     let dispatch_closed = Arc::new(AtomicBool::new(false));
     let executions = Arc::new(std::sync::Mutex::new(Vec::<tokio::task::AbortHandle>::new()));
@@ -122,11 +121,16 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
                                         heartbeat.ping(params).and_then(|v| serde_json::to_value(v).map_err(error))
                                     } else { Err(ProtocolError { code: "provider_not_initialized".into(), message: "Initialize before heartbeat".into(), retryable: true, details: None }) })
                                 } else {
-                                    let detached_start = matches!(method, ProtocolMethod::TurnStart | ProtocolMethod::TurnSteer);
+                                    let detached_operation = matches!(method, ProtocolMethod::TurnStart | ProtocolMethod::TurnSteer | ProtocolMethod::InstanceReleaseControl);
                                     let pending_executions = executions.clone();
                                     let work = async move {
-                                        let _execution = activity.gate.read().await;
-                                        let _permit = lane.acquire_owned().await.map_err(error)?;
+                                        // Release has exclusive admission in its handler. Shutdown must bypass
+                                        // that guard to cancel a hung recycle and clean all owned children.
+                                        let _execution = if matches!(method, ProtocolMethod::InstanceReleaseControl | ProtocolMethod::ProviderShutdown) {
+                                            None
+                                        } else { Some(activity.gate.read().await) };
+                                        let _permit = if method == ProtocolMethod::ProviderShutdown { None }
+                                            else { Some(lane.acquire_owned().await.map_err(error)?) };
                                         if dispatch_closed.load(Ordering::SeqCst) { return Err(error("Provider is shutting down")); }
                                         if method == ProtocolMethod::ProviderShutdown {
                                             dispatch_closed.store(true, Ordering::SeqCst);
@@ -134,14 +138,17 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
                                         }
                                         let business_instance = super::activity::Activity::request_activity(&request);
                                         let mutation = activity.mutation(&request);
-                                        let reply = dispatch(provider.as_ref(), request).await;
+                                        let reply = if let crate::generated::ProtocolRequest::InstanceReleaseControl { id, params, .. } = request {
+                                            response(Some(id), super::release_control::handle(provider.as_ref(), &activity, params).await
+                                                .and_then(|value| serde_json::to_value(value).map_err(error)))
+                                        } else { dispatch(provider.as_ref(), request).await };
                                         activity.response(method, &reply);
                                         activity.mutation_response(mutation, &reply);
                                         if let Some(instance) = business_instance { activity.touch(&instance); }
                                         Ok::<_, ProtocolError>(reply)
                                     };
-                                    if detached_start {
-                                        // Once admitted, a turn mutation outlives its response stream.
+                                    if detached_operation {
+                                        // Once admitted, a turn mutation or release outlives its response stream.
                                         // The task retains the execution guard until its result is recorded;
                                         // Host EOF/shutdown still force-cleans the adapter generation.
                                         let mut execution = tokio::spawn(work);
@@ -181,7 +188,7 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
     dispatch_closed.store(true, Ordering::SeqCst);
     for execution in executions.lock().unwrap_or_else(|e| e.into_inner()).drain(..) { execution.abort(); }
     output_closed.store(true, Ordering::SeqCst);
-    monitor.abort(); event_task.abort();
+    event_task.abort();
     // Once the connection is lost, queued handlers cannot deliver a response.
     if !shutdown_called { tasks.abort_all(); }
     let _ = tokio::time::timeout(options.dispatch_drain_timeout, async {
@@ -270,6 +277,14 @@ mod tests {
                 Err(error("fixture completed"))
             })
         }
+        fn instance_release_control<'a>(&'a self, _: crate::InstanceReleaseControlRequest) -> crate::ProtocolFuture<'a, crate::InstanceReleaseControlResponse> {
+            Box::pin(async move {
+                self.entered.notify_one();
+                let _permit = self.release.acquire().await.unwrap();
+                self.finished.store(true, Ordering::SeqCst);
+                Ok(crate::InstanceReleaseControlResponse { outcome: crate::InstanceReleaseControlOutcome::Released })
+            })
+        }
         fn provider_shutdown<'a>(&'a self, _: ProviderShutdownRequest) -> crate::ProtocolFuture<'a, crate::ProviderShutdownResponse> {
             Box::pin(async { Ok(crate::ProviderShutdownResponse { accepted: true }) })
         }
@@ -312,6 +327,60 @@ mod tests {
                 release.add_permits(1);
                 tokio::task::yield_now().await;
                 assert!(!finished.load(Ordering::SeqCst), "shutdown must abort outstanding detached starts");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn release_control_outlives_response_cancellation_but_shutdown_bypasses_its_exclusive_guard() {
+        for shutdown_during_release in [false, true] {
+            let (host, provider) = std::os::unix::net::UnixStream::pair().unwrap();
+            host.set_nonblocking(true).unwrap();
+            let (read, write) = tokio::io::split(tokio::net::UnixStream::from_std(host).unwrap());
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Semaphore::new(0));
+            let finished = Arc::new(AtomicBool::new(false));
+            let probe = StartProbe { entered: entered.clone(), release: release.clone(), finished: finished.clone() };
+            let server = tokio::spawn(async move {
+                serve_mux_with_io(provider.try_clone().unwrap(), provider,
+                    StdioServerOptions { max_concurrent_control_requests: 1, ..Default::default() }, |sink| {
+                        sink.publish(serde_json::from_value(serde_json::json!({
+                            "jsonrpc":"2.0","method":"event.instanceStatusChanged","params":{"instance":{
+                                "route":{"deviceId":"d","providerPluginId":"p","providerInstanceId":"i"},
+                                "pluginId":"p","instanceKind":"fixture","displayName":"Fixture",
+                                "harness":{"id":"fixture","displayName":"Fixture"},"status":"ready",
+                                "capabilities":{"revision":"1","methods":["instance.releaseControl"],"extensions":[]}
+                            }}
+                        })).unwrap()).unwrap(); probe
+                    }).await
+            });
+            let (peer, mut incoming, _driver) = ProviderMux::connect(read, write, true, default_transport_limits()).await.unwrap();
+            let mut ready_event = incoming.recv().await.unwrap();
+            ready_event.receive().await.unwrap();
+            ready_event.acknowledge().await.unwrap();
+            tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
+            let request = crate::ProtocolRequest::from_method_params(ProtocolMethod::InstanceReleaseControl, "release".into(),
+                serde_json::json!({"route":{"deviceId":"d","providerPluginId":"p","providerInstanceId":"i"},"idleTimeoutSeconds":1})).unwrap();
+            let release_peer = peer.clone();
+            let mut pending = tokio::spawn(async move { release_peer.exchange(ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request))).await });
+            tokio::select! {
+                _ = entered.notified() => {},
+                result = &mut pending => panic!("release completed before entering handler: {result:?}"),
+                _ = tokio::time::sleep(std::time::Duration::from_secs(2)) => panic!("release handler was not entered"),
+            }
+            pending.abort(); let _ = pending.await;
+            if !shutdown_during_release {
+                release.add_permits(1);
+                tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                    while !finished.load(Ordering::SeqCst) { tokio::task::yield_now().await; }
+                }).await.unwrap();
+            }
+            let request = crate::ProtocolRequest::from_method_params(ProtocolMethod::ProviderShutdown, "shutdown".into(), serde_json::json!({})).unwrap();
+            tokio::time::timeout(std::time::Duration::from_secs(2), peer.exchange(ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request)))).await.unwrap().unwrap();
+            server.await.unwrap().unwrap();
+            if shutdown_during_release {
+                release.add_permits(1); tokio::task::yield_now().await;
+                assert!(!finished.load(Ordering::SeqCst), "shutdown must cancel admitted releases before cleanup");
             }
         }
     }

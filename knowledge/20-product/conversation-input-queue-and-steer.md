@@ -87,6 +87,12 @@ Host 重启后暂停保存的待发项；遗留 dispatching/steering 改为 outc
 
 发布前：安装两端新包，以真实 Codex 验证运行中连续入队、同轮多次 Steer、跨设备编辑/删除、断网重连、Host 强杀恢复及原生终态可靠性。
 
+## 合入 main 的验证
+
+2026-11-08 合并桌面 `main` 的 `b8d22f0`，保留新 Provider release-control 能力映射和仅测试环境启用的 Svelte browser 条件；手机从 `main` 的 `ee7aaea` 独立合入队列提交，未捎带原工作分支的 Live Updates 功能。按合并后的协议生成器重新导出手机 SDK，`--check` 通过。
+
+合并后重跑 `npm run protocol:check`（23 项）、`npx vitest run frontend`（175 项）、`npm run build`、Host 与 Provider 数据层合并回归（201 项通过、4 项依赖外部环境忽略）及 Tauri `cargo check`，全部通过。手机在新工作区分别获取应用及 `packages/codepet_connection_engine` 依赖，`flutter analyze --no-pub` 无问题，`flutter test --no-pub` 469 项通过。构建按现有 main 工作流执行：桌面 all 平台且 publish=false，Android release APK；未改变基础版本。
+
 ## 知识沉淀
 
 [桌面状态存储规约](../60-rules/desktop-state-storage.md) 延伸到队列关联表；本文件替换原设计提案，记录当前行为、恢复边界和验收缺口。

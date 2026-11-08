@@ -36,6 +36,8 @@ mod input_queue;
 mod recent;
 #[path = "manager_gateway/import.rs"]
 mod import;
+#[path = "manager_gateway/runtime_inventory.rs"]
+mod runtime_inventory;
 
 #[tokio::test]
 async fn codepet_usage_routes_to_provider_and_host_assigns_private_storage_and_logs() {

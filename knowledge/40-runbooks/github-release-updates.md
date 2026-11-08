@@ -17,7 +17,7 @@
 ## 发布前检查
 
 - 构建 Windows 需要 secret `TAURI_SIGNING_PRIVATE_KEY`。如果私钥有密码，同时配置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。macOS DMG-only 构建不需要 updater 密钥。
-- 这两个 secret 是 Tauri updater 签名，不是 Apple/Windows 代码签名。当前 workflow 不做 notarization、Apple 签名或 Windows 签名。
+- 这两个 secret 是 Tauri updater 签名，不是 macOS/Windows 代码签名。macOS workflow 的固定自签名证书另需 `CODEPET_MACOS_CERTIFICATE_BASE64`、`CODEPET_MACOS_CERTIFICATE_PASSWORD`、`CODEPET_MACOS_CERTIFICATE_SHA1`；配置与上线状态见 [固定开发签名](macos-stable-development-signing.md)。缺失或指纹不匹配时失败，不回退到 ad-hoc。workflow 不做 Apple notarization 或 Windows 代码签名。
 - Windows job 会在构建前检查 `TAURI_SIGNING_PRIVATE_KEY` 非空；Tauri build 通过这个环境变量读取 updater 私钥。
 - 当前 CI 使用 `--mac-updater disabled`，`latest.json` 仅为所选 Windows 平台写入 `windows-x86_64`；单独 macOS 发布时 platforms 为空。DMG 不充当 updater 包，macOS 用户需手动下载安装新版本。依据 [Tauri updater 文档](https://v2.tauri.app/plugin/updater/)，macOS 自动更新依赖 App 的 tar.gz 归档。
 - Tauri `beforeBuildCommand` 会先运行 `npm run providers:stage`。macOS job 必须设置 `CODEPET_PROVIDER_TARGET=aarch64-apple-darwin`，Windows job 必须设置 `CODEPET_PROVIDER_TARGET=x86_64-pc-windows-msvc`；App、Provider 与 SDK 生成器的目标必须一致。
@@ -64,7 +64,7 @@ npm run version:check
 
 更新已有 release 时，workflow 会先删除该 release 的旧资产再上传本次构建产物，避免同一个 tag 下同时残留旧版本和新版本安装包。
 
-macOS workflow 使用 `--target aarch64-apple-darwin --bundles dmg --config src-tauri/tauri.macos-dmg.conf.json`。打包过程仍会产生供 DMG 收录的 `.app` 中间目录，但 Actions artifact `macos-arm64-dmg` 仅含 DMG，并关闭重复 ZIP 压缩。发布时额外保留 `latest.json` 作为跨平台更新元数据，里面不会将 ARM 包宣传为 universal。旧手动 updater 生成脚本仍可显式使用 `--mac-updater enabled` 处理已有 universal 归档，当前 CI 不走该模式。
+macOS workflow 由 `scripts/macos_signing.py build` 准备固定证书、验证双版本签名身份，再以 `--target aarch64-apple-darwin --bundles dmg --config src-tauri/tauri.macos-dmg.conf.json` 调用 Tauri 并验证最终 App。打包过程仍会产生供 DMG 收录的 `.app` 中间目录，但 Actions artifact `macos-arm64-dmg` 仅含 DMG，并关闭重复 ZIP 压缩。发布时额外保留 `latest.json` 作为跨平台更新元数据，里面不会将 ARM 包宣传为 universal。旧手动 updater 生成脚本仍可显式使用 `--mac-updater enabled` 处理已有 universal 归档，当前 CI 不走该模式。
 
 本地只验证 staging 时可运行：
 

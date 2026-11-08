@@ -4,7 +4,7 @@
 
 远程 Codex 能力已经从 Tauri 进程内直连实现迁到独立二进制 `crates/providers/codepet-provider-codex`。二进制只依赖 `codepet-provider-sdk`，通过 Provider Protocol v1 的 JSON-RPC 2.0 业务 payload 与 `codepet-host` 通信；stdin/stdout 物理通道使用 SDK Runtime 的 CodePet Provider Frame V1。它不依赖 `codepet-host`、Tauri、Pet SDK 或 Desktop 私有 IPC。Provider 入口只构造 `CodexProvider` 并调用 SDK 的 `serve_stdio`；JSON 序列化、raw/zstd、reader、writer、dispatcher、event sink、普通/控制双通路、过载、frame limit 与 terminal cleanup 全部属于公共 SDK runtime，Codex crate 不再复制或感知 transport server。
 
-每个 Provider instance 只持有一个共享 App Server。instance.start 完成 initialize 与事件订阅后返回 Starting；model/list、Project API 与账号详情并行探测，全部结束后统一发布 Ready，所有 conversation 的 create/resume/read/turn/approval 复用该进程；会话槽不再拥有独立子进程。公共 SDK 接收 Host 心跳携带的客户端集合：有连接时协调实例启动并保持所有已 resume 会话，最后连接离开或 Host 心跳过期时停止 Server，包括 active turn。页面退出不释放会话，不存在续租 timer 或 reaper。Provider 插件本身保持在线。完整模块和心跳设计见 [连接架构](remote-and-provider-connections.md)。
+每个 Provider instance 只持有一个共享 App Server。instance.start 完成 initialize 与事件订阅后返回 Starting；model/list、Project API 与账号详情并行探测，全部结束后统一发布 Ready，所有 conversation 的 create/resume/read/turn/approval 复用该进程；会话槽不再拥有独立子进程。公共 SDK 心跳只确认连接；Host 依据 instance.releaseControl 能力调度，SDK 确认实例全部业务活动结束并持续空闲 300 秒，Codex 再释放并重新启动 Server。2026-11-08 起手动 release 也自动启动干净进程，但不自动 resume 旧会话。页面退出不释放会话，网络失联不终止活动任务。Provider 插件本身保持在线。完整模块和心跳设计见 [连接架构](remote-and-provider-connections.md)。
 
 Server 从 spawn 前占位开始进入 generation/cancellation registry；stop/shutdown 等待占位收敛、进程退出才发布 stopped。SDK 普通请求保持 16 active/32 pending，生命周期 control 保留 2 active/4 pending，过载按原 id 返回 provider_overloaded。provider.ping 在 reader 中直接确认，实例启动/停止由独立协调任务完成。
 

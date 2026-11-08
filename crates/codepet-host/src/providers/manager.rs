@@ -45,6 +45,7 @@ pub struct ProviderInstanceRuntimeSnapshot {
 #[derive(Clone, Debug)]
 pub struct PluginRuntimeSnapshot {
     pub runtime_inventory: Option<RuntimeGetInstalledResponse>,
+    pub runtime_inventory_diagnostic: Option<HostError>,
     pub catalog: PluginDescriptor,
     pub reported: Option<ProviderPluginDescriptor>,
     pub state: PluginRuntimeState,
@@ -79,6 +80,8 @@ pub struct PluginManagerConfig {
     pub supported_versions: VersionRange,
     pub process: PluginProcessOptions,
     pub event_capacity: usize,
+    /// Continuous business-idle requirement, enforced by capable Providers at admission.
+    pub release_control_idle_timeout: Duration,
 }
 
 impl Default for PluginManagerConfig {
@@ -94,6 +97,7 @@ impl Default for PluginManagerConfig {
             },
             process: PluginProcessOptions::default(),
             event_capacity: 256,
+            release_control_idle_timeout: Duration::from_secs(300),
         }
     }
 }
@@ -113,6 +117,8 @@ enum HistoricalRouteRecovery {
 
 struct PluginEntry {
     runtime_inventory: Option<RuntimeGetInstalledResponse>,
+    runtime_inventory_diagnostic: Option<HostError>,
+    runtime_inventory_revision: u64,
     catalog: PluginDescriptor,
     reported: Option<ProviderPluginDescriptor>,
     state: PluginRuntimeState,
@@ -129,6 +135,7 @@ impl PluginEntry {
     fn snapshot(&self) -> PluginRuntimeSnapshot {
         PluginRuntimeSnapshot {
             runtime_inventory: self.runtime_inventory.clone(),
+            runtime_inventory_diagnostic: self.runtime_inventory_diagnostic.clone(),
             catalog: self.catalog.clone(),
             reported: self.reported.clone(),
             state: self.state,
@@ -180,7 +187,9 @@ pub struct PluginManager {
 }
 
 mod heartbeat;
+mod release_control;
 mod import;
+mod runtime_inventory;
 pub use import::ProviderImportResult;
 mod subscriptions;
 pub use subscriptions::ProviderEventSubscription;
@@ -202,6 +211,10 @@ impl PluginManager {
         instances: ProviderInstanceRegistry,
         config: PluginManagerConfig,
     ) -> HostResult<Self> {
+        if !(1..=86400).contains(&config.release_control_idle_timeout.as_secs())
+            || config.release_control_idle_timeout.subsec_nanos() != 0 {
+            return Err(HostError::new("invalid_release_control_window", "release_control_idle_timeout must be 1..86400 whole seconds"));
+        }
         if device.identity().device_id != instances.device_id() {
             return Err(HostError::new(
                 "provider_host_device_mismatch",
@@ -239,6 +252,8 @@ impl PluginManager {
                 descriptor.plugin_id.clone(),
                 PluginEntry {
                     runtime_inventory: None,
+                    runtime_inventory_diagnostic: None,
+                    runtime_inventory_revision: 0,
                     catalog: descriptor.clone(),
                     reported: None,
                     state: PluginRuntimeState::Stopped,
@@ -528,6 +543,8 @@ impl PluginManager {
             let previous_state = entry.state;
             entry.generation = entry.generation.saturating_add(1);
             entry.runtime_inventory = None;
+            entry.runtime_inventory_diagnostic = None;
+            entry.runtime_inventory_revision = entry.runtime_inventory_revision.wrapping_add(1);
             entry.state = PluginRuntimeState::Starting;
             entry.connection_status = codepet_provider_sdk::ConnectionStatus::Connecting;
             entry.diagnostic = None;
@@ -695,6 +712,7 @@ impl PluginManager {
             exit,
             diagnostics,
         );
+        self.spawn_release_control(plugin_id.to_string(), generation, Arc::downgrade(&process));
         if self.inner.heartbeat_enabled.load(Ordering::SeqCst) {
             self.spawn_heartbeat(plugin_id.to_string(), generation, Arc::downgrade(&process));
         }
@@ -1085,22 +1103,6 @@ impl PluginManager {
         instance.capabilities = response.capabilities.clone();
         self.set_runtime_instance(&record.plugin_id, instance).await?;
         Ok(response)
-    }
-
-    pub async fn runtime_get_installed(
-        &self,
-        plugin_id: &str,
-        request: RuntimeGetInstalledRequest,
-    ) -> HostResult<RuntimeGetInstalledResponse> {
-        let process = self.process_for_plugin(plugin_id).await?;
-        if request.refresh == Some(true) {
-            if let Some(entry) = self.inner.plugins.write().await.get_mut(plugin_id) {
-                entry.runtime_inventory = None;
-            }
-        } else if let Some(inventory) = self.inner.plugins.read().await.get(plugin_id).and_then(|entry| entry.runtime_inventory.clone()) {
-            return Ok(inventory);
-        }
-        process.client().runtime_get_installed(request).await.map_err(HostError::from)
     }
 
     pub async fn runtime_select(
@@ -1566,23 +1568,13 @@ impl PluginManager {
             journal.provider(plugin_id, &event);
         }
         if let ProtocolEvent::RuntimeInventoryChanged {params,..} = event {
-            let (first,generation)={
+            let (start,generation)={
                 let mut plugins=self.inner.plugins.write().await;
                 let entry=plugins.get_mut(plugin_id).ok_or_else(||unknown_plugin(plugin_id))?;
-                let first=entry.runtime_inventory.is_none();
-                entry.runtime_inventory=Some(params.clone());(first,entry.generation)
+                let start=runtime_inventory::install_inventory(entry, params);
+                (start,entry.generation)
             };
-            self.inner.runtime_changes.send_modify(|version| *version = version.wrapping_add(1));
-            if first && params.scanning != Some(true) {
-                let manager=self.clone();let plugin_id=plugin_id.to_owned();
-                tokio::spawn(async move {
-                    let Ok(operation) = manager.plugin_operation(&plugin_id) else { return; };
-                    let _operation = operation.lock().await;
-                    if manager.inner.shutting_down.load(Ordering::SeqCst) || !manager.inner.plugins.read().await.get(&plugin_id)
-                        .is_some_and(|entry| entry.generation == generation && entry.state == PluginRuntimeState::Ready) { return; }
-                    let _=manager.start_manifest_instances(&plugin_id).await;
-                });
-            }
+            self.inventory_updated(plugin_id, generation, start);
             return Ok(());
         }
         if let ProtocolEvent::EventNotification { params, .. } = event {

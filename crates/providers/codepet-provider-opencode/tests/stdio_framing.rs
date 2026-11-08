@@ -127,8 +127,18 @@ fn start_turn_resource_from_fresh_provider() -> String {
     ] {
         let expected_id = frame["id"].as_str().unwrap().to_string();
         write_frame(&mut stdin, &frame);
-        let response = read_response(&mut stdout, &expected_id);
+        let mut response = read_response(&mut stdout, &expected_id);
         assert!(response.get("error").is_none(), "{response}");
+        if expected_id == "start" {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+            while response["result"]["instance"]["status"] != "ready" {
+                assert!(std::time::Instant::now() < deadline, "instance did not become ready: {response}");
+                std::thread::sleep(std::time::Duration::from_millis(10));
+                write_frame(&mut stdin, &frame);
+                response = read_response(&mut stdout, &expected_id);
+                assert!(response.get("error").is_none(), "{response}");
+            }
+        }
         if expected_id == "turn" {
             resource = Some(
                 response["result"]["turn"]["resource"]["nativeResourceId"]

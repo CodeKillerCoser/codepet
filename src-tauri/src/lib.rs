@@ -97,14 +97,7 @@ async fn refresh_agent_runtimes(
     provider_host: tauri::State<'_, ProviderHostState>,
 ) -> Result<Vec<AgentRuntime>, String> {
     let _ = service;
-    let providers = provider_host.runtime_views().await;
-    let mut scans = tokio::task::JoinSet::new();
-    for runtime in providers.into_iter().filter(|runtime| matches!(runtime.provider_id.as_str(), "dev.codepet.codex" | "dev.codepet.claude" | "dev.codepet.opencode")) {
-        let host = provider_host.inner().clone();
-        scans.spawn(async move { host.rescan_runtime(&runtime.provider_id).await });
-    }
-    while let Some(result) = scans.join_next().await { result.map_err(|error| error.to_string())??; }
-    let runtimes = provider_host.runtime_views().await;
+    let runtimes = provider_host.rescan_builtin_runtimes().await?;
     let _ = app.emit("agent-runtimes-updated", runtimes.clone());
     Ok(runtimes)
 }
@@ -231,8 +224,12 @@ fn set_launch_at_login_enabled(app: AppHandle, enabled: bool) -> Result<bool, St
 }
 
 #[tauri::command]
-fn list_pets() -> Result<PetLibraryView, String> {
-    pets::list_pet_library()
+fn list_pets(app: AppHandle) -> Result<PetLibraryView, String> {
+    let view = pets::list_pet_library()?;
+    if let Ok(settings) = load_app_settings() {
+        let _ = app.emit("settings-updated", settings);
+    }
+    Ok(view)
 }
 
 #[tauri::command]
@@ -255,8 +252,8 @@ fn delete_pet(app: AppHandle, pet_id: String) -> Result<PetLibraryView, String> 
 
 #[tauri::command]
 fn path_manager_set_pets(app: AppHandle, path: String) -> Result<PetLibraryView, String> {
-    let settings = paths::set_pets_directory(path).map_err(|error| error.to_string())?;
-    let view = pets::pet_library_view(&settings);
+    paths::set_pets_directory(path).map_err(|error| error.to_string())?;
+    let view = pets::list_pet_library()?;
     if let Ok(settings) = load_app_settings() {
         let _ = app.emit("settings-updated", settings);
     }
@@ -264,8 +261,8 @@ fn path_manager_set_pets(app: AppHandle, path: String) -> Result<PetLibraryView,
 }
 
 #[tauri::command]
-fn import_pet_image(app: AppHandle, source_path: String, name: Option<String>, pixel_size: Option<u32>) -> Result<PetLibraryView, String> {
-    let view = pets::import_pet_image(source_path, name, pixel_size)?;
+fn import_pet_image(app: AppHandle, source_path: String, name: Option<String>) -> Result<PetLibraryView, String> {
+    let view = pets::import_pet_image(source_path, name)?;
     if let Ok(settings) = load_app_settings() {
         let _ = app.emit("settings-updated", settings);
     }
@@ -273,8 +270,8 @@ fn import_pet_image(app: AppHandle, source_path: String, name: Option<String>, p
 }
 
 #[tauri::command]
-fn update_pet_image_pixel_size(app: AppHandle, pixel_size: u32) -> Result<PetLibraryView, String> {
-    let view = pets::update_active_image_pet_pixel_size(pixel_size)?;
+fn import_pet_package(app: AppHandle, source_path: String) -> Result<PetLibraryView, String> {
+    let view = pets::import_pet_package(source_path)?;
     if let Ok(settings) = load_app_settings() {
         let _ = app.emit("settings-updated", settings);
     }
@@ -353,6 +350,9 @@ fn open_main_window(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 fn pet_asset_data_url(path: String) -> Result<String, String> {
+    if std::fs::metadata(&path).map_err(|error| error.to_string())?.len() > 16 * 1024 * 1024 {
+        return Err("pet asset exceeds 16 MiB".into());
+    }
     let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
     let mime = match std::path::Path::new(&path)
         .extension()
@@ -422,6 +422,7 @@ pub fn run() {
         .manage(reloadable_assets)
         .manage(PendingAppUpdate::default())
         .manage(AgentRuntimeService::default())
+        .manage(pet::surface::SurfaceState::default())
         .setup(|app| {
             let setup_span = app_log::PerfSpan::start("startup.total");
             app_log::info("startup", "setup started");
@@ -491,6 +492,7 @@ pub fn run() {
             }
             let overlay_span = app_log::PerfSpan::start("startup.configure_pet_overlay_window");
             configure_pet_overlay_window(&handle);
+            pet::surface::start(handle.clone());
             overlay_span.finish_ok(&[]);
             app_log::info("startup", "pet overlay window configured");
             app_log::info("startup", "setup finished");
@@ -510,6 +512,9 @@ pub fn run() {
             task_lineage::task_lineage_workspace,
             task_lineage::task_lineage_watch,
             platform::main_window::main_window_toolbar_anchor,
+            platform::permissions::get_system_permission_settings,
+            platform::permissions::open_full_disk_access_settings,
+            platform::permissions::reveal_permission_app,
             list_agent_runtimes,
             detect_agent_runtime,
             refresh_agent_runtimes,
@@ -529,7 +534,7 @@ pub fn run() {
             delete_pet,
             path_manager_set_pets,
             import_pet_image,
-            update_pet_image_pixel_size,
+            import_pet_package,
             cut_out_image_subject,
             recent_events,
             app::event_journal::query_event_journal,
@@ -540,6 +545,11 @@ pub fn run() {
             runtime_gateway::tauri_bridge::pet_gateway_request,
             open_main_window,
             pet_asset_data_url,
+            pet::surface::pet_surface_state,
+            pet::surface::pet_surface_layout,
+            pet::surface::pet_surface_mode,
+            pet::surface::pet_surface_drag,
+            pet::surface::pet_surface_pointer,
             provider_connection_status,
             runtime_gateway_request,
             codepet_gateway_request,

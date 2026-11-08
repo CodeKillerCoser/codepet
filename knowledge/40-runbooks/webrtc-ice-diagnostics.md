@@ -61,7 +61,7 @@ TURN 不理解 attempt，需结合时间、session 和本地 endpoint 日志辅�
 
 ## VPS 部署与回滚
 
-增量脚本 `services/signaling/deploy_diagnostics.py` 接收新版 server.py 路径，备份并更新
+增量脚本 `server/deploy_diagnostics.py` 接收新版 server.py 路径，备份并更新
 信令源码、TURN 日志选项及轮转配置。失败自动恢复三个文件并重启；不覆盖身份数据库、密钥或防火墙。
 备份保存在 `/opt/codepet-signal/backups/diagnostics-<UTC时间>/`，禁止放在配置 include 目录；校验完整 `/etc/logrotate.conf`。见 [日志轮转备份故障](logrotate-include-backups.md)。
 
@@ -80,7 +80,7 @@ logrotate 配置 daily、maxsize 10M、rotate 3、copytruncate；10M 是轮转�
 - `cargo test -p codepet-host --test remote_lan_listener --manifest-path crates/Cargo.toml`：2 项通过，
   2 项需要真机/私有配置的探针维持 ignored。
 - `cargo check --manifest-path src-tauri/Cargo.toml --lib`：通过，有既有未使用代码告警。
-- `uv run --with aiohttp==3.14.3 python -m unittest discover -s services/signaling -p test_server.py`：3 项通过，
+- `uv run --with aiohttp==3.14.3 python -m unittest discover -s server -p test_server.py`：3 项通过，
   覆盖完整信令阶段关联、鉴权失败与日志不泄露 token/信封/query。
 
 下一轮用新版桌面和手机分别复现 LAN、4G、TUN 开关后的全新连接及大列表加载，按 offerId

@@ -22,9 +22,17 @@ Gateway 的 handshake、provider.list、ping 摘要和 provider.changed 必须�
 
 验证：Host `handshake_list_and_ping_hide_undetected_builtins_but_keep_custom_providers`；可见性单测覆盖未扫描、空清单、已安装但停止、自定义 Provider。内置集成 fixture 必须经检测/选择上报安装清单，不能依赖开发机恰好安装了某款 Runtime。
 
+## 检测任务隔离与库存一致性
+
+不同 Provider 的检测并行启动，分别保存结果、超时和错误。批量入口必须收集全部结果，不能因一个失败提前返回并取消其他任务，也不能先串行探测整份列表再启动刷新。单项错误归属于对应 Provider；Host 本身不可用才是整体错误。
+
+刷新中、请求取消、RPC 失败或带 scanError 的空扫描结果，都不能当作“未安装”而抹掉上一份有效库存。只有成功完成的空扫描才能确认 Runtime 已移除。RPC 返回与库存通知都可以更新缓存，更新必须校验 Provider 进程 generation 和请求 revision；旧进程、旧请求的回包不能覆盖新库存或新诊断。先收到 scanning 快照、再收到完整安装清单时，仍须正常启动对应实例。
+
+验证：`manager_gateway::runtime_inventory` 使用真实子进程覆盖一个启动失败、一个超时、一个正常完成的并发组合，并在慢项结束前检查成功项的缓存和 Gateway 可见性；另覆盖请求取消、失败扫描、真正移除、通知早于 RPC、请求重叠和进程重启。桌面桥接测试 `builtin_rescan_returns_healthy_views_and_scopes_errors_to_the_failed_provider` 验证整批成功返回、错误归属及恢复后清除诊断。
+
 ## 来源
 
-`../40-runbooks/host-provider-startup-stale-runtime.md`；Remote 的 Ready 后补拉见 `../40-runbooks/codex-detail-size-and-capability-loading.md`。
+`../40-runbooks/host-provider-startup-stale-runtime.md`；检测隔离见 [Provider 检测失败隔离](../40-runbooks/provider-runtime-scan-isolation.md)；Remote 的 Ready 后补拉见 `../40-runbooks/codex-detail-size-and-capability-loading.md`。
 
 ## 验证方式
 

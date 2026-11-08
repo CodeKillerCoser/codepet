@@ -88,7 +88,7 @@ npm run tauri build
 
 Tauri bundle 会先构建并 staging Code Pet 自有的 Codex、OpenCode、Claude Provider adapter，再把 `provider-plugins/` 收录到 App Resources。它不会打包底层 Agent runtime；Codex/OpenCode/Claude 可执行文件仍来自用户本机检测或选择。仅验证 staging 可运行：
 
-macOS 本地构建使用显式 ad-hoc bundle 签名，保证运行时 code-sign identifier 与 `CFBundleIdentifier` 都是 `com.codepet.desktop`，而不是随二进制哈希变化的 linker identity。ad-hoc designated requirement 仍随构建变化；需要让 Desktop/Documents 等 TCC 授权跨版本稳定时，必须改用同一 Apple Developer ID 证书签名。
+macOS 本地默认构建使用显式 ad-hoc bundle 签名，保证运行时 code-sign identifier 与 `CFBundleIdentifier` 都是 `com.codepet.desktop`，而不是随二进制哈希变化的 linker identity。ad-hoc 没有证书身份，当前 designated requirement 依赖 cdhash，不能保证跨构建保留 TCC 授权。固定复用同一张自签名代码签名证书也可建立稳定的 designated requirement，并非必须使用 Developer ID 才有稳定身份；但目标 macOS 上的 TCC 保留仍需升级实测，Developer ID/公证另用于正式分发。历史 CI 的 ad-hoc 证据见 [macOS 文件授权排查](../40-runbooks/macos-file-access-authorization.md)；新的 CI 固定证书配置及上线状态见 [固定开发签名](../40-runbooks/macos-stable-development-signing.md)。
 
 ```bash
 npm run providers:test
@@ -152,8 +152,8 @@ npm run package:signed
 - `src-tauri/src/app/log.rs`：应用日志、启动 banner 和性能事件记录。
 - `src-tauri/src/app/autostart.rs`：基于 Tauri autostart 插件的登录启动控制。
 - `src-tauri/src/agent/actions.rs`：任务卡片激活、回复和审批能力边界。
-- `frontend/lib/activity.ts`：任务活动归并、过滤和展示辅助逻辑。
-- `frontend/lib/agentInteractions.ts`：前端任务操作 capability 计算。
+- `frontend/lib/pet/model.ts`：Pet Gateway 快照、任务排序和关闭历史。
+- `frontend/lib/pet/presentation.ts`：顶部/桌面共用展示状态机；旧卡片操作 capability 模块已移除。
 - `frontend/lib/sound.ts`：通知音效、鞭子音效和抽打反应音。
 
 ## 开发约定

@@ -16,7 +16,7 @@
 
 ## 现状理解
 
-三个内置 Provider 共用 Rust SDK 的 mux、活动投影与空闲回收器，并发布标准 turn/approval 事件。运行实例各自管理原生 session generation，负责拒绝旧代事件。SDK 不直接访问 Codex 内部 active turn 槽。
+三个内置 Provider 共用 Rust SDK 的 mux 与活动投影，并发布标准 turn/approval 事件；Host 仅向声明 instance.releaseControl 的 Codex 调度空闲释放。运行实例各自管理原生 session generation，负责拒绝旧代事件。SDK 不直接访问 Codex 内部 active turn 槽。
 
 ## 实现路径
 
@@ -24,7 +24,7 @@
 
 业务请求持有共享执行门，自动空闲 stop 必须独占该门并复核活动状态，覆盖响应尚未返回、turn ID 尚未登记的窗口。当前门覆盖同一 Provider 进程的请求，因此另一实例的慢 RPC 可能推迟空闲回收，但不会取消其任务。start/steer 已接收后由受管理的异步执行继续处理，即使客户端取消响应流也不撤销已发送操作；shutdown/EOF 关闭调度并取消这些执行。不得自动重发未知结果的 turn/start。
 
-无论客户端是否在线，每秒复核活动与连续空闲时间，默认空闲 300 秒后释放 Harness。心跳不调用 start/stop；Host 显式启动和正常历史/业务需求可启动新进程，不批量恢复旧会话。任务、审批、等待输入和未知发送结果均阻止自动释放；stdin EOF、明确停止/释放、provider.shutdown 保留原清理合同。详细实现与测试见 [Runtime 生命周期](interaction-runtime-lifecycle.md)。
+无论客户端是否在线，启用空闲回收的适配器按独立窗口复核业务活动；当前仅 Codex 选择空闲 300 秒后释放并重启 Harness。SDK 默认关闭回收，Claude/OpenCode 不因空闲停止。心跳不调用 start/stop；Host 显式启动和正常历史/业务需求可启动新进程，不批量恢复旧会话。任务、审批、等待输入和未知发送结果均阻止自动释放；stdin EOF、明确停止/释放、provider.shutdown 保留原清理合同。详细实现与测试见 [Runtime 生命周期](interaction-runtime-lifecycle.md)。
 
 macOS `AwakeGuard` 使用 IOKit `PreventUserIdleSystemSleep`，setup 时申请，由 Tauri managed state 持有。应用真正 Exit 时释放；进程异常退出由系统回收进程所属断言。申请失败记录 power 错误日志，不伪报成功。不修改用户持久化电源设置、不要求屏幕常亮、不创建外部 caffeinate 子进程。
 

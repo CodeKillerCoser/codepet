@@ -4,7 +4,7 @@
 
 支持 Server 模式的 Harness，每个 Provider 运行实例只有一个 Server。Codex list/get/create/resume/turn/approval 共用该 Server；会话槽只负责串行、配置与路由，不创建独立进程。删除会话租约、续租 timer 和过期 reaper。
 
-SDK 统一跟踪实例内全部会话活动，最后一项活动结束且持续空闲达到窗口后才释放 Server，默认 300 秒。手机在线和心跳正常不阻止释放；手机失联也不取消活动。心跳不调用 start/stop。旧进程退出释放其积累的会话锁，新进程可以按需启动，但不能批量 resume 旧会话。详见 [空闲释放规约](heartbeat-task-retention.md)。
+Host 统一调度声明 instance.releaseControl 的实例；SDK 跟踪全部会话活动并复核持续空闲 300 秒，Codex 实现释放并重启 Server。SDK 不再自带定时器，未声明的其他 Provider 不参与。手机在线和心跳正常不阻止 Codex 空闲释放；手机失联也不取消活动。心跳不调用 start/stop。旧进程退出释放其积累的会话锁，新进程不能批量 resume 旧会话。详见 [空闲释放规约](heartbeat-task-retention.md)。
 
 ## 适用场景
 
@@ -30,7 +30,7 @@ Codex lifecycle、conversation acquire/create、turn、approval、事件分发�
 - approval 句柄包含 Server generation 和原始 request ID，回写还要校验 conversation 与 pending 记录；不能让旧审批命中新进程复用的 request ID。
 - 只把 code=-32600、空 data、message 精确匹配当前 thread 的官方 active-writer 错误映射为 conversation_write_conflict；近似 message 不猜测。
 - Remote 成功获取交互权后开放 composer，成功后不定时 acquire；失败重试属于恢复流程。重连、Provider generation/可用状态改变后重新检查。首次 selection 可初始化 UI，后续重试不得覆盖用户修改。
-- SDK 应用 ping 直接处理，生命周期协调与普通 RPC 分离。普通请求保持 16 active + 32 pending，生命周期 control 保留 2 active + 4 pending；队列满按原 id 返回 provider_overloaded。EOF/fatal 先停止空闲回收器再关闭 Provider，不能在清理时再次启动 Server。
+- SDK 应用 ping 直接处理，生命周期协调与普通 RPC 分离。普通请求保持 16 active + 32 pending，生命周期 control 保留 2 active + 4 pending；队列满按原 id 返回 provider_overloaded。EOF/fatal 先取消进行中的释放再关闭 Provider，不能在清理时再次启动 Server。
 - `leaseExpiresAt` 暂留为可选 wire 兼容字段；Codex 返回 None，客户端不使用它调度或决定 Server 存活。
 - SDK activity 只用于回收判定，不能成为第二份 UI 会话状态。按实例、会话、turn ID 区分活动；终态不能被晚到 start 响应复活。审批终结或对应 turn 终结都解除该审批保留。已接收的 start/steer 不随响应流取消而丢失启动保护，Provider shutdown/EOF 必须取消这些执行。
 

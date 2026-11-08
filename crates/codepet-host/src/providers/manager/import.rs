@@ -99,6 +99,7 @@ impl PluginManager {
                 .map(|record| (record.instance_id.clone(), ManagedInstance { record, instance: None, diagnostic: None })).collect();
             self.inner.plugin_operations.lock().map_err(|_| update_channel_error())?.insert(plugin_id.clone(), operation.clone());
             plugins.insert(plugin_id.clone(), PluginEntry {
+                runtime_inventory_diagnostic: None, runtime_inventory_revision: 0,
                 runtime_inventory: None, catalog: descriptor.clone(), reported: None,
                 state: PluginRuntimeState::Stopped, diagnostic: None, generation: 0,
                 connection_status: codepet_provider_sdk::ConnectionStatus::Offline,

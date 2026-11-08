@@ -1,5 +1,7 @@
 # 能力边界
 
+> 2026-11-08 桌宠边界更新：本文涉及旧桌宠 PetEvent 归并、companion UI、回复/审批按钮的内容属于历史设计；相关前端投影与能力模块已移除。当前桌宠使用 Pet Gateway + `pet/model.ts` + 两套具体 UI。后端 Agent、事件记录和远程控制模块仍独立保留，不能因前端清理而视为整体停用。
+
 ## 前端契约
 
 `frontend/lib/agentInteractions.ts` 决定卡片操作是否可见。它必须与 `src-tauri/src/agent/actions.rs` 中的后端行为保持一致。

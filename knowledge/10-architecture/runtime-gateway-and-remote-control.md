@@ -1,5 +1,7 @@
 # Runtime Gateway 与远程控制架构
 
+> 2026-11-08 桌宠边界更新：本文涉及旧桌宠 PetEvent 归并、companion UI、回复/审批按钮的内容属于历史设计；相关前端投影与能力模块已移除。当前桌宠使用 Pet Gateway + `pet/model.ts` + 两套具体 UI。后端 Agent、事件记录和远程控制模块仍独立保留，不能因前端清理而视为整体停用。
+
 > 文档状态（2026-08-31）：长期远程设计仍保留。当前 Codex 使用隔离双链路：`CodexRemote` 已迁到进程外 `codepet-provider-codex`，经 Provider Protocol v1、Plugin Manager 与内部 Gateway v1 service 提供远程能力；`CodexDesktopCompanion / IPC` 只驱动桌宠本地投影和面向 Desktop owner 的安全动作。Claude 已有能力较小的独立 `codepet-provider-claude`，只接官方 CLI stream-json，不提供全局会话 CRUD、steer 或审批；OpenCode 只通过独立 `codepet-provider-opencode` 加入同一个 remote Provider Gateway，不存在 companion/Pet 支路。compat `RuntimeGatewayState` 与 LAN listener 复用同一个 Provider registry、event bus 和 Gateway；Tauri 后端已接入 TLS listener、mDNS、pairing/credential 与有界生命周期，frontend UI 尚未接入。Remote 与 companion/Pet 链路不得共享 session、owner/revision 或 unavailable 状态，也不得把 Remote event 注入 Desktop/Pet/activity IPC。
 >
 > 当前事实入口：Codex 插件边界与协议矩阵见 `codex-provider-plugin-runtime.md`，Claude 见 `claude-provider-plugin-runtime.md`，OpenCode 见 `opencode-provider-plugin-runtime.md`，remote 领域见 `../30-domains/agent-control/codex-app-server.md`，companion 见 `../30-domains/agent-control/codex-desktop-companion.md`，Provider Host 见 `provider-host-device-and-plugin-runtime.md`；协议现状见 `protocol-layers-and-device-routing.md`、`../../protocol/provider/v1/manifest.json` 和 `../../protocol/gateway/v1/manifest.json`。下文的阶段规划和完整能力清单仍包含未实现的长期目标；旧目录、统一 wire envelope、方法名或已生成 Dart 的描述均视为 superseded，不是当前实现证据。

@@ -25,7 +25,6 @@ async fn gateway_idle_restart_keeps_provider_visible_and_ready_without_phone() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("plugins/codex"); std::fs::create_dir_all(&root).unwrap();
     let mut manifest: Value = serde_json::from_slice(&std::fs::read(workspace.join("providers/codepet-provider-codex/codepet-provider.json")).unwrap()).unwrap();
-    manifest["env"]["CODEPET_PROVIDER_IDLE_TIMEOUT_SECONDS"] = serde_json::json!("2");
     manifest["executable"] = serde_json::json!(executable("codepet-provider-codex"));
     manifest["instances"][0]["settings"]["appServerExecutable"] = serde_json::json!(executable("codex-app-server-fixture"));
     manifest["instances"][0]["settings"]["appServerArgs"] = serde_json::json!(["--approval-mode", "none"]);
@@ -34,7 +33,7 @@ async fn gateway_idle_restart_keeps_provider_visible_and_ready_without_phone() {
     let device = DeviceRegistry::open(directory.path().join("device.json"), "release test").unwrap();
     let registry = ProviderInstanceRegistry::open(directory.path().join("instances.json"), device.identity().device_id.clone()).unwrap();
     let catalog = PluginCatalog::discover(PluginCatalogConfig::default().with_directory(root.parent().unwrap()));
-    let manager = Arc::new(PluginManager::new(device, catalog, registry, PluginManagerConfig::default()).unwrap());
+    let manager = Arc::new(PluginManager::new(device, catalog, registry, PluginManagerConfig { release_control_idle_timeout: Duration::from_secs(2), ..PluginManagerConfig::default() }).unwrap());
     let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap()); gateway.start_event_forwarding();
     manager.enable_connection_heartbeats();
     // No phone is required to start, idle-release, or serve a later local read.
@@ -67,7 +66,7 @@ async fn gateway_idle_restart_keeps_provider_visible_and_ready_without_phone() {
 }
 
 #[tokio::test]
-async fn gateway_release_interaction_stops_codex_and_explicit_resume_restarts_it() {
+async fn gateway_release_interaction_restarts_codex_and_keeps_history_available() {
     let workspace = crates_workspace();
     let target = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().parent().unwrap().to_path_buf();
     assert!(Command::new(cargo_executable()).args(["build", "--quiet", "-p", "codepet-provider-codex", "--bins"])
@@ -99,10 +98,17 @@ async fn gateway_release_interaction_stops_codex_and_explicit_resume_restarts_it
     assert!(gateway.conversation_resume(codepet_gateway_sdk::ConversationResumeRequest { conversation:conversation.clone(), force:None, limit:Some(20) }).await.unwrap().interaction_acquired);
     let release = gateway.conversation_release_interaction(codepet_gateway_sdk::ConversationReleaseInteractionRequest { conversation:conversation.clone() }).await.unwrap();
     assert!(release.released); assert_eq!(release.scope, "providerInstance");
-    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Stopped).await;
-    assert!(gateway.conversation_get(codepet_gateway_sdk::ConversationGetRequest { conversation:conversation.clone(), cursor:None, limit:Some(20) }).await.is_err());
-    let stopped = gateway.provider_list(ProviderListRequest {}).await.unwrap();
-    assert_eq!(stopped.providers[0].runtime.status, ProviderStatus::Stopped);
+    wait_for_instances(&manager, codepet_provider_sdk::InstanceStatus::Ready).await;
+    assert!(gateway.conversation_get(codepet_gateway_sdk::ConversationGetRequest { conversation:conversation.clone(), cursor:None, limit:Some(20) }).await.is_ok());
+    let restarted = gateway.provider_list(ProviderListRequest {}).await.unwrap();
+    assert_eq!(restarted.providers[0].runtime.status, ProviderStatus::Ready);
+    let created = gateway.conversation_create(ConversationCreateRequest {
+        provider_id: id.clone(), project: None, title: None,
+        permission_level: "workspace-write".into(), model: Some("gpt-fixture".into()),
+        reasoning_effort: Some("high".into()), workspace_root: Some(directory.path().to_string_lossy().into_owned()),
+        workspace_mode: None,
+    }).await.unwrap();
+    assert_eq!(created.conversation.resource.provider_id, id, "a fresh conversation must work without resuming a released one");
     let resumed = gateway.conversation_resume(codepet_gateway_sdk::ConversationResumeRequest { conversation, force:None, limit:Some(20) }).await.unwrap();
     assert!(resumed.interaction_acquired, "{:?}", resumed.interaction_error);
     assert!(resumed.history.is_some(), "{:?}", resumed.history_error);
@@ -112,6 +118,15 @@ async fn gateway_release_interaction_stops_codex_and_explicit_resume_restarts_it
 
 #[tokio::test]
 async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
+    exercise_builtins(false).await;
+}
+
+#[tokio::test]
+async fn host_recycles_only_capable_codex_while_claude_and_opencode_stay_ready() {
+    exercise_builtins(true).await;
+}
+
+async fn exercise_builtins(recycle_only: bool) {
     let workspace = crates_workspace();
     build_builtin_provider_fixtures(&workspace);
     let executable = |name: &str| {
@@ -193,6 +208,7 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
             catalog,
             instances,
             PluginManagerConfig {
+                release_control_idle_timeout: Duration::from_secs(if recycle_only { 2 } else { 300 }),
                 process: PluginProcessOptions {
                     request_timeout: Duration::from_secs(10),
                     shutdown_timeout: Duration::from_secs(5),
@@ -241,6 +257,34 @@ async fn codepet_host_runs_all_sdk_based_builtin_providers_end_to_end() {
     let codex = ready_provider(&listed.providers, "codex", &device_id);
     let claude = ready_provider(&listed.providers, "claude", &device_id);
     let opencode = ready_provider(&listed.providers, "opencode", &device_id);
+    if recycle_only {
+        for snapshot in manager.snapshots().await {
+            let supports = snapshot.instances[0].instance.as_ref().unwrap().capabilities.methods
+                .contains(&codepet_provider_sdk::ProviderCapability::InstanceReleaseControl);
+            assert_eq!(supports, snapshot.catalog.plugin_id == CODEX_PLUGIN_ID);
+        }
+        let cursor = gateway.current_event_cursor();
+        let mut events = gateway.subscribe_events(Some(&cursor)).unwrap();
+        tokio::time::timeout(Duration::from_secs(12), async {
+            let mut cycles = 0;
+            let mut stopped = false;
+            while cycles < 2 {
+                if let codepet_gateway_sdk::ProtocolEvent::ProviderChanged { params, .. } = events.next_event().await.unwrap() {
+                    let changed = params.payload.provider;
+                    if changed.id != codex.id {
+                        assert_eq!(changed.runtime.status, ProviderStatus::Ready, "non-participating provider {} changed state", changed.id);
+                    } else if changed.runtime.status == ProviderStatus::Stopped { stopped = true; }
+                    else if stopped && changed.runtime.status == ProviderStatus::Ready { cycles += 1; stopped = false; }
+                }
+            }
+        }).await.expect("Host must recycle Codex independently of the other builtins");
+        for snapshot in manager.snapshots().await {
+            assert_eq!(snapshot.state, PluginRuntimeState::Ready);
+            assert!(snapshot.instances.iter().all(|i| i.instance.as_ref().unwrap().status == codepet_provider_sdk::InstanceStatus::Ready));
+        }
+        assert!(manager.shutdown().await.iter().all(|(_, result)| result.is_ok()));
+        return;
+    }
     assert_eq!(
         codex.identity.icon.as_deref(),
         Some("https://avatars.githubusercontent.com/u/14957082?s=200&v=4")

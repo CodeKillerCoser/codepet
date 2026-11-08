@@ -1,6 +1,6 @@
 import { derived, writable } from "svelte/store";
 
-export type AppRoute = "tasks" | "connections" | "devices" | "runtimes" | "usage" | "personalize" | "events" | "settings" | "appearance" | "notifications" | "extraction" | "about";
+export type AppRoute = "tasks" | "connections" | "devices" | "runtimes" | "usage" | "personalize" | "events" | "settings" | "appearance" | "notifications" | "permissions" | "extraction" | "about";
 export const connectionRoutes = [
   { route: "connections", label: "活动接入" },
   { route: "runtimes", label: "本机运行时" },
@@ -10,6 +10,7 @@ export const settingsRoutes = [
   { route: "settings", label: "通用" },
   { route: "appearance", label: "外观与桌宠" },
   { route: "notifications", label: "通知" },
+  { route: "permissions", label: "权限" },
   { route: "extraction", label: "任务抽取" },
   { route: "events", label: "诊断" },
   { route: "about", label: "关于" },

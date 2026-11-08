@@ -13,7 +13,7 @@ await build({ build: { outDir, emptyOutDir: false, rollupOptions: { input: resol
 const server = await preview({ build: { outDir }, preview: { host: '127.0.0.1', port: 1431, strictPort: true } });
 let browser;
 try {
-  browser = await chromium.launch({ channel: 'msedge', headless: true });
+  browser = await chromium.launch({ channel: process.env.CODEPET_QA_BROWSER ?? 'msedge', headless: true });
   const page = await browser.newPage({ viewport: { width: 320, height: 640 } });
   const errors = []; page.on('pageerror', e => errors.push(e.message));
   await page.goto('http://127.0.0.1:1431/frontend/qa/pet-groups.html');

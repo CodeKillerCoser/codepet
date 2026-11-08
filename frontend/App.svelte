@@ -2,6 +2,7 @@
   import HorizontalTabs from "./lib/HorizontalTabs.svelte";
   import SettingsRow from "./lib/SettingsRow.svelte";
   import AboutSettings from "./lib/AboutSettings.svelte";
+  import PermissionSettings from "./lib/PermissionSettings.svelte";
   import { consumeReloadNotice, webcontentReloading } from "./lib/webcontent";
   import EventJournal from "./lib/EventJournal.svelte";
   import TaskLineage from "./lib/TaskLineage.svelte";
@@ -48,11 +49,11 @@
   import ProviderRuntimeInfo from "./lib/ProviderRuntimeInfo.svelte";
   import { shouldShowRuntime, isBuiltinProvider } from "./lib/agentRuntime";
   import { observeProviderRuntimes, type ProviderConnectionState } from "./lib/providerRuntimes";
-  import { getAppPaths, importProviderPlugin, type AppPaths, checkAppUpdate, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setPathManagerData, setLaunchAtLoginEnabled, setPathManagerPets, updateAppSettings, updatePetImagePixelSize } from "./lib/api";
+  import { getAppPaths, importProviderPlugin, type AppPaths, checkAppUpdate, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setPathManagerData, setLaunchAtLoginEnabled, setPathManagerPets, updateAppSettings, importPetPackage } from "./lib/api";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
-  import PetAvatar from "./lib/PetAvatar.svelte";
+  import PetLibraryPanel from "./lib/pet/PetLibraryPanel.svelte";
   import PairDeviceDialog from "./lib/PairDeviceDialog.svelte";
   import RemoteDeviceList from "./lib/RemoteDeviceList.svelte";
   import { cancelRemotePairing, copyRemotePairingJson, getRemoteAccessStatus, getRemotePairingStatus, listRemoteClients, listRemotePairingRequests, remoteCommandDiagnostic, resolveRemotePairingRequest, retryRemoteAccess, revokeRemoteCredential, deleteRemoteClient, startRemotePairing, type RemoteAccessDiagnostic, type RemoteAccessStatus } from "./lib/remoteAccess";
@@ -216,7 +217,6 @@
     { key: "backgroundColor", label: "背景色", fallback: runningBubbleDefaults.backgroundColor, directional: true },
     { key: "borderColor", label: "边框色", fallback: runningBubbleDefaults.borderColor, directional: false },
   ] as const;
-  const defaultImagePixelSize = 48;
   const defaultPetOpacity = 1;
   const minPetOpacity = 0.25;
   const updateAutoIntervalMs = 6 * 60 * 60 * 1000;
@@ -1008,7 +1008,7 @@
     try {
       const filename = await basename(selected, `.${await extname(selected)}`) || "Imported Pet";
       const sourcePath = cutOutSubject ? (await cutOutImageSubject(selected, await cutoutOutputPath(selected))).outputPath : selected;
-      petLibrary = await importPetImage(sourcePath, filename, settings?.pet.imagePixelSize ?? defaultImagePixelSize);
+      petLibrary = await importPetImage(sourcePath, filename);
       settings = normalizeSettings(await getAppSettings());
     } catch (currentError) {
       error = String(currentError);
@@ -1102,7 +1102,6 @@
     settings.petLibrary.selectedPetId = settings.pet.selectedPetId;
     const selected = settings.petLibrary.pets.find((pet) => pet.id === settings?.pet.selectedPetId);
     if (!selected) return;
-    selected.sprite = settings.pet.sprite;
     selected.imagePath = settings.pet.imagePath;
   }
 
@@ -1116,7 +1115,6 @@
     };
     nextSettings.appearance.runningBubble.animationMs = clampRunningBubbleAnimationMs(nextSettings.appearance.runningBubble.animationMs);
     nextSettings.appearance.runningBubble.borderWidth = clampRunningBubbleBorderWidth(nextSettings.appearance.runningBubble.borderWidth);
-    nextSettings.pet.imagePixelSize = clampImagePixelSize(nextSettings.pet.imagePixelSize);
     nextSettings.pet.opacity = clampPetOpacity(nextSettings.pet.opacity ?? defaultPetOpacity);
     nextSettings.pet.whipReactionSound = nextSettings.pet.whipReactionSound ?? "none";
     nextSettings.pet.customWhipReactionSoundPath = nextSettings.pet.customWhipReactionSoundPath ?? null;
@@ -1446,15 +1444,6 @@
     return normalizeFilterKeywords(filters?.titleKeywords).length + normalizeFilterKeywords(filters?.messageKeywords).length;
   }
 
-  function clampImagePixelSize(value: number) {
-    return Math.min(128, Math.max(16, Math.round(value || defaultImagePixelSize)));
-  }
-
-  function imagePixelSizeLabel(value: number) {
-    const pixelSize = clampImagePixelSize(value);
-    return `${pixelSize}px`;
-  }
-
   function clampPetOpacity(value: number | null | undefined) {
     const numericValue = Number(value);
     if (!Number.isFinite(numericValue)) {
@@ -1607,19 +1596,22 @@
     }
   }
 
-  async function savePetImagePixelSize() {
-    if (!settings) return;
-    settings.pet.imagePixelSize = clampImagePixelSize(settings.pet.imagePixelSize);
-    busyPet = "pixel-size";
+  async function importAnimatedPet() {
+    const selected = await open({ multiple: false, filters: [{ name: "Pet manifest", extensions: ["json"] }] });
+    if (typeof selected !== "string") return;
+    busyPet = "package";
     error = "";
     try {
-      petLibrary = await updatePetImagePixelSize(settings.pet.imagePixelSize);
+      petLibrary = await importPetPackage(selected);
       settings = normalizeSettings(await getAppSettings());
-    } catch (currentError) {
-      error = String(currentError);
-    } finally {
-      busyPet = "";
-    }
+    } catch (currentError) { error = String(currentError); }
+    finally { busyPet = ""; }
+  }
+
+  async function savePetScale(scale: number) {
+    if (!settings) return;
+    settings.pet.scale = Math.min(5, Math.max(2, scale));
+    await saveSettings();
   }
 
   async function savePetOpacity() {
@@ -1846,77 +1838,7 @@
       <UsagePanel onConnections={() => navigation.navigate("runtimes")} />
     {:else if tab === "personalize" && settings}
       <div class="settings-workspace pet-creation">
-        <section class="pet-editor pixel-panel">
-          <header class="panel-head">
-            <div>
-              <h3>像素形象</h3>
-            </div>
-          </header>
-          <div class="pet-preview codex-preview">
-            <PetAvatar sprite={settings.pet.sprite} kind={settings.pet.kind} imagePath={settings.pet.imagePath} status={latest?.status ?? "thinking"} scale={Math.max(settings.pet.scale, 4)} />
-            <button class="preview-import-button" disabled={busyPet === "import" || busyPet === "cutout-import"} on:click={() => importImagePet(true)} aria-label="抠图导入图片宠物">
-              <ImagePlus size={18} />
-            </button>
-          </div>
-          <label class="image-pixel-control">
-            <span>
-              <span>像素化程度</span>
-              <strong>{imagePixelSizeLabel(settings.pet.imagePixelSize)}</strong>
-            </span>
-            <input
-              type="range"
-              min="16"
-              max="128"
-              step="8"
-              bind:value={settings.pet.imagePixelSize}
-              disabled={busyPet === "pixel-size"}
-              on:change={savePetImagePixelSize}
-            />
-          </label>
-          <section class="pet-library-panel">
-            <div class="panel-head compact">
-              <div>
-                <h3>宠物库</h3>
-              </div>
-            </div>
-            <div class="pet-list" aria-label="已配置宠物">
-              {#each petLibrary?.pets ?? settings.petLibrary.pets as pet}
-                {@const isActivePet = (petLibrary?.selectedPetId ?? settings.pet.selectedPetId) === pet.id}
-                <article class="pet-item" class:active={isActivePet}>
-                  <button class="pet-select-button" disabled={busyPet === pet.id} on:click={() => activatePet(pet.id)}>
-                    <span class="pet-thumb">
-                      <PetAvatar
-                        sprite={pet.sprite ?? settings.pet.sprite}
-                        kind={pet.kind}
-                        imagePath={pet.imagePath}
-                        status="idle"
-                        scale={2}
-                        label={pet.name}
-                      />
-                    </span>
-                    <span>
-                      <strong>{pet.name}</strong>
-                      <em>{pet.kind === "codex-atlas" ? "Codex 宠物" : pet.kind === "image" ? "导入图片" : "调色板"}</em>
-                    </span>
-                    {#if isActivePet}
-                      <Check size={17} />
-                    {/if}
-                  </button>
-                  {#if pet.id !== "default"}
-                    <button
-                      class="pet-delete-button"
-                      disabled={busyPet === `delete:${pet.id}`}
-                      on:click={(event) => removePet(event, pet.id)}
-                      aria-label={`删除 ${pet.name}`}
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  {/if}
-                </article>
-              {/each}
-            </div>
-          </section>
-        </section>
+        <PetLibraryPanel {settings} library={petLibrary} busy={busyPet} onSelect={activatePet} onRemove={removePet} onImportImage={importImagePet} onImportPackage={importAnimatedPet} onScale={savePetScale} />
         <button class="context-link" on:click={() => navigation.navigate("appearance")}>调整主题、透明度与桌宠效果</button>
       </div>
     {:else if tab === "appearance" && settings}
@@ -2343,6 +2265,8 @@
             </div>
           </div></section>
       </div>
+    {:else if tab === "permissions"}
+      <PermissionSettings />
     {:else if tab === "about"}
       <AboutSettings checking={!!updateCheckMode || updateInstallBusy} message={updateMessage} error={updateError} ignoredVersion={settings?.updates.ignoredVersion ?? null} onCheck={() => checkForUpdates("manual")}
         reloaded={resourceReloaded} onExtraction={() => navigation.navigate("extraction")}

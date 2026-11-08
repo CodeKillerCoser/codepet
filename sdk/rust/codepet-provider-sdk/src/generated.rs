@@ -468,6 +468,35 @@ pub struct InstanceDestroyResponse {
     pub destroyed: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InstanceReleaseControlOutcome {
+    #[serde(rename = "released")]
+    Released,
+    #[serde(rename = "busy")]
+    Busy,
+    #[serde(rename = "notIdle")]
+    NotIdle,
+    #[serde(rename = "unavailable")]
+    Unavailable,
+    #[serde(rename = "unsupported")]
+    Unsupported,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct InstanceReleaseControlRequest {
+    pub route: ProviderInstanceRoute,
+    pub idle_timeout_seconds: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
+pub struct InstanceReleaseControlResponse {
+    pub outcome: InstanceReleaseControlOutcome,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
@@ -669,6 +698,8 @@ pub enum ProviderCapability {
     ConversationMarkRead,
     #[serde(rename = "usage.query")]
     UsageQuery,
+    #[serde(rename = "instance.releaseControl")]
+    InstanceReleaseControl,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1072,6 +1103,8 @@ pub enum ProtocolDispatchLane {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolMethod {
+    #[serde(rename = "instance.releaseControl")]
+    InstanceReleaseControl,
     #[serde(rename = "conversation.releaseInteraction")]
     ConversationReleaseInteraction,
     #[serde(rename = "conversation.active.list")]
@@ -1141,6 +1174,7 @@ pub enum ProtocolMethod {
 impl ProtocolMethod {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::InstanceReleaseControl => "instance.releaseControl",
             Self::ConversationReleaseInteraction => "conversation.releaseInteraction",
             Self::ConversationActiveList => "conversation.active.list",
             Self::ConversationUnreadList => "conversation.unread.list",
@@ -1178,6 +1212,7 @@ impl ProtocolMethod {
 
     pub const fn dispatch_lane(self) -> ProtocolDispatchLane {
         match self {
+            Self::InstanceReleaseControl => ProtocolDispatchLane::Control,
             Self::ConversationReleaseInteraction => ProtocolDispatchLane::Control,
             Self::ConversationActiveList => ProtocolDispatchLane::Normal,
             Self::ConversationUnreadList => ProtocolDispatchLane::Normal,
@@ -1215,6 +1250,7 @@ impl ProtocolMethod {
 
     pub const fn capability(self) -> Option<ProviderCapability> {
         match self {
+            Self::InstanceReleaseControl => Some(ProviderCapability::InstanceReleaseControl),
             Self::ConversationReleaseInteraction => Some(ProviderCapability::ConversationReleaseInteraction),
             Self::ConversationActiveList => Some(ProviderCapability::ConversationActiveList),
             Self::ConversationUnreadList => Some(ProviderCapability::ConversationUnreadList),
@@ -1256,6 +1292,7 @@ impl std::str::FromStr for ProtocolMethod {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
+            "instance.releaseControl" => Ok(Self::InstanceReleaseControl),
             "conversation.releaseInteraction" => Ok(Self::ConversationReleaseInteraction),
             "conversation.active.list" => Ok(Self::ConversationActiveList),
             "conversation.unread.list" => Ok(Self::ConversationUnreadList),
@@ -1376,6 +1413,12 @@ pub const DEFAULT_MAX_JSON_LINE_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ProtocolRequest {
+    #[serde(rename = "instance.releaseControl")]
+    InstanceReleaseControl {
+        jsonrpc: String,
+        id: RequestId,
+        params: InstanceReleaseControlRequest,
+    },
     #[serde(rename = "conversation.releaseInteraction")]
     ConversationReleaseInteraction {
         jsonrpc: String,
@@ -1578,6 +1621,11 @@ impl ProtocolRequest {
     ) -> Result<Self, ProtocolError> {
         let jsonrpc = "2.0".to_string();
         match method {
+            ProtocolMethod::InstanceReleaseControl => Ok(Self::InstanceReleaseControl {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode instance.releaseControl request params", error))?,
+            }),
             ProtocolMethod::ConversationReleaseInteraction => Ok(Self::ConversationReleaseInteraction {
                 jsonrpc,
                 id,
@@ -1743,6 +1791,7 @@ impl ProtocolRequest {
 
     pub fn jsonrpc_version(&self) -> &str {
         match self {
+            Self::InstanceReleaseControl { jsonrpc, .. } => jsonrpc,
             Self::ConversationReleaseInteraction { jsonrpc, .. } => jsonrpc,
             Self::ConversationActiveList { jsonrpc, .. } => jsonrpc,
             Self::ConversationUnreadList { jsonrpc, .. } => jsonrpc,
@@ -1780,6 +1829,7 @@ impl ProtocolRequest {
 
     pub fn id(&self) -> &RequestId {
         match self {
+            Self::InstanceReleaseControl { id, .. } => id,
             Self::ConversationReleaseInteraction { id, .. } => id,
             Self::ConversationActiveList { id, .. } => id,
             Self::ConversationUnreadList { id, .. } => id,
@@ -1817,6 +1867,7 @@ impl ProtocolRequest {
 
     pub const fn method(&self) -> ProtocolMethod {
         match self {
+            Self::InstanceReleaseControl { .. } => ProtocolMethod::InstanceReleaseControl,
             Self::ConversationReleaseInteraction { .. } => ProtocolMethod::ConversationReleaseInteraction,
             Self::ConversationActiveList { .. } => ProtocolMethod::ConversationActiveList,
             Self::ConversationUnreadList { .. } => ProtocolMethod::ConversationUnreadList,
@@ -2037,6 +2088,10 @@ impl std::error::Error for JsonRpcInboundError {}
 pub type ProtocolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ProtocolError>> + Send + 'a>>;
 
 pub trait ProtocolServer: Send + Sync {
+    fn instance_release_control<'a>(&'a self, _request: InstanceReleaseControlRequest) -> ProtocolFuture<'a, InstanceReleaseControlResponse> {
+        Box::pin(async { Err(method_not_implemented("instance.releaseControl")) })
+    }
+
     fn conversation_release_interaction<'a>(&'a self, _request: ConversationReleaseInteractionRequest) -> ProtocolFuture<'a, ConversationReleaseInteractionResponse> {
         Box::pin(async { Err(method_not_implemented("conversation.releaseInteraction")) })
     }
@@ -2177,6 +2232,16 @@ fn method_not_implemented(method: &str) -> ProtocolError {
 
 pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolRequest) -> JsonRpcResponse {
     match request {
+        ProtocolRequest::InstanceReleaseControl { jsonrpc, id, params } => {
+            let response = match server.instance_release_control(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
         ProtocolRequest::ConversationReleaseInteraction { jsonrpc, id, params } => {
             let response = match server.conversation_release_interaction(params).await {
                 Ok(result) => match serde_json::to_value(result) {
@@ -2544,6 +2609,14 @@ impl<T> ProtocolClient<T> {
 }
 
 impl<T: ProtocolTransport> ProtocolClient<T> {
+    pub fn instance_release_control<'a>(&'a self, request: InstanceReleaseControlRequest) -> ProtocolFuture<'a, InstanceReleaseControlResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::InstanceReleaseControl, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
     pub fn conversation_release_interaction<'a>(&'a self, request: ConversationReleaseInteractionRequest) -> ProtocolFuture<'a, ConversationReleaseInteractionResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;

@@ -175,7 +175,7 @@ test("provider is JSON-RPC over stdio and owns plugin instance lifecycle", async
     provider.methods
       .filter((method) => method.dispatchLane === "control")
       .map((method) => method.name),
-    ["conversation.releaseInteraction", "provider.ping", "instance.stop", "instance.destroy", "provider.shutdown"],
+    ["instance.releaseControl", "conversation.releaseInteraction", "provider.ping", "instance.stop", "instance.destroy", "provider.shutdown"],
   );
   const providerIr = model.protocolIr.packagesById.get("provider-v1");
   assert.equal(

@@ -666,7 +666,8 @@
         "conversation.active.list",
         "conversation.unread.list",
         "conversation.markRead",
-        "usage.query"
+        "usage.query",
+        "instance.releaseControl"
       ]
     },
     "ProviderCapabilities": {
@@ -990,8 +991,12 @@
         },
         "selected": {
           "oneOf": [
-            { "$ref": "#/$defs/RuntimeInstallation" },
-            { "type": "null" }
+            {
+              "$ref": "#/$defs/RuntimeInstallation"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "scanning": {
@@ -2014,6 +2019,48 @@
       ],
       "additionalProperties": false,
       "description": "Host-assigned absolute Provider-owned paths, independent of harness storage. Database file must reside directly in data. Provider owns schema and transactions. Never exposed remotely."
+    },
+    "InstanceReleaseControlRequest": {
+      "description": "Host-scheduled, conditional release of idle native control. The Provider must atomically reject active/uncertain work and requests in flight, and must never reacquire old conversations. Unsupported Providers return unsupported without side effects.",
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "idleTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400
+        }
+      },
+      "required": [
+        "route",
+        "idleTimeoutSeconds"
+      ],
+      "additionalProperties": false
+    },
+    "InstanceReleaseControlOutcome": {
+      "type": "string",
+      "enum": [
+        "released",
+        "busy",
+        "notIdle",
+        "unavailable",
+        "unsupported"
+      ]
+    },
+    "InstanceReleaseControlResponse": {
+      "description": "released means old control is released and a clean runtime start was accepted; readiness continues through instance status events. No snapshot is returned to avoid overwriting newer lifecycle events.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/InstanceReleaseControlOutcome"
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "additionalProperties": false
     }
   }
 }

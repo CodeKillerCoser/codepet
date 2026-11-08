@@ -56,7 +56,7 @@ VPS 邮箱按 Host 和邀请 ID 隔离，保留至邀请到期；相同密文幂
 - `remote/access.rs`：统一申请绑定、单次签发、过期/取消后的确认约束。
 - `remote/channels/webrtc/cloud/invitation.rs`：加密签名验证、结果封装、邀请同步。
 - `remote/channels/lan/listener.rs`、Tauri remote_access：生成邀请并暴露 LAN 同协议入口。
-- `services/signaling/server.py`：未配对客户端的临时、隔离、受限邮箱。
+- `server/server.py`：未配对客户端的临时、隔离、受限邮箱。
 - Remote `pairing/`、`cloud_signaling.dart`：竞速、校验、重试状态与授权保存。
 
 ## 风险

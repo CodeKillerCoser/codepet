@@ -1,6 +1,6 @@
 use codepet_provider_data::conversation_atoms::{self, ConversationAtoms};
 use codepet_provider_sdk::local_runtime;
-use crate::client::OpenCodeServerSession;
+use crate::client::{OpenCodeClient, OpenCodeServerSession};
 use crate::mapper::{protocol_error, OpenCodeProtocolMapper};
 use crate::protocol::{
     OpenCodeDelivery, OpenCodeDeltaEventData, OpenCodeEvent,
@@ -208,6 +208,7 @@ impl OpenCodeInstanceRuntime {
         let settings = self.settings.clone();
         let session = mutable.session.clone();
         mutable.metadata_task = Some(tokio::spawn(async move {
+            let probe_client = session.as_ref().map(|session| session.client());
             let cwd = settings
                 .workspace_root
                 .clone()
@@ -219,6 +220,7 @@ impl OpenCodeInstanceRuntime {
                     cwd.as_deref(),
                     settings.data_directory.as_deref(),
                     Duration::from_secs(30),
+                    probe_client.as_ref(),
                 )
             };
             let auth = async {
@@ -232,18 +234,27 @@ impl OpenCodeInstanceRuntime {
             let catalog = async {
                 let session = session?;
                 let client = session.client();
-                let discovered = tokio::task::spawn_blocking(move || {
-                    std::thread::scope(|scope| {
-                        let models = scope.spawn(|| client.list_models());
-                        let agents = scope.spawn(|| client.list_agents());
-                        let providers = scope.spawn(|| client.list_providers());
-                        Some((agents.join().ok()?.ok()?, models.join().ok()?.ok()?, providers.join().ok()?.ok()?))
-                    })
-                }).await;
-                let (agents, mut models, providers) = discovered.ok().flatten()?;
+                // A newly opened location can return empty snapshots while
+                // OpenCode's built-in/config plugins settle (notably 1.18.25).
+                // Retry only successful empty catalogs before using the CLI fallback.
+                let settle_until = Instant::now() + Duration::from_secs(3);
+                let (agents, mut models, providers) = loop {
+                    let client = client.clone();
+                    let discovered = tokio::task::spawn_blocking(move || {
+                        std::thread::scope(|scope| {
+                            let models = scope.spawn(|| client.list_models());
+                            let agents = scope.spawn(|| client.list_agents());
+                            let providers = scope.spawn(|| client.list_providers());
+                            Some((agents.join().ok()?.ok()?, models.join().ok()?.ok()?, providers.join().ok()?.ok()?))
+                        })
+                    }).await.ok().flatten()?;
+                    if (!discovered.0.is_empty() && !discovered.1.is_empty() && !discovered.2.is_empty())
+                        || Instant::now() >= settle_until { break discovered; }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                };
                 if models.is_empty() {
                     models = discover_cli_models(&settings.server_executable, cwd.as_deref(),
-                        settings.data_directory.as_deref()).await.ok()?;
+                        settings.data_directory.as_deref(), probe_client.as_ref()).await.ok()?;
                 }
                 OpenCodeProtocolMapper::capabilities(&agents, &models, &providers).ok()
             };
@@ -2414,6 +2425,7 @@ async fn discover_cli_models(
     executable: &std::path::Path,
     working_directory: Option<&std::path::Path>,
     data_directory: Option<&std::path::Path>,
+    client: Option<&OpenCodeClient>,
 ) -> Result<Vec<OpenCodeModel>, OpenCodeServerError> {
     let output = crate::background_probe::run(
         executable,
@@ -2421,6 +2433,7 @@ async fn discover_cli_models(
         working_directory,
         data_directory,
         Duration::from_secs(30),
+        client,
     )
     .await
     .map_err(|error| {

@@ -6,7 +6,7 @@ Claude 默认 Provider 是独立 Rust 二进制 `crates/providers/codepet-provid
 
 当前官方公开接口中未发现与 Codex App Server 等价、可由 Rust 直接消费的完整 Claude session server。诚实切面是官方 Claude Code CLI 的 `--print` + 双向 `stream-json`：Provider 管理自己的 session ID，一次 turn 启动一个 CLI 子进程，后续 turn 用 `--resume`。它不宣称能枚举、读取、附着或同步其他 Claude Desktop/CLI 会话。
 
-公共 SDK 也为 Claude 实例接入 Host 心跳协调：连接集合为空或 Host 失联时调用 instance.stop，重连调用幂等 start。Claude 当前适配器的任务执行方式不因此被改造成 Server 模式；它仍复用既有 stop/shutdown 清理。状态和两段心跳机制见 [连接架构](remote-and-provider-connections.md)，三个内置 Provider 的 Host 集成测试已覆盖。
+公共 SDK 心跳只表达连通性，不因连接集合为空或 Host 心跳过期调用 instance.stop。Claude 不声明 `instance.releaseControl`，Host 不向它调度释放，不参与 Codex 专用的空闲回收/重启，启动后保持就绪。当前适配器仍按任务执行原生进程，未改成共享 Server 模式；显式 stop/shutdown 和真实 IPC 退出继续执行既有清理。状态及两段心跳见 [连接架构](remote-and-provider-connections.md)。
 
 ## 配置继承语义
 

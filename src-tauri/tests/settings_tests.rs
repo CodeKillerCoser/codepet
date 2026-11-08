@@ -14,7 +14,6 @@ fn settings_default_to_system_theme() {
     assert!(!settings.appearance.running_bubble.border_marquee);
     assert_eq!(settings.appearance.running_bubble.animation_ms, 1800);
     assert_eq!(settings.appearance.running_bubble.border_width, 1);
-    assert_eq!(settings.pet.image_pixel_size, 48);
     assert_eq!(settings.pet.opacity, 1.0);
     assert_eq!(settings.pet.whip_reaction_sound, WhipReactionSound::None);
     assert!(settings.pet.custom_whip_reaction_sound_path.is_none());
@@ -56,7 +55,6 @@ fn settings_keep_existing_values_when_theme_field_is_missing() {
     let settings: AppSettings = serde_json::from_str(
         r##"{
           "pet": {
-            "sprite": { "body": "#111111", "accent": "#222222", "eyes": "#333333" },
             "scale": 4,
             "alwaysOnTop": true
           },
@@ -81,11 +79,9 @@ fn settings_keep_existing_values_when_theme_field_is_missing() {
     assert!(!settings.appearance.running_bubble.border_marquee);
     assert_eq!(settings.appearance.running_bubble.border_width, 1);
     assert_eq!(settings.pet.scale, 4);
-    assert_eq!(settings.pet.image_pixel_size, 48);
     assert_eq!(settings.pet.opacity, 1.0);
     assert_eq!(settings.pet.whip_reaction_sound, WhipReactionSound::None);
     assert!(settings.pet.custom_whip_reaction_sound_path.is_none());
-    assert_eq!(settings.pet.sprite.body, "#111111");
     assert!(!settings.notifications.ring_on_failure);
     assert!(!settings.notifications.ring_on_done);
     assert!(!settings.notifications.robot.enabled);
@@ -372,4 +368,23 @@ fn settings_enable_done_ringing_when_field_is_missing() {
     .unwrap();
 
     assert!(settings.notifications.ring_on_done);
+}
+
+#[test]
+fn unknown_pet_types_and_fields_do_not_break_settings_or_survive_saving() {
+    let mut value = serde_json::to_value(AppSettings::default()).unwrap();
+    value["pet"]["kind"] = serde_json::json!("retired-renderer");
+    value["pet"]["sprite"] = serde_json::json!({"body": "#112233"});
+    value["pet"]["imagePixelSize"] = serde_json::json!(48);
+    value["pet"]["scale"] = serde_json::json!(4);
+    value["petLibrary"]["pets"][0]["kind"] = serde_json::json!("retired-renderer");
+    value["petLibrary"]["pets"][0]["sprite"] = serde_json::json!({"body": "#112233"});
+    let settings: AppSettings = serde_json::from_value(value).unwrap();
+    assert_eq!(settings.pet.kind, code_pet_lib::settings::PetKind::Builtin);
+    assert_eq!(settings.pet.scale, 4);
+    let saved = serde_json::to_value(settings).unwrap();
+    assert_eq!(saved["pet"]["kind"], "builtin");
+    assert!(saved["pet"].get("sprite").is_none());
+    assert!(saved["pet"].get("imagePixelSize").is_none());
+    assert!(saved["petLibrary"]["pets"][0].get("sprite").is_none());
 }

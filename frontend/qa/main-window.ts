@@ -4,7 +4,7 @@ import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { mount } from "svelte";
 import App from "../App.svelte";
 import { frontendBuild } from "../lib/webcontent";
-import { defaultPetSprite, defaultRunningBubbleSettings } from "../lib/theme";
+import { defaultRunningBubbleSettings } from "../lib/theme";
 import "../styles.css";
 import "../main-window.css";
 import type { LineageSnapshot, LineageMessage } from "../lib/taskLineage";
@@ -34,8 +34,8 @@ const history: LineageMessage[] = [
 mockWindows("main");
 let appSettings: any = {
   data: {}, appearance: {theme: "light", runningBubble: {...defaultRunningBubbleSettings}},
-  pet: {selectedPetId: "default", kind: "palette", sprite: defaultPetSprite, scale: 3, imagePixelSize: 48, opacity: 1, whipReactionSound: "none"},
-  petLibrary: {selectedPetId: "default", dataDirectory: "/fixture/pets", pets: [{id:"default", name:"Classic Pixel", kind:"palette", sprite:defaultPetSprite}]},
+  pet: {selectedPetId: "default", kind: "builtin", scale: 3, opacity: 1, whipReactionSound: "none"},
+  petLibrary: {selectedPetId: "default", dataDirectory: "/fixture/pets", pets: [{id:"default", name:"橘猫", kind:"builtin"}]},
   notifications: {sound:"blip", ringOnPermission:true, ringOnFailure:true, ringOnDone:true, repeatSeconds:30, quietHoursEnabled:false, quietHoursStart:"22:00", quietHoursEnd:"08:00"},
   providerPlugins: {directories: []}, updates: {},
 };
@@ -55,6 +55,15 @@ let runtimeInventory = runtimeCase === "missing" ? [...absentRuntimes, missingRu
   : [runtime];
 const runtimeConnections = () => runtimeInventory.map((item) => ({providerId:item.providerId,displayName:item.displayName,icon:"https://avatars.githubusercontent.com/u/14957082?s=200&v=4",version:"0.1.0",defaultWorkspaceRoot:"/Users/wangxin/.codepet/remote_workspace/codex",connectionStatus:"online",generation:1,instances:[{id:"qa",status:"ready"}]}));
 mockIPC((command, raw) => {
+  const permissionScenario = new URLSearchParams(location.search);
+  if (command === "get_system_permission_settings") {
+    if (permissionScenario.has("permissionLoadError")) throw new Error("Simulated old backend");
+    return { fullDiskAccessSupported: !permissionScenario.has("permissionUnsupported"), appPath: "/Applications/Code Pet.app" };
+  }
+  if (command === "open_full_disk_access_settings" || command === "reveal_permission_app") {
+    if (permissionScenario.has("permissionOpenError")) throw new Error("无法打开系统设置（模拟错误）");
+    return;
+  }
   if (command === "webcontent_info" || command === "load_latest_webcontent") {
     const scenario = new URLSearchParams(location.search).get("webcontentCase");
     if (scenario === "unsupported") throw new Error("Command not found");

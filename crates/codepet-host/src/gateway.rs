@@ -1750,6 +1750,7 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
             }
             provider::ProviderCapability::UsageQuery => Some(gateway::GatewayCapability::CodepetUsageQuery),
             provider::ProviderCapability::TurnSteer => Some(gateway::GatewayCapability::TurnSteer),
+            provider::ProviderCapability::InstanceReleaseControl => None,
             provider::ProviderCapability::ConversationActiveList
             | provider::ProviderCapability::ConversationUnreadList
             | provider::ProviderCapability::ConversationMarkRead => None,
@@ -2158,6 +2159,7 @@ mod visibility_tests {
     #[test]
     fn builtin_visibility_uses_inventory_not_process_or_instance_liveness() {
         let mut plugin = PluginRuntimeSnapshot {
+            runtime_inventory_diagnostic: None,
             catalog: serde_json::from_value(serde_json::json!({
                 "pluginId":"dev.codepet.codex", "displayName":"Codex", "executable":"provider"
             })).unwrap(),
