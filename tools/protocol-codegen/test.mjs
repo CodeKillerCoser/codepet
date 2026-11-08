@@ -643,3 +643,20 @@ test("freshness accepts CRLF checkouts but still rejects content changes", async
     await rm(outputRoot, { recursive: true, force: true });
   }
 });
+
+
+test("queue operations are durable idempotent mutations and steering is bound to an explicit turn", async () => {
+  const gateway = record(await loadProtocolModel(), "gateway-v1");
+  for (const operation of ["enqueue", "withdraw", "steer", "resume", "acknowledgeEdit"]) {
+    const method = gateway.manifest.methods.find(m => m.name === `conversation.inputQueue.${operation}`);
+    assert.equal(method.idempotency, "idempotent");
+    assert.equal(method.capability, method.name);
+  }
+  const defs = gateway.schema.$defs;
+  for (const field of ["turn", "clientRequestId", "capabilityRevision"]) assert(defs.TurnSteerRequest.required.includes(field));
+  assert(defs.InputQueueSteerRequest.required.includes("expectedRevision"));
+  assert.equal(defs.TurnSteerRequest.properties.selection, undefined);
+  assert.equal(defs.InputQueueSteerRequest.properties.selection, undefined);
+  assert(defs.InputQueueSnapshot.required.includes("recoverableEdits"));
+  assert(defs.InputQueueItemState.enum.includes("outcomeUnknown"));
+});

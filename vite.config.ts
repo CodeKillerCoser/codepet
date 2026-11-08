@@ -14,6 +14,8 @@ export default defineConfig(({ command }) => {
 
   return {
     root: projectRoot,
+    // Component tests and the app both use the browser Svelte runtime.
+    resolve: { conditions: ["browser"] },
     define: { __WEB_BUILD_AT__: JSON.stringify(builtAt) },
     plugins: [svelte(), {
       name: "webcontent-build-info",

@@ -725,6 +725,16 @@ pub fn start_runtime_gateway_event_bridge<R: Runtime>(
 ) -> Result<(), ProtocolError> {
     if let Some(host) = app.try_state::<ProviderHostState>() {
         let host = host.inner().clone();
+        if let Some(gateway) = host.gateway.as_ref() {
+            if let Ok(mut events) = gateway.subscribe_events(Some(&gateway.current_event_cursor())) {
+                let event_app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Ok(event) = events.next_event().await {
+                        let _ = event_app.emit("codepet-gateway-event", event);
+                    }
+                });
+            }
+        }
         if let Some(manager) = host.manager.as_ref() {
             let mut runtime_changes = manager.subscribe_runtime_changes();
             let runtime_app = app.clone();

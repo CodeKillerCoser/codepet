@@ -169,7 +169,7 @@
       <div class="center-toolbar"><div class="segmented"><button class:active={view === "conversation"} on:click={() => selectedThreadId && selectThread(selectedThreadId)}>对话</button>{#if selectedThread?.createdBy === "human" && !selectedThread.parentId}<button class:active={view === "task"} on:click={() => relatedTasks[0] ? selectTask(relatedTasks[0]) : view = "task"}>任务</button>{/if}</div><span>{selectedThread?.workspace.split(/[\\/]/).pop() ?? ""}</span></div>
       {#if view === "conversation"}
         <header class="title"><small>{creationLabel(selectedThread?.creationKind ?? "unknown")}</small><h3>{selectedThread?.title ?? "选择一个对话"}</h3>{#if selectedThread}<span>{statusLabel(selectedThread.id, statuses)} · {dirtyLabel(selectedThread.id, dirty)}</span>{/if}</header>
-        <LineageMessages {messages} contextId={selectedThreadId} anchorEventId={conversationAnchor} title={selectedThread?.title ?? "对话消息"} busy={messageBusy} onSend={selectedThread && connectionProviderId ? send : null} />
+        <LineageMessages {messages} inputQueueConversation={selectedThread && connectionProviderId ? { providerId: connectionProviderId, nativeResourceId: selectedThreadId } : null} contextId={selectedThreadId} anchorEventId={conversationAnchor} title={selectedThread?.title ?? "对话消息"} busy={messageBusy} onSend={selectedThread && connectionProviderId ? send : null} />
       {:else if task}
         <div class="task-picker">{#each relatedTasks as item}<button class:active={item.id === task.id} on:click={() => selectTask(item)}>{item.title}</button>{/each}</div>
         <div class="task-picker"><button disabled={!!busy} on:click={allocateWorkspace}>申请任务工作区</button></div>

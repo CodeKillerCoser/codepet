@@ -1,5 +1,8 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import ConversationComposer from "./ConversationComposer.svelte";
+  import type { RoutedResourceId } from "../../sdk/typescript/codepet-gateway-sdk/src/generated";
+  export let inputQueueConversation: RoutedResourceId | null = null;
   import type { LineageMessage } from "./taskLineage";
   export let messages: LineageMessage[] = [];
   export let title = "原始消息";
@@ -38,7 +41,9 @@
       </article>
     {/each}
   </div>
-  {#if onSend}
+  {#if inputQueueConversation}
+    <ConversationComposer conversation={inputQueueConversation} {onSend} />
+  {:else if onSend}
     <form on:submit|preventDefault={send}>
       <label>继续当前线程<textarea bind:value={text} rows={compact ? 2 : 3} disabled={sending} placeholder="要求验收、修正或继续任务…"></textarea></label>
       <div class="send-row">{#if error}<p role="alert">{error}</p>{/if}<button disabled={sending || busy || !text.trim()} type="submit">{sending ? "发送中…" : "发送消息"}</button></div>

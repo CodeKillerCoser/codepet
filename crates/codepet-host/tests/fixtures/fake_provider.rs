@@ -25,7 +25,7 @@ use codepet_provider_sdk::{
     MessageConversationItem, MessageConversationItemKind, TextContentBlock, TextContentBlockKind,
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent, TurnSendCapabilities,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
-    TurnSteerResponse, VersionRange,
+    TurnSteerResponse, VersionRange, TurnUpsertedEvent,
 };
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -35,6 +35,7 @@ use std::time::Duration;
 mod recent;
 
 struct FakeProvider {
+    queue_turns: Arc<Mutex<BTreeMap<String, TurnTask>>>,
     data: codepet_provider_data::ProviderData,
     recent: recent::RecentFixture,
     events: Option<Arc<dyn codepet_provider_sdk::ProviderEventSink>>,
@@ -458,6 +459,10 @@ impl ProtocolServer for FakeProvider {
                 .and_then(|value| value.as_str())
                 .map(str::to_string);
             let mut configured = conversation(&response_route, native_id);
+            if std::env::var_os("CODEPET_FAKE_QUEUE").is_some() {
+                let current=self.queue_turns.lock().unwrap().get(native_id).cloned().or_else(||(native_id=="queue-active").then(||turn(&response_route,"active-turn",configured.resource.clone())));
+                if let Some(current)=current { if matches!(current.status,TurnStatus::Running|TurnStatus::WaitingApproval) { configured.status=ConversationStatus::Running; configured.active_turn=Some(current); } }
+            }
             if let Some(configured_revision) = configured_revision {
                 configured.preview = Some(configured_revision);
             }
@@ -542,7 +547,20 @@ impl ProtocolServer for FakeProvider {
             } else {
                 resource(&route, &request.conversation.native_resource_id)
             };
-            let turn = turn(&route, "turn-started", conversation.clone());
+            let turn = turn(&route, if std::env::var_os("CODEPET_FAKE_QUEUE").is_some(){&request.client_request_id}else{"turn-started"}, conversation.clone());
+            if std::env::var_os("CODEPET_FAKE_QUEUE").is_some() {
+                self.queue_turns.lock().unwrap().insert(request.conversation.native_resource_id.clone(),turn.clone());
+                let turns=self.queue_turns.clone();let events=self.events.clone().unwrap();let mut completed=turn.clone();let conversation_id=request.conversation.native_resource_id.clone();
+                events.publish(ProtocolEvent::EventTurnUpserted{jsonrpc:"2.0".into(),params:TurnUpsertedEvent{turn:turn.clone()}})?;
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                    let mut turns=turns.lock().unwrap();
+                    if turns.get(&conversation_id).is_some_and(|current|current.resource==completed.resource && current.status==TurnStatus::Running) {
+                        completed.status=TurnStatus::Completed;turns.insert(conversation_id,completed.clone());
+                        let _=events.publish(ProtocolEvent::EventTurnUpserted{jsonrpc:"2.0".into(),params:TurnUpsertedEvent{turn:completed}});
+                    }
+                });
+            }
             let user_item_conversation = if wrong_user_item_conversation {
                 resource(&route, "different-user-item-conversation")
             } else {
@@ -576,6 +594,7 @@ impl ProtocolServer for FakeProvider {
         request: TurnSteerRequest,
     ) -> ProtocolFuture<'a, TurnSteerResponse> {
         Box::pin(async move {
+            if let Ok(path)=std::env::var("CODEPET_FAKE_TURN_STEER_MARKER") { let mut file=std::fs::OpenOptions::new().create(true).append(true).open(path).unwrap();writeln!(file,"{}",request.client_message_id).unwrap(); }
             let route = route_from_resource(&request.turn);
             self.instance(&route)?;
             let conversation = if request.turn.native_resource_id == "steer-wrong-conversation" {
@@ -606,6 +625,9 @@ impl ProtocolServer for FakeProvider {
                 resource(&route, &request.conversation.native_resource_id),
             );
             interrupted.status = TurnStatus::Interrupted;
+            if std::env::var_os("CODEPET_FAKE_QUEUE").is_some() { self.queue_turns.lock().unwrap().insert(request.conversation.native_resource_id.clone(),interrupted.clone());
+                self.events.as_ref().unwrap().publish(ProtocolEvent::EventTurnUpserted{jsonrpc:"2.0".into(),params:TurnUpsertedEvent{turn:interrupted.clone()}})?;
+            }
             Ok(TurnInterruptResponse { turn: interrupted })
         })
     }
@@ -711,6 +733,7 @@ async fn main() {
     let plugin_id = std::env::var("CODEPET_FAKE_PLUGIN_ID")
         .unwrap_or_else(|_| "dev.codepet.fake".to_string());
     codepet_provider_sdk::serve_stdio(codepet_provider_sdk::StdioServerOptions::default(), |events| FakeProvider {
+        queue_turns:Arc::new(Mutex::new(BTreeMap::new())),
         data: codepet_provider_data::ProviderData::default(),
         recent: recent::RecentFixture::default(),
         events: Some(events), plugin_id, observation: Mutex::new(None), instances: Mutex::new(BTreeMap::new()), instance_settings: Mutex::new(BTreeMap::new()),

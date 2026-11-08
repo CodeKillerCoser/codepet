@@ -29,6 +29,14 @@
     "field": "methods"
   },
   "methods": [
+    {"name": "turn.steer","direction": "clientToGateway","idempotency": "nonIdempotent","capability": "turn.steer","request": {"$ref": "./schema.json#/$defs/TurnSteerRequest"},"response": {"$ref": "./schema.json#/$defs/TurnSteerResponse"}},
+    {"name": "conversation.inputQueue.get","direction": "clientToGateway","idempotency": "safe","capability": "conversation.inputQueue.get","request": {"$ref": "./schema.json#/$defs/InputQueueGetRequest"},"response": {"$ref": "./schema.json#/$defs/InputQueueSnapshot"}},
+    {"name": "conversation.inputQueue.enqueue","direction": "clientToGateway","idempotency": "idempotent","capability": "conversation.inputQueue.enqueue","request": {"$ref": "./schema.json#/$defs/InputQueueEnqueueRequest"},"response": {"$ref": "./schema.json#/$defs/InputQueueMutationResponse"}},
+    {"name": "conversation.inputQueue.withdraw","direction": "clientToGateway","idempotency": "idempotent","capability": "conversation.inputQueue.withdraw","request": {"$ref": "./schema.json#/$defs/InputQueueWithdrawRequest"},"response": {"$ref": "./schema.json#/$defs/InputQueueMutationResponse"}},
+    {"name": "conversation.inputQueue.steer","direction": "clientToGateway","idempotency": "idempotent","capability": "conversation.inputQueue.steer","request": {"$ref": "./schema.json#/$defs/InputQueueSteerRequest"},"response": {"$ref": "./schema.json#/$defs/InputQueueMutationResponse"}},
+    {"name": "conversation.inputQueue.resume","direction": "clientToGateway","idempotency": "idempotent","capability": "conversation.inputQueue.resume","request": {"$ref": "./schema.json#/$defs/InputQueueResumeRequest"},"response": {"$ref": "./schema.json#/$defs/InputQueueSnapshot"}},
+    {"name": "conversation.inputQueue.acknowledgeEdit","direction": "clientToGateway","idempotency": "idempotent","capability": "conversation.inputQueue.acknowledgeEdit","request": {"$ref": "./schema.json#/$defs/InputQueueAcknowledgeEditRequest"},"response": {"$ref": "./schema.json#/$defs/InputQueueSnapshot"}},
+
     {"name": "conversation.releaseInteraction", "direction": "clientToGateway", "idempotency": "idempotent", "capability": "conversation.releaseInteraction", "request": {"$ref": "./schema.json#/$defs/ConversationReleaseInteractionRequest"}, "response": {"$ref": "./schema.json#/$defs/ConversationReleaseInteractionResponse"}},
     {"name": "conversation.recent", "direction": "clientToGateway", "idempotency": "safe", "capability": "conversation.recent", "request": {"$ref": "./schema.json#/$defs/ConversationRecentRequest"}, "response": {"$ref": "./schema.json#/$defs/ConversationRecentResponse"}},
 
@@ -56,6 +64,7 @@
     {"name": "codepet.usage.query", "direction": "clientToGateway", "idempotency": "safe", "capability": "codepet.usage.query", "request": {"$ref": "./schema.json#/$defs/UsageQueryRequest"}, "response": {"$ref": "./schema.json#/$defs/UsageQueryResponse"}}
   ],
   "events": [
+    {"name": "conversation.inputQueueChanged", "direction": "gatewayToClient", "delivery": "replayable", "scope": "conversation", "payload": {"$ref": "./schema.json#/$defs/InputQueueChangedEvent"}},
     {"name": "conversation.recentChanged", "direction": "gatewayToClient", "delivery": "replayable", "scope": "provider", "payload": {"$ref": "./schema.json#/$defs/ConversationRecentChangedEvent"}},
 
     { "name": "project.changed", "direction": "gatewayToClient", "delivery": "replayable", "scope": "project", "payload": { "$ref": "./schema.json#/$defs/ProjectChangedEvent" } },

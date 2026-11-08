@@ -22,6 +22,7 @@ const MAX_USAGE_DETAIL_BYTES: usize = 16 * 1024;
 const MAX_USAGE_DETAILS_BYTES: usize = 32 * 1024;
 
 mod recent;
+mod input_queue;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemoteHostIdentity {
@@ -237,6 +238,11 @@ pub struct ProviderGatewayService {
     server_version: String,
     remote_host_identity: Option<RemoteHostIdentity>,
     turn_sends: AsyncMutex<TurnSendCache>,
+    input_queue: Option<crate::input_queue::InputQueueStore>,
+    queue_locks: Mutex<BTreeMap<(String,String), std::sync::Weak<AsyncMutex<()>>>>,
+    input_request_locks: Mutex<BTreeMap<(String, String, String, String), std::sync::Weak<AsyncMutex<()>>>>,
+    queue_wake: Arc<tokio::sync::Notify>,
+    turn_steers: AsyncMutex<BTreeMap<(String,String,String), (gateway::TurnSteerRequest, Result<gateway::TurnSteerResponse,gateway::ProtocolError>)>>,
     conversation_state: Arc<ConversationStateStore>,
     recent: Arc<Mutex<RecentSnapshots>>,
     recent_concurrency: tokio::sync::Semaphore,
@@ -283,6 +289,7 @@ impl ProviderGatewayService {
             manager.set_conversation_state_path(path)?;
         }
         conversation_state.configure(manager.provider_state_paths()?)?;
+        let input_queue = conversation_state.path().map(crate::input_queue::InputQueueStore::open).transpose()?;
         let updates = manager.take_updates()?;
         Ok(Self {
             manager,
@@ -293,6 +300,7 @@ impl ProviderGatewayService {
             server_version: env!("CARGO_PKG_VERSION").to_string(),
             remote_host_identity,
             turn_sends: AsyncMutex::new(TurnSendCache::new()),
+            input_queue, queue_locks:Mutex::new(BTreeMap::new()), input_request_locks:Mutex::new(BTreeMap::new()), queue_wake:Arc::new(tokio::sync::Notify::new()), turn_steers:AsyncMutex::new(BTreeMap::new()),
             conversation_state,
             recent: Arc::new(Mutex::new(RecentSnapshots::default())),
             recent_concurrency: tokio::sync::Semaphore::new(4),
@@ -431,6 +439,13 @@ impl ProviderGatewayService {
         request: gateway::ProtocolRequest,
     ) -> gateway::JsonRpcResponse {
         match request {
+            gateway::ProtocolRequest::TurnSteer { jsonrpc,id,params } => json_rpc_response(jsonrpc,id,self.turn_steer_for_caller_scope(caller_scope,params).await),
+            gateway::ProtocolRequest::ConversationInputQueueGet { jsonrpc,id,params } => json_rpc_response(jsonrpc,id,self.input_queue_get(caller_scope,params).await),
+            gateway::ProtocolRequest::ConversationInputQueueEnqueue { jsonrpc,id,params } => json_rpc_response(jsonrpc,id,self.input_queue_enqueue(caller_scope,params).await),
+            gateway::ProtocolRequest::ConversationInputQueueWithdraw { jsonrpc,id,params } => json_rpc_response(jsonrpc,id,self.input_queue_withdraw(caller_scope,params).await),
+            gateway::ProtocolRequest::ConversationInputQueueSteer { jsonrpc,id,params } => json_rpc_response(jsonrpc,id,self.input_queue_steer(caller_scope,params).await),
+            gateway::ProtocolRequest::ConversationInputQueueResume { jsonrpc,id,params } => json_rpc_response(jsonrpc,id,self.input_queue_resume(caller_scope,params).await),
+            gateway::ProtocolRequest::ConversationInputQueueAcknowledgeEdit { jsonrpc,id,params } => json_rpc_response(jsonrpc,id,self.input_queue_acknowledge_edit(caller_scope,params).await),
             gateway::ProtocolRequest::ConversationRecent { jsonrpc, id, params } => {
                 let result = self.conversation_recent_for_scope(caller_scope, params).await;
                 json_rpc_response(jsonrpc, id, result)
@@ -488,7 +503,11 @@ impl ProviderGatewayService {
         request: gateway::TurnSendRequest,
     ) -> Result<gateway::TurnSendResponse, gateway::ProtocolError> {
         let key = turn_send_key(caller_scope, &request)?;
-        let mut cache = self.turn_sends.lock().await;
+        let request_lock = self.input_request_lock(caller_scope, "turn.send", &request.conversation.provider_id, &request.client_request_id)?;
+        let _request_guard = request_lock.lock().await;
+        let lock=self.input_lock(&request.conversation)?;
+        let _guard=lock.lock().await;
+        let cache = self.turn_sends.lock().await;
         if let Some(entry) = cache.entries.get(&key) {
             if entry.request != request {
                 return Err(gateway::ProtocolError {
@@ -501,8 +520,12 @@ impl ProviderGatewayService {
             }
             return entry.result.clone();
         }
+        drop(cache);
+        if self.input_queue.as_ref().is_some_and(|store|store.has_pending(&request.conversation).unwrap_or(true)) {
+            return Err(crate::input_queue::error("input_queue_pending","Submit this input through the conversation queue while it has pending messages"));
+        }
         let result = self.perform_turn_send(request.clone()).await;
-        cache.insert(
+        self.turn_sends.lock().await.insert(
             key,
             TurnSendCacheEntry {
                 request,
@@ -527,6 +550,7 @@ impl ProviderGatewayService {
             },
             Err(_) => return false,
         };
+        self.start_input_queue_worker();
         let service = Arc::downgrade(self);
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_millis(250));
@@ -574,6 +598,7 @@ impl ProviderGatewayService {
                         self.invalidate_recent(&params.conversation.resource.provider_id)?;
                     }
                     provider::ProtocolEvent::EventTurnUpserted { params, .. } => {
+                        if let Some(store)=&self.input_queue { store.observe_turn(&params.turn)?; self.publish_queue_changed(&params.turn.conversation)?; self.queue_wake.notify_one(); }
                         self.invalidate_recent(&params.turn.conversation.provider_id)?;
                     }
                     _ => {}
@@ -602,6 +627,14 @@ impl ProviderGatewayService {
                 previous_state,
             } => {
                 let _ = previous_state;
+                if let Some(store) = &self.input_queue {
+                    for instance in &snapshot.instances {
+                        let provider = gateway_provider(&snapshot, instance).summary;
+                        if provider.runtime.status != gateway::ProviderStatus::Ready {
+                            for route in store.pause_provider(&provider.id)? { self.publish_queue_changed(&route)?; }
+                        }
+                    }
+                }
                 if !gateway_plugin_visible(&snapshot) { return Ok(()); }
                 for instance in &snapshot.instances {
                     let provider = gateway_provider(&snapshot, instance).summary;
@@ -621,6 +654,14 @@ impl ProviderGatewayService {
                 previous_status,
             } => {
                 let _ = previous_status;
+                if let Some(store) = &self.input_queue {
+                    for instance in &snapshot.instances {
+                        let provider = gateway_provider(&snapshot, instance).summary;
+                        if provider.runtime.status != gateway::ProviderStatus::Ready {
+                            for route in store.pause_provider(&provider.id)? { self.publish_queue_changed(&route)?; }
+                        }
+                    }
+                }
                 if !gateway_plugin_visible(&snapshot) { return Ok(()); }
                 self.conversation_state.configure(self.manager.provider_state_paths().map_err(gateway_error)?).map_err(gateway_error)?;
                 self.invalidate_recent(&instance_id)?;
@@ -765,6 +806,7 @@ impl ProviderGatewayService {
             if !gateway_plugin_visible(&snapshot) { continue; }
             for instance in &snapshot.instances {
                 let mut runtime = gateway_provider(&snapshot, instance);
+                self.add_queue_capabilities(&mut runtime.capabilities);
                 if self.conversation_state.path().is_none() {
                     runtime.capabilities.methods.retain(|method| *method != gateway::GatewayCapability::ConversationRecent);
                 }
@@ -912,6 +954,14 @@ impl ProviderGatewayService {
 }
 
 impl ProtocolServer for ProviderGatewayService {
+    fn turn_steer<'a>(&'a self, request:gateway::TurnSteerRequest) -> gateway::ProtocolFuture<'a,gateway::TurnSteerResponse> { Box::pin(self.turn_steer_for_caller_scope(DEFAULT_TURN_SEND_CALLER_SCOPE,request)) }
+    fn conversation_input_queue_get<'a>(&'a self, request:gateway::InputQueueGetRequest) -> gateway::ProtocolFuture<'a,gateway::InputQueueSnapshot> { Box::pin(self.input_queue_get(DEFAULT_TURN_SEND_CALLER_SCOPE,request)) }
+    fn conversation_input_queue_enqueue<'a>(&'a self, request:gateway::InputQueueEnqueueRequest) -> gateway::ProtocolFuture<'a,gateway::InputQueueMutationResponse> { Box::pin(self.input_queue_enqueue(DEFAULT_TURN_SEND_CALLER_SCOPE,request)) }
+    fn conversation_input_queue_withdraw<'a>(&'a self, request:gateway::InputQueueWithdrawRequest) -> gateway::ProtocolFuture<'a,gateway::InputQueueMutationResponse> { Box::pin(self.input_queue_withdraw(DEFAULT_TURN_SEND_CALLER_SCOPE,request)) }
+    fn conversation_input_queue_steer<'a>(&'a self, request:gateway::InputQueueSteerRequest) -> gateway::ProtocolFuture<'a,gateway::InputQueueMutationResponse> { Box::pin(self.input_queue_steer(DEFAULT_TURN_SEND_CALLER_SCOPE,request)) }
+    fn conversation_input_queue_resume<'a>(&'a self, request:gateway::InputQueueResumeRequest) -> gateway::ProtocolFuture<'a,gateway::InputQueueSnapshot> { Box::pin(self.input_queue_resume(DEFAULT_TURN_SEND_CALLER_SCOPE,request)) }
+    fn conversation_input_queue_acknowledge_edit<'a>(&'a self, request:gateway::InputQueueAcknowledgeEditRequest) -> gateway::ProtocolFuture<'a,gateway::InputQueueSnapshot> { Box::pin(self.input_queue_acknowledge_edit(DEFAULT_TURN_SEND_CALLER_SCOPE,request)) }
+
     fn conversation_recent<'a>(
         &'a self, request: gateway::ConversationRecentRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ConversationRecentResponse> {
@@ -1291,6 +1341,7 @@ impl ProtocolServer for ProviderGatewayService {
         &'a self, request: gateway::ConversationReleaseInteractionRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ConversationReleaseInteractionResponse> {
         Box::pin(async move {
+            if let Some(store)=&self.input_queue { for route in store.pause_provider(&request.conversation.provider_id)? { self.publish_queue_changed(&route)?; } }
             let conversation = self.resolve_resource(request.conversation).await?;
             let response = self.manager.conversation_release_interaction(provider::ConversationReleaseInteractionRequest { conversation })
                 .await.map_err(gateway_error)?;
@@ -1453,6 +1504,8 @@ impl ProtocolServer for ProviderGatewayService {
     ) -> gateway::ProtocolFuture<'a, gateway::TurnInterruptResponse> {
         Box::pin(async move {
             ensure_same_gateway_route(&request.conversation, &request.turn)?;
+            let lock=self.input_lock(&request.conversation)?; let _guard=lock.lock().await;
+            if let Some(store)=&self.input_queue { store.pause(&request.conversation)?; self.publish_queue_changed(&request.conversation)?; }
             let conversation = self.resolve_resource(request.conversation).await?;
             let turn = self.resolve_resource(request.turn).await?;
             let response = self
@@ -1696,7 +1749,7 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
                 Some(gateway::GatewayCapability::TurnSend)
             }
             provider::ProviderCapability::UsageQuery => Some(gateway::GatewayCapability::CodepetUsageQuery),
-            provider::ProviderCapability::TurnSteer => None,
+            provider::ProviderCapability::TurnSteer => Some(gateway::GatewayCapability::TurnSteer),
             provider::ProviderCapability::ConversationActiveList
             | provider::ProviderCapability::ConversationUnreadList
             | provider::ProviderCapability::ConversationMarkRead => None,

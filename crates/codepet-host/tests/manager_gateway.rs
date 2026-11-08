@@ -30,6 +30,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[path = "manager_gateway/input_queue.rs"]
+mod input_queue;
 #[path = "manager_gateway/recent.rs"]
 mod recent;
 #[path = "manager_gateway/import.rs"]

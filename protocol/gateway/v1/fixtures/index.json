@@ -172,5 +172,36 @@
     "kind": "type",
     "name": "UsageQueryRequest",
     "valid": false
+  },
+  {
+    "file": "input-queue-enqueue-request.json",
+    "kind": "request",
+    "name": "conversation.inputQueue.enqueue"
+  },
+  {
+    "file": "input-queue-steer-request.json",
+    "kind": "request",
+    "name": "conversation.inputQueue.steer"
+  },
+  {
+    "file": "input-queue-snapshot.json",
+    "kind": "response",
+    "name": "conversation.inputQueue.get"
+  },
+  {
+    "file": "input-queue-changed-event.json",
+    "kind": "event",
+    "name": "conversation.inputQueueChanged"
+  },
+  {
+    "file": "input-queue-steer-missing-revision.json",
+    "kind": "type",
+    "name": "InputQueueSteerRequest",
+    "valid": false
+  },
+  {
+    "file": "turn-steer-request.json",
+    "kind": "request",
+    "name": "turn.steer"
   }
 ]

@@ -573,7 +573,14 @@
         "turn.interrupt",
         "approval.resolve",
         "conversation.recent",
-        "codepet.usage.query"
+        "codepet.usage.query",
+        "turn.steer",
+        "conversation.inputQueue.get",
+        "conversation.inputQueue.enqueue",
+        "conversation.inputQueue.withdraw",
+        "conversation.inputQueue.steer",
+        "conversation.inputQueue.resume",
+        "conversation.inputQueue.acknowledgeEdit"
       ]
     },
     "GatewayCapabilities": {
@@ -1303,6 +1310,328 @@
       },
       "required": [
         "result"
+      ],
+      "additionalProperties": false
+    },
+    "TurnSteerRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "clientRequestId": {
+          "$ref": "../../core/v1/schema.json#/$defs/RequestId"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnInput"
+        }
+      },
+      "required": [
+        "conversation",
+        "turn",
+        "clientRequestId",
+        "capabilityRevision",
+        "input"
+      ],
+      "additionalProperties": false
+    },
+    "TurnSteerResponse": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "additionalProperties": false
+    },
+    "InputQueueItemState": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "dispatching",
+        "steering",
+        "accepted",
+        "blocked",
+        "outcomeUnknown",
+        "withdrawn"
+      ]
+    },
+    "InputQueueWithdrawKind": {
+      "type": "string",
+      "enum": [
+        "edit",
+        "delete"
+      ]
+    },
+    "InputQueueItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "input": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnInput"
+        },
+        "selection": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnSelection"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "$ref": "#/$defs/InputQueueItemState"
+        },
+        "createdAt": {
+          "$ref": "../../core/v1/schema.json#/$defs/TimestampMs"
+        },
+        "targetTurn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "errorCode": {
+          "type": "string",
+          "minLength": 1
+        },
+        "errorMessage": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "sequence",
+        "input",
+        "selection",
+        "capabilityRevision",
+        "state",
+        "createdAt"
+      ],
+      "additionalProperties": false
+    },
+    "InputQueueSnapshot": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InputQueueItem"
+          }
+        },
+        "recoverableEdits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InputQueueItem"
+          }
+        },
+        "snapshotCursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
+        }
+      },
+      "required": [
+        "conversation",
+        "revision",
+        "paused",
+        "items",
+        "recoverableEdits",
+        "snapshotCursor"
+      ],
+      "additionalProperties": false
+    },
+    "InputQueueGetRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": false
+    },
+    "InputQueueEnqueueRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "clientRequestId": {
+          "$ref": "../../core/v1/schema.json#/$defs/RequestId"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnInput"
+        },
+        "selection": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnSelection"
+        }
+      },
+      "required": [
+        "conversation",
+        "clientRequestId",
+        "capabilityRevision",
+        "input",
+        "selection"
+      ],
+      "additionalProperties": false
+    },
+    "InputQueueMutationResponse": {
+      "type": "object",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/InputQueueItem"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "item",
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "InputQueueWithdrawRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "itemId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clientRequestId": {
+          "$ref": "../../core/v1/schema.json#/$defs/RequestId"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "kind": {
+          "$ref": "#/$defs/InputQueueWithdrawKind"
+        }
+      },
+      "required": [
+        "conversation",
+        "itemId",
+        "clientRequestId",
+        "expectedRevision",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "InputQueueSteerRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "itemId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "clientRequestId": {
+          "$ref": "../../core/v1/schema.json#/$defs/RequestId"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "turn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "conversation",
+        "itemId",
+        "clientRequestId",
+        "expectedRevision",
+        "turn",
+        "capabilityRevision"
+      ],
+      "additionalProperties": false
+    },
+    "InputQueueResumeRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "conversation",
+        "expectedRevision"
+      ],
+      "additionalProperties": false
+    },
+    "InputQueueAcknowledgeEditRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "itemId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "conversation",
+        "itemId"
+      ],
+      "additionalProperties": false
+    },
+    "InputQueueChangedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "conversation",
+        "revision"
       ],
       "additionalProperties": false
     }

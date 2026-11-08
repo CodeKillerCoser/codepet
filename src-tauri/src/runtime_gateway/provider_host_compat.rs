@@ -62,7 +62,8 @@ impl CompatProviderGateway {
         event: gateway::ProtocolEvent,
     ) -> Result<Option<compat::ProtocolEvent>, compat::ProtocolError> {
         let mapped = match event {
-            gateway::ProtocolEvent::ProjectChanged { .. }
+            gateway::ProtocolEvent::ConversationInputQueueChanged { .. }
+            | gateway::ProtocolEvent::ProjectChanged { .. }
             | gateway::ProtocolEvent::ConversationRecentChanged { .. }
             | gateway::ProtocolEvent::ProviderChanged { .. }
             | gateway::ProtocolEvent::ConversationActivityChanged { .. }
@@ -474,7 +475,16 @@ fn map_provider(
         .methods
         .iter()
         .filter_map(|method| match method {
-            gateway::GatewayCapability::CodepetUsageQuery => None,
+            // Queue and steer use the canonical Gateway; the legacy bridge has
+            // no matching request or capability contract.
+            gateway::GatewayCapability::CodepetUsageQuery
+            | gateway::GatewayCapability::TurnSteer
+            | gateway::GatewayCapability::ConversationInputQueueGet
+            | gateway::GatewayCapability::ConversationInputQueueEnqueue
+            | gateway::GatewayCapability::ConversationInputQueueWithdraw
+            | gateway::GatewayCapability::ConversationInputQueueSteer
+            | gateway::GatewayCapability::ConversationInputQueueResume
+            | gateway::GatewayCapability::ConversationInputQueueAcknowledgeEdit => None,
             gateway::GatewayCapability::ProjectList
             | gateway::GatewayCapability::ProjectGet
             | gateway::GatewayCapability::ProjectCreate

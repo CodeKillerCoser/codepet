@@ -1537,7 +1537,14 @@ enum GatewayCapability {
   turnInterrupt('turn.interrupt'),
   approvalResolve('approval.resolve'),
   conversationRecent('conversation.recent'),
-  codepetUsageQuery('codepet.usage.query');
+  codepetUsageQuery('codepet.usage.query'),
+  turnSteer('turn.steer'),
+  conversationInputQueueGet('conversation.inputQueue.get'),
+  conversationInputQueueEnqueue('conversation.inputQueue.enqueue'),
+  conversationInputQueueWithdraw('conversation.inputQueue.withdraw'),
+  conversationInputQueueSteer('conversation.inputQueue.steer'),
+  conversationInputQueueResume('conversation.inputQueue.resume'),
+  conversationInputQueueAcknowledgeEdit('conversation.inputQueue.acknowledgeEdit');
 
   const GatewayCapability(this.wireValue);
 
@@ -1548,7 +1555,7 @@ enum GatewayCapability {
     for (final candidate in values) {
       if (candidate.wireValue == wireValue) return candidate;
     }
-    throw ProtocolCodecException(path, 'expected one of: project.list, project.get, project.create, project.update, project.delete, conversation.list, conversation.search, conversation.get, conversation.releaseInteraction, conversation.create, turn.send, turn.interrupt, approval.resolve, conversation.recent, codepet.usage.query');
+    throw ProtocolCodecException(path, 'expected one of: project.list, project.get, project.create, project.update, project.delete, conversation.list, conversation.search, conversation.get, conversation.releaseInteraction, conversation.create, turn.send, turn.interrupt, approval.resolve, conversation.recent, codepet.usage.query, turn.steer, conversation.inputQueue.get, conversation.inputQueue.enqueue, conversation.inputQueue.withdraw, conversation.inputQueue.steer, conversation.inputQueue.resume, conversation.inputQueue.acknowledgeEdit');
   }
 
   String toJson() => wireValue;
@@ -1743,6 +1750,586 @@ final class HandshakeResponse {
 
   @override
   String toString() => 'HandshakeResponse(protocol: $protocol, device: $device, providers: $providers, eventCursor: $eventCursor)';
+}
+
+final class InputQueueAcknowledgeEditRequest {
+  factory InputQueueAcknowledgeEditRequest({
+    required RoutedResourceId conversation,
+    required String itemId,
+  }) {
+    final validatedConversation = conversation;
+    final validatedItemId = _string(itemId, 'InputQueueAcknowledgeEditRequest.itemId', minLength: 1);
+    return InputQueueAcknowledgeEditRequest._(
+      conversation: validatedConversation,
+      itemId: validatedItemId,
+    );
+  }
+
+  InputQueueAcknowledgeEditRequest._({
+    required this.conversation,
+    required this.itemId,
+  });
+
+  final RoutedResourceId conversation;
+  final String itemId;
+
+  factory InputQueueAcknowledgeEditRequest.fromJson(Object? value, {String path = 'InputQueueAcknowledgeEditRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation', 'itemId'}, path);
+    return InputQueueAcknowledgeEditRequest(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      itemId: _string(_required(json, 'itemId', path), '$path.itemId', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+    'itemId': itemId,
+  };
+
+  @override
+  String toString() => 'InputQueueAcknowledgeEditRequest(conversation: $conversation, itemId: $itemId)';
+}
+
+final class InputQueueChangedEvent {
+  factory InputQueueChangedEvent({
+    required RoutedResourceId conversation,
+    required int revision,
+  }) {
+    final validatedConversation = conversation;
+    final validatedRevision = _integer(revision, 'InputQueueChangedEvent.revision', minimum: 0);
+    return InputQueueChangedEvent._(
+      conversation: validatedConversation,
+      revision: validatedRevision,
+    );
+  }
+
+  InputQueueChangedEvent._({
+    required this.conversation,
+    required this.revision,
+  });
+
+  final RoutedResourceId conversation;
+  final int revision;
+
+  factory InputQueueChangedEvent.fromJson(Object? value, {String path = 'InputQueueChangedEvent'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation', 'revision'}, path);
+    return InputQueueChangedEvent(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      revision: _integer(_required(json, 'revision', path), '$path.revision', minimum: 0),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+    'revision': revision,
+  };
+
+  @override
+  String toString() => 'InputQueueChangedEvent(conversation: $conversation, revision: $revision)';
+}
+
+final class InputQueueEnqueueRequest {
+  factory InputQueueEnqueueRequest({
+    required RoutedResourceId conversation,
+    required RequestId clientRequestId,
+    required String capabilityRevision,
+    required TurnInput input,
+    required TurnSelection selection,
+  }) {
+    final validatedConversation = conversation;
+    final validatedClientRequestId = _string(clientRequestId, 'InputQueueEnqueueRequest.clientRequestId', minLength: 1);
+    final validatedCapabilityRevision = _string(capabilityRevision, 'InputQueueEnqueueRequest.capabilityRevision', minLength: 1);
+    final validatedInput = input;
+    final validatedSelection = selection;
+    return InputQueueEnqueueRequest._(
+      conversation: validatedConversation,
+      clientRequestId: validatedClientRequestId,
+      capabilityRevision: validatedCapabilityRevision,
+      input: validatedInput,
+      selection: validatedSelection,
+    );
+  }
+
+  InputQueueEnqueueRequest._({
+    required this.conversation,
+    required this.clientRequestId,
+    required this.capabilityRevision,
+    required this.input,
+    required this.selection,
+  });
+
+  final RoutedResourceId conversation;
+  final RequestId clientRequestId;
+  final String capabilityRevision;
+  final TurnInput input;
+  final TurnSelection selection;
+
+  factory InputQueueEnqueueRequest.fromJson(Object? value, {String path = 'InputQueueEnqueueRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation', 'clientRequestId', 'capabilityRevision', 'input', 'selection'}, path);
+    return InputQueueEnqueueRequest(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      clientRequestId: _string(_required(json, 'clientRequestId', path), '$path.clientRequestId', minLength: 1),
+      capabilityRevision: _string(_required(json, 'capabilityRevision', path), '$path.capabilityRevision', minLength: 1),
+      input: TurnInput.fromJson(_required(json, 'input', path), path: '$path.input'),
+      selection: TurnSelection.fromJson(_required(json, 'selection', path), path: '$path.selection'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+    'clientRequestId': clientRequestId,
+    'capabilityRevision': capabilityRevision,
+    'input': input.toJson(),
+    'selection': selection.toJson(),
+  };
+
+  @override
+  String toString() => 'InputQueueEnqueueRequest(conversation: $conversation, clientRequestId: $clientRequestId, capabilityRevision: $capabilityRevision, input: $input, selection: $selection)';
+}
+
+final class InputQueueGetRequest {
+  factory InputQueueGetRequest({
+    required RoutedResourceId conversation,
+  }) {
+    final validatedConversation = conversation;
+    return InputQueueGetRequest._(
+      conversation: validatedConversation,
+    );
+  }
+
+  InputQueueGetRequest._({
+    required this.conversation,
+  });
+
+  final RoutedResourceId conversation;
+
+  factory InputQueueGetRequest.fromJson(Object? value, {String path = 'InputQueueGetRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation'}, path);
+    return InputQueueGetRequest(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+  };
+
+  @override
+  String toString() => 'InputQueueGetRequest(conversation: $conversation)';
+}
+
+final class InputQueueItem {
+  factory InputQueueItem({
+    required String id,
+    required int sequence,
+    required TurnInput input,
+    required TurnSelection selection,
+    required String capabilityRevision,
+    required InputQueueItemState state,
+    required TimestampMs createdAt,
+    RoutedResourceId? targetTurn,
+    String? errorCode,
+    String? errorMessage,
+  }) {
+    final validatedId = _string(id, 'InputQueueItem.id', minLength: 1);
+    final validatedSequence = _integer(sequence, 'InputQueueItem.sequence', minimum: 0);
+    final validatedInput = input;
+    final validatedSelection = selection;
+    final validatedCapabilityRevision = _string(capabilityRevision, 'InputQueueItem.capabilityRevision', minLength: 1);
+    final validatedState = state;
+    final validatedCreatedAt = _integer(createdAt, 'InputQueueItem.createdAt', minimum: 0, maximum: 9007199254740991);
+    final validatedTargetTurn = targetTurn == null ? null : targetTurn;
+    final validatedErrorCode = errorCode == null ? null : _string(errorCode, 'InputQueueItem.errorCode', minLength: 1);
+    final validatedErrorMessage = errorMessage == null ? null : _string(errorMessage, 'InputQueueItem.errorMessage');
+    return InputQueueItem._(
+      id: validatedId,
+      sequence: validatedSequence,
+      input: validatedInput,
+      selection: validatedSelection,
+      capabilityRevision: validatedCapabilityRevision,
+      state: validatedState,
+      createdAt: validatedCreatedAt,
+      targetTurn: validatedTargetTurn,
+      errorCode: validatedErrorCode,
+      errorMessage: validatedErrorMessage,
+    );
+  }
+
+  InputQueueItem._({
+    required this.id,
+    required this.sequence,
+    required this.input,
+    required this.selection,
+    required this.capabilityRevision,
+    required this.state,
+    required this.createdAt,
+    required this.targetTurn,
+    required this.errorCode,
+    required this.errorMessage,
+  });
+
+  final String id;
+  final int sequence;
+  final TurnInput input;
+  final TurnSelection selection;
+  final String capabilityRevision;
+  final InputQueueItemState state;
+  final TimestampMs createdAt;
+  final RoutedResourceId? targetTurn;
+  final String? errorCode;
+  final String? errorMessage;
+
+  factory InputQueueItem.fromJson(Object? value, {String path = 'InputQueueItem'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'id', 'sequence', 'input', 'selection', 'capabilityRevision', 'state', 'createdAt', 'targetTurn', 'errorCode', 'errorMessage'}, path);
+    return InputQueueItem(
+      id: _string(_required(json, 'id', path), '$path.id', minLength: 1),
+      sequence: _integer(_required(json, 'sequence', path), '$path.sequence', minimum: 0),
+      input: TurnInput.fromJson(_required(json, 'input', path), path: '$path.input'),
+      selection: TurnSelection.fromJson(_required(json, 'selection', path), path: '$path.selection'),
+      capabilityRevision: _string(_required(json, 'capabilityRevision', path), '$path.capabilityRevision', minLength: 1),
+      state: InputQueueItemState.fromJson(_required(json, 'state', path), path: '$path.state'),
+      createdAt: _integer(_required(json, 'createdAt', path), '$path.createdAt', minimum: 0, maximum: 9007199254740991),
+      targetTurn: json.containsKey('targetTurn') && json['targetTurn'] != null ? RoutedResourceId.fromJson(json['targetTurn'], path: '$path.targetTurn') : null,
+      errorCode: json.containsKey('errorCode') && json['errorCode'] != null ? _string(json['errorCode'], '$path.errorCode', minLength: 1) : null,
+      errorMessage: json.containsKey('errorMessage') && json['errorMessage'] != null ? _string(json['errorMessage'], '$path.errorMessage') : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'sequence': sequence,
+    'input': input.toJson(),
+    'selection': selection.toJson(),
+    'capabilityRevision': capabilityRevision,
+    'state': state.toJson(),
+    'createdAt': createdAt,
+    if (targetTurn != null) 'targetTurn': targetTurn!.toJson(),
+    if (errorCode != null) 'errorCode': errorCode!,
+    if (errorMessage != null) 'errorMessage': errorMessage!,
+  };
+
+  @override
+  String toString() => 'InputQueueItem(id: $id, sequence: $sequence, input: $input, selection: $selection, capabilityRevision: $capabilityRevision, state: $state, createdAt: $createdAt, targetTurn: $targetTurn, errorCode: $errorCode, errorMessage: $errorMessage)';
+}
+
+enum InputQueueItemState {
+  queued('queued'),
+  dispatching('dispatching'),
+  steering('steering'),
+  accepted('accepted'),
+  blocked('blocked'),
+  outcomeUnknown('outcomeUnknown'),
+  withdrawn('withdrawn');
+
+  const InputQueueItemState(this.wireValue);
+
+  final String wireValue;
+
+  static InputQueueItemState fromJson(Object? value, {String path = 'InputQueueItemState'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: queued, dispatching, steering, accepted, blocked, outcomeUnknown, withdrawn');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class InputQueueMutationResponse {
+  factory InputQueueMutationResponse({
+    required InputQueueItem item,
+    required int revision,
+  }) {
+    final validatedItem = item;
+    final validatedRevision = _integer(revision, 'InputQueueMutationResponse.revision', minimum: 0);
+    return InputQueueMutationResponse._(
+      item: validatedItem,
+      revision: validatedRevision,
+    );
+  }
+
+  InputQueueMutationResponse._({
+    required this.item,
+    required this.revision,
+  });
+
+  final InputQueueItem item;
+  final int revision;
+
+  factory InputQueueMutationResponse.fromJson(Object? value, {String path = 'InputQueueMutationResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'item', 'revision'}, path);
+    return InputQueueMutationResponse(
+      item: InputQueueItem.fromJson(_required(json, 'item', path), path: '$path.item'),
+      revision: _integer(_required(json, 'revision', path), '$path.revision', minimum: 0),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'item': item.toJson(),
+    'revision': revision,
+  };
+
+  @override
+  String toString() => 'InputQueueMutationResponse(item: $item, revision: $revision)';
+}
+
+final class InputQueueResumeRequest {
+  factory InputQueueResumeRequest({
+    required RoutedResourceId conversation,
+    required int expectedRevision,
+  }) {
+    final validatedConversation = conversation;
+    final validatedExpectedRevision = _integer(expectedRevision, 'InputQueueResumeRequest.expectedRevision', minimum: 0);
+    return InputQueueResumeRequest._(
+      conversation: validatedConversation,
+      expectedRevision: validatedExpectedRevision,
+    );
+  }
+
+  InputQueueResumeRequest._({
+    required this.conversation,
+    required this.expectedRevision,
+  });
+
+  final RoutedResourceId conversation;
+  final int expectedRevision;
+
+  factory InputQueueResumeRequest.fromJson(Object? value, {String path = 'InputQueueResumeRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation', 'expectedRevision'}, path);
+    return InputQueueResumeRequest(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      expectedRevision: _integer(_required(json, 'expectedRevision', path), '$path.expectedRevision', minimum: 0),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+    'expectedRevision': expectedRevision,
+  };
+
+  @override
+  String toString() => 'InputQueueResumeRequest(conversation: $conversation, expectedRevision: $expectedRevision)';
+}
+
+final class InputQueueSnapshot {
+  factory InputQueueSnapshot({
+    required RoutedResourceId conversation,
+    required int revision,
+    required bool paused,
+    required List<InputQueueItem> items,
+    required List<InputQueueItem> recoverableEdits,
+    required EventCursor snapshotCursor,
+  }) {
+    final validatedConversation = conversation;
+    final validatedRevision = _integer(revision, 'InputQueueSnapshot.revision', minimum: 0);
+    final validatedPaused = paused;
+    final validatedItems = _freezeList<InputQueueItem>(items, 'InputQueueSnapshot.items', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedRecoverableEdits = _freezeList<InputQueueItem>(recoverableEdits, 'InputQueueSnapshot.recoverableEdits', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedSnapshotCursor = _string(snapshotCursor, 'InputQueueSnapshot.snapshotCursor', minLength: 1);
+    return InputQueueSnapshot._(
+      conversation: validatedConversation,
+      revision: validatedRevision,
+      paused: validatedPaused,
+      items: validatedItems,
+      recoverableEdits: validatedRecoverableEdits,
+      snapshotCursor: validatedSnapshotCursor,
+    );
+  }
+
+  InputQueueSnapshot._({
+    required this.conversation,
+    required this.revision,
+    required this.paused,
+    required this.items,
+    required this.recoverableEdits,
+    required this.snapshotCursor,
+  });
+
+  final RoutedResourceId conversation;
+  final int revision;
+  final bool paused;
+  final List<InputQueueItem> items;
+  final List<InputQueueItem> recoverableEdits;
+  final EventCursor snapshotCursor;
+
+  factory InputQueueSnapshot.fromJson(Object? value, {String path = 'InputQueueSnapshot'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation', 'revision', 'paused', 'items', 'recoverableEdits', 'snapshotCursor'}, path);
+    return InputQueueSnapshot(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      revision: _integer(_required(json, 'revision', path), '$path.revision', minimum: 0),
+      paused: _boolean(_required(json, 'paused', path), '$path.paused'),
+      items: _decodeList<InputQueueItem>(_required(json, 'items', path), '$path.items', (item, itemPath) => InputQueueItem.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      recoverableEdits: _decodeList<InputQueueItem>(_required(json, 'recoverableEdits', path), '$path.recoverableEdits', (item, itemPath) => InputQueueItem.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      snapshotCursor: _string(_required(json, 'snapshotCursor', path), '$path.snapshotCursor', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+    'revision': revision,
+    'paused': paused,
+    'items': items.map((item) => item.toJson()).toList(growable: false),
+    'recoverableEdits': recoverableEdits.map((item) => item.toJson()).toList(growable: false),
+    'snapshotCursor': snapshotCursor,
+  };
+
+  @override
+  String toString() => 'InputQueueSnapshot(conversation: $conversation, revision: $revision, paused: $paused, items: $items, recoverableEdits: $recoverableEdits, snapshotCursor: $snapshotCursor)';
+}
+
+final class InputQueueSteerRequest {
+  factory InputQueueSteerRequest({
+    required RoutedResourceId conversation,
+    required String itemId,
+    required RequestId clientRequestId,
+    required int expectedRevision,
+    required RoutedResourceId turn,
+    required String capabilityRevision,
+  }) {
+    final validatedConversation = conversation;
+    final validatedItemId = _string(itemId, 'InputQueueSteerRequest.itemId', minLength: 1);
+    final validatedClientRequestId = _string(clientRequestId, 'InputQueueSteerRequest.clientRequestId', minLength: 1);
+    final validatedExpectedRevision = _integer(expectedRevision, 'InputQueueSteerRequest.expectedRevision', minimum: 0);
+    final validatedTurn = turn;
+    final validatedCapabilityRevision = _string(capabilityRevision, 'InputQueueSteerRequest.capabilityRevision', minLength: 1);
+    return InputQueueSteerRequest._(
+      conversation: validatedConversation,
+      itemId: validatedItemId,
+      clientRequestId: validatedClientRequestId,
+      expectedRevision: validatedExpectedRevision,
+      turn: validatedTurn,
+      capabilityRevision: validatedCapabilityRevision,
+    );
+  }
+
+  InputQueueSteerRequest._({
+    required this.conversation,
+    required this.itemId,
+    required this.clientRequestId,
+    required this.expectedRevision,
+    required this.turn,
+    required this.capabilityRevision,
+  });
+
+  final RoutedResourceId conversation;
+  final String itemId;
+  final RequestId clientRequestId;
+  final int expectedRevision;
+  final RoutedResourceId turn;
+  final String capabilityRevision;
+
+  factory InputQueueSteerRequest.fromJson(Object? value, {String path = 'InputQueueSteerRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation', 'itemId', 'clientRequestId', 'expectedRevision', 'turn', 'capabilityRevision'}, path);
+    return InputQueueSteerRequest(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      itemId: _string(_required(json, 'itemId', path), '$path.itemId', minLength: 1),
+      clientRequestId: _string(_required(json, 'clientRequestId', path), '$path.clientRequestId', minLength: 1),
+      expectedRevision: _integer(_required(json, 'expectedRevision', path), '$path.expectedRevision', minimum: 0),
+      turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
+      capabilityRevision: _string(_required(json, 'capabilityRevision', path), '$path.capabilityRevision', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+    'itemId': itemId,
+    'clientRequestId': clientRequestId,
+    'expectedRevision': expectedRevision,
+    'turn': turn.toJson(),
+    'capabilityRevision': capabilityRevision,
+  };
+
+  @override
+  String toString() => 'InputQueueSteerRequest(conversation: $conversation, itemId: $itemId, clientRequestId: $clientRequestId, expectedRevision: $expectedRevision, turn: $turn, capabilityRevision: $capabilityRevision)';
+}
+
+enum InputQueueWithdrawKind {
+  edit('edit'),
+  delete('delete');
+
+  const InputQueueWithdrawKind(this.wireValue);
+
+  final String wireValue;
+
+  static InputQueueWithdrawKind fromJson(Object? value, {String path = 'InputQueueWithdrawKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: edit, delete');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class InputQueueWithdrawRequest {
+  factory InputQueueWithdrawRequest({
+    required RoutedResourceId conversation,
+    required String itemId,
+    required RequestId clientRequestId,
+    required int expectedRevision,
+    required InputQueueWithdrawKind kind,
+  }) {
+    final validatedConversation = conversation;
+    final validatedItemId = _string(itemId, 'InputQueueWithdrawRequest.itemId', minLength: 1);
+    final validatedClientRequestId = _string(clientRequestId, 'InputQueueWithdrawRequest.clientRequestId', minLength: 1);
+    final validatedExpectedRevision = _integer(expectedRevision, 'InputQueueWithdrawRequest.expectedRevision', minimum: 0);
+    final validatedKind = kind;
+    return InputQueueWithdrawRequest._(
+      conversation: validatedConversation,
+      itemId: validatedItemId,
+      clientRequestId: validatedClientRequestId,
+      expectedRevision: validatedExpectedRevision,
+      kind: validatedKind,
+    );
+  }
+
+  InputQueueWithdrawRequest._({
+    required this.conversation,
+    required this.itemId,
+    required this.clientRequestId,
+    required this.expectedRevision,
+    required this.kind,
+  });
+
+  final RoutedResourceId conversation;
+  final String itemId;
+  final RequestId clientRequestId;
+  final int expectedRevision;
+  final InputQueueWithdrawKind kind;
+
+  factory InputQueueWithdrawRequest.fromJson(Object? value, {String path = 'InputQueueWithdrawRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation', 'itemId', 'clientRequestId', 'expectedRevision', 'kind'}, path);
+    return InputQueueWithdrawRequest(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      itemId: _string(_required(json, 'itemId', path), '$path.itemId', minLength: 1),
+      clientRequestId: _string(_required(json, 'clientRequestId', path), '$path.clientRequestId', minLength: 1),
+      expectedRevision: _integer(_required(json, 'expectedRevision', path), '$path.expectedRevision', minimum: 0),
+      kind: InputQueueWithdrawKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+    'itemId': itemId,
+    'clientRequestId': clientRequestId,
+    'expectedRevision': expectedRevision,
+    'kind': kind.toJson(),
+  };
+
+  @override
+  String toString() => 'InputQueueWithdrawRequest(conversation: $conversation, itemId: $itemId, clientRequestId: $clientRequestId, expectedRevision: $expectedRevision, kind: $kind)';
 }
 
 final class PingRequest {
@@ -2949,6 +3536,98 @@ final class TurnSendResponse {
   String toString() => 'TurnSendResponse(accepted: $accepted, turn: $turn, userItem: $userItem, effectiveSelection: $effectiveSelection)';
 }
 
+final class TurnSteerRequest {
+  factory TurnSteerRequest({
+    required RoutedResourceId conversation,
+    required RoutedResourceId turn,
+    required RequestId clientRequestId,
+    required String capabilityRevision,
+    required TurnInput input,
+  }) {
+    final validatedConversation = conversation;
+    final validatedTurn = turn;
+    final validatedClientRequestId = _string(clientRequestId, 'TurnSteerRequest.clientRequestId', minLength: 1);
+    final validatedCapabilityRevision = _string(capabilityRevision, 'TurnSteerRequest.capabilityRevision', minLength: 1);
+    final validatedInput = input;
+    return TurnSteerRequest._(
+      conversation: validatedConversation,
+      turn: validatedTurn,
+      clientRequestId: validatedClientRequestId,
+      capabilityRevision: validatedCapabilityRevision,
+      input: validatedInput,
+    );
+  }
+
+  TurnSteerRequest._({
+    required this.conversation,
+    required this.turn,
+    required this.clientRequestId,
+    required this.capabilityRevision,
+    required this.input,
+  });
+
+  final RoutedResourceId conversation;
+  final RoutedResourceId turn;
+  final RequestId clientRequestId;
+  final String capabilityRevision;
+  final TurnInput input;
+
+  factory TurnSteerRequest.fromJson(Object? value, {String path = 'TurnSteerRequest'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'conversation', 'turn', 'clientRequestId', 'capabilityRevision', 'input'}, path);
+    return TurnSteerRequest(
+      conversation: RoutedResourceId.fromJson(_required(json, 'conversation', path), path: '$path.conversation'),
+      turn: RoutedResourceId.fromJson(_required(json, 'turn', path), path: '$path.turn'),
+      clientRequestId: _string(_required(json, 'clientRequestId', path), '$path.clientRequestId', minLength: 1),
+      capabilityRevision: _string(_required(json, 'capabilityRevision', path), '$path.capabilityRevision', minLength: 1),
+      input: TurnInput.fromJson(_required(json, 'input', path), path: '$path.input'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'conversation': conversation.toJson(),
+    'turn': turn.toJson(),
+    'clientRequestId': clientRequestId,
+    'capabilityRevision': capabilityRevision,
+    'input': input.toJson(),
+  };
+
+  @override
+  String toString() => 'TurnSteerRequest(conversation: $conversation, turn: $turn, clientRequestId: $clientRequestId, capabilityRevision: $capabilityRevision, input: $input)';
+}
+
+final class TurnSteerResponse {
+  factory TurnSteerResponse({
+    required TurnTask turn,
+  }) {
+    final validatedTurn = turn;
+    return TurnSteerResponse._(
+      turn: validatedTurn,
+    );
+  }
+
+  TurnSteerResponse._({
+    required this.turn,
+  });
+
+  final TurnTask turn;
+
+  factory TurnSteerResponse.fromJson(Object? value, {String path = 'TurnSteerResponse'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'turn'}, path);
+    return TurnSteerResponse(
+      turn: TurnTask.fromJson(_required(json, 'turn', path), path: '$path.turn'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'turn': turn.toJson(),
+  };
+
+  @override
+  String toString() => 'TurnSteerResponse(turn: $turn)';
+}
+
 final class TurnUpsertedEvent {
   factory TurnUpsertedEvent({
     required TurnTask turn,
@@ -3062,6 +3741,13 @@ enum ProtocolIdempotency {
 }
 
 enum ProtocolMethod {
+  turnSteer('turn.steer', direction: 'clientToGateway', idempotency: ProtocolIdempotency.nonIdempotent, capability: GatewayCapability.turnSteer, requestType: TurnSteerRequest, responseType: TurnSteerResponse),
+  conversationInputQueueGet('conversation.inputQueue.get', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationInputQueueGet, requestType: InputQueueGetRequest, responseType: InputQueueSnapshot),
+  conversationInputQueueEnqueue('conversation.inputQueue.enqueue', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueEnqueue, requestType: InputQueueEnqueueRequest, responseType: InputQueueMutationResponse),
+  conversationInputQueueWithdraw('conversation.inputQueue.withdraw', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueWithdraw, requestType: InputQueueWithdrawRequest, responseType: InputQueueMutationResponse),
+  conversationInputQueueSteer('conversation.inputQueue.steer', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueSteer, requestType: InputQueueSteerRequest, responseType: InputQueueMutationResponse),
+  conversationInputQueueResume('conversation.inputQueue.resume', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueResume, requestType: InputQueueResumeRequest, responseType: InputQueueSnapshot),
+  conversationInputQueueAcknowledgeEdit('conversation.inputQueue.acknowledgeEdit', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueAcknowledgeEdit, requestType: InputQueueAcknowledgeEditRequest, responseType: InputQueueSnapshot),
   conversationReleaseInteraction('conversation.releaseInteraction', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationReleaseInteraction, requestType: ConversationReleaseInteractionRequest, responseType: ConversationReleaseInteractionResponse),
   conversationRecent('conversation.recent', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationRecent, requestType: ConversationRecentRequest, responseType: ConversationRecentResponse),
   protocolPing('protocol.ping', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: PingRequest, responseType: PingResponse),
@@ -3108,6 +3794,7 @@ enum ProtocolMethod {
 }
 
 enum ProtocolEventName {
+  conversationInputQueueChanged('conversation.inputQueueChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'conversation', payloadType: InputQueueChangedEvent),
   conversationRecentChanged('conversation.recentChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'provider', payloadType: ConversationRecentChangedEvent),
   projectChanged('project.changed', direction: 'gatewayToClient', delivery: 'replayable', scope: 'project', payloadType: ProjectChangedEvent),
   providerChanged('provider.changed', direction: 'gatewayToClient', delivery: 'replayable', scope: 'provider', payloadType: ProviderChangedEvent),
@@ -3140,6 +3827,20 @@ enum ProtocolEventName {
 
 Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
   switch (method) {
+    case ProtocolMethod.turnSteer:
+      return TurnSteerRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueGet:
+      return InputQueueGetRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueEnqueue:
+      return InputQueueEnqueueRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueWithdraw:
+      return InputQueueWithdrawRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueSteer:
+      return InputQueueSteerRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueResume:
+      return InputQueueResumeRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueAcknowledgeEdit:
+      return InputQueueAcknowledgeEditRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationReleaseInteraction:
       return ConversationReleaseInteractionRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationRecent:
@@ -3193,6 +3894,27 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
 
 Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, String path) {
   switch (method) {
+    case ProtocolMethod.turnSteer:
+      if (value is! TurnSteerRequest) throw ProtocolCodecException(path, 'expected TurnSteerRequest');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueGet:
+      if (value is! InputQueueGetRequest) throw ProtocolCodecException(path, 'expected InputQueueGetRequest');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueEnqueue:
+      if (value is! InputQueueEnqueueRequest) throw ProtocolCodecException(path, 'expected InputQueueEnqueueRequest');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueWithdraw:
+      if (value is! InputQueueWithdrawRequest) throw ProtocolCodecException(path, 'expected InputQueueWithdrawRequest');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueSteer:
+      if (value is! InputQueueSteerRequest) throw ProtocolCodecException(path, 'expected InputQueueSteerRequest');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueResume:
+      if (value is! InputQueueResumeRequest) throw ProtocolCodecException(path, 'expected InputQueueResumeRequest');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueAcknowledgeEdit:
+      if (value is! InputQueueAcknowledgeEditRequest) throw ProtocolCodecException(path, 'expected InputQueueAcknowledgeEditRequest');
+      return value.toJson();
     case ProtocolMethod.conversationReleaseInteraction:
       if (value is! ConversationReleaseInteractionRequest) throw ProtocolCodecException(path, 'expected ConversationReleaseInteractionRequest');
       return value.toJson();
@@ -3270,6 +3992,20 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
 
 Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) {
   switch (method) {
+    case ProtocolMethod.turnSteer:
+      return TurnSteerResponse.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueGet:
+      return InputQueueSnapshot.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueEnqueue:
+      return InputQueueMutationResponse.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueWithdraw:
+      return InputQueueMutationResponse.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueSteer:
+      return InputQueueMutationResponse.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueResume:
+      return InputQueueSnapshot.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueAcknowledgeEdit:
+      return InputQueueSnapshot.fromJson(value, path: path);
     case ProtocolMethod.conversationReleaseInteraction:
       return ConversationReleaseInteractionResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationRecent:
@@ -3323,6 +4059,27 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
 
 Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, String path) {
   switch (method) {
+    case ProtocolMethod.turnSteer:
+      if (value is! TurnSteerResponse) throw ProtocolCodecException(path, 'expected TurnSteerResponse');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueGet:
+      if (value is! InputQueueSnapshot) throw ProtocolCodecException(path, 'expected InputQueueSnapshot');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueEnqueue:
+      if (value is! InputQueueMutationResponse) throw ProtocolCodecException(path, 'expected InputQueueMutationResponse');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueWithdraw:
+      if (value is! InputQueueMutationResponse) throw ProtocolCodecException(path, 'expected InputQueueMutationResponse');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueSteer:
+      if (value is! InputQueueMutationResponse) throw ProtocolCodecException(path, 'expected InputQueueMutationResponse');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueResume:
+      if (value is! InputQueueSnapshot) throw ProtocolCodecException(path, 'expected InputQueueSnapshot');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueAcknowledgeEdit:
+      if (value is! InputQueueSnapshot) throw ProtocolCodecException(path, 'expected InputQueueSnapshot');
+      return value.toJson();
     case ProtocolMethod.conversationReleaseInteraction:
       if (value is! ConversationReleaseInteractionResponse) throw ProtocolCodecException(path, 'expected ConversationReleaseInteractionResponse');
       return value.toJson();
@@ -3400,6 +4157,8 @@ Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, 
 
 Object _decodeEventPayload(ProtocolEventName event, Object? value, String path) {
   switch (event) {
+    case ProtocolEventName.conversationInputQueueChanged:
+      return InputQueueChangedEvent.fromJson(value, path: path);
     case ProtocolEventName.conversationRecentChanged:
       return ConversationRecentChangedEvent.fromJson(value, path: path);
     case ProtocolEventName.projectChanged:
@@ -3425,6 +4184,9 @@ Object _decodeEventPayload(ProtocolEventName event, Object? value, String path) 
 
 Map<String, Object?> _encodeEventPayload(ProtocolEventName event, Object value, String path) {
   switch (event) {
+    case ProtocolEventName.conversationInputQueueChanged:
+      if (value is! InputQueueChangedEvent) throw ProtocolCodecException(path, 'expected InputQueueChangedEvent');
+      return value.toJson();
     case ProtocolEventName.conversationRecentChanged:
       if (value is! ConversationRecentChangedEvent) throw ProtocolCodecException(path, 'expected ConversationRecentChangedEvent');
       return value.toJson();
@@ -3601,6 +4363,20 @@ final class ProtocolClient {
       };
     });
   }
+
+  Future<TurnSteerResponse> turnSteer(TurnSteerRequest request) => _request<TurnSteerResponse>(ProtocolMethod.turnSteer, request);
+
+  Future<InputQueueSnapshot> conversationInputQueueGet(InputQueueGetRequest request) => _request<InputQueueSnapshot>(ProtocolMethod.conversationInputQueueGet, request);
+
+  Future<InputQueueMutationResponse> conversationInputQueueEnqueue(InputQueueEnqueueRequest request) => _request<InputQueueMutationResponse>(ProtocolMethod.conversationInputQueueEnqueue, request);
+
+  Future<InputQueueMutationResponse> conversationInputQueueWithdraw(InputQueueWithdrawRequest request) => _request<InputQueueMutationResponse>(ProtocolMethod.conversationInputQueueWithdraw, request);
+
+  Future<InputQueueMutationResponse> conversationInputQueueSteer(InputQueueSteerRequest request) => _request<InputQueueMutationResponse>(ProtocolMethod.conversationInputQueueSteer, request);
+
+  Future<InputQueueSnapshot> conversationInputQueueResume(InputQueueResumeRequest request) => _request<InputQueueSnapshot>(ProtocolMethod.conversationInputQueueResume, request);
+
+  Future<InputQueueSnapshot> conversationInputQueueAcknowledgeEdit(InputQueueAcknowledgeEditRequest request) => _request<InputQueueSnapshot>(ProtocolMethod.conversationInputQueueAcknowledgeEdit, request);
 
   Future<ConversationReleaseInteractionResponse> conversationReleaseInteraction(ConversationReleaseInteractionRequest request) => _request<ConversationReleaseInteractionResponse>(ProtocolMethod.conversationReleaseInteraction, request);
 

@@ -12,7 +12,7 @@
 
 ## 非目标
 
-手机暂不引入 SQLite；任务抽取、任务谱系及其存储不改。完整聊天历史仍由 Harness 提供。本次是存储改造，尚未实现 Gateway Steer、待发消息表、派发器或手机队列 UI。设置仍沿用现有读写服务，本次未增加外部编辑热加载、冲突合并或新配置格式。
+手机暂不引入 SQLite；任务抽取、任务谱系及其存储不改。完整聊天历史仍由 Harness 提供。存储改造自身不包含队列；后续已实现 Gateway Steer、队列关联表、派发器及两端 UI，详见[消息排队与 Steer](../20-product/conversation-input-queue-and-steer.md)。设置仍沿用现有读写服务，本次未增加外部编辑热加载、冲突合并或新配置格式。
 
 ## 现状理解
 
@@ -122,11 +122,11 @@ Host 身份与连接不重复写入每个 Provider 行。TLS 载入继续校验�
 - `cargo test -p codepet-provider-data --manifest-path crates/Cargo.toml --quiet`：35 项通过，包括结构化 schema、并发活动、用量冻结快照。
 - `cargo test -p codepet-host --manifest-path crates/Cargo.toml --quiet -- --test-threads=1`：148 项通过，4 项依赖已安装 Harness、Live VPS 或 Android 的测试按原标记忽略。串行避免全进程 FD 计数测试受其他测试同时创建连接影响。
 - 桌面检查：`TAURI_CONFIG='{"app":{"macOSPrivateApi":false},"bundle":{"resources":[]}}' cargo check --manifest-path src-tauri/Cargo.toml --quiet` 通过。覆盖用于绕过已有 Tauri feature 配置检查与工作区缺失的打包资源，不等价于完整发行构建；未修改产品配置。
-- 未改协议或 UI；未运行新的手机队列、Steer 或 UI 验收。
+- 存储提交本身未改协议或 UI；后续消息队列、Steer 的验证结果见对应功能文档。
 
 ## 知识沉淀
 
-已同步 Path Manager、设置、Provider Host、用量和最近会话文档，新增 [桌面状态存储规约](../60-rules/desktop-state-storage.md)。[队列与 Steer 设计](../20-product/conversation-input-queue-and-steer.md) 保留待实施状态。
+已同步 Path Manager、设置、Provider Host、用量和最近会话文档，新增 [桌面状态存储规约](../60-rules/desktop-state-storage.md)。[队列与 Steer](../20-product/conversation-input-queue-and-steer.md) 另行记录后续实现和验证。
 
 ## 未知项
 
