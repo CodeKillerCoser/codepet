@@ -602,9 +602,8 @@ impl OpenCodeProtocolMapper {
     }
 
     pub(crate) fn execution_error(value: &Value) -> ProtocolError {
-        let original_message = value.get("message").or_else(|| value.pointer("/data/message"))
-            .and_then(Value::as_str).or_else(|| value.as_str()).filter(|s| !s.trim().is_empty())
-            .unwrap_or("OpenCode execution failed without an error message");
+        let readable_message = concise_error_message(value);
+        let original_message = readable_message.as_str();
         // 1.x wraps model API errors in a message string. Extract only the
         // documented error fields, rather than displaying the entire response.
         let legacy = original_message.strip_prefix("Provider request failed with HTTP ")
@@ -855,9 +854,27 @@ fn shell_tool_invocation(message: &OpenCodeMessage) -> ToolInvocation {
     }
 }
 
-fn concise_error_message(value: &Value) -> String {
-    let message = value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string());
-    message.chars().take(512).collect()
+pub(crate) fn concise_error_message(value: &Value) -> String {
+    fn message(value: &Value, depth: u8) -> Option<String> {
+        if depth > 4 { return None; }
+        if let Some(text) = value.as_str() {
+            let text = text.trim();
+            if text.is_empty() { return None; }
+            if let Ok(decoded) = serde_json::from_str::<Value>(text) {
+                if decoded.is_object() || decoded.is_array() {
+                    return message(&decoded, depth + 1);
+                }
+            }
+            return Some(text.to_string());
+        }
+        for key in ["message", "error", "data"] {
+            if let Some(text) = value.get(key).and_then(|v| message(v, depth + 1)) {
+                return Some(text);
+            }
+        }
+        None
+    }
+    message(value, 0).unwrap_or_else(|| "执行失败，服务未提供错误信息。".into())
 }
 
 fn opencode_tool_category(name: &str, command: bool) -> ToolCategory {
@@ -921,6 +938,28 @@ fn tool_status(state: Option<&serde_json::Value>) -> ConversationItemStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn errors_show_only_readable_messages_in_history_and_tools() {
+        let error = serde_json::json!({"message":"Free usage limit reached.",
+            "response":{"body":"raw backend response"},"status":429,"retryAfterMs":100});
+        assert_eq!(concise_error_message(&error), "Free usage limit reached.");
+        assert_eq!(concise_error_message(&serde_json::json!({"data":{"message":"Nested failure"}})), "Nested failure");
+        assert_eq!(concise_error_message(&serde_json::json!({"error":{"message":"Nested error"}})), "Nested error");
+        assert_eq!(concise_error_message(&serde_json::json!(error.to_string())), "Free usage limit reached.");
+        assert_eq!(concise_error_message(&serde_json::json!("plain failure")), "plain failure");
+        assert_eq!(concise_error_message(&serde_json::json!({"message":"", "response":{"body":"private details"}})),
+            "执行失败，服务未提供错误信息。");
+        let mapper = OpenCodeProtocolMapper::new(codepet_provider_sdk::ProviderInstanceRoute {
+            device_id: "device".into(), provider_plugin_id: "opencode".into(), provider_instance_id: "instance".into(),
+        });
+        let mut failed = history_message("failure", "assistant", None, None);
+        failed.error = Some(error);
+        let items = mapper.conversation_items(&mapper.resource("session".into()), &[failed]);
+        let ConversationItem::MessageConversationItem(item) = &items[0] else { panic!() };
+        let ContentBlock::ActivitySummaryContentBlock(content) = &item.contents[0] else { panic!() };
+        assert_eq!(content.text, "Free usage limit reached.");
+    }
 
     fn history_message(
         id: &str,

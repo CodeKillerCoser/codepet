@@ -3048,6 +3048,14 @@ mod tests {
         let Some(codepet_provider_sdk::ConversationItem::MessageConversationItem(item)) = &params.item else { panic!() };
         assert_eq!(item.resource.native_resource_id, "legacy");
         assert_eq!(item.turn, turn.resource);
+        lock(&runtime.mutable).active_turns.get_mut("session").unwrap().assistant_message_id = Some("assistant".into());
+        let events = runtime.map_event("generation", event("session.next.step.failed", json!({
+            "sessionID":"session", "assistantMessageID":"assistant", "timestamp":3,
+            "error":{"message":"Readable failure", "status":429, "response":{"body":"raw"}}
+        }))).unwrap();
+        let ProtocolEvent::EventTurnUpserted { params, .. } = &events[0] else { panic!() };
+        assert_eq!(params.turn.display_summary.as_deref(), Some("Readable failure"));
+
 
     }
 
