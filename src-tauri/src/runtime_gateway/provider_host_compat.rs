@@ -849,6 +849,7 @@ mod tests {
                         started_at: Some(10),
                         updated_at,
                         completed_at: None,
+                        error: None,
                     },
                 },
             },
