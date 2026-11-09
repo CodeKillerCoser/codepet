@@ -6,6 +6,8 @@
 
 ## 行为与实现
 
+当前组件责任以[顶部动效组件边界](../../10-architecture/dock-panel-motion-boundary.md)为准：`DockPanel` 拥有顶部容器、交互和单进度动效，`NotchPet` 通过插槽提供任务业务。下文交付记录中的 `notchMotion.ts`、`panelExpanded` 和 DOM 克隆属于已替换的历史实现。
+
 - `pet/surface/geometry.rs`：整个屏幕顶部都是吸附目标；窗口 frame 从屏幕顶边起，水平居中于保存的位置并限制在屏幕边界。与刘海横向相交时返回摄像头安全区；展开后的实际宽度也参与判断，防止收起未相交而展开遮住文字。黑色背景覆盖安全区，所以视觉上与刘海一体。
 - `pet/surface/mod.rs`：沿顶部拖动保持 docked，离开吸附带后转为 floating，松手进入顶部目标才回吸。靠近刘海中心时自动对齐；Escape 恢复拖动前屏幕、位置与模式。`dockXRatio` 独立保存窗口横向中心，原有角色锚点继续服务悬浮缩放；旧配置缺少此字段时迁移为 0.5，不沿用旧菜单头像位置。
 - `platform/pet_surface.rs`：封装窗口显示/隐藏；删除独立 `pet_menu` 平台模块。窗口等待当前 revision 的测量后显示，避免瞬间出现旧大窗口。

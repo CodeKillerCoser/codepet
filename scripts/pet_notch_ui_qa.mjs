@@ -5,7 +5,7 @@ import { mkdir } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { build, preview } from 'vite';
 const require = createRequire(import.meta.url);
-const { chromium } = require(resolve(process.env.CODEPET_QA_NODE_MODULES, 'playwright'));
+const { chromium } = require(process.env.CODEPET_QA_NODE_MODULES ? resolve(process.env.CODEPET_QA_NODE_MODULES, 'playwright') : 'playwright');
 const output = resolve('artifacts/pet-notch-qa'), outDir = resolve(output, 'site');
 await mkdir(output, { recursive: true });
 await build({ build: { outDir, emptyOutDir: false, rollupOptions: { input: resolve('frontend/qa/pet-module.html') } } });
@@ -36,7 +36,7 @@ try {
   assert.equal(await page.locator('.pet-avatar.portrait').count(), 1);
   assert.equal(await page.locator('.pet-action-rail').count(), 0);
   assert.match(await page.locator('.latest-title').innerText(), /调整顶部/);
-  assert.equal(await page.locator('.notch-task').count(), 0);
+  assert.equal(await page.locator('.dock-body-clip:not([inert]) .notch-task').count(), 0);
   assert.equal(await page.locator('.notch-backdrop').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)');
   assert.ok(await page.evaluate(() => innerWidth <= 200));
   assert.ok(await page.locator('.pet-avatar').evaluate(el => { const frame = el.querySelector('[data-pet-frame]').getBoundingClientRect(), box = el.getBoundingClientRect(); return frame.left >= box.left && frame.right <= box.right && frame.top >= box.top; }));
@@ -49,7 +49,7 @@ try {
   const checkAlignment = () => page.evaluate(() => {
     const rect = el => el.getBoundingClientRect(), center = el => { const r = rect(el); return r.top + r.height / 2; };
     const panel = document.querySelector('.notch-panel'), css = getComputedStyle(panel);
-    const avatar = document.querySelector('.notch-heading .pet-avatar');
+    const avatar = document.querySelector('.dock-leading .pet-avatar');
     const headerAligned = Math.abs(center(avatar) - center(document.querySelector('.notch-summary'))) < 1;
     const rows = [...document.querySelectorAll('.notch-task:not([aria-hidden="true"])')];
     return {
@@ -62,7 +62,7 @@ try {
       actionsInside: rows.every(row => rect(row.querySelector('.dismiss-task')).right <= rect(row.querySelector('.task-content')).right + 1),
     };
   });
-  assert.deepEqual(await checkAlignment(), { padding: ['0px', '12px', '12px', '12px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
+  assert.deepEqual(await checkAlignment(), { padding: ['0px', '0px', '0px', '0px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
   assert.equal(await page.locator('.provider-badge').count(), 2);
   assert.deepEqual(await page.locator('.task-state').allTextContents(), ['进行中', '等待输入', '本轮结束']);
   assert.equal(await page.locator('time[title^="最近更新："]').count(), 3);
@@ -77,11 +77,11 @@ try {
   await page.waitForTimeout(300); assert.equal(await page.locator('.notch-task').count(), 3);
   await page.mouse.move(-20, -20); await page.waitForFunction(() => innerHeight === 24);
   // Keyboard entry opens the same panel; Escape returns focus to the bar.
-  await page.keyboard.press('Tab'); await page.waitForSelector('.notch-details');
+  await page.keyboard.press('Tab'); await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
   await page.getByRole('button', { name: '打开主窗口', exact: true }).focus();
   await page.keyboard.press('Escape'); await page.waitForFunction(() => innerHeight === 24);
   assert.equal(await page.getByRole('button', { name: '展开任务面板', exact: true }).evaluate(el => el === document.activeElement), true);
-  await page.keyboard.press('Enter'); await page.waitForSelector('.notch-details');
+  await page.keyboard.press('Enter'); await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
   await page.waitForFunction(() => !document.querySelector('[data-morphing]'));
   assert.equal(await page.locator('.notch-summary').evaluate(el => el === document.activeElement), true, 'native resize preparation must preserve keyboard focus');
   await page.getByRole('button', { name: '隐藏 完成窗口尺寸回归检查', exact: true }).click();
@@ -115,6 +115,7 @@ try {
   assert.ok(await page.locator('.notch-task-list').evaluate(el => el.scrollHeight > el.clientHeight));
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && innerHeight <= 340));
   assert.ok(await page.locator('.task-progress').first().innerText() === '尚未收到回复内容');
+  await page.waitForFunction(() => !document.querySelector('[data-morphing]'));
   const headerTop = await page.locator('.notch-header').evaluate(el => el.getBoundingClientRect().top);
   await page.locator('.notch-task-list').evaluate(el => { el.scrollTop = el.scrollHeight; });
   assert.equal(await page.locator('.notch-header').evaluate(el => el.getBoundingClientRect().top), headerTop, 'activity bar must remain fixed while tasks scroll');
@@ -138,7 +139,7 @@ try {
     await page.waitForFunction(w => innerWidth === Math.round(Math.min(640, Math.max(340, 440 * Math.sqrt(w / 1440)))), width);
     await page.keyboard.press('Tab');
     assert.ok(await page.evaluate(h => innerHeight <= Math.min(h, 440) + 1, height));
-    await page.waitForFunction(() => !document.querySelector('main:not([data-motion-ghost]) [data-morphing]'));
+    await page.waitForFunction(() => !document.querySelector('main [data-morphing]'));
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     const expandedSize = await page.evaluate(() => [innerWidth, innerHeight]);
     await page.screenshot({ path: resolve(output, `screen-${width}-expanded.png`) });
@@ -159,7 +160,7 @@ try {
   // One UI on every screen; only the camera clearance changes.
   await page.evaluate(() => { const q = window.__petQa; q.surface = { ...q.surface, physicalNotch: false, topInset: 0 }; q.finishDrag(true); });
   await page.locator('.notch-header').hover();
-  await page.waitForSelector('.notch-details');
+  await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
   await page.keyboard.press('Tab');
   await page.locator('.notch-task-list').focus();
   const corners = () => page.locator('.notch-panel').evaluate(el => {
@@ -175,7 +176,7 @@ try {
   assert.ok(await page.locator('.notch-header').evaluate(el => el.getBoundingClientRect().top >= 32));
   await page.screenshot({ path: resolve(output, 'notch-fused-expanded.png') });
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => !document.querySelector('.notch-details'));
+  await page.waitForFunction(() => !document.querySelector('.dock-body-clip:not([inert]) .notch-details'));
   await page.waitForFunction(() => innerHeight === 58);
   await page.screenshot({ path: resolve(output, 'notch-fused-collapsed.png') });
   // Moving out of the notch removes the safe inset, not the shoulder corners.
@@ -184,7 +185,7 @@ try {
   assert.deepEqual(await corners(), ['0px', '0px', '8px', '8px', '\"\"', '\"\"']);
   await page.mouse.move(-20, -20);
   await page.locator('.notch-header').hover();
-  await page.waitForSelector('.notch-details');
+  await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
   await page.keyboard.press('Tab');
   await page.locator('.notch-task-list').focus();
   // Completed history stays below live/approval tasks even when it is newer.
@@ -204,7 +205,7 @@ try {
   assert.equal(await completedToggle.getAttribute('aria-expanded'), 'false');
   assert.deepEqual(await page.locator('.notch-task:not([aria-hidden="true"]) h3').allTextContents(), ['当前进行中的任务', '需要授权的任务', '需要检查的失败任务', '已完成任务 1']);
   assert.equal(await page.locator('#notch-completed-codex .notch-task[inert]').count(), 2);
-  assert.deepEqual(await checkAlignment(), { padding: ['0px', '12px', '12px', '12px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
+  assert.deepEqual(await checkAlignment(), { padding: ['0px', '0px', '0px', '0px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
   await page.waitForTimeout(200);
   await page.screenshot({ path: resolve(output, 'completed-stacked.png') });
   await page.evaluate(() => { window.__petQa.surface.availableWidth = 280; window.__petQa.finishDrag(true); });
@@ -274,7 +275,7 @@ try {
       return Math.abs(box.left - column.left) < 1 && Math.abs(box.right - column.right) < 1;
     });
   }), 'expanded task content must fill the whole shared right column');
-  assert.deepEqual(await checkAlignment(), { padding: ['0px', '12px', '12px', '12px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
+  assert.deepEqual(await checkAlignment(), { padding: ['0px', '0px', '0px', '0px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
   assert.ok(await page.locator('#notch-completed-codex').evaluate(group => {
     const icon = group.querySelector('.group-icon').getBoundingClientRect();
     const heading = group.querySelector('h3').getBoundingClientRect();
@@ -329,46 +330,46 @@ try {
     Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false });
     window.__petQa.cursorScreen = null; window.__petQa.cursor = { x: -20, y: -20 };
   });
-  await page.waitForFunction(() => !document.querySelector('.notch-details'));
+  await page.waitForFunction(() => !document.querySelector('.dock-body-clip:not([inert]) .notch-details'));
   await page.evaluate(() => { const q=window.__petQa; q.cursorScreen = { x: q.native.position.x / q.native.scale + innerWidth / 2, y: q.native.position.y / q.native.scale + 12 }; });
-  await page.waitForSelector('.notch-details');
+  await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
   assert.equal(await page.evaluate(() => document.hasFocus()), false);
   assert.equal(await page.evaluate(() => window.__petQa.ignored), false);
   assert.equal(await page.evaluate(() => document.activeElement === document.body), true, 'background hover must not take keyboard focus');
   await page.locator('.notch-summary').focus();
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => !document.querySelector('.notch-details'));
+  await page.waitForFunction(() => !document.querySelector('.dock-body-clip:not([inert]) .notch-details'));
   await page.waitForTimeout(360);
-  assert.equal(await page.locator('.notch-details').count(), 0, 'background polling must respect Escape until the pointer leaves');
+  assert.equal(await page.locator('.dock-body-clip:not([inert]) .notch-details').count(), 0, 'background polling must respect Escape until the pointer leaves');
   await page.evaluate(() => { window.__petQa.cursorScreen = null; window.__petQa.cursor = { x: -20, y: -20 }; });
   await page.waitForFunction(() => window.__petQa.ignored);
   await page.evaluate(() => { const q=window.__petQa; q.cursorScreen = { x: q.native.position.x / q.native.scale + innerWidth / 2, y: q.native.position.y / q.native.scale + 12 }; });
-  await page.waitForSelector('.notch-details');
+  await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
   await page.evaluate(() => { document.activeElement?.blur(); window.__petQa.cursorScreen = null; window.__petQa.cursor = { x: -20, y: -20 }; });
-  await page.waitForFunction(() => !document.querySelector('.notch-details'));
+  await page.waitForFunction(() => !document.querySelector('.dock-body-clip:not([inert]) .notch-details'));
   await page.evaluate(() => { delete document.hasFocus; });
   // Hover dwell, press-before-open, and both horizontal drag presentations.
   await page.evaluate(() => { const q = window.__petQa; q.manualDrag = true; q.dragAlongTop = true; document.activeElement?.blur(); });
   await page.mouse.move(-20, -20);
-  await page.waitForFunction(() => !document.querySelector('.notch-details'));
+  await page.waitForFunction(() => !document.querySelector('.dock-body-clip:not([inert]) .notch-details'));
   const header = page.locator('.notch-panel');
   await header.dispatchEvent('mouseenter');
-  assert.equal(await page.locator('.notch-details').count(), 0, 'hover must not expand immediately');
+  assert.equal(await page.locator('.dock-body-clip:not([inert]) .notch-details').count(), 0, 'hover must not expand immediately');
   await header.dispatchEvent('mouseleave');
   await page.waitForTimeout(300);
-  assert.equal(await page.locator('.notch-details').count(), 0, 'brief hover must cancel expansion');
+  assert.equal(await page.locator('.dock-body-clip:not([inert]) .notch-details').count(), 0, 'brief hover must cancel expansion');
   const smallAvatar = await page.locator('.pet-avatar').boundingBox();
   const smallX = smallAvatar.x + smallAvatar.width / 2, smallY = smallAvatar.y + smallAvatar.height / 2;
   await page.mouse.move(smallX, smallY); await page.mouse.down();
   await page.mouse.move(smallX + 12, smallY);
   await page.waitForFunction(() => window.__petQa.surface.dragging);
   await page.waitForTimeout(360);
-  assert.equal(await page.locator('.notch-details').count(), 0, 'drag begun before dwell must remain collapsed');
+  assert.equal(await page.locator('.dock-body-clip:not([inert]) .notch-details').count(), 0, 'drag begun before dwell must remain collapsed');
   await page.mouse.up(); await page.evaluate(() => window.__petQa.finishDrag(true));
   await page.waitForTimeout(300);
-  assert.equal(await page.locator('.notch-details').count(), 0, 'release must not resurrect the cancelled dwell');
+  assert.equal(await page.locator('.dock-body-clip:not([inert]) .notch-details').count(), 0, 'release must not resurrect the cancelled dwell');
   await page.mouse.move(-20, -20); await page.locator('.notch-header').hover();
-  await page.waitForSelector('.notch-details');
+  await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
   assert.equal(await header.evaluate(el => getComputedStyle(el).animationName), 'none');
   await page.waitForTimeout(300);
   const largeAvatar = await page.locator('.pet-avatar').boundingBox();
@@ -377,12 +378,12 @@ try {
   await page.mouse.move(largeX, largeY); await page.mouse.down(); await page.mouse.move(largeX + 12, largeY);
   await page.waitForFunction(() => window.__petQa.surface.dragging);
   await page.mouse.move(-20, -20); await page.waitForTimeout(360);
-  assert.equal(await page.locator('.notch-details').count(), 1, 'expanded drag must ignore mouseleave and close timer');
+  assert.equal(await page.locator('.dock-body-clip:not([inert]) .notch-details').count(), 1, 'expanded drag must ignore mouseleave and close timer');
   assert.equal(await page.evaluate(() => innerHeight), expandedHeight);
   await page.mouse.move(largeX, largeY); await page.mouse.up();
   await page.evaluate(() => window.__petQa.finishDrag(true));
   await page.waitForTimeout(300);
-  assert.equal(await page.locator('.notch-details').count(), 1, 'horizontal drag release keeps expanded layout');
+  assert.equal(await page.locator('.dock-body-clip:not([inert]) .notch-details').count(), 1, 'horizontal drag release keeps expanded layout');
   // Titles, status, action buttons, and padded header space all share the drag region.
   for (const selector of ['.latest-title', '.latest-status', '.panel-actions button:first-child', '[data-pet-drag-region]']) {
     const box = await page.locator(selector).boundingBox();
@@ -392,15 +393,15 @@ try {
     await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 6, y);
     await page.waitForFunction(n => window.__petQa.drags > n, before);
     await page.mouse.up(); await page.evaluate(() => window.__petQa.finishDrag(true));
-    assert.equal(await page.locator('.notch-details').count(), 1, `dragging ${selector} must not trigger its click action`);
+    assert.equal(await page.locator('.dock-body-clip:not([inert]) .notch-details').count(), 1, `dragging ${selector} must not trigger its click action`);
     assert.equal(await page.locator('.pet-stage').count(), 0);
   }
   // Keep the header nodes alive; only the backdrop and details may be animated/clipped.
   await page.evaluate(() => { window.__stableHeader = ['.pet-avatar', '.latest-title', '.latest-status'].map(s => document.querySelector(s)); });
   await page.getByRole('button', { name: '收起任务面板', exact: true }).click();
-  await page.waitForFunction(() => !document.querySelector('.notch-details'));
+  await page.waitForFunction(() => !document.querySelector('.dock-body-clip:not([inert]) .notch-details'));
   await page.getByRole('button', { name: '展开任务面板', exact: true }).click();
-  await page.waitForSelector('.notch-details');
+  await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
   assert.equal(await page.evaluate(() => window.__stableHeader.every(el => el.isConnected)), true);
   assert.deepEqual(await header.evaluate(el => { const s = getComputedStyle(el); return [s.animationName, s.clipPath, s.opacity]; }), ['none', 'none', '1']);
   assert.equal(await page.locator('.notch-header').evaluate(el => getComputedStyle(el).opacity), '1');

@@ -183,7 +183,7 @@ fn main() {
                       Object.defineProperty(document, 'hasFocus', { configurable:true, value:()=>true });
                       let iteration = 0;
                       setInterval(() => {
-                        const panel = document.querySelector('main:not([data-motion-ghost]) .notch-panel');
+                        const panel = document.querySelector('main .notch-panel');
                         panel.dispatchEvent(new MouseEvent('mouseenter'));
                         panel.querySelector('.notch-summary').click();
                         const delay = [null, 110, 1][iteration++ % 3];

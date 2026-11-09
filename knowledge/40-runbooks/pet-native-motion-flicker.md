@@ -12,6 +12,8 @@
 
 ## 修复及模块
 
+以下记录原生覆盖窗口方案的引入过程。当前前端已改为 `DockPanel.svelte` 与私有 `dockPanelMotion.ts`，删除 `notchMotion.ts`、逐业务节点动画和 DOM 克隆；原生 begin/end 协议不变。当前边界、验证命令和内容更新回归见[组件决策](../10-architecture/dock-panel-motion-boundary.md)。
+
 - `PetApp.svelte`：状态机输入立即更新，只有面板尺寸的显示等待动画交接；不得把整个旧 Presentation 延迟回写。完整 UI QA 曾检出 Escape 后背景 hover 重新展开，因排队动画覆盖了新 hovered/focused 状态，分离后需重跑该回归。
 - `notchMotion.ts`、`NotchPet.svelte`：去掉顶栏动态 clip；共享元素保留原字号/图像大小，以 left/top 与背景一起绘制。新建动画先暂停，原生完成交接后播放；收起先完成动效再缩窗。取消和反向从当前可见状态接续；原生尺寸交接期间合并到最近一次请求，不能中途采样新旧坐标。
 - `platform/pet_surface/macos_frame.rs`：WKSnapshot 的 afterScreenUpdates 获取旧画面，在独立、不可交互、无边框的原生覆盖窗口中保留；临时隐藏原窗口 alpha 后调整 frame，快照窗口不参与 resize。新布局快照完成后恢复实时内容、移除覆盖。token 防旧回调移除新覆盖，失败/超时恢复可见性。纯移动时覆盖随窗口移动。

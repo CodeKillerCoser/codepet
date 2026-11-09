@@ -5,14 +5,14 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { build, preview } from 'vite';
 const require = createRequire(import.meta.url);
-const { chromium } = require(resolve(process.env.CODEPET_QA_NODE_MODULES, 'playwright'));
+const { chromium } = require(process.env.CODEPET_QA_NODE_MODULES ? resolve(process.env.CODEPET_QA_NODE_MODULES, 'playwright') : 'playwright');
 const output = resolve('artifacts/pet-motion-qa'), outDir = resolve(output, 'site');
 await mkdir(output, { recursive: true });
 await build({ build: { outDir, emptyOutDir: false, rollupOptions: { input: resolve('frontend/qa/pet-module.html') } } });
 const server = await preview({ build: { outDir }, preview: { host: '127.0.0.1', port: 1436, strictPort: true } });
 let browser;
 try {
-  browser = await chromium.launch({ channel: 'chrome', headless: true });
+  browser = await chromium.launch({ channel: process.env.CODEPET_QA_BROWSER ?? 'chrome', headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.setDefaultTimeout(15000);
   const errors = []; page.on('pageerror', e => errors.push(e.message));
@@ -68,13 +68,13 @@ try {
         return {x:x+r.x,y:r.y,w:r.width,h:r.height,opacity:s.opacity,clip:s.clipPath};
       };
       const sample=()=>{
-        const live=document.querySelector('main:not([data-motion-ghost])'), content=live.querySelector('.pet-content');
-        const visual=content.hasAttribute('data-motion-preparing') ? document.querySelector('[data-motion-ghost]')||live : live;
-        frames.push({timestamp:(performance.timeOrigin+performance.now())/1000,t:performance.now()-started, viewport:[innerWidth,innerHeight], preparing:content.hasAttribute('data-motion-preparing'),
+        const live=document.querySelector('main'), content=live.querySelector('[data-dock-frame]');
+        const visual=live;
+        frames.push({timestamp:(performance.timeOrigin+performance.now())/1000,t:performance.now()-started, viewport:[innerWidth,innerHeight], progress:Number(getComputedStyle(content).getPropertyValue('--dock-progress')),
           morphing:content.hasAttribute('data-morphing'), background:read(visual.querySelector('.notch-backdrop')), avatar:read(visual.querySelector('.pet-avatar')),title:read(visual.querySelector('.latest-title'))});
       };
       sample();
-      const live=document.querySelector('main:not([data-motion-ghost])');
+      const live=document.querySelector('main');
       live.querySelector('.notch-panel').dispatchEvent(new MouseEvent('mouseenter'));
       if(live.querySelector('.notch-summary').getAttribute('aria-expanded')!==String(expanded)) live.querySelector('.notch-summary').click();
       if(reverse)setTimeout(()=>live.querySelector('.notch-summary')?.click(),reverse);
@@ -90,7 +90,32 @@ try {
     results.push({name,frames:frames.length,maxStep,maxFrameStep,avatarSizeSpread:Math.max(...widths)-Math.min(...widths),deltas,first:frames[0],last:frames.at(-1)});
     console.log(name,JSON.stringify({frames:frames.length,maxStep,maxFrameStep,avatarSizeSpread:Math.max(...widths)-Math.min(...widths)}));
   }
-  await writeFile(resolve(output,'report.json'),JSON.stringify({results,screenshots,errors},null,2));
+  // Deliver a real gateway update while the production component is expanding.
+  // The list and header must survive, and its new natural height must be measured.
+  await page.evaluate(() => {
+    const q = window.__petQa;
+    window.__stableDockNodes = ['.notch-summary','.notch-details','.latest-title','.pet-avatar'].map(s => document.querySelector(s));
+    q.beforeSnapshot = async () => {
+      q.beforeSnapshot = null;
+      document.querySelector('.notch-summary').click();
+      await new Promise(resolve => setTimeout(resolve, 80));
+      window.__updatedDuringMotion = !!document.querySelector('[data-morphing]');
+      q.tasks = Array.from({length: 8}, (_, i) => ({id: `updated-${i}`, title: `动画期间更新任务 ${i}`, summary: '新增内容第一行\n新增内容第二行', status: 'running', providerId: 'codex', updatedAt: Date.now() - i}));
+    };
+  });
+  await page.waitForFunction(() => document.querySelector('.latest-title')?.textContent.includes('动画期间'));
+  await page.waitForFunction(() => !document.querySelector('[data-morphing]') && innerHeight > 300);
+  assert.equal(await page.evaluate(() => window.__updatedDuringMotion), true);
+  assert.equal(await page.evaluate(() => window.__stableDockNodes.every(node => node.isConnected)), true);
+  assert.equal(await page.locator('.notch-task').count(), 8);
+  assert.ok(await page.locator('.notch-task-list').evaluate(node => node.scrollHeight > node.clientHeight));
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  await page.screenshot({path: resolve(output, 'content-updated.png')});
+  await page.locator('.notch-summary').evaluate(node => node.click());
+  await page.waitForFunction(() => document.querySelector('[data-dock-frame]')?.getAttribute('data-phase') === 'closed');
+  assert.equal(await page.evaluate(() => window.__stableDockNodes.every(node => node.isConnected)), true);
+  assert.equal(await page.locator('.dock-body-clip').getAttribute('inert'), '');
+  await writeFile(resolve(output,'report.json'),JSON.stringify({results,screenshots,contentUpdate: 'passed',errors},null,2));
   assert.deepEqual(errors,[]);
   for(const r of results){
     assert.ok(r.maxFrameStep<45,`${r.name}: discontinuous screen-space movement ${r.maxStep}px`);

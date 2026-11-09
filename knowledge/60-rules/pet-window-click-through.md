@@ -81,4 +81,6 @@ NSStatusItem 插入或恢复显示时可能暂时位于零坐标，并重建鼠�
 
 浏览器截图、WebView rAF 和 AppKit frame 采样均不能单独证明原生合成无闪烁。涉及 native resize 的动效，必须连续捕获真实 macOS 窗口像素，包含扩容前后、收缩末帧和反向。截图工具若在点击完成后才返回，不能据此声称覆盖了动画起点；使用隔离 native fixture 自主触发动画，CUA 同步连续读屏。保留失败基线以验证检测器确实能发现空白/裁切/偏移。不要在同一共享元素动效混用 compositor transform 和 layout 宽高时钟；图像快照只用于尺寸交接，不能长期替代可交互 WebView。参见 [原生动效排查](../40-runbooks/pet-native-motion-flicker.md)。
 
-动画只能延迟视觉状态，不能延迟回写整个交互状态机快照；hover、focus、Escape 和拖动输入必须立即生效，否则排队动画会覆盖后续输入并把刚收起的面板重新打开。`PetApp` 的 `panelExpanded` 只控制渲染尺寸，`presentation` 始终是最新输入状态。用后台 hover → focus → Escape → 保持鼠标不动的完整 UI 回归验证。
+动画只能延迟视觉状态，不能延迟回写整个交互状态机快照；hover、focus、Escape 和拖动输入必须立即生效，否则排队动画会覆盖后续输入并把刚收起的面板重新打开。`DockPanel` 的状态机保持最新输入，私有动效驱动只维护呈现进度。用后台 hover → focus → Escape → 保持鼠标不动的完整 UI 回归验证。
+
+顶部动效只能访问组件拥有的容器，禁止查询任务标题/Provider 等业务后代或克隆业务 DOM；正文与顶栏节点在展开收起之间保持挂载，关闭正文退出键盘和鼠标交互。内容尺寸变化合并测量，不能逐帧写原生窗口；真实指针移动与几何变化合成的 enter/leave 要分开，避免收缩后重新打开。任务 UI 变更运行 `npm run test:pet`、`npm run test:pet:ui`、`npm run test:pet:motion`，来源及取舍见[顶部动效组件边界](../10-architecture/dock-panel-motion-boundary.md)。

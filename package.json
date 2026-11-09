@@ -27,7 +27,10 @@
     "protocol:test": "node --test tools/protocol-codegen/test.mjs",
     "protocol:check": "node tools/protocol-codegen/generate.mjs --check && node --test tools/protocol-codegen/test.mjs",
     "sdkgen:build": "bun build tools/cp-sdk-gen/cp-sdk-gen.mjs --compile --outfile tools/cp-sdk-gen/dist/cp-sdk-gen",
-    "sdkgen:test": "bun test tools/cp-sdk-gen/cp-sdk-gen.test.mjs"
+    "sdkgen:test": "bun test tools/cp-sdk-gen/cp-sdk-gen.test.mjs",
+    "test:pet": "vitest run frontend/lib/pet",
+    "test:pet:ui": "node scripts/pet_notch_ui_qa.mjs",
+    "test:pet:motion": "node scripts/pet_motion_ui_qa.mjs"
   },
   "dependencies": {
     "@lucide/svelte": "^1.16.0",
@@ -43,6 +46,7 @@
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tauri-apps/cli": "^2.0.0",
     "jsdom": "^30.0.1",
+    "playwright": "1.65.0",
     "typescript": "^5.6.0",
     "vite": "^6.0.0",
     "vitest": "^2.1.0"

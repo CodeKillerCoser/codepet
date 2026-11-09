@@ -49,6 +49,7 @@ const qa = {
   drags: 0,
   hit: (x: number, y: number) => isPointOnOpaquePetImage(document.querySelector(".pet-window")!, { x, y }),
   updateSettings: () => {},
+  beforeSnapshot: null as (() => Promise<void>) | null,
 };
 (window as any).__petQa = qa;
 const listeners = new Map<string, number>();
@@ -65,6 +66,7 @@ mockIPC((command, args: any) => {
   if (command === "get_app_settings") return qa.settings;
   if (command === "pet_gateway_request") {
     const request = args.request;
+    if (qa.beforeSnapshot) return qa.beforeSnapshot().then(() => ({ ...request, response: { status: 'ok', result: { snapshot: { tasks: qa.tasks, sources: [] } } } }));
     return { ...request, response: { status: "ok", result: { snapshot: { tasks: qa.tasks, sources: [] } } } };
   }
   if (command === "plugin:event|listen") { listeners.set(args.event, args.handler); return args.handler; }
