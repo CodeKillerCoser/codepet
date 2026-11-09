@@ -54,6 +54,8 @@ pub fn configure_pet_overlay_window(app: &AppHandle) -> Result<(), String> {
     panel.set_floating_panel(true);
     panel.set_hides_on_deactivate(false);
     panel.set_works_when_modal(true);
+    // The overlay must handle pointer movement even when another app owns focus.
+    panel.set_accepts_mouse_moved_events(true);
     panel.set_has_shadow(false);
     panel.set_transparent(true);
     panel.set_style_mask(pet_overlay_style_mask());

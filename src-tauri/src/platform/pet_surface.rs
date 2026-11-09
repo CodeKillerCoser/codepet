@@ -2,6 +2,22 @@
 //! macOS uses AppKit points (not Tauri physical coordinates); other platforms use pixels.
 use crate::pet::surface::geometry::{Display, Point, Rect};
 use tauri::AppHandle;
+#[cfg(target_os = "macos")]
+#[path = "pet_surface/macos_frame.rs"]
+mod macos_frame;
+
+pub async fn begin_frame(app: AppHandle) -> Result<u64, String> {
+    #[cfg(target_os = "macos")]
+    { macos_frame::begin(app).await }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = app; Ok(0) }
+}
+pub async fn end_frame(app: AppHandle, token: u64, abort: bool) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    { macos_frame::end(app, token, abort).await }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = (app, token, abort); Ok(()) }
+}
 
 pub struct Environment {
     pub displays: Vec<Display>,
@@ -184,6 +200,17 @@ mod implementation {
             }
         });
     }
+    pub fn show(app: &AppHandle, visible: bool) -> Result<(), String> {
+        let panel = app.get_webview_panel("pet").map_err(|e| format!("{e:?}"))?;
+        if visible {
+            if !panel.as_panel().isVisible() {
+                panel.show();
+            }
+        } else if panel.as_panel().isVisible() {
+            panel.hide();
+        }
+        Ok(())
+    }
     pub fn apply(app: &AppHandle, frame: Rect, elevated: bool) -> Result<(), String> {
         let panel = app.get_webview_panel("pet").map_err(|e| format!("{e:?}"))?;
         let ns = panel.as_panel();
@@ -193,7 +220,14 @@ mod implementation {
             NSSize::new(frame.width, frame.height),
         );
         if ns.frame() != next {
+            // WindowServer frame and the snapshot view must be committed atomically.
+            use tauri_nspanel::objc2_app_kit::NSAnimationContext;
+            NSAnimationContext::beginGrouping();
+            NSAnimationContext::currentContext().setDuration(0.);
+            NSAnimationContext::currentContext().setAllowsImplicitAnimation(false);
+            super::macos_frame::reposition(rect(ns.frame()), frame);
             ns.setFrame_display(next, true);
+            NSAnimationContext::endGrouping();
         }
         Ok(())
     }
@@ -259,6 +293,12 @@ mod implementation {
             cancel: false,
         })
     }
+    pub fn show(app: &AppHandle, visible: bool) -> Result<(), String> {
+        let w = app
+            .get_webview_window("pet")
+            .ok_or("pet window unavailable")?;
+        if visible { w.show() } else { w.hide() }.map_err(|e| e.to_string())
+    }
     pub fn apply(app: &AppHandle, frame: Rect, _elevated: bool) -> Result<(), String> {
         let w = app
             .get_webview_window("pet")
@@ -277,7 +317,7 @@ mod implementation {
 }
 #[cfg(target_os = "macos")]
 pub use implementation::install_drag_monitor;
-pub use implementation::{apply, read};
+pub use implementation::{apply, read, show};
 #[cfg(not(target_os = "macos"))]
 pub fn install_drag_monitor(_: &AppHandle) {}
 pub const TRACKS_DRAG: bool = cfg!(target_os = "macos");

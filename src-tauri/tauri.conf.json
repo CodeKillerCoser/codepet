@@ -25,6 +25,7 @@
       },
       {
         "label": "pet",
+        "acceptFirstMouse": true,
         "title": "Code Pet",
         "url": "pet.html",
         "width": 360,

@@ -17,22 +17,26 @@
   import { isPointOnOpaquePetImage } from './lib/pet/hitTest';
   import { taskStatusForPet } from './lib/pet/animation';
   import { PetSurfaceController } from './lib/pet/surface';
-  import { PetMenuController } from './lib/pet/menu';
+  import { NotchMotion } from './lib/pet/notchMotion';
   import { petSizing } from './lib/pet/sizing';
   import { themeClassNames } from './lib/theme';
   import type { AppSettings } from './lib/types';
-  const menuController = new PetMenuController();
   let settings: AppSettings | null = null;
   let presentation = initialPresentation;
+  // Input state updates immediately; only the rendered size waits for native
+  // handoff. A queued animation must never restore stale hover/focus state.
+  let panelExpanded = initialPresentation.expanded;
   const petData = createPetData(() => dispatch({ type: 'new-task' }));
   let expandedGroups = new Set<ActivityGroupId>();
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
+  let openTimer: ReturnType<typeof setTimeout> | undefined;
   let systemDark = false;
   let ready = false;
   let actionNotice = '';
   let noticeTimer: number | null = null;
   $: surface = presentation.surface;
   let surfaceController: PetSurfaceController | null = null;
+  let notchMotion: NotchMotion | null = null;
   let petWindowElement: HTMLElement | null = null;
   let petContentElement: HTMLElement | null = null;
   let cursorPassthroughTimer: number | null = null;
@@ -53,15 +57,21 @@
   $: railHeight = (2 + Number(activities.length > 0) + Number(activities.some(a => a.status === 'completed')) + Number(surface.canDock)) * 28;
   $: sizing = petSizing(surface, settings?.pet.scale, railHeight);
   $: if (ready) surfaceController?.schedule();
-  $: if (ready && surface.menuBar && settings) void menuController.update(settings, activities, $petData.error).catch(error => console.warn('Pet menu update failed', error));
   function dispatch(event: PresentationEvent) {
-    if (surface.menuBar && surface.mode === 'docked' && event.type === 'collapse') {
-      void surfaceController?.setPanel(false).catch(error => showNotice(String(error)));
-    }
-    if (surface.menuBar && surface.mode === 'docked' && event.type === 'focus') void surfaceController?.setPanel(true).catch(error => showNotice(String(error)));
-    presentation = present(presentation, event);
-    if (event.type === 'enter' || event.type === 'focus' || event.type === 'surface') clearTimeout(closeTimer);
-    if (event.type === 'leave' || event.type === 'blur') {
+    const wasPending = presentation.openPending;
+    const next = present(presentation, event);
+    const modeChanged = next.surface.mode !== presentation.surface.mode;
+    const expansionChanged = next.expanded !== presentation.expanded;
+    presentation = next;
+    if (modeChanged) notchMotion?.cancel();
+    if (expansionChanged && !modeChanged && next.surface.mode === 'docked' && notchMotion) {
+      void notchMotion.transition(next.expanded, () => { panelExpanded = next.expanded; });
+    } else if (modeChanged || !notchMotion) panelExpanded = next.expanded;
+    if (!presentation.openPending) clearTimeout(openTimer);
+    else if (!wasPending) openTimer = setTimeout(() => dispatch({ type: 'open-delay' }), 200);
+    const locked = presentation.pointerHeld || presentation.surface.dragging;
+    if (locked || presentation.hovered || presentation.focused || !presentation.expanded) clearTimeout(closeTimer);
+    else if (['leave', 'blur', 'release', 'surface'].includes(event.type)) {
       clearTimeout(closeTimer);
       closeTimer = setTimeout(() => dispatch({ type: 'close-delay' }), 240);
     }
@@ -89,8 +99,10 @@
     const windowHandle = getCurrentWindow();
     void windowHandle.setResizable(false);
     if (petContentElement) {
-      surfaceController = new PetSurfaceController(petContentElement, value => { dispatch({ type: 'surface', surface: value }); if (value.menuBar && value.panelOpen) void setPetWindowCursorEventsIgnored(false); }, error => showNotice(String(error)));
+      surfaceController = new PetSurfaceController(petContentElement, value => { dispatch({ type: 'surface', surface: value }); }, error => showNotice(String(error)));
       void surfaceController.start().catch(error => showNotice(String(error)));
+      notchMotion = new NotchMotion(petContentElement, surfaceController, error => showNotice(String(error)));
+      cleanup.push(() => notchMotion?.dispose());
       cleanup.push(() => surfaceController?.dispose());
     }
     cursorPassthroughTimer = window.setInterval(() => void syncCursorPassthrough(), cursorPassthroughPollMs);
@@ -99,7 +111,7 @@
     const poll = window.setInterval(() => void petData.refresh(), 1000);
     return () => {
       disposed = true; window.clearInterval(poll); cleanup.forEach(fn => fn()); media.removeEventListener('change', syncTheme);
-      menuController.dispose(); petData.dispose(); clearTimeout(closeTimer); clearNoticeTimer(); clearCursorPassthroughTimer(); void setPetWindowCursorEventsIgnored(false);
+      petData.dispose(); clearTimeout(openTimer); clearTimeout(closeTimer); clearNoticeTimer(); clearCursorPassthroughTimer(); void setPetWindowCursorEventsIgnored(false);
     };
   });
   function dismissActivity(event: MouseEvent, task: PetTask) { event.stopPropagation(); petData.dismiss(task); }
@@ -128,13 +140,20 @@
   }
 
   async function syncCursorPassthrough() {
-    if (!petWindowElement || cursorPassthroughInFlight || (surface.menuBar && surface.mode === 'docked' && !surface.panelOpen)) {
+    if (!petWindowElement || cursorPassthroughInFlight) {
       return;
     }
 
     cursorPassthroughInFlight = true;
     try {
       const point = await invoke<{ x: number; y: number }>('pet_surface_pointer');
+      // WKWebView may omit enter/leave while its nonactivating panel is not key.
+      // Reuse native pointer polling rather than activating the app on hover.
+      if (!document.hasFocus() && surface.mode === 'docked' && !petDragging) {
+        const panel = petWindowElement.querySelector('.notch-backdrop')?.getBoundingClientRect();
+        const inside = Boolean(panel && point.x >= panel.left && point.x < panel.right && point.y >= panel.top && point.y < panel.bottom);
+        if (inside !== presentation.hovered) dispatch({ type: inside ? 'enter' : 'leave' });
+      }
       const ignoreCursor = !petDragging && shouldIgnorePetWindowCursor(point, collectPetHitRects(petWindowElement)) && !isPointOnOpaquePetImage(petWindowElement, point);
       await setPetWindowCursorEventsIgnored(ignoreCursor);
     } catch (error) {
@@ -161,7 +180,7 @@
   function collectPetHitRects(root: HTMLElement): PetHitRect[] {
     const rootBounds = root.getBoundingClientRect();
     const hitRects: PetHitRect[] = [];
-    for (const element of root.querySelectorAll<HTMLElement>(".activity-group-toggle, .status-pill, .pet-action-button, .notch-panel")) {
+    for (const element of root.querySelectorAll<HTMLElement>(".activity-group-toggle, .status-pill, .pet-action-button, .notch-backdrop")) {
       if (element.getClientRects().length === 0) continue;
       if (element.closest("[inert]")) continue;
 
@@ -219,16 +238,16 @@
 
 </script>
 
-<svelte:window on:keydown={handleKey} />
+<svelte:window on:keydown={handleKey} on:pointerup={() => dispatch({ type: 'release' })} on:pointercancel={() => dispatch({ type: 'release' })} />
 
 <main bind:this={petWindowElement}
   class={`pet-window ${themeClass}${devMode ? " dev-mode" : ""}`}
   class:docked={surface.mode === 'docked'} class:snap-candidate={surface.snapCandidate}
-  style={`--pet-window-opacity: ${petWindowOpacity}; --pet-rail-height: ${railHeight}px; --pet-desktop-width: ${sizing.desktopWidth}px; --pet-stage-height: ${sizing.stageHeight}px; --notch-header-height: ${sizing.headerHeight}px; --notch-width: ${presentation.expanded ? sizing.expandedWidth : sizing.collapsedWidth}px;`}
+  style={`--pet-window-opacity: ${petWindowOpacity}; --pet-rail-height: ${railHeight}px; --pet-desktop-width: ${sizing.desktopWidth}px; --pet-stage-height: ${sizing.stageHeight}px; --notch-header-height: ${sizing.headerHeight}px; --notch-width: ${panelExpanded ? sizing.expandedWidth : sizing.collapsedWidth}px;`}
   on:dblclick={preventPetWindowDoubleClick}>
   <div class="pet-content" bind:this={petContentElement}>
     {#if surface.mode === 'docked'}
-      <NotchPet data={$petData} {settings} {avatarStatus} {surface} {sizing} expanded={presentation.expanded}
+      <NotchPet data={$petData} {settings} {avatarStatus} {surface} {sizing} expanded={panelExpanded}
         {dispatch} {dragWindow} {toggleSurface} {openMain} {dismissActivity} {actionNotice} />
     {:else}
       <DesktopPet {activities} sources={$petData.sources} gatewayError={$petData.error} {settings} {avatarStatus} {surface} {sizing}
@@ -241,7 +260,7 @@
 <style>
   .pet-window { justify-content: flex-start; -webkit-user-select: none; }
   .pet-window.docked { width: max-content; max-width: var(--notch-width); opacity: 1; cursor: default; }
-  .docked .pet-content { width: max-content; max-width: var(--notch-width); padding: 0 6px; }
+  .docked .pet-content { position: relative; width: max-content; max-width: var(--notch-width); padding: 0 6px; }
   .docked:has(:global(.notch-panel.expanded)) .pet-content { width: var(--notch-width); }
   .snap-candidate :global(.pet-stage) { filter: drop-shadow(0 0 6px var(--color-focus-ring)); }
 </style>

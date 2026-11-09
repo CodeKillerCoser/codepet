@@ -20,13 +20,14 @@ const native = {
   size: { width: 640, height: 1168 },
   scale: 2,
   resizeCount: 0,
+  dockRatio: 0.5,
   monitors: [{ name: "QA", scaleFactor: 2, position: { x: 0, y: 0 }, size: { width: 2880, height: 1800 }, workArea: { position: { x: 0, y: 40 }, size: { width: 2880, height: 1720 } } }],
 };
 const qa = {
   native,
-  surface: { revision: 1, mode: 'floating' as 'floating' | 'docked', dragging: false, snapCandidate: false, canDock: true, availableHeight: 860, availableWidth: 1440, nativeDrag: true, physicalNotch: true, menuBar: false, panelOpen: false },
-  menuSummary: null as any,
+  surface: { revision: 1, mode: 'floating' as 'floating' | 'docked', dragging: false, snapCandidate: false, canDock: true, availableHeight: 860, availableWidth: 1440, nativeDrag: true, physicalNotch: true, topInset: 0, notchWidth: 185 },
   manualDrag: false,
+  dragAlongTop: false,
   finishDrag: (docked = false) => {
     qa.surface = { ...qa.surface, revision: qa.surface.revision + 1, dragging: false, snapCandidate: false, mode: docked ? 'docked' : 'floating' };
     fire('pet-surface-changed', qa.surface);
@@ -44,6 +45,7 @@ const qa = {
   assets: {} as Record<string, string>,
   ignored: false,
   cursor: { x: 0, y: 0 },
+  cursorScreen: null as { x: number; y: number } | null,
   drags: 0,
   hit: (x: number, y: number) => isPointOnOpaquePetImage(document.querySelector(".pet-window")!, { x, y }),
   updateSettings: () => {},
@@ -66,10 +68,17 @@ mockIPC((command, args: any) => {
     return { ...request, response: { status: "ok", result: { snapshot: { tasks: qa.tasks, sources: [] } } } };
   }
   if (command === "plugin:event|listen") { listeners.set(args.event, args.handler); return args.handler; }
-  if (command === 'pet_menu_summary') { qa.menuSummary = args.summary; return; }
-  if (command === 'pet_surface_panel') { qa.surface.panelOpen = args.open; qa.surface.revision++; fire('pet-surface-changed', qa.surface); return qa.surface; }
+  if (command === 'pet_surface_begin_frame') return 0;
+  if (command === 'pet_surface_end_frame') return;
   if (command === 'pet_surface_state') return qa.surface;
-  if (command === 'pet_surface_pointer') return qa.cursor;
+  if (command === 'pet_surface_pointer') return qa.cursorScreen
+    ? { x: qa.cursorScreen.x - native.position.x / native.scale, y: qa.cursorScreen.y - native.position.y / native.scale } : qa.cursor;
+  if (command === 'pet_surface_plan_layout') {
+    const l = args.layout, m = native.monitors[0], scale = native.scale;
+    const x = Math.max(m.position.x, Math.min(m.position.x + m.size.width * native.dockRatio - l.width * scale / 2, m.position.x + m.size.width - l.width * scale));
+    return { from: { x: native.position.x / scale, y: native.position.y / scale, width: native.size.width / scale, height: native.size.height / scale },
+      to: { x: x / scale, y: m.position.y / scale + 40, width: l.width, height: l.height }, topInset: qa.surface.topInset };
+  }
   if (command === 'pet_surface_mode') {
     qa.surface = { ...qa.surface, mode: args.mode, revision: qa.surface.revision + 1 };
     fire('pet-surface-changed', qa.surface);
@@ -78,7 +87,7 @@ mockIPC((command, args: any) => {
   if (command === 'pet_surface_drag') {
     if (args.cancel) { qa.finishDrag(); return qa.surface; }
     qa.drags++;
-    qa.surface = { ...qa.surface, mode: 'floating', dragging: true, revision: qa.surface.revision + 1 };
+    qa.surface = { ...qa.surface, mode: qa.dragAlongTop ? 'docked' : 'floating', dragging: true, revision: qa.surface.revision + 1 };
     fire('pet-surface-changed', qa.surface);
     if (!qa.manualDrag) setTimeout(() => qa.finishDrag(), 200);
     return qa.surface;
@@ -89,7 +98,7 @@ mockIPC((command, args: any) => {
     anchor ??= { x: area.position.x + area.size.width - 95 * scale, y: area.position.y + area.size.height - 95 * scale };
     let x = anchor.x - l.anchor.x * scale, y = anchor.y - l.anchor.y * scale;
     const size = { width: Math.round(l.width * scale), height: Math.round(l.height * scale) };
-    if (qa.surface.mode === 'docked') { x = m.position.x + m.size.width / 2 - l.width * scale / 2; y = m.position.y + 40 * scale; }
+    if (qa.surface.mode === 'docked') { x = Math.max(m.position.x, Math.min(m.position.x + m.size.width * native.dockRatio - l.width * scale / 2, m.position.x + m.size.width - size.width)); y = m.position.y + 40 * scale; }
     else if (!qa.surface.dragging) {
       x = Math.max(area.position.x, Math.min(x, area.position.x + area.size.width - size.width));
       y = Math.max(area.position.y, Math.min(y, area.position.y + area.size.height - size.height));

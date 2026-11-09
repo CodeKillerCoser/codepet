@@ -4,9 +4,6 @@
 //! TAURI_CONFIG='{"app":{"macOSPrivateApi":false}}' cargo run --manifest-path src-tauri/Cargo.toml --example pet_surface_qa --features custom-protocol
 #![cfg_attr(not(target_os = "macos"), allow(dead_code))]
 #[cfg(target_os = "macos")]
-#[path = "../src/platform/pet_menu.rs"]
-pub mod qa_menu;
-#[cfg(target_os = "macos")]
 #[path = "../src/platform/pet_surface.rs"]
 pub mod qa_platform;
 #[cfg(target_os = "macos")]
@@ -18,7 +15,7 @@ pub mod pet {
 }
 #[cfg(target_os = "macos")]
 pub mod platform {
-    pub use crate::{qa_menu as pet_menu, qa_platform as pet_surface};
+    pub use crate::qa_platform as pet_surface;
 }
 static QA_DATA: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
 pub mod settings {
@@ -69,49 +66,74 @@ fn qa_report(value: serde_json::Value) {
 fn open_main_window() {}
 
 #[cfg(target_os = "macos")]
+#[tauri::command]
+async fn qa_motion_frame(app: tauri::AppHandle) -> Result<qa_surface::geometry::Rect, String> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || { let _ = tx.send(qa_platform::read(&handle).map(|e| e.frame)); }).map_err(|e|e.to_string())?;
+    rx.await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+fn qa_motion_done(app: tauri::AppHandle, value: serde_json::Value) {
+    let path = std::env::var("CODEPET_MOTION_REPORT").expect("motion report destination");
+    std::fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    app.exit(if value.is_array() { 0 } else { 1 });
+}
+
+#[cfg(target_os = "macos")]
 async fn native_smoke(app: tauri::AppHandle) -> Result<(), String> {
     use tauri::Manager;
     let w = app.get_webview_window("pet").ok_or("missing pet window")?;
-    for (open, expected) in [(true, true), (false, false), (true, true)] {
-        qa_surface::pet_surface_panel(app.clone(), open).await?;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    w.with_webview(move |webview| {
+        let accepts: bool = unsafe {
+            let view = &*(webview.inner() as *const objc2::runtime::AnyObject);
+            objc2::msg_send![view, acceptsFirstMouse: std::ptr::null::<objc2::runtime::AnyObject>()]
+        };
+        let _ = tx.send(accepts);
+    })
+    .map_err(|e| e.to_string())?;
+    if !rx.await.map_err(|e| e.to_string())? {
+        return Err("inactive WebView must accept the first mouse click".into());
+    }
+    for mode in [
+        qa_surface::Mode::Docked,
+        qa_surface::Mode::Floating,
+        qa_surface::Mode::Docked,
+    ] {
+        qa_surface::pet_surface_mode(app.clone(), mode).await?;
         tokio::time::sleep(std::time::Duration::from_millis(600)).await;
-        if w.is_visible().map_err(|e| e.to_string())? != expected {
-            return Err(format!("panel visible != {expected}"));
+        if !w.is_visible().map_err(|e| e.to_string())? {
+            return Err(format!("{mode:?} window hidden"));
         }
     }
-    qa_surface::pet_surface_mode(app.clone(), qa_surface::Mode::Floating).await?;
-    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
-    if !w.is_visible().map_err(|e| e.to_string())? {
-        return Err("floating window hidden".into());
-    }
-    qa_surface::pet_surface_mode(app.clone(), qa_surface::Mode::Docked).await?;
-    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
-    if w.is_visible().map_err(|e| e.to_string())? {
-        return Err("collapsed menu left a visible window".into());
-    }
-    qa_surface::pet_surface_panel(app.clone(), true).await?;
-    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
-    let state = qa_surface::pet_surface_state(app.clone()).await?;
-    eprintln!(
-        "Final native state: {state:?}; window size: {:?}",
-        w.inner_size()
-    );
-    // Check actual AppKit window coordinates, not just WebView content dimensions.
     let (tx, rx) = tokio::sync::oneshot::channel();
     let handle = app.clone();
     app.run_on_main_thread(move || {
         let result = (|| -> Result<(), String> {
+            use tauri_nspanel::ManagerExt;
+            let panel = handle
+                .get_webview_panel("pet")
+                .map_err(|e| format!("{e:?}"))?;
+            if !panel.as_panel().acceptsMouseMovedEvents() {
+                return Err("panel must accept mouse movement".into());
+            }
+            if !panel
+                .as_panel()
+                .styleMask()
+                .contains(tauri_nspanel::objc2_app_kit::NSWindowStyleMask::NonactivatingPanel)
+            {
+                return Err("hover must not require activating the app".into());
+            }
             let env = qa_platform::read(&handle)?;
-            let menu = qa_menu::anchor(&handle).ok_or("menu anchor unavailable")?;
-            let display = qa_surface::geometry::display_for(menu.center(), &env.displays)
-                .ok_or("menu display unavailable")?;
-            let area = qa_surface::geometry::menu_area(display, menu);
+            let display = qa_surface::geometry::display_for(env.frame.center(), &env.displays)
+                .ok_or("display unavailable")?;
             eprintln!(
-                "Native placement: menu={menu:?}, work={:?}, actual={:?}, expectedTop={}",
-                display.work, env.frame, area.y
+                "Native placement: actual={:?}, screen={:?}",
+                env.frame, display.frame
             );
-            if (env.frame.y - area.y).abs() > 1. || (env.frame.y - menu.bottom()).abs() > 1. {
-                return Err("native panel must touch the bottom of its menu item".into());
+            if (env.frame.y - display.frame.y).abs() > 1. {
+                return Err("panel must touch screen top".into());
             }
             Ok(())
         })();
@@ -148,6 +170,29 @@ fn main() {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                 let result = native_smoke(handle.clone()).await;
                 eprintln!("Native smoke: {result:?}");
+                if result.is_ok() && std::env::args().any(|arg| arg == "--motion") {
+                    use tauri::Manager;
+                    let _ = handle.get_webview_window("pet").unwrap().eval(include_str!("pet-surface-qa/motion.js"));
+                }
+                if result.is_ok() && std::env::args().any(|arg| arg == "--capture") {
+                    use tauri::Manager;
+                    if std::env::args().any(|arg| arg == "--capture-reverse") {
+                        let _ = handle.get_webview_window("pet").unwrap().eval("window.__qaCaptureReversals = true");
+                    }
+                    let _ = handle.get_webview_window("pet").unwrap().eval(r#"
+                      Object.defineProperty(document, 'hasFocus', { configurable:true, value:()=>true });
+                      let iteration = 0;
+                      setInterval(() => {
+                        const panel = document.querySelector('main:not([data-motion-ghost]) .notch-panel');
+                        panel.dispatchEvent(new MouseEvent('mouseenter'));
+                        panel.querySelector('.notch-summary').click();
+                        const delay = [null, 110, 1][iteration++ % 3];
+                        if (window.__qaCaptureReversals && delay !== null) {
+                          setTimeout(() => panel.querySelector('.notch-summary').click(), delay);
+                        }
+                      }, 1400);
+                    "#);
+                }
                 if std::env::args().any(|arg| arg == "--smoke") {
                     handle.exit(if result.is_ok() { 0 } else { 1 });
                 }
@@ -165,13 +210,16 @@ fn main() {
             pet_gateway_request,
             open_main_window,
             qa_report,
+            qa_motion_frame,
+            qa_motion_done,
             qa_surface::pet_surface_state,
             qa_surface::pet_surface_layout,
+            qa_surface::pet_surface_plan_layout,
+            qa_surface::pet_surface_begin_frame,
+            qa_surface::pet_surface_end_frame,
             qa_surface::pet_surface_mode,
             qa_surface::pet_surface_drag,
             qa_surface::pet_surface_pointer,
-            qa_surface::pet_surface_panel,
-            qa_surface::pet_menu_summary
         ])
         .run(tauri::generate_context!(
             "examples/pet-surface-qa/tauri.conf.json"
@@ -181,5 +229,5 @@ fn main() {
 }
 #[cfg(not(target_os = "macos"))]
 fn main() {
-    eprintln!("Native menu QA requires macOS; use the browser UI QA on this platform.");
+    eprintln!("Native surface QA requires macOS; use the browser UI QA on this platform.");
 }

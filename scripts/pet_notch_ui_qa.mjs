@@ -37,7 +37,7 @@ try {
   assert.equal(await page.locator('.pet-action-rail').count(), 0);
   assert.match(await page.locator('.latest-title').innerText(), /调整顶部/);
   assert.equal(await page.locator('.notch-task').count(), 0);
-  assert.equal(await page.locator('.notch-panel').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)');
+  assert.equal(await page.locator('.notch-backdrop').evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(0, 0, 0)');
   assert.ok(await page.evaluate(() => innerWidth <= 200));
   assert.ok(await page.locator('.pet-avatar').evaluate(el => { const frame = el.querySelector('[data-pet-frame]').getBoundingClientRect(), box = el.getBoundingClientRect(); return frame.left >= box.left && frame.right <= box.right && frame.top >= box.top; }));
   await page.screenshot({ path: resolve(output, 'collapsed.png') });
@@ -62,7 +62,7 @@ try {
       actionsInside: rows.every(row => rect(row.querySelector('.dismiss-task')).right <= rect(row.querySelector('.task-content')).right + 1),
     };
   });
-  assert.deepEqual(await checkAlignment(), { padding: ['12px', '12px', '12px', '12px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
+  assert.deepEqual(await checkAlignment(), { padding: ['0px', '12px', '12px', '12px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
   assert.equal(await page.locator('.provider-badge').count(), 2);
   assert.deepEqual(await page.locator('.task-state').allTextContents(), ['进行中', '等待输入', '本轮结束']);
   assert.equal(await page.locator('time[title^="最近更新："]').count(), 3);
@@ -70,7 +70,7 @@ try {
   assert.equal(await page.locator('.progress-track, .list-heading, footer').count(), 0);
   assert.equal(await page.locator('.provider-icon img').count(), 3);
   assert.equal(await page.locator('.notch-panel').evaluate(el => getComputedStyle(el).borderTopLeftRadius), '0px');
-  assert.equal(await page.locator('.notch-panel').evaluate(el => getComputedStyle(el, '::before').content), '""');
+  assert.equal(await page.locator('.notch-backdrop').evaluate(el => getComputedStyle(el, '::before').content), '""');
   await page.screenshot({ path: resolve(output, 'expanded.png') });
   // A brief exit and reentry must cancel the delayed close.
   await page.mouse.move(-20, -20); await page.waitForTimeout(80); await page.locator('.notch-header').hover();
@@ -82,6 +82,8 @@ try {
   await page.keyboard.press('Escape'); await page.waitForFunction(() => innerHeight === 24);
   assert.equal(await page.getByRole('button', { name: '展开任务面板', exact: true }).evaluate(el => el === document.activeElement), true);
   await page.keyboard.press('Enter'); await page.waitForSelector('.notch-details');
+  await page.waitForFunction(() => !document.querySelector('[data-morphing]'));
+  assert.equal(await page.locator('.notch-summary').evaluate(el => el === document.activeElement), true, 'native resize preparation must preserve keyboard focus');
   await page.getByRole('button', { name: '隐藏 完成窗口尺寸回归检查', exact: true }).click();
   await page.getByRole('button', { name: '切换为悬浮', exact: true }).click();
   await page.waitForSelector('.pet-stage');
@@ -136,6 +138,7 @@ try {
     await page.waitForFunction(w => innerWidth === Math.round(Math.min(640, Math.max(340, 440 * Math.sqrt(w / 1440)))), width);
     await page.keyboard.press('Tab');
     assert.ok(await page.evaluate(h => innerHeight <= Math.min(h, 440) + 1, height));
+    await page.waitForFunction(() => !document.querySelector('main:not([data-motion-ghost]) [data-morphing]'));
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
     const expandedSize = await page.evaluate(() => [innerWidth, innerHeight]);
     await page.screenshot({ path: resolve(output, `screen-${width}-expanded.png`) });
@@ -153,40 +156,37 @@ try {
     assert.equal(await page.evaluate(() => window.__petQa.native.resizeCount), count, 'screen sizing must not feed back from viewport');
     matrix.push({ screen: [width, height], expanded: expandedSize, desktop: desktopSize });
   }
-  // The native menu owns visibility: leaving the webview cannot trigger its old
-  // hover close timer. Escape requests native dismissal.
-  await page.evaluate(() => { const q = window.__petQa; q.surface.menuBar = true; q.surface.panelOpen = true; q.surface.physicalNotch = false; q.finishDrag(true); });
-  await page.waitForSelector('.notch-details');
-  const corners = () => page.locator('.notch-panel').evaluate(el => {
-    const css = getComputedStyle(el);
-    return [css.borderTopLeftRadius, css.borderTopRightRadius, css.borderBottomLeftRadius, css.borderBottomRightRadius, getComputedStyle(el, '::before').content, getComputedStyle(el, '::after').content];
-  });
-  assert.deepEqual(await corners(), ['12px', '12px', '12px', '12px', 'none', 'none']);
-  await page.waitForFunction(() => innerWidth === 640 && innerHeight === 440);
-  await page.waitForTimeout(200);
-  await page.screenshot({ path: resolve(output, 'menu-expanded-rounded.png') });
-  // Moving an open panel between display types must update the corners without remounting.
-  await page.mouse.move(-20, -20);
-  await page.evaluate(() => { const q = window.__petQa; q.surface = { ...q.surface, physicalNotch: true, menuBar: false, panelOpen: false }; q.finishDrag(true); });
-  await page.waitForFunction(() => document.querySelector('.notch-panel.physical-notch') && !document.querySelector('.notch-details'));
+  // One UI on every screen; only the camera clearance changes.
+  await page.evaluate(() => { const q = window.__petQa; q.surface = { ...q.surface, physicalNotch: false, topInset: 0 }; q.finishDrag(true); });
   await page.locator('.notch-header').hover();
   await page.waitForSelector('.notch-details');
-  assert.deepEqual(await corners(), ['0px', '0px', '12px', '12px', '""', '""']);
-  await page.mouse.move(-20, -20);
-  await page.waitForFunction(() => !document.querySelector('.notch-details'));
-  await page.evaluate(() => { const q = window.__petQa; q.surface = { ...q.surface, physicalNotch: false, menuBar: true, panelOpen: true }; q.finishDrag(true); });
-  await page.waitForFunction(() => !document.querySelector('.notch-panel.physical-notch'));
-  assert.deepEqual(await corners(), ['12px', '12px', '12px', '12px', 'none', 'none']);
-  await page.waitForFunction(() => window.__petQa.menuSummary?.count === 14);
-  assert.match(await page.evaluate(() => window.__petQa.menuSummary.portrait), /^data:image\/png;base64,/);
-  await page.mouse.move(-20, -20); await page.waitForTimeout(600);
-  assert.equal(await page.locator('.notch-task').count(), 14);
-  await page.getByRole('button', { name: '打开主窗口', exact: true }).focus();
+  await page.keyboard.press('Tab');
+  await page.locator('.notch-task-list').focus();
+  const corners = () => page.locator('.notch-panel').evaluate(el => {
+    const css = getComputedStyle(el);
+    return [css.borderTopLeftRadius, css.borderTopRightRadius, css.borderBottomLeftRadius, css.borderBottomRightRadius, getComputedStyle(el.querySelector('.notch-backdrop'), '::before').content, getComputedStyle(el.querySelector('.notch-backdrop'), '::after').content];
+  });
+  assert.deepEqual(await corners(), ['0px', '0px', '12px', '12px', '\"\"', '\"\"']);
+  await page.waitForFunction(() => innerWidth === 640 && innerHeight === 440);
+  await page.screenshot({ path: resolve(output, 'top-edge-expanded.png') });
+  await page.evaluate(() => { const q = window.__petQa; q.surface = { ...q.surface, physicalNotch: true, topInset: 32, notchWidth: 185 }; q.finishDrag(true); });
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.notch-panel')).paddingTop === '32px');
+  assert.deepEqual(await corners(), ['0px', '0px', '12px', '12px', '\"\"', '\"\"']);
+  assert.ok(await page.locator('.notch-header').evaluate(el => el.getBoundingClientRect().top >= 32));
+  await page.screenshot({ path: resolve(output, 'notch-fused-expanded.png') });
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => window.__petQa.surface.panelOpen === false);
   await page.waitForFunction(() => !document.querySelector('.notch-details'));
-  await page.evaluate(() => { window.__petQa.surface.panelOpen = true; window.__petQa.finishDrag(true); });
+  await page.waitForFunction(() => innerHeight === 58);
+  await page.screenshot({ path: resolve(output, 'notch-fused-collapsed.png') });
+  // Moving out of the notch removes the safe inset, not the shoulder corners.
+  await page.evaluate(() => { const q = window.__petQa; q.surface = { ...q.surface, topInset: 0 }; q.finishDrag(true); });
+  await page.waitForFunction(() => innerHeight === 26);
+  assert.deepEqual(await corners(), ['0px', '0px', '8px', '8px', '\"\"', '\"\"']);
+  await page.mouse.move(-20, -20);
+  await page.locator('.notch-header').hover();
   await page.waitForSelector('.notch-details');
+  await page.keyboard.press('Tab');
+  await page.locator('.notch-task-list').focus();
   // Completed history stays below live/approval tasks even when it is newer.
   await page.evaluate(() => {
     const q = window.__petQa, now = Date.now();
@@ -204,7 +204,7 @@ try {
   assert.equal(await completedToggle.getAttribute('aria-expanded'), 'false');
   assert.deepEqual(await page.locator('.notch-task:not([aria-hidden="true"]) h3').allTextContents(), ['当前进行中的任务', '需要授权的任务', '需要检查的失败任务', '已完成任务 1']);
   assert.equal(await page.locator('#notch-completed-codex .notch-task[inert]').count(), 2);
-  assert.deepEqual(await checkAlignment(), { padding: ['12px', '12px', '12px', '12px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
+  assert.deepEqual(await checkAlignment(), { padding: ['0px', '12px', '12px', '12px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
   await page.waitForTimeout(200);
   await page.screenshot({ path: resolve(output, 'completed-stacked.png') });
   await page.evaluate(() => { window.__petQa.surface.availableWidth = 280; window.__petQa.finishDrag(true); });
@@ -255,6 +255,8 @@ try {
   assert.equal(await page.locator('.completed .provider-icon').count(), 2);
   assert.equal(await page.locator('.completed .provider-badge').count(), 0);
   await page.locator('.notch-task-list').evaluate(el => el.scrollTop = 0);
+  await page.keyboard.press('Tab');
+  await page.locator('.notch-task-list').focus();
   await page.mouse.move(-20, -20); await page.waitForTimeout(200);
   await page.screenshot({ path: resolve(output, 'agent-stacks.png') });
   await codexToggle.click();
@@ -272,7 +274,7 @@ try {
       return Math.abs(box.left - column.left) < 1 && Math.abs(box.right - column.right) < 1;
     });
   }), 'expanded task content must fill the whole shared right column');
-  assert.deepEqual(await checkAlignment(), { padding: ['12px', '12px', '12px', '12px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
+  assert.deepEqual(await checkAlignment(), { padding: ['0px', '12px', '12px', '12px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
   assert.ok(await page.locator('#notch-completed-codex').evaluate(group => {
     const icon = group.querySelector('.group-icon').getBoundingClientRect();
     const heading = group.querySelector('h3').getBoundingClientRect();
@@ -317,8 +319,94 @@ try {
   assert.equal(await completedToggle.count(), 0);
   await page.getByRole('button', { name: '切换为悬浮', exact: true }).click();
   await page.waitForSelector('.pet-stage');
-  await page.getByRole('button', { name: '收起到菜单栏', exact: true }).click();
+  await page.getByRole('button', { name: '吸附到刘海', exact: true }).click();
   await page.waitForSelector('.notch-panel');
+  // A background WKWebView need not deliver DOM mouseenter/mouseleave.
+  // Feed only the native pointer API: hover must work without focus or a click.
+  await page.mouse.move(-20, -20);
+  await page.evaluate(() => {
+    document.activeElement?.blur();
+    Object.defineProperty(document, 'hasFocus', { configurable: true, value: () => false });
+    window.__petQa.cursorScreen = null; window.__petQa.cursor = { x: -20, y: -20 };
+  });
+  await page.waitForFunction(() => !document.querySelector('.notch-details'));
+  await page.evaluate(() => { const q=window.__petQa; q.cursorScreen = { x: q.native.position.x / q.native.scale + innerWidth / 2, y: q.native.position.y / q.native.scale + 12 }; });
+  await page.waitForSelector('.notch-details');
+  assert.equal(await page.evaluate(() => document.hasFocus()), false);
+  assert.equal(await page.evaluate(() => window.__petQa.ignored), false);
+  assert.equal(await page.evaluate(() => document.activeElement === document.body), true, 'background hover must not take keyboard focus');
+  await page.locator('.notch-summary').focus();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.notch-details'));
+  await page.waitForTimeout(360);
+  assert.equal(await page.locator('.notch-details').count(), 0, 'background polling must respect Escape until the pointer leaves');
+  await page.evaluate(() => { window.__petQa.cursorScreen = null; window.__petQa.cursor = { x: -20, y: -20 }; });
+  await page.waitForFunction(() => window.__petQa.ignored);
+  await page.evaluate(() => { const q=window.__petQa; q.cursorScreen = { x: q.native.position.x / q.native.scale + innerWidth / 2, y: q.native.position.y / q.native.scale + 12 }; });
+  await page.waitForSelector('.notch-details');
+  await page.evaluate(() => { document.activeElement?.blur(); window.__petQa.cursorScreen = null; window.__petQa.cursor = { x: -20, y: -20 }; });
+  await page.waitForFunction(() => !document.querySelector('.notch-details'));
+  await page.evaluate(() => { delete document.hasFocus; });
+  // Hover dwell, press-before-open, and both horizontal drag presentations.
+  await page.evaluate(() => { const q = window.__petQa; q.manualDrag = true; q.dragAlongTop = true; document.activeElement?.blur(); });
+  await page.mouse.move(-20, -20);
+  await page.waitForFunction(() => !document.querySelector('.notch-details'));
+  const header = page.locator('.notch-panel');
+  await header.dispatchEvent('mouseenter');
+  assert.equal(await page.locator('.notch-details').count(), 0, 'hover must not expand immediately');
+  await header.dispatchEvent('mouseleave');
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('.notch-details').count(), 0, 'brief hover must cancel expansion');
+  const smallAvatar = await page.locator('.pet-avatar').boundingBox();
+  const smallX = smallAvatar.x + smallAvatar.width / 2, smallY = smallAvatar.y + smallAvatar.height / 2;
+  await page.mouse.move(smallX, smallY); await page.mouse.down();
+  await page.mouse.move(smallX + 12, smallY);
+  await page.waitForFunction(() => window.__petQa.surface.dragging);
+  await page.waitForTimeout(360);
+  assert.equal(await page.locator('.notch-details').count(), 0, 'drag begun before dwell must remain collapsed');
+  await page.mouse.up(); await page.evaluate(() => window.__petQa.finishDrag(true));
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('.notch-details').count(), 0, 'release must not resurrect the cancelled dwell');
+  await page.mouse.move(-20, -20); await page.locator('.notch-header').hover();
+  await page.waitForSelector('.notch-details');
+  assert.equal(await header.evaluate(el => getComputedStyle(el).animationName), 'none');
+  await page.waitForTimeout(300);
+  const largeAvatar = await page.locator('.pet-avatar').boundingBox();
+  const largeX = largeAvatar.x + largeAvatar.width / 2, largeY = largeAvatar.y + largeAvatar.height / 2;
+  const expandedHeight = await page.evaluate(() => innerHeight);
+  await page.mouse.move(largeX, largeY); await page.mouse.down(); await page.mouse.move(largeX + 12, largeY);
+  await page.waitForFunction(() => window.__petQa.surface.dragging);
+  await page.mouse.move(-20, -20); await page.waitForTimeout(360);
+  assert.equal(await page.locator('.notch-details').count(), 1, 'expanded drag must ignore mouseleave and close timer');
+  assert.equal(await page.evaluate(() => innerHeight), expandedHeight);
+  await page.mouse.move(largeX, largeY); await page.mouse.up();
+  await page.evaluate(() => window.__petQa.finishDrag(true));
+  await page.waitForTimeout(300);
+  assert.equal(await page.locator('.notch-details').count(), 1, 'horizontal drag release keeps expanded layout');
+  // Titles, status, action buttons, and padded header space all share the drag region.
+  for (const selector of ['.latest-title', '.latest-status', '.panel-actions button:first-child', '[data-pet-drag-region]']) {
+    const box = await page.locator(selector).boundingBox();
+    const x = selector === '[data-pet-drag-region]' ? box.x + 3 : box.x + box.width / 2;
+    const y = selector === '[data-pet-drag-region]' ? box.y + 3 : box.y + box.height / 2;
+    const before = await page.evaluate(() => window.__petQa.drags);
+    await page.mouse.move(x, y); await page.mouse.down(); await page.mouse.move(x + 6, y);
+    await page.waitForFunction(n => window.__petQa.drags > n, before);
+    await page.mouse.up(); await page.evaluate(() => window.__petQa.finishDrag(true));
+    assert.equal(await page.locator('.notch-details').count(), 1, `dragging ${selector} must not trigger its click action`);
+    assert.equal(await page.locator('.pet-stage').count(), 0);
+  }
+  // Keep the header nodes alive; only the backdrop and details may be animated/clipped.
+  await page.evaluate(() => { window.__stableHeader = ['.pet-avatar', '.latest-title', '.latest-status'].map(s => document.querySelector(s)); });
+  await page.getByRole('button', { name: '收起任务面板', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('.notch-details'));
+  await page.getByRole('button', { name: '展开任务面板', exact: true }).click();
+  await page.waitForSelector('.notch-details');
+  assert.equal(await page.evaluate(() => window.__stableHeader.every(el => el.isConnected)), true);
+  assert.deepEqual(await header.evaluate(el => { const s = getComputedStyle(el); return [s.animationName, s.clipPath, s.opacity]; }), ['none', 'none', '1']);
+  assert.equal(await page.locator('.notch-header').evaluate(el => getComputedStyle(el).opacity), '1');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  assert.equal(await page.locator('.notch-backdrop').evaluate(el => getComputedStyle(el).animationName), 'none');
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   console.log('Responsive display matrix:', JSON.stringify(matrix));
   assert.deepEqual(errors, []);
   console.log('Notch UI QA passed: compact/hover, keyboard/Escape, shared dismissals, imported atlas, detach/redock, responsive bounds, corners, live-first order, completed stacking/toggle/resume, capped scrolling and visible actions.');

@@ -25,6 +25,29 @@ afterEach(() => { controller?.dispose(); vi.useRealTimers(); vi.unstubAllGlobals
 it('measures the character anchor relative to content rather than viewport or window edge', () => {
   expect(measureSurface(content, 7)).toEqual({ width: 320, height: 200, petWidth: 80, petHeight: 90, anchor: { x: 240, y: 145 }, revision: 7 });
 });
+it('reports the entire header drag region independently of the character anchor', () => {
+  const header = document.createElement('div'); header.dataset.petDragRegion = '';
+  header.getBoundingClientRect = () => ({ left: 11, top: 40, width: 308, height: 50 }) as DOMRect;
+  content.append(header);
+  expect(measureSurface(content, 7)?.dragRegion).toEqual({ x: 6, y: 0, width: 308, height: 50 });
+  expect(measureSurface(content, 7)?.anchor).toEqual({ x: 240, y: 145 });
+});
+it('syncs a new frame in the next turn instead of clipping the new header for 60ms', async () => {
+  controller = new PetSurfaceController(content, vi.fn(), vi.fn()); await controller.start();
+  measure(); await vi.advanceTimersByTimeAsync(1);
+  expect(vi.mocked(invoke).mock.calls.some(([name]) => name === 'pet_surface_layout')).toBe(true);
+});
+it('holds resize observer updates during a morph and resumes with the final measured layout', async () => {
+  controller = new PetSurfaceController(content, vi.fn(), error => { throw error; });
+  await controller.start(); controller.pauseLayout();
+  measure(); await vi.advanceTimersByTimeAsync(300);
+  expect(vi.mocked(invoke).mock.calls.map(c => c[0])).toEqual(['pet_surface_state']);
+  content.getBoundingClientRect = () => ({ left: 5, top: 40, width: 440, height: 300 }) as DOMRect;
+  controller.resumeLayout(); await vi.advanceTimersByTimeAsync(1);
+  const calls = vi.mocked(invoke).mock.calls.filter(([name]) => name === 'pet_surface_layout');
+  expect(calls).toHaveLength(1);
+  expect((calls[0][1] as any).layout).toMatchObject({width:440,height:300});
+});
 it('ignores a stale layout reply after a dock event and remeasures the new epoch', async () => {
   const changed = vi.fn(); controller = new PetSurfaceController(content, changed, error => { throw error; });
   await controller.start();

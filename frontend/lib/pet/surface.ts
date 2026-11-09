@@ -12,23 +12,27 @@ export interface SurfaceView {
   availableWidth?: number;
   nativeDrag: boolean;
   physicalNotch: boolean;
-  menuBar?: boolean;
-  panelOpen?: boolean;
+  topInset?: number;
+  notchWidth?: number;
 }
 export const initialSurface: SurfaceView = {
   revision: 0, mode: 'floating', dragging: false, snapCandidate: false,
   canDock: false, availableHeight: 700, nativeDrag: true, physicalNotch: false,
 };
-export interface SurfaceLayout { width: number; height: number; petWidth: number; petHeight: number; anchor: { x: number; y: number }; revision: number }
+export interface SurfaceLayout { width: number; height: number; petWidth: number; petHeight: number; anchor: { x: number; y: number }; dragRegion?: { x: number; y: number; width: number; height: number }; revision: number }
+export interface SurfaceRect { x: number; y: number; width: number; height: number }
+export interface SurfacePlan { from: SurfaceRect; to: SurfaceRect; topInset: number }
 
 export function measureSurface(content: HTMLElement, revision: number): SurfaceLayout | null {
   const pet = content.querySelector<HTMLElement>('.pet-avatar');
   if (!pet) return null;
   const bounds = content.getBoundingClientRect(), actor = pet.getBoundingClientRect();
+  const drag = content.querySelector('[data-pet-drag-region]')?.getBoundingClientRect();
   if (bounds.height <= 0 || actor.width <= 0) return null;
   return {
     width: Math.ceil(bounds.width), height: Math.ceil(bounds.height), petWidth: actor.width, petHeight: actor.height,
     anchor: { x: actor.left - bounds.left + actor.width / 2, y: actor.top - bounds.top + actor.height / 2 },
+    ...(drag ? { dragRegion: { x: drag.left - bounds.left, y: drag.top - bounds.top, width: drag.width, height: drag.height } } : {}),
     revision,
   };
 }
@@ -43,6 +47,7 @@ export class PetSurfaceController {
   private inFlight = false;
   private pending = false;
   private dragFinished?: () => void;
+  private paused = false;
   constructor(private content: HTMLElement, private changed: (view: SurfaceView) => void, private failed: (error: unknown) => void) {}
 
   async start() {
@@ -62,13 +67,14 @@ export class PetSurfaceController {
     }
   }
   schedule() {
-    if (this.disposed || !this.view.revision) return;
+    if (this.disposed || this.paused || !this.view.revision) return;
     this.pending = true;
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => void this.flush(), 60);
+    // Coalesce this render turn, but don't leave the new header clipped by the old frame.
+    this.timer = setTimeout(() => void this.flush(), 0);
   }
   private async flush() {
-    if (this.disposed || this.inFlight || !this.pending) return;
+    if (this.disposed || this.paused || this.inFlight || !this.pending) return;
     this.pending = false; this.inFlight = true;
     try {
       const layout = measureSurface(this.content, this.view.revision);
@@ -76,9 +82,13 @@ export class PetSurfaceController {
     } catch (error) { this.failed(error); }
     finally { this.inFlight = false; if (this.pending) this.schedule(); }
   }
-  async setPanel(open: boolean) {
-    this.accept(await invoke<SurfaceView>('pet_surface_panel', { open }));
-  }
+  pauseLayout() { this.paused = true; clearTimeout(this.timer); this.pending = false; }
+  resumeLayout() { this.paused = false; this.schedule(); }
+  measure() { return measureSurface(this.content, this.view.revision); }
+  plan(layout: SurfaceLayout) { return invoke<SurfacePlan>('pet_surface_plan_layout', { layout }); }
+  beginFrame() { return invoke<number>('pet_surface_begin_frame'); }
+  endFrame(token: number, abort = false) { return invoke<void>('pet_surface_end_frame', { token, abort }); }
+  async commit(layout: SurfaceLayout) { this.accept(await invoke<SurfaceView>('pet_surface_layout', { layout })); }
   async setMode(mode: SurfaceView['mode']) {
     this.accept(await invoke<SurfaceView>('pet_surface_mode', { mode }));
   }

@@ -39,7 +39,7 @@ it('uses safe startup defaults for missing or nonfinite display data', () => {
 });
 
 it('keeps the compact detail header readable without depending on the system menu height', () => {
-  const size = petSizing({ ...initialSurface, menuBar: true, availableWidth: 3840, availableHeight: 2160 });
+  const size = petSizing({ ...initialSurface, availableWidth: 3840, availableHeight: 2160 });
   expect(size.headerHeight).toBe(26);
   expect(size.portraitWidth * 2 / 3 + 4).toBeLessThanOrEqual(26);
 });

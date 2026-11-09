@@ -4,13 +4,13 @@
 
 桌宠几何统一由 `src-tauri/src/pet/surface/` 协调，平台 API 封装在 `platform/pet_surface.rs`。前端只发送自然布局和角色锚点，不再自行选择显示器、调整窗口位置。
 
-悬浮时按角色锚点选择包含它的显示器，找不到时选最近显示器；工作区钳制只在非拖动阶段执行。拖动期间可进入屏幕顶部吸附带，松手后才停靠或恢复工作区约束。当前显示器移除时使用可用显示器及归一化锚点恢复。macOS 物理刘海屏优先走刘海位置，无刘海屏在菜单能力可用时走菜单位置，仍保留顶部居中吸附目标；其他平台维持普通悬浮。
+悬浮时按角色锚点选择包含它的显示器，找不到时选最近显示器；工作区钳制只在非拖动阶段执行。拖动期间可进入屏幕顶部吸附带，松手后才停靠或恢复工作区约束。当前显示器移除时使用可用显示器及归一化锚点恢复。macOS 所有屏幕统一使用顶部吸附，物理刘海只影响相交面板的内容安全区；横向位置按屏幕比例持久化；其他平台维持普通悬浮。
 
 macOS 计算使用 AppKit 点坐标，y 统一为负的 AppKit y，不混用物理像素。其他平台适配器使用物理坐标，并携带每屏 CSS→原生单位倍率。前端 alpha 命中通过原生 pet_surface_pointer 获取窗口内逻辑坐标。
 
 ## 刘海检测诊断
 
-`platform/pet_surface.rs` 当前按每块 `NSScreen.safeAreaInsets.top > 0` 设置 `physical_notch`；辅助左右区域用于确定横向位置和宽度，辅助区域不可用时宽度回退到 180pt。无刘海屏仍创建顶部吸附目标，因此 `notch.is_some()`/`canDock` 不能解释为物理刘海。Surface 由当前显示器选择布局路径，仅在无刘海且菜单能力可用时输出 `menuBar=true`。菜单锚点必须属于当前屏幕，不能通过展开事件把窗口拉去另一屏。
+`platform/pet_surface.rs` 当前按每块 `NSScreen.safeAreaInsets.top > 0` 设置 `physical_notch`；辅助左右区域用于确定横向位置和宽度，辅助区域不可用时宽度回退到 180pt。无刘海屏仍创建顶部吸附目标，因此 `notch.is_some()`/`canDock` 不能解释为物理刘海。当前 Surface 不再输出菜单模式；统一输出 `topInset`、`notchWidth`，仅在窗口横向范围与物理刘海相交时增加顶部黑色安全区。窗口保持贴顶，详见[统一顶部吸附](top-edge-docking.md)。后文菜单分流修复是被统一方案替代前的历史记录。
 
 运行 `swift scripts/diagnose_notch_macos.swift --json`，或双击同目录下的 `diagnose_notch_macos.command`。脚本只读，列出所有屏幕的 ID、名称、内外置属性、缩放、frame/visibleFrame、安全区、左右辅助区、当前 Code Pet 判断及回退吸附目标；保存的 displayId 仅供核对。自定义数据目录用 `--surface-state <路径>`，其他安装副本用 `--app <路径>`。
 

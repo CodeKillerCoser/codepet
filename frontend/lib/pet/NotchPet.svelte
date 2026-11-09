@@ -21,6 +21,23 @@
   export let openMain: (event: MouseEvent) => void;
   export let dismissActivity: (event: MouseEvent, task: PetTask) => void;
   let header: HTMLButtonElement;
+  let headerPress: { x: number; y: number } | null = null;
+  let headerDragged = false;
+  $: if (surface.dragging) { headerDragged = true; headerPress = null; }
+  function headerDown(event: PointerEvent) {
+    if (event.button !== 0) return;
+    headerDragged = false;
+    headerPress = { x: event.clientX, y: event.clientY };
+    dispatch({ type: 'press' });
+  }
+  function headerMove(event: PointerEvent) {
+    if (!headerPress || headerDragged || Math.hypot(event.clientX - headerPress.x, event.clientY - headerPress.y) < 5) return;
+    headerDragged = true; headerPress = null;
+    void dragWindow();
+  }
+  function headerClick(event: MouseEvent) {
+    if (headerDragged && event.detail !== 0) { event.preventDefault(); event.stopPropagation(); }
+  }
   let failedIcons = new Set<string>();
   let expandedCompleted = new Set<string>();
   const attention = (task: PetTask) => ['waiting-approval', 'waiting-input'].includes(task.status);
@@ -68,21 +85,27 @@
   }
 </script>
 
+<svelte:window on:pointermove={headerMove} on:pointerup={() => { headerPress = null; }} on:pointercancel={() => { headerPress = null; }} />
+
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<section class="notch-panel dark theme-dark" class:expanded class:physical-notch={surface.physicalNotch} aria-label="顶部任务面板"
-  style={`--notch-max-height: ${sizing.expandedHeight}px; --portrait-width: ${sizing.portraitWidth}px; --task-icon-size: ${sizing.portraitWidth * 2 / 3}px`}
+<section class="notch-panel dark theme-dark" class:expanded aria-label="顶部任务面板"
+  style={`--notch-max-height: ${sizing.expandedHeight}px; --notch-top-inset: ${surface.topInset || 0}px; --notch-min-width: ${(surface.topInset || 0) > 0 ? (surface.notchWidth || 0) : 0}px; --portrait-width: ${sizing.portraitWidth}px; --task-icon-size: ${sizing.portraitWidth * 2 / 3}px`}
   on:mouseenter={() => dispatch({ type: 'enter' })} on:mouseleave={() => dispatch({ type: 'leave' })}
   on:focusin={focusIn} on:focusout={focusOut} on:keydown={keyDown}>
+  <div class="notch-backdrop" aria-hidden="true"></div>
+  <!-- The capture handler only suppresses pointer clicks after dragging; child buttons own keyboard actions. -->
+  <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+  <div class="notch-drag-region" data-pet-drag-region on:pointerdown={headerDown} on:click|capture={headerClick}>
   <div class="notch-header">
     <div class="notch-heading">
       <PetAvatar petId={settings?.pet.selectedPetId ?? 'default'} kind={settings?.pet.kind} imagePath={settings?.pet.imagePath}
-        portrait width={sizing.portraitWidth} interactive label="桌宠头像" status={avatarStatus} onDrag={dragWindow} dragging={surface.dragging} />
+        portrait width={sizing.portraitWidth} interactive label="桌宠头像" status={avatarStatus} dragging={surface.dragging} />
       <button class="notch-summary" bind:this={header} type="button" aria-expanded={expanded} aria-controls="notch-details"
         aria-label={expanded ? '收起任务面板' : '展开任务面板'}
         title={data.error || (latest ? `${petStatusLabel(latest.status)} · ${latest.title}` : '就绪')}
-        on:click={() => dispatch({ type: expanded ? 'collapse' : 'enter' })}>
+        on:click={() => dispatch({ type: expanded ? 'collapse' : 'expand' })}>
         <span class="status-dot" class:busy={latest?.status === 'running'} class:attention={latest && attention(latest)} class:error={Boolean(data.error) || latest?.status === 'failed'}></span>
-        {#if expanded}<span class="latest-status">{data.error ? '连接中断' : latest ? petStatusLabel(latest.status) : '就绪'}</span>{/if}
+        <span class="latest-status">{data.error ? '连接中断' : latest ? petStatusLabel(latest.status) : '就绪'}</span>
         <span class="latest-title">{data.error ? '连接中断' : latest?.title || '就绪'}</span>
         {#if data.tasks.length > 1}<span class="task-count" aria-label={`${data.tasks.length} 项任务`}>{data.tasks.length}</span>{/if}
         <ChevronDown size={13} class={expanded ? 'chevron open' : 'chevron'} aria-hidden="true" />
@@ -94,6 +117,7 @@
         <button type="button" aria-label="打开主窗口" title="打开主窗口" on:click={openMain}><ExternalLink size={14} /></button>
       </div>
     {/if}
+  </div>
   </div>
   {#if expanded}
     <div class="notch-details" id="notch-details">
@@ -166,18 +190,22 @@
 </section>
 
 <style>
-  .notch-panel { position: relative; width: max-content; max-width: 100%; color: var(--color-text-primary); background: var(--color-black); border-radius: 8px; cursor: default; color-scheme: dark; }
-  .notch-panel.physical-notch { border-radius: 0 0 8px 8px; }
-  .physical-notch::before, .physical-notch::after { content: ''; position: absolute; top: 0; width: 6px; height: 6px; background: var(--color-black); pointer-events: none; }
-  .physical-notch::before { left: -6px; mask-image: radial-gradient(circle at 0 100%, transparent 5.5px, black 6px); }
-  .physical-notch::after { right: -6px; mask-image: radial-gradient(circle at 100% 100%, transparent 5.5px, black 6px); }
-  .notch-panel.expanded { width: 100%; border-radius: 12px; padding: 12px; }
-  .notch-panel.expanded.physical-notch { border-radius: 0 0 12px 12px; }
+  .notch-panel { position: relative; isolation: isolate; width: max-content; max-width: 100%; color: var(--color-text-primary); border-radius: 0 0 8px 8px; padding-top: var(--notch-top-inset); min-width: var(--notch-min-width); cursor: default; color-scheme: dark; }
+  .notch-backdrop { position: absolute; inset: 0; z-index: -1; background: var(--color-black); border-radius: inherit; pointer-events: none; }
+  .notch-drag-region { cursor: grab; }
+  .notch-drag-region:active { cursor: grabbing; }
+  .notch-backdrop::before, .notch-backdrop::after { content: ''; position: absolute; top: 0; width: 6px; height: 6px; background: var(--color-black); pointer-events: none; }
+  .notch-backdrop::before { left: -6px; mask-image: radial-gradient(circle at 0 100%, transparent 5.5px, black 6px); }
+  .notch-backdrop::after { right: -6px; mask-image: radial-gradient(circle at 100% 100%, transparent 5.5px, black 6px); }
+  .notch-panel.expanded { width: 100%; border-radius: 0 0 12px 12px; padding: var(--notch-top-inset) 12px 12px; }
+  .expanded .notch-drag-region { margin: 0 -12px; padding: 12px; }
+  .notch-panel:not(.expanded) .latest-status { display: none; }
   .notch-header { height: var(--notch-header-height); padding: 2px 10px 2px 6px; display: flex; gap: 6px; align-items: center; }
   .notch-heading { min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px; }
   button { color: inherit; border: 0; background: transparent; }
   button:focus-visible, .notch-task-list:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; border-radius: 6px; }
   .notch-summary { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1; text-align: left; padding: 0; font-size: 12px; line-height: 1.4; }
+  .notch-summary > *, .notch-summary :global(.chevron), .panel-actions { position: relative; }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green-9); flex: none; }
   .status-dot.busy { background: var(--blue-9); animation: pulse 1.6s ease-in-out infinite; }
   .status-dot.attention { background: var(--amber-9); }
@@ -191,8 +219,8 @@
   .notch-summary :global(.chevron.open) { transform: rotate(180deg); }
   .panel-actions { display: flex; flex: none; gap: 2px; }
   .panel-actions button { display: grid; place-items: center; width: 22px; height: min(22px, calc(var(--notch-header-height) - 4px)); border-radius: 6px; color: var(--gray-10); }
-  .notch-details { display: flex; flex-direction: column; max-height: calc(var(--notch-max-height) - var(--notch-header-height) - 36px); margin-top: 12px; animation: reveal 140ms ease-out; }
-  .notch-task-list { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--gray-7) transparent; padding: 0; }
+  .notch-details { display: flex; flex-direction: column; max-height: calc(var(--notch-max-height) - var(--notch-header-height) - var(--notch-top-inset) - 36px); }
+  .notch-task-list { container-type: inline-size; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--gray-7) transparent; padding: 0; }
   .task-group { min-width: 0; }
   .task-group.completed { display: grid; grid-template-columns: var(--task-icon-size) minmax(0, 1fr); gap: 2px; align-items: start; }
   .completed .group-icon { position: relative; top: 6px; }
@@ -244,7 +272,6 @@
   .connection-error, .action-notice { margin: 8px 0; font-size: 12px; }
   .action-notice { flex: none; }
   @keyframes pulse { 50% { opacity: .45; } }
-  @keyframes reveal { from { opacity: 0; } to { opacity: 1; } }
-  @media (prefers-reduced-motion: reduce) { .notch-details, .status-dot.busy { animation: none; } }
-  @media (max-width: 380px) { .provider-icon { margin-top: max(0px, calc((21px - var(--task-icon-size)) / 2)); } .task-topline { flex-wrap: wrap; gap: 4px; } h3 { flex-basis: 100%; } .provider-badge { max-width: 80%; padding: 3px 7px; font-size: 10px; } }
+  @media (prefers-reduced-motion: reduce) { .status-dot.busy { animation: none; } }
+  @container (max-width: 344px) { .provider-icon { margin-top: max(0px, calc((21px - var(--task-icon-size)) / 2)); } .task-topline { flex-wrap: wrap; gap: 4px; } h3 { flex-basis: 100%; } .provider-badge { max-width: 80%; padding: 3px 7px; font-size: 10px; } }
 </style>

@@ -18,7 +18,7 @@ export function petSizing(surface: SurfaceView, scale = 3, railHeight = 56) {
     bounded(80 * Math.min(widthScale, heightScale), 64, 104) * Math.min(4, Math.max(2, Number.isFinite(scale) ? scale : 3)) / 3)));
   const stageHeight = Math.max(Math.round(petWidth * 208 / 192), railHeight);
   return {
-    collapsedWidth: fitWidth(200, 160, 260),
+    collapsedWidth: Math.min(width, Math.max(fitWidth(200, 160, 260), (surface.topInset || 0) > 0 ? (surface.notchWidth || 0) + 12 : 0)),
     expandedWidth: fitWidth(440, 340, 640),
     expandedHeight: Math.min(height, bounded(340 * heightScale, headerHeight + 80, 440)),
     headerHeight,
