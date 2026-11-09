@@ -9,7 +9,7 @@ Code Pet 默认 `signingIdentity: "-"` 为 ad-hoc 签名，代码变化可能改
 ## 实现与涉及模块
 
 - `scripts/macos_signing.py generate`：一次性生成 RSA 3072 / SHA-256、有效期 3650 天的自签名代码签名证书，导出加密 PKCS#12。目录权限 0700，文件 0600，拒绝写入仓库或覆盖已有目录，防止误提交私钥或每次构建换身份。
-- `.github/workflows/release.yml` 的 macOS job：通过三个 Secret 向 `macos_signing.py build` 提供固定身份。Windows updater 签名和本地默认 ad-hoc 配置保持原流程。
+- `.github/workflows/build.yml` 的 macOS job：通过三个 Secret 向 `macos_signing.py build` 提供固定身份。Windows updater 签名和本地默认 ad-hoc 配置保持原流程。
 - `build`：只接受 GitHub 托管 macOS runner；导入前校验公有证书指纹和至少 30 天剩余有效期。临时 keychain 只为 codesign 开放私钥；自签名证书在临时 runner 上仅为 codeSign 策略设置信任，随后用指纹覆盖 `APPLE_SIGNING_IDENTITY`。Tauri 子进程不接收证书 Secret，也不沿用其他 Apple 账号/证书环境变量。
 - 验收：先签两个不同测试二进制，比对证书和 designated requirement 一致且不依赖 cdhash；再以 `--bundles app,dmg` 保留 App 并验证深度签名、证书指纹和应用标识。只发布 DMG，macOS updater 仍关闭。每条签名辅助命令限时 120 秒；凭据操作日志只输出工具名和操作名，验签失败可显示公有诊断。成功或异常退出均尝试恢复 keychain 列表、删除包含私钥的临时 keychain；codeSign 信任记录随一次性 runner 销毁，不调用可能进入交互等待的 `remove-trusted-cert`。清理错误不覆盖原始业务错误。
 - `scripts/macos_signing_test.py`：覆盖凭据缺失/格式错误、指纹不匹配、拒绝本机/自托管 runner、异常清理、错误不回显密码、真实 PKCS#12 生成解析、拒绝覆盖和拒绝仓库内生成。

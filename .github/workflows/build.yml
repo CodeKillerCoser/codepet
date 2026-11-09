@@ -1,0 +1,222 @@
+name: Build
+run-name: Build ${{ inputs.platform }} · ${{ inputs.version || github.ref_name }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Platforms to build.
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - mac
+          - win
+      version:
+        description: Optional base version. Syncs it to the branch before building.
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Resolve build version
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      base_version: ${{ steps.release.outputs.base_version }}
+      version: ${{ steps.release.outputs.version }}
+      commit_sha: ${{ steps.release.outputs.commit_sha }}
+      tag: ${{ steps.release.outputs.tag }}
+      metadata_name: ${{ steps.artifacts.outputs.metadata_name }}
+      mac_name: ${{ steps.artifacts.outputs.mac_name }}
+      win_name: ${{ steps.artifacts.outputs.win_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Sync requested source version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_VERSION" ]; then
+            if [ "$GITHUB_REF_TYPE" != "branch" ]; then
+              echo "Version sync requires workflow_dispatch to run on a branch ref."
+              exit 1
+            fi
+            node scripts/release_version.mjs --sync-version "$INPUT_VERSION"
+          fi
+          BASE_VERSION="$(node scripts/release_version.mjs --print-version)"
+          echo "BASE_VERSION=$BASE_VERSION" >> "$GITHUB_ENV"
+      - name: Validate release manifest generation
+        run: node --test scripts/generate_latest_json.test.mjs scripts/release_artifacts.test.mjs scripts/publish_github_release.test.mjs
+      - name: Validate macOS signing helpers
+        run: python3 scripts/macos_signing_test.py
+      - name: Commit synced source version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git diff --quiet; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+            git commit -m "chore: sync release version to ${BASE_VERSION}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          fi
+      - name: Resolve build metadata
+        id: release
+        run: |
+          set -euo pipefail
+          COMMIT_SHA="$(git rev-parse HEAD)"
+          node scripts/release_version.mjs \
+            --version "$BASE_VERSION" \
+            --commit-sha "$COMMIT_SHA" \
+            --github-output "$GITHUB_OUTPUT"
+      - name: Record immutable build identity
+        id: artifacts
+        env:
+          BUILD_PLATFORM: ${{ inputs.platform }}
+          BUILD_COMMIT: ${{ steps.release.outputs.commit_sha }}
+        run: >-
+          node scripts/release_artifacts.mjs metadata
+          --version "$BASE_VERSION" --commit "$BUILD_COMMIT"
+          --platform "$BUILD_PLATFORM" --run-id "$GITHUB_RUN_ID" --output dist/build-metadata
+      - uses: actions/upload-artifact@v7
+        with:
+          path: ${{ steps.artifacts.outputs.metadata }}
+          archive: false
+          overwrite: true
+          if-no-files-found: error
+  build-macos:
+    name: Build macOS ARM64 DMG
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'mac' }}
+    runs-on: macos-latest
+    needs: preflight
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.commit_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.preflight.outputs.metadata_name }}
+          path: dist/build-metadata
+      - run: npm ci
+      - name: Apply build version
+        run: node scripts/release_version.mjs --sync-version "${{ needs.preflight.outputs.version }}" --allow-build-metadata
+      - name: Build Tauri app
+        shell: bash
+        run: python3 scripts/macos_signing.py build
+        env:
+          CODEPET_PROVIDER_TARGET: aarch64-apple-darwin
+          CODEPET_MACOS_CERTIFICATE_BASE64: ${{ secrets.CODEPET_MACOS_CERTIFICATE_BASE64 }}
+          CODEPET_MACOS_CERTIFICATE_PASSWORD: ${{ secrets.CODEPET_MACOS_CERTIFICATE_PASSWORD }}
+          CODEPET_MACOS_CERTIFICATE_SHA1: ${{ secrets.CODEPET_MACOS_CERTIFICATE_SHA1 }}
+      - name: Normalize DMG filename
+        env:
+          BUILD_METADATA: ${{ needs.preflight.outputs.metadata_name }}
+        run: >-
+          node scripts/release_artifacts.mjs stage
+          --metadata "dist/build-metadata/$BUILD_METADATA" --platform macos-arm64
+          --input src-tauri/target/aarch64-apple-darwin/release/bundle/dmg
+          --output dist/release-assets
+      - uses: actions/upload-artifact@v7
+        with:
+          path: dist/release-assets/${{ needs.preflight.outputs.mac_name }}
+          archive: false
+          overwrite: true
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows x86_64
+    if: ${{ inputs.platform == 'all' || inputs.platform == 'win' }}
+    runs-on: windows-latest
+    needs: preflight
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.commit_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.4.2"
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.preflight.outputs.metadata_name }}
+          path: dist/build-metadata
+      - run: npm ci
+      - name: Apply build version
+        shell: pwsh
+        run: node scripts/release_version.mjs --sync-version "${{ needs.preflight.outputs.version }}" --allow-build-metadata
+      - name: Check updater signing key secret
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+            throw "TAURI_SIGNING_PRIVATE_KEY secret is required."
+          }
+      - name: Build Tauri app
+        shell: pwsh
+        run: |
+          $maxAttempts = 3
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt += 1) {
+            npm run tauri -- build --bundles nsis
+            if ($LASTEXITCODE -eq 0) {
+              exit 0
+            }
+            if ($attempt -eq $maxAttempts) {
+              exit $LASTEXITCODE
+            }
+            Start-Sleep -Seconds ($attempt * 20)
+          }
+        env:
+          CODEPET_PROVIDER_TARGET: x86_64-pc-windows-msvc
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      - name: Normalize Windows installer filename
+        shell: pwsh
+        env:
+          BUILD_METADATA: ${{ needs.preflight.outputs.metadata_name }}
+        run: >-
+          node scripts/release_artifacts.mjs stage
+          --metadata "dist/build-metadata/$env:BUILD_METADATA" --platform windows-x86_64
+          --input src-tauri/target/release/bundle/nsis --output dist/release-assets
+      - uses: actions/upload-artifact@v7
+        with:
+          path: dist/release-assets/${{ needs.preflight.outputs.win_name }}
+          archive: false
+          overwrite: true
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          path: dist/release-assets/${{ needs.preflight.outputs.win_name }}.sig
+          archive: false
+          overwrite: true
+          if-no-files-found: error

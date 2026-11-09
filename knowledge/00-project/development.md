@@ -8,7 +8,7 @@
 - Windows 已支持核心 Rust 编译检查和 Tauri 打包所需的 `.ico` 图标资源；macOS-only 能力会降级为明确的不支持提示。
 - Linux 需要 Tauri/WebKitGTK/GTK 相关系统依赖。macOS 上交叉检查 Linux target 还需要配置对应 sysroot 和 `pkg-config`。
 - Node.js 和 npm（Hook 接入运行时也需要 Node.js）。
-- Bun：Provider staging 会调用它编译协议生成器；版本参考 `.github/workflows/release.yml`。
+- Bun：Provider staging 会调用它编译协议生成器；版本参考 `.github/workflows/build.yml`。
 - Rust stable toolchain。
 - Tauri 2 所需的本机构建依赖。
 - 如需签名和 notarization，需要 Xcode 命令行工具、Apple Developer 证书和 notary credentials。
@@ -165,4 +165,4 @@ npm run package:signed
 
 ## 维护依据
 
-构建入口以 `package.json`、`src-tauri/tauri.conf.json` 和 `.github/workflows/release.yml` 为准；模块职责见 [运行拓扑](../10-architecture/runtime-topology.md)。发布与签名的完整检查见 [GitHub Release 更新发布](../40-runbooks/github-release-updates.md)。新增依赖时同步验证开发启动和安装包构建。
+构建入口以 `package.json`、`src-tauri/tauri.conf.json` 和 `.github/workflows/build.yml` 为准；模块职责见 [运行拓扑](../10-architecture/runtime-topology.md)。发布与签名的完整检查见 [GitHub Release 更新发布](../40-runbooks/github-release-updates.md)。新增依赖时同步验证开发启动和安装包构建。

@@ -1,100 +1,85 @@
-# GitHub Release 更新发布
+# GitHub 构建与 Release 发布
 
-## 现象
+## 入口与职责
 
-需要发布 Code Pet 新版本时，客户端会通过 Tauri updater 请求 GitHub Release 中的 `latest.json`，再按当前平台下载对应 updater 产物。
+- `.github/workflows/build.yml`（Build）：选择 `all/mac/win`，可选基础版本；同步版本、固定源码 commit，构建并上传 Actions 产物。不会创建 Release、tag 或更新 `latest.json`。
+- `.github/workflows/release.yml`（Release）：输入一个成功的 Build 运行 ID，下载那次运行的产物、验证并发布。不会重新编译，不接受版本、平台或 tag 覆盖。
+- `scripts/release_artifacts.mjs`：记录完整 commit、版本、所选平台和 run ID；规范安装包名称；校验发布输入完整且来自同一构建。
+- `scripts/release_version.mjs`：基础版本同步和 `<base>+<short_commit>` 构建版本派生。
+- `scripts/generate_latest_json.mjs`：依据实际签名产物生成 Windows updater 清单。
 
-## 数据来源
+Windows 客户端通过 Tauri updater 请求固定 `latest.json`。macOS 从 GitHub Releases latest API 检查版本并匹配 DMG，提示手动安装；新规范名与旧版 Tauri 名称均兼容，策略位于 `src-tauri/src/platform/app_updates.rs`。旧客户端的 `macos-universal` 错误见 [排查记录](macos-update-target-missing.md)。
 
-- `src-tauri/tauri.conf.json`：updater 公钥、endpoint 和 `createUpdaterArtifacts`。
-- `scripts/release_version.mjs`：读写基础版本，校验 `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock`，并能派生 `<base>+<short_commit>` 构建版本。
-- `scripts/generate_latest_json.mjs`：从 Release 产物和 `.sig` 文件生成 `latest.json`。
-- `scripts/stage_provider_plugins.mjs`：为目标平台构建 Codex/OpenCode/Claude 三个 Code Pet Provider adapter，并 staging 对应 manifest 与可执行文件。
-- `.github/workflows/release.yml`：手动触发 macOS ARM64 DMG 与 Windows x86_64 构建，并创建或更新 GitHub Release。
-- `src-tauri/tauri.macos-dmg.conf.json`：仅 macOS CI 加载的覆盖配置，关闭 updater 归档生成，保留 Windows 默认配置。
-- GitHub Release asset：客户端直接下载的安装包、updater 包、签名文件和 `latest.json`。
+## 操作步骤
 
-## 发布前检查
+1. 在 Actions 的 **Build** 选择分支、平台，以及可选基础版本。也可以运行：
 
-- 构建 Windows 需要 secret `TAURI_SIGNING_PRIVATE_KEY`。如果私钥有密码，同时配置 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。macOS DMG-only 构建不需要 updater 密钥。
-- 这两个 secret 是 Tauri updater 签名，不是 macOS/Windows 代码签名。macOS workflow 的固定自签名证书另需 `CODEPET_MACOS_CERTIFICATE_BASE64`、`CODEPET_MACOS_CERTIFICATE_PASSWORD`、`CODEPET_MACOS_CERTIFICATE_SHA1`；配置与上线状态见 [固定开发签名](macos-stable-development-signing.md)。缺失或指纹不匹配时失败，不回退到 ad-hoc。workflow 不做 Apple notarization 或 Windows 代码签名。
-- Windows job 会在构建前检查 `TAURI_SIGNING_PRIVATE_KEY` 非空；Tauri build 通过这个环境变量读取 updater 私钥。
-- 当前 CI 使用 `--mac-updater disabled`，`latest.json` 仅为所选 Windows 平台写入 `windows-x86_64`；单独 macOS 发布时 platforms 为空。DMG 不充当 updater 包，macOS 用户需手动下载安装新版本。依据 [Tauri updater 文档](https://v2.tauri.app/plugin/updater/)，macOS 自动更新依赖 App 的 tar.gz 归档。
-- Tauri `beforeBuildCommand` 会先运行 `npm run providers:stage`。macOS job 必须设置 `CODEPET_PROVIDER_TARGET=aarch64-apple-darwin`，Windows job 必须设置 `CODEPET_PROVIDER_TARGET=x86_64-pc-windows-msvc`；App、Provider 与 SDK 生成器的目标必须一致。
-- 两个构建 job 都必须先通过 `oven-sh/setup-bun@v2` 安装 Bun（当前固定 `1.4.2`）。`providers:stage` 除 Rust Provider 外还调用 `bun build --compile` 生成 `cp-sdk-gen`；`npm ci` 不会安装此构建工具。调整 staging 工具依赖时，必须同步检查两个平台的 runner 初始化步骤。
-- 三个内置二进制是 Code Pet Provider adapter，不是 Codex、OpenCode 或 Claude runtime。安装包不会替用户安装或选择底层 runtime，本机 `AgentRuntimeService` 检测与用户配置仍是权威。
-- `src-tauri/tauri.conf.json` 中的 updater endpoint 必须是固定检查入口 `https://github.com/CodeKillerCoser/codepet/releases/latest/download/latest.json`。不要配置成 `releases/download/<tag>/latest.json`，否则旧客户端会一直检查旧 tag 下的 manifest，无法发现新版本。
-- 仓库提交的版本必须是基础版本，例如 `0.1.4`，不要提交 `0.1.4+<sha>`。构建版本由 workflow 基于版本同步后的 commit 派生。
-- 发布新版本时优先在 workflow 的 `version` 输入中填写基础版本，或通过本地 `npm run release:github -- --version <version> --ref main` 触发。`preflight` job 会先把基础版本同步并推送回当前分支，再输出 `version=<base>+<short_commit>` 给 macOS/Windows 构建。
-- Release workflow 会先运行 `preflight` job。基础版本格式错误、版本源不一致、无法同步分支，或手动 tag 与最终构建版本不一致时，会在 macOS/Windows 构建开始前失败。手动 tag 若只是 `v<base>` 或 `<base>`，会按留空处理并自动派生最终 tag。
-- 从 `v0` 等非默认分支发布时，`gh release create` 必须显式传入 `--target`，值为 preflight 的完整 `commit_sha`。否则尚不存在的 tag 会落在默认分支，导致安装包来自所选分支而 Release 源码指向其他提交。2026-09-06 发布前检查发现并修正此遗漏；验收时比对远端 tag 与 preflight commit。
-- 公共 GitHub Release asset 可匿名下载，客户端检查更新不需要 GitHub 身份验证。私有仓库或私有 Release 不适合当前静态 endpoint 方案。
+   ```sh
+   npm run build:github -- --version 0.3.11-beta --platform all --ref main
+   ```
 
-## 发布步骤
+2. 等待构建成功，从运行页直接下载 DMG 或 EXE 验证。记录 URL `/actions/runs/<ID>` 中的运行 ID。
+3. 在 **Release** 填入 `build_run_id`，可选填写标题和说明。命令行等价入口：
 
-`platform` 可选 `all`（默认）、`mac`、`win`，分别构建全部平台、macOS ARM64、Windows x86_64。macOS 固定 `aarch64-apple-darwin`，不构建 Intel 或 universal，不提供无效的架构选项。单平台发布不会沿用另一平台旧版本资产；发布仍要求所选构建成功，失败或取消不能发布。macOS 只交付 DMG，自动更新范围见上文。
+   ```sh
+   npm run release:github -- --build-run-id 123456789 --ref main
+   ```
 
-本地发布命令也支持 `--platform mac` 或 `--platform win`，省略时为 `all`，例如 `npm run release:github -- --ref v0 --platform mac`。
+旧的 `release:github --version ...` 及 `publish` 开关已移除；发布必须指定已有 Build。此次拆分前的旧 Release 运行没有构建元数据，不能作为新发布入口的输入，需要先运行一次新 Build。
 
-GitHub Actions 的 `Release` workflow 增加布尔输入 `publish`，默认不勾选：所选平台正常构建并上传 Actions Artifacts，跳过整个发布 job，不创建或更新 Release、tag 和 `latest.json`。正式发布时勾选 `publish`。本地 `npm run release:github` 命令显式传入 `publish=true`，保持发布语义。
+## 版本与产物名称
 
-只构建时若填写 `version`，仍会同步并提交基础版本到所选分支；Windows 构建仍需 updater 签名 secret。验收时分别运行未勾选和勾选的 workflow：前者应有所选平台 Artifacts 且发布 job skipped，后者应生成下述 Release 资产。
+基础版本继续同步到 `package.json`、`package-lock.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 和 `src-tauri/Cargo.lock`。Build 的 preflight 在请求版本变化时提交并推送版本文件，再用该完整 commit 构建。构建版本是 `<base>+<commit前7位>`，tag 为 `v<构建版本>`，源码里不提交 SHA 后缀。
 
-在本地有 GitHub CLI 且已登录时，可运行：
+例如基础版本 `0.3.10-beta`、commit `a68ec0c...`：
 
-```powershell
+| 产物 | 名称 |
+| --- | --- |
+| macOS ARM64 | `codepet-macos-arm64_0.3.10-beta_a68ec0c.dmg` |
+| Windows x86_64 | `codepet-windows-x86_64_0.3.10-beta_a68ec0c-setup.exe` |
+| Windows updater 签名 | `codepet-windows-x86_64_0.3.10-beta_a68ec0c-setup.exe.sig` |
+| 构建元数据（双平台示例） | `codepet-build-all_0.3.10-beta_a68ec0c.json` |
+
+平台选择为 mac/win 时元数据名称中的 all 相应替换。元数据包含完整 SHA、构建版本、tag、平台和 run ID。安装包只改外部文件名，不改签名后的内容；EXE 与 `.sig` 成对改名。
+
+使用 [upload-artifact v7 的 `archive: false`](https://github.com/actions/upload-artifact/blob/v7/action.yml) 上传每个单文件；artifact 名称由真实文件名决定，不设置另一个展示名称。Mac 点击下载直接得到 DMG，不再套 ZIP，也不上传 `.app`。跨工作流读取使用 [download-artifact v8](https://github.com/actions/download-artifact)，校验摘要不一致即失败。
+
+## 发布验证与失败重试
+
+Release 要求来源为本仓库 `.github/workflows/build.yml` 的成功、已完成、手动触发运行。发布入口下载指定 run 的产物，验证元数据中的 run ID、版本与 commit 关系，以及所选平台的精确文件集合；缺包、空包、额外旧包、缺签名均失败。构建产物已过期时需重新 Build。
+
+发布使用元数据中的精确 commit 作为 tag target；已有 tag 必须解析到相同 commit。先创建草稿，再上传安装包、构建元数据和 `latest.json`，全部成功才转正式 Release 并设为 latest。失败可用同一 Build 重试草稿；已正式发布的 tag 拒绝覆盖，请构建新版本。不会先删除既有公开安装包。
+
+发布范围严格等于 Build 所选平台，不拼接其他运行的旧产物。`all` 构建有任一平台失败，即便另一平台已有下载产物，也不能发布。单平台发布的 latest 只含该平台当前产物；需要两平台一起升级时使用 `all`。
+
+## 构建与签名约束
+
+- macOS 固定 `aarch64-apple-darwin`，由 `scripts/macos_signing.py build` 导入固定证书，验证 App/Provider 签名，使用 `src-tauri/tauri.macos-dmg.conf.json` 只交付 ARM64 DMG。证书 Secrets 和验证方式见 [固定开发签名](macos-stable-development-signing.md)。不提供 Intel/universal 构建选项，不做 Apple notarization。
+- Windows 固定 x86_64 NSIS，要求 `TAURI_SIGNING_PRIVATE_KEY`，可选 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`。这是 updater 签名，不是系统代码签名。Tauri 构建保留三次重试。
+- 两个平台先安装 Bun 1.4.2；`beforeBuildCommand` 运行 Provider staging。目标分别设为 `CODEPET_PROVIDER_TARGET=aarch64-apple-darwin` 和 `x86_64-pc-windows-msvc`；主 App、三个 Provider adapter 与 SDK 生成器必须一致。Provider adapter 不代替用户的 Agent runtime。
+- 当前 `--mac-updater disabled`，清单仅写 Windows updater；Mac 单平台的 `platforms` 为空。DMG 不能充当 updater 归档，依据 [Tauri 文档](https://v2.tauri.app/plugin/updater/)，Mac 自动安装依赖签名 App tar.gz。旧生成脚本仍可显式 `--mac-updater enabled` 处理已有归档，当前 CI 不走此路径。
+- `src-tauri/tauri.conf.json` updater endpoint 保持 `https://github.com/CodeKillerCoser/codepet/releases/latest/download/latest.json`；包 URL 指向具体 tag，不可把检查入口固定到旧 tag。
+- Build 同一 ref 串行执行，防止版本同步冲突；Release 串行发布，防止同时修改 latest。GitHub API 不需要客户端登录；网络失败和匿名限流须显示检查失败，不伪装成无更新。
+
+## 本地验证与风险对应
+
+2026-11-09 拆分验证：
+
+```sh
+node --test scripts/generate_latest_json.test.mjs scripts/release_artifacts.test.mjs scripts/publish_github_release.test.mjs
+actionlint .github/workflows/build.yml .github/workflows/release.yml
+python3 scripts/macos_signing_test.py
 npm run version:check
-npm run release:github -- --version 0.1.4 --ref main
+TAURI_CONFIG='{"app":{"macOSPrivateApi":false}}' cargo test --manifest-path src-tauri/Cargo.toml --lib platform::app_updates -- --nocapture
 ```
 
-也可以直接在 GitHub Actions 页面手动触发 `Release` workflow。日常发布填写 `version`，不要填写 `tag`；workflow 会同步基础版本并生成 `v<version+short_commit>`。如果误填 `v<version>` 或 `<version>`，workflow 会按留空处理。如果填写其他 tag，`preflight` 会校验 tag 去掉可选 `v` 前缀后必须等于最终构建版本。
+脚本测试覆盖双平台、两个单平台、文件字节不变、Windows 新 URL 和签名配对、缺包/空包/混包、版本及 run ID 不匹配、失败/取消/错误工作流拒绝发布，以及两个 CLI 的参数边界。Mac 测试同时检查旧文件名、新规范名、commit 和架构不匹配。
 
-如果只是本地提升仓库基础版本，可以运行：
+真实 CI 验收路径：Build all 成功 → 直接下载 DMG 并 `hdiutil verify`、App/Provider 验签与启动 → Release 指定同一 run → 比对 tag 完整 commit、发布文件名和大小、Windows 清单 URL → Mac/Windows 旧版本分别检查更新。取消自动更新提示后，手动检查仍需能提示。
 
-```powershell
-npm run version:sync -- 0.1.4
-npm run version:check
-```
+## 未知项
 
-选择 `all` 并发布后，Release 应包含以下全部文件；单平台时只包含对应平台文件及 `latest.json`：
-
-- macOS ARM64 `.dmg`，不上传 `.app`、`.app.tar.gz` 或签名归档。
-- Windows `*setup.exe` 与 `*setup.exe.sig`。
-- `latest.json`。
-
-更新已有 release 时，workflow 会先删除该 release 的旧资产再上传本次构建产物，避免同一个 tag 下同时残留旧版本和新版本安装包。
-
-macOS workflow 由 `scripts/macos_signing.py build` 准备固定证书、验证双版本签名身份，再以 `--target aarch64-apple-darwin --bundles dmg --config src-tauri/tauri.macos-dmg.conf.json` 调用 Tauri 并验证最终 App。打包过程仍会产生供 DMG 收录的 `.app` 中间目录，但 Actions artifact `macos-arm64-dmg` 仅含 DMG，并关闭重复 ZIP 压缩。发布时额外保留 `latest.json` 作为跨平台更新元数据，里面不会将 ARM 包宣传为 universal。旧手动 updater 生成脚本仍可显式使用 `--mac-updater enabled` 处理已有 universal 归档，当前 CI 不走该模式。
-
-本地只验证 staging 时可运行：
-
-```bash
-npm run providers:test
-CODEPET_PROVIDER_TARGET=aarch64-apple-darwin npm run providers:stage
-```
-
-开发态可把 `CODEPET_BUNDLED_PROVIDER_PLUGINS_DIR` 设置为 `src-tauri/resources/provider-plugins` 的绝对路径；发行态不设置该变量，App 使用 Tauri resource API 从自身 Resources 的 `provider-plugins/` 定位。
-
-GitHub Release 上传资产时会把文件名中的空格规范化为 `.`，`latest.json` 里的 URL 必须使用规范化后的资产名。
-
-`latest.json` 的检查入口是固定的 `releases/latest/download/latest.json`；JSON 内部的平台安装包 URL 可以、也应该指向当前版本的具体 tag asset。检查更新读取固定入口，下载安装时再使用 manifest 中的版本化资产 URL。
-
-## 验证
-
-- 本地语法检查：`node --check scripts/release_version.mjs`、`node --check scripts/generate_latest_json.mjs` 和 `node --check scripts/publish_github_release.mjs`。
-- 本地版本一致性检查：`npm run version:check`。
-- Provider staging 检查：`npm run providers:test`，确认三 manifest、三平台 executable、Unix 可执行位和 Windows `.exe` manifest。
-- macOS App 检查：确认 `Contents/Resources/provider-plugins/{codex,opencode,claude}/` 各有 `codepet-provider.json` 与同名 executable；对 `Contents/MacOS/code-pet`、三个 Provider 和 SDK 生成器分别运行 `lipo -archs`，必须只有 `arm64`。
-- macOS DMG 检查：运行 `hdiutil verify <dmg>`，并对 App/DMG 记录绝对路径、字节大小和 `shasum -a 256`。
-- Windows workflow 检查：staging manifest 的 executable 必须带 `.exe`，NSIS 继续从同一个 `provider-plugins/` resources 映射收录文件；本机 macOS 不要求交叉生成安装包。
-- 本地基础版本同步检查：`npm run version:sync -- <version>` 后运行 `npm run version:check`。
-- 本地 manifest 生成：用临时目录放置 `.app.tar.gz`、`.app.tar.gz.sig`、`*setup.exe`、`*setup.exe.sig`，运行 `npm run release:latest-json -- --repo CodeKillerCoser/codepet --tag v0.1.4+2e4ca34 --version 0.1.4+2e4ca34 --artifacts <dir> --output <file>`。
-- manifest 生成脚本会校验 `src-tauri/tauri.conf.json` 的 updater endpoint 是否等于固定检查入口。该检查失败时，应优先修正 `tauri.conf.json`，不要改脚本绕过。
-- manifest 生成脚本会校验 release tag 与传入的构建版本一致。该检查失败时，应先确认 `preflight` 输出的 `version` 和 `tag`，不要手动发布 tag 是新版本但 `latest.json.version` 仍是旧版本的 release。
-- Release 后检查 `https://github.com/CodeKillerCoser/codepet/releases/latest/download/latest.json` 可公开访问，且其中列出的 Windows URL 能下载；macOS DMG 从 Release 资产手动下载。
-- Windows 客户端验证：安装旧版本后手动检查更新，确认弹窗出现；取消后自动检查不再提示同一版本，手动检查仍会提示。macOS 此发布方式不再提供应用内自动更新。
-
-2026-09-10 ARM64/DMG 调整的本地回归：`node --test scripts/generate_latest_json.test.mjs` 覆盖 DMG-only、双平台 Windows 签名、缺失资产拒绝发布及旧签名归档兼容。真实 macOS 构建和 DMG 尺寸需在 Actions runner 验证，本机 Windows 不声称已产出新 DMG。
+本地模拟不能验证 GitHub 跨运行下载、Secrets 注入及最终发布；需按上面的真实 CI 验收路径检查，并以对应 Actions 运行结果为准。先前合并流程的成功不等于新流程验收完成。Windows 原生安装仍需 Windows 验收。
 
 ## Bun 缺失导致 staging 失败
 
@@ -103,16 +88,3 @@ GitHub Release 上传资产时会把文件名中的空格规范化为 `.`，`lat
 - 修复：在两个构建 job 的 `npm ci` 前显式安装 Bun；保持现有统一 staging 入口和各目标平台编译参数。
 - 本地验证：`npm run providers:test` 三项通过；用 staging 导出的 `resolveBunExecutable` 和 `sdkGeneratorBuildArguments` 实际编译 Windows `cp-sdk-gen.exe`，并执行 `--help`。macOS universal 合并和完整签名打包仍需在新提交的 Release workflow 中验证。
 - 回归检查：遇到 `ENOENT` 先确认缺失的工具及 PATH，并检查所有构建 job 的安装步骤；重复构建不能修复缺少依赖。Bun 版本升级后重新验证 Windows executable 与 macOS 两种架构的编译、合并。
-
-## 风险
-
-- `latest.json` 使用 `releases/latest` endpoint。如果 GitHub latest 指向了错误 Release，客户端会读取错误版本。发布 job 会用 `gh release ... --latest` 标记当前 Release。
-- Windows 当前是 x86_64 runner 产物。如果未来需要 32-bit x86，需要增加新的构建 target 和平台键。
-- 未签名或未公证的安装包可能触发系统安全提示，这不影响 updater manifest，但会影响用户安装体验。
-- 缺少 `TAURI_SIGNING_PRIVATE_KEY` 时，Tauri 可能在 App/DMG 已经生成后因 updater artifact 签名返回非零。排查时先检查 bundle 目录并验证既有 App/DMG，再把“bundle 产物存在”和“updater 签名失败”分别报告，不能把后者误报为未构建。
-- Tauri 打包阶段会下载 NSIS 等外部工具，GitHub 下载链路偶发 `504` 时可能导致 Windows build 失败。workflow 对 Tauri build 做三次重试；如果三次都失败，应先按 job 日志确认是否仍是外部下载错误。
-
-## 未知项
-
-- 尚未在 GitHub Actions 真实 runner 上完成一次端到端 Release 构建。
-- 构建版本使用 SemVer build metadata，即 `+<short_commit>`。SemVer 比较会忽略 build metadata，因此同一基础版本下不同 commit 后缀不应作为强制升级手段；需要强制升级时必须提升基础版本。

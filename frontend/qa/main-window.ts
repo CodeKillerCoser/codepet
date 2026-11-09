@@ -80,7 +80,18 @@ mockIPC((command, raw) => {
   if (command === "get_launch_at_login_enabled") return false;
   if (command === "path_manager_get") return {install:"/fixture/install",data:"/fixture/data",workspace:"/fixture/workspace"};
   if (["recent_events", "list_remote_clients", "list_remote_pairing_requests"].includes(command)) return [];
-  if (["record_perf_event", "check_app_update"].includes(command)) return null;
+  if (command === "check_app_update") {
+    const scenario = permissionScenario.get("updateCase");
+    if (scenario === "error") throw new Error("无法获取最新发行版：网络连接失败（模拟）");
+    if (scenario === "manual" || scenario === "installError" || scenario === "automatic") return { version: "0.3.10-beta+a68ec0c", currentVersion: "0.3.9-beta", manualDownload: scenario !== "automatic" };
+    return null;
+  }
+  if (command === "install_app_update") {
+    (window as any).__updateInstallCount = ((window as any).__updateInstallCount || 0) + 1;
+    if (permissionScenario.get("updateCase") === "installError") throw new Error("无法打开安装包下载地址（模拟）");
+    return;
+  }
+  if (command === "record_perf_event") return null;
   if (command === "plugin:dialog|open") return "/fixture/provider/codepet-provider.json";
   if (command === "plugin:path|basename") return "codepet-provider.json";
   if (command === "import_provider_plugin") {

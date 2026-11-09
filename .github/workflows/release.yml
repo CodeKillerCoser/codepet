@@ -1,252 +1,105 @@
 name: Release
+run-name: Release Build ${{ inputs.build_run_id }}
 
 on:
   workflow_dispatch:
     inputs:
-      platform:
-        description: Platforms to build and include in this release.
+      build_run_id:
+        description: Successful Build workflow run ID. Publishes its existing artifacts without rebuilding.
         required: true
-        type: choice
-        default: all
-        options:
-          - all
-          - mac
-          - win
-      publish:
-        description: Publish GitHub Release after building. Unchecked uploads build artifacts only.
-        required: false
-        type: boolean
-        default: false
-      version:
-        description: Base app version. CI syncs it to the branch, then builds v<version+short_commit>.
-        required: false
-        type: string
-      tag:
-        description: Advanced tag override. Leave empty; v<base version> is treated as empty.
-        required: false
         type: string
       release_name:
-        description: Release title.
+        description: Optional release title.
         required: false
         type: string
       release_notes:
-        description: Release notes.
+        description: Optional release notes.
         required: false
         type: string
 
 permissions:
   contents: write
+  actions: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
-  preflight:
-    name: Resolve release version
-    runs-on: ubuntu-latest
-    outputs:
-      base_version: ${{ steps.release.outputs.base_version }}
-      version: ${{ steps.release.outputs.version }}
-      commit_sha: ${{ steps.release.outputs.commit_sha }}
-      tag: ${{ steps.release.outputs.tag }}
-      release_name: ${{ steps.release.outputs.release_name }}
-      release_notes: ${{ steps.release.outputs.release_notes }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - name: Sync requested source version
-        shell: bash
-        env:
-          INPUT_VERSION: ${{ inputs.version }}
-        run: |
-          set -euo pipefail
-          if [ -n "$INPUT_VERSION" ]; then
-            if [ "$GITHUB_REF_TYPE" != "branch" ]; then
-              echo "Version sync requires workflow_dispatch to run on a branch ref."
-              exit 1
-            fi
-            node scripts/release_version.mjs --sync-version "$INPUT_VERSION"
-          fi
-          BASE_VERSION="$(node scripts/release_version.mjs --print-version)"
-          echo "BASE_VERSION=$BASE_VERSION" >> "$GITHUB_ENV"
-      - name: Validate release manifest generation
-        run: node --test scripts/generate_latest_json.test.mjs
-      - name: Validate macOS signing helpers
-        run: python3 scripts/macos_signing_test.py
-      - name: Commit synced source version
-        shell: bash
-        run: |
-          set -euo pipefail
-          if ! git diff --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add package.json package-lock.json src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/Cargo.lock
-            git commit -m "chore: sync release version to ${BASE_VERSION}"
-            git push origin "HEAD:${GITHUB_REF_NAME}"
-          fi
-      - name: Resolve release metadata
-        id: release
-        env:
-          INPUT_TAG: ${{ inputs.tag }}
-          INPUT_RELEASE_NAME: ${{ inputs.release_name }}
-          INPUT_RELEASE_NOTES: ${{ inputs.release_notes }}
-        run: |
-          set -euo pipefail
-          COMMIT_SHA="$(git rev-parse HEAD)"
-          node scripts/release_version.mjs \
-            --version "$BASE_VERSION" \
-            --commit-sha "$COMMIT_SHA" \
-            --github-output "$GITHUB_OUTPUT"
-
-  build-macos:
-    name: Build macOS ARM64 DMG
-    if: ${{ inputs.platform == 'all' || inputs.platform == 'mac' }}
-    runs-on: macos-latest
-    needs: preflight
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.preflight.outputs.commit_sha }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.4.2"
-      - run: npm ci
-      - name: Apply build version
-        run: node scripts/release_version.mjs --sync-version "${{ needs.preflight.outputs.version }}" --allow-build-metadata
-      - name: Build Tauri app
-        shell: bash
-        run: python3 scripts/macos_signing.py build
-        env:
-          CODEPET_PROVIDER_TARGET: aarch64-apple-darwin
-          CODEPET_MACOS_CERTIFICATE_BASE64: ${{ secrets.CODEPET_MACOS_CERTIFICATE_BASE64 }}
-          CODEPET_MACOS_CERTIFICATE_PASSWORD: ${{ secrets.CODEPET_MACOS_CERTIFICATE_PASSWORD }}
-          CODEPET_MACOS_CERTIFICATE_SHA1: ${{ secrets.CODEPET_MACOS_CERTIFICATE_SHA1 }}
-      - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
-        with:
-          name: macos-arm64-dmg
-          if-no-files-found: error
-          compression-level: 0
-          path: src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
-
-  build-windows:
-    name: Build Windows x86_64
-    if: ${{ inputs.platform == 'all' || inputs.platform == 'win' }}
-    runs-on: windows-latest
-    needs: preflight
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.preflight.outputs.commit_sha }}
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.4.2"
-      - run: npm ci
-      - name: Apply build version
-        shell: pwsh
-        run: node scripts/release_version.mjs --sync-version "${{ needs.preflight.outputs.version }}" --allow-build-metadata
-      - name: Check updater signing key secret
-        shell: pwsh
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        run: |
-          if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
-            throw "TAURI_SIGNING_PRIVATE_KEY secret is required."
-          }
-      - name: Build Tauri app
-        shell: pwsh
-        run: |
-          $maxAttempts = 3
-          for ($attempt = 1; $attempt -le $maxAttempts; $attempt += 1) {
-            npm run tauri -- build --bundles nsis
-            if ($LASTEXITCODE -eq 0) {
-              exit 0
-            }
-            if ($attempt -eq $maxAttempts) {
-              exit $LASTEXITCODE
-            }
-            Start-Sleep -Seconds ($attempt * 20)
-          }
-        env:
-          CODEPET_PROVIDER_TARGET: x86_64-pc-windows-msvc
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: windows-x86_64
-          if-no-files-found: error
-          path: |
-            src-tauri/target/release/bundle/nsis/*setup.exe
-            src-tauri/target/release/bundle/nsis/*setup.exe.sig
-
   publish:
-    name: Publish GitHub Release
-    if: >-
-      ${{ !cancelled() && inputs.publish && needs.preflight.result == 'success'
-          && (needs.build-macos.result == 'success' || (inputs.platform == 'win' && needs.build-macos.result == 'skipped'))
-          && (needs.build-windows.result == 'success' || (inputs.platform == 'mac' && needs.build-windows.result == 'skipped')) }}
+    name: Publish existing build
     runs-on: ubuntu-latest
-    needs:
-      - preflight
-      - build-macos
-      - build-windows
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: ${{ needs.preflight.outputs.commit_sha }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist/release-assets
-      - name: Generate latest.json
-        env:
-          VERSION: ${{ needs.preflight.outputs.version }}
-          TAG: ${{ needs.preflight.outputs.tag }}
-          RELEASE_NOTES: ${{ needs.preflight.outputs.release_notes }}
-          PLATFORM: ${{ inputs.platform }}
-        run: >
-          node scripts/generate_latest_json.mjs
-          --repo "$GITHUB_REPOSITORY"
-          --tag "$TAG"
-          --version "$VERSION"
-          --platform "$PLATFORM"
-          --mac-updater disabled
-          --artifacts dist/release-assets
-          --output dist/latest.json
-          --notes "$RELEASE_NOTES"
-      - name: Create or update release
-        shell: bash
+      - name: Validate source workflow run
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ needs.preflight.outputs.tag }}
-          RELEASE_NAME: ${{ needs.preflight.outputs.release_name }}
-          RELEASE_NOTES: ${{ needs.preflight.outputs.release_notes }}
-          RELEASE_COMMIT: ${{ needs.preflight.outputs.commit_sha }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
         run: |
+          set -euo pipefail
+          [[ "$BUILD_RUN_ID" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid build run ID"; exit 1; }
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN_ID" > "$RUNNER_TEMP/build-run.json"
+          node --input-type=module <<'JS'
+          import { readFileSync } from 'node:fs';
+          import { validateBuildRun } from './scripts/release_artifacts.mjs';
+          validateBuildRun(JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/build-run.json`, 'utf8')), process.env.BUILD_RUN_ID, process.env.GITHUB_REPOSITORY);
+          JS
+      - uses: actions/download-artifact@v8
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.build_run_id }}
+          pattern: codepet-*
+          merge-multiple: true
+          path: dist/release-assets
+          digest-mismatch: error
+      - name: Validate complete build artifacts
+        id: build
+        env:
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+        run: >-
+          node scripts/release_artifacts.mjs validate --run-id "$BUILD_RUN_ID"
+          --run-json "$RUNNER_TEMP/build-run.json" --repo "$GITHUB_REPOSITORY"
+          --input dist/release-assets
+      - name: Generate latest.json
+        env:
+          VERSION: ${{ steps.build.outputs.version }}
+          TAG: ${{ steps.build.outputs.tag }}
+          PLATFORM: ${{ steps.build.outputs.platform }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: >-
+          node scripts/generate_latest_json.mjs
+          --repo "$GITHUB_REPOSITORY" --tag "$TAG" --version "$VERSION"
+          --platform "$PLATFORM" --mac-updater disabled
+          --artifacts dist/release-assets --output dist/latest.json --notes "$RELEASE_NOTES"
+      - name: Publish validated artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.build.outputs.tag }}
+          RELEASE_COMMIT: ${{ steps.build.outputs.commit_sha }}
+          RELEASE_NAME: ${{ inputs.release_name }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$RELEASE_COMMIT"
+          # Existing tags must identify the exact source used by Build, including annotated tags.
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+            test "$(git rev-parse "$TAG^{commit}")" = "$RELEASE_COMMIT"
+          fi
+          printf '%s\n' "${RELEASE_NOTES:-Release $TAG}" > "$RUNNER_TEMP/release-notes.md"
+          # A failed upload stays in a draft; retries never delete a published release's assets.
+          if gh release view "$TAG" --json isDraft,targetCommitish,assets > "$RUNNER_TEMP/release.json" 2>/dev/null; then
+            jq -e --arg commit "$RELEASE_COMMIT" '.isDraft == true and .targetCommitish == $commit' "$RUNNER_TEMP/release.json" > /dev/null || { echo "Release is already published or its draft targets a different commit."; exit 1; }
+            while IFS= read -r asset; do
+              [[ "$asset" == latest.json || -f "dist/release-assets/$asset" ]] || { echo "Draft has an unexpected asset: $asset"; exit 1; }
+            done < <(jq -r '.assets[].name' "$RUNNER_TEMP/release.json")
+          else
+            gh release create "$TAG" --draft --target "$RELEASE_COMMIT" --title "${RELEASE_NAME:-Release $TAG}" --notes-file "$RUNNER_TEMP/release-notes.md"
+          fi
           mapfile -d '' ASSETS < <(find dist/release-assets -type f -print0)
           ASSETS+=(dist/latest.json)
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            mapfile -t EXISTING_ASSETS < <(gh release view "$TAG" --json assets --jq '.assets[].name')
-            for ASSET in "${EXISTING_ASSETS[@]}"; do
-              gh release delete-asset "$TAG" "$ASSET" --yes
-            done
-            gh release upload "$TAG" "${ASSETS[@]}"
-            gh release edit "$TAG" --title "$RELEASE_NAME" --notes "$RELEASE_NOTES" --latest
-          else
-            gh release create "$TAG" "${ASSETS[@]}" --target "$RELEASE_COMMIT" --title "$RELEASE_NAME" --notes "$RELEASE_NOTES" --latest
-          fi
+          gh release upload "$TAG" "${ASSETS[@]}" --clobber
+          gh release edit "$TAG" --draft=false --latest --title "${RELEASE_NAME:-Release $TAG}" --notes-file "$RUNNER_TEMP/release-notes.md"

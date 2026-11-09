@@ -1,77 +1,36 @@
 import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { prepareReleaseMetadata } from "./release_version.mjs";
+import { parseArgs } from "node:util";
+import { normalizeBaseVersion } from "./release_version.mjs";
 
-const args = parseArgs(process.argv.slice(2));
-const platform = args.platform ?? "all";
-if (!["all", "mac", "win"].includes(platform)) {
-  fail("--platform must be all, mac, or win.");
+export function workflowArguments(mode, argv) {
+  const fields = mode === "build" ? ["platform", "version"] : ["build-run-id", "release-name", "release-notes"];
+  const { values } = parseArgs({ args: argv, options: Object.fromEntries(["ref", ...fields].map(key => [key, { type: "string" }])) });
+  if (mode === "build") {
+    values.platform ??= "all";
+    if (!["all", "mac", "win"].includes(values.platform)) throw new Error("--platform must be all, mac, or win.");
+    if (values.version) normalizeBaseVersion(values.version);
+  } else if (!/^[1-9]\d*$/.test(values["build-run-id"] ?? "")) {
+    throw new Error("Pass --build-run-id <successful Build run ID>. Release no longer builds from source.");
+  }
+  return ["workflow", "run", `${mode}.yml`, "--ref", values.ref ?? "main",
+    ...fields.filter(key => values[key] !== undefined).flatMap(key => ["--raw-field", `${key.replaceAll("-", "_")}=${values[key]}`])];
 }
-const root = fileURLToPath(new URL("..", import.meta.url));
-const metadata = prepareReleaseMetadata({
-  version: args.version,
-});
-const ref = args.ref ?? "main";
 
-run("gh", [
-  "workflow",
-  "run",
-  "release.yml",
-  "--ref",
-  ref,
-  "--field",
-  "publish=true",
-  "--field",
-  `platform=${platform}`,
-  "--field",
-  `version=${args.version ?? ""}`,
-  "--field",
-  `tag=${args.tag ?? ""}`,
-  "--field",
-  `release_name=${args.releaseName ?? ""}`,
-  "--field",
-  `release_notes=${args.releaseNotes ?? ""}`,
-]);
-
-console.log(`Queued GitHub release workflow for base version ${metadata.baseVersion} on ${ref}.`);
-
-function run(command, commandArgs) {
-  const result = spawnSync(command, commandArgs, {
-    cwd: root,
-    stdio: "inherit",
-    shell: process.platform === "win32",
-  });
-
-  if (result.status !== 0) {
-    process.exit(result.status ?? 1);
+export function dispatchWorkflow(mode, argv) {
+  try {
+    const args = workflowArguments(mode, argv);
+    const result = spawnSync("gh", args, { cwd: fileURLToPath(new URL("..", import.meta.url)), stdio: "inherit" });
+    if (result.error) throw result.error;
+    if (result.status !== 0) { process.exitCode = result.status ?? 1; return; }
+    console.log(`Queued GitHub ${mode} workflow.`);
+  } catch (error) {
+    console.error(error.message);
+    process.exitCode = 1;
   }
 }
 
-function parseArgs(argv) {
-  const parsed = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const item = argv[index];
-    if (!item.startsWith("--")) {
-      fail(`Unexpected argument: ${item}`);
-    }
-
-    const [rawKey, inlineValue] = item.slice(2).split("=", 2);
-    const key = rawKey.replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
-    const value = inlineValue ?? argv[index + 1];
-    if (!value || value.startsWith("--")) {
-      fail(`Missing value for --${rawKey}`);
-    }
-
-    parsed[key] = value;
-    if (inlineValue === undefined) {
-      index += 1;
-    }
-  }
-
-  return parsed;
-}
-
-function fail(message) {
-  console.error(message);
-  process.exit(1);
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  dispatchWorkflow("release", process.argv.slice(2));
 }

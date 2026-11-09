@@ -147,6 +147,7 @@ export interface ProviderPluginSettings {
 export interface AppUpdate {
   version: string;
   currentVersion: string;
+  manualDownload?: boolean;
 }
 
 export interface RobotNotificationSettings {

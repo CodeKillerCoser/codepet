@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/CodeKillerCoser/codepet/releases"><img src="https://img.shields.io/github/v/release/CodeKillerCoser/codepet?include_prereleases&label=release" alt="GitHub 最新版本（含预发布）" /></a>
   <a href="https://github.com/CodeKillerCoser/codepet/stargazers"><img src="https://img.shields.io/github/stars/CodeKillerCoser/codepet?style=flat" alt="GitHub Stars" /></a>
-  <a href="https://github.com/CodeKillerCoser/codepet/actions/workflows/release.yml"><img src="https://img.shields.io/github/actions/workflow/status/CodeKillerCoser/codepet/release.yml?label=release%20build" alt="发布构建状态" /></a>
+  <a href="https://github.com/CodeKillerCoser/codepet/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/CodeKillerCoser/codepet/build.yml?label=build" alt="构建状态" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-orange" alt="许可证：PolyForm Noncommercial 1.0.0" /></a>
 </p>
 

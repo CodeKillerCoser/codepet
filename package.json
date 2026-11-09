@@ -11,6 +11,7 @@
     "install:webcontent": "node scripts/webcontent.mjs install",
     "test:webcontent": "node --test scripts/webcontent_test.mjs",
     "build:bundle": "npm run protocol:check && npm run providers:stage && npm run build",
+    "build:github": "node scripts/build_github.mjs",
     "preview": "vite preview --host 127.0.0.1",
     "tauri": "tauri",
     "providers:stage": "node scripts/stage_provider_plugins.mjs",

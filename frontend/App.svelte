@@ -961,9 +961,15 @@
 
     updateInstallBusy = true;
     updateError = "";
-    updateMessage = `正在安装 ${availableUpdate.version}…`;
+    const manualDownload = availableUpdate.manualDownload === true;
+    updateMessage = manualDownload ? "正在打开安装包下载…" : `正在安装 ${availableUpdate.version}…`;
     try {
       await installAppUpdate();
+      if (manualDownload) {
+        availableUpdate = null;
+        updateInstallBusy = false;
+        updateMessage = "已在浏览器打开 DMG 下载，下载后请手动安装。";
+      }
     } catch (currentError) {
       updateInstallBusy = false;
       updateError = String(currentError);
@@ -2294,20 +2300,21 @@
     <div class="update-dialog pixel-panel" role="dialog" aria-modal="true" aria-labelledby="update-dialog-title">
       <header class="panel-head">
         <div>
-          <h3 id="update-dialog-title"><Download size={18} /> Update available</h3>
+          <h3 id="update-dialog-title"><Download size={18} /> 发现新版本</h3>
         </div>
-        <button class="icon-button" type="button" disabled={updateInstallBusy} on:click={dismissAvailableUpdate} aria-label="Cancel update">
+        <button class="icon-button" type="button" disabled={updateInstallBusy} on:click={dismissAvailableUpdate} aria-label="取消更新">
           <X size={17} />
         </button>
       </header>
-      <p>Code Pet {availableUpdate.version} is ready. Current version: {availableUpdate.currentVersion}.</p>
+      <p>发现 Code Pet {availableUpdate.version}，当前版本为 {availableUpdate.currentVersion}。</p>
+      {#if availableUpdate.manualDownload}<p>此版本通过 DMG 安装。点击下载后，请打开安装包手动安装。</p>{/if}
       {#if updateError}
         <p class="error">{updateError}</p>
       {/if}
       <div class="row-actions">
-        <button type="button" disabled={updateInstallBusy} on:click={dismissAvailableUpdate}>Cancel</button>
+        <button type="button" disabled={updateInstallBusy} on:click={dismissAvailableUpdate}>取消</button>
         <button class="primary-action" type="button" disabled={updateInstallBusy} on:click={installAvailableUpdate}>
-          <Download size={17} /> {updateInstallBusy ? "Installing" : "Upgrade now"}
+          <Download size={17} /> {availableUpdate.manualDownload ? (updateInstallBusy ? "正在打开…" : "下载 DMG") : (updateInstallBusy ? "正在安装…" : "立即升级")}
         </button>
       </div>
     </div>
