@@ -37,3 +37,17 @@ it('native menu owns expansion across the gap, keyboard focus and delayed webvie
   state = present(state, { type: 'surface', surface: { ...state.surface, revision: 4, mode: 'floating', dragging: true, panelOpen: false } });
   expect(state.expanded).toBe(false);
 });
+it('switches between native menu and physical notch without retaining expansion or focus', () => {
+  let state = present(initialPresentation, { type: 'surface', surface: { ...initialSurface, revision: 1, mode: 'docked', menuBar: true, panelOpen: true } });
+  state = present(state, { type: 'surface', surface: { ...state.surface, revision: 2, menuBar: false, physicalNotch: true, panelOpen: false } });
+  expect(state.expanded).toBe(false);
+  state = present(state, { type: 'enter' });
+  expect(state.expanded).toBe(true);
+  state = present(state, { type: 'leave' });
+  expect(present(state, { type: 'close-delay' }).expanded).toBe(false);
+  state = present(state, { type: 'focus' });
+  state = present(state, { type: 'surface', surface: { ...state.surface, revision: 3, menuBar: true, physicalNotch: false, panelOpen: false } });
+  expect(state.expanded).toBe(false);
+  expect(state.focused).toBe(false);
+  expect(present(state, { type: 'enter' }).expanded).toBe(false);
+});

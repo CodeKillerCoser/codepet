@@ -21,7 +21,8 @@ export function present(state: Presentation, event: PresentationEvent): Presenta
   switch (event.type) {
     case 'surface': {
       if (event.surface.revision < state.surface.revision) return state;
-      const changed = event.surface.mode !== state.surface.mode || event.surface.dragging !== state.surface.dragging;
+      const changed = event.surface.mode !== state.surface.mode || event.surface.dragging !== state.surface.dragging ||
+        Boolean(event.surface.menuBar) !== Boolean(state.surface.menuBar) || event.surface.physicalNotch !== state.surface.physicalNotch;
       return { ...state, surface: event.surface, ...(changed ? { expanded: false, hovered: false, focused: false } : {}),
         ...(event.surface.menuBar && event.surface.mode === 'docked' ? { expanded: Boolean(event.surface.panelOpen) } : {}) };
     }

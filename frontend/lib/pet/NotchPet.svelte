@@ -25,10 +25,11 @@
   let expandedCompleted = new Set<string>();
   const attention = (task: PetTask) => ['waiting-approval', 'waiting-input'].includes(task.status);
   const live = (task: PetTask) => task.status === 'running' || attention(task);
+  const completedOrCancelled = (task: PetTask) => task.status === 'completed' || task.status === 'interrupted';
   function completedByProvider(tasks: PetTask[]) {
     const groups = new Map<string, { id: string; providerId: string; completed: boolean; tasks: PetTask[] }>();
     for (const task of tasks) {
-      if (task.status !== 'completed') continue;
+      if (!completedOrCancelled(task)) continue;
       const providerId = task.providerId || '';
       const id = `completed-${encodeURIComponent(providerId)}`;
       if (!groups.has(id)) groups.set(id, { id, providerId, completed: true, tasks: [] });
@@ -38,7 +39,7 @@
   }
   $: completedGroups = completedByProvider(data.tasks);
   $: taskGroups = [
-    { id: 'active', providerId: '', completed: false, tasks: data.tasks.filter(task => task.status !== 'completed').sort((a, b) => Number(live(b)) - Number(live(a))) },
+    { id: 'active', providerId: '', completed: false, tasks: data.tasks.filter(task => !completedOrCancelled(task)).sort((a, b) => Number(live(b)) - Number(live(a))) },
     ...completedGroups,
   ].filter(group => group.tasks.length > 0);
   $: if ([...expandedCompleted].some(id => !completedGroups.some(group => group.id === id))) {
@@ -111,40 +112,49 @@
             id={`notch-${group.id}`}
             style={`--stack-count: ${Math.min(group.tasks.length - 1, 2)}`}
             on:click={event => { if (group.completed) expandCompleted(event, group.id); }}>
-            {#each stacked ? group.tasks.slice(0, 3) : group.tasks as task, index (task.id)}
-              {@const provider = data.providers.find(item => item.providerId === task.providerId)}
-              {@const providerName = provider?.displayName || data.sources.find(source => source.id === task.providerId)?.displayName || task.providerId || 'Agent'}
-              <article class="notch-task" class:stack-back={stacked && index > 0}
-                inert={stacked && index > 0} aria-hidden={stacked && index > 0 ? 'true' : undefined}
-                style={stacked ? `--stack-depth: ${index}; z-index: ${3 - index}` : undefined}
-                aria-label={`${task.title}，${petStatusLabel(task.status)}`}>
-                <div class="provider-icon" title={providerName}>
-                  {#if group.completed && index === 0}
-                    <button class="completed-toggle" type="button" aria-expanded={completedExpanded}
-                      aria-label={`${providerName} 已完成任务（${group.tasks.length}）`}
-                      title={`${completedExpanded ? '收起' : '展开'} ${providerName} 的已完成任务`}
-                      aria-controls={`notch-${group.id}`} on:click={() => toggleCompleted(group.id)}>
+            {#if group.completed}
+              {@const provider = data.providers.find(item => item.providerId === group.providerId)}
+              {@const providerName = provider?.displayName || data.sources.find(source => source.id === group.providerId)?.displayName || group.providerId || 'Agent'}
+              <div class="provider-icon group-icon" title={providerName}>
+                <button class="completed-toggle" type="button" aria-expanded={completedExpanded}
+                  aria-label={`${providerName} 已完成任务（${group.tasks.length}）`}
+                  title={`${completedExpanded ? '收起' : '展开'} ${providerName} 的已完成任务`}
+                  aria-controls={`notch-${group.id}-tasks`} on:click={() => toggleCompleted(group.id)}>
+                  {#if provider?.icon && !failedIcons.has(provider.icon)}
+                    <img src={provider.icon} alt={providerName} referrerpolicy="no-referrer" on:error={() => { failedIcons = new Set([...failedIcons, provider.icon!]); }} />
+                  {:else}<Plug size={sizing.portraitWidth * 2 / 3} aria-label={providerName} />{/if}
+                </button>
+              </div>
+            {/if}
+            <div class="task-group-items" id={`notch-${group.id}-tasks`}>
+              {#each stacked ? group.tasks.slice(0, 3) : group.tasks as task, index (task.id)}
+                {@const provider = data.providers.find(item => item.providerId === task.providerId)}
+                {@const providerName = provider?.displayName || data.sources.find(source => source.id === task.providerId)?.displayName || task.providerId || 'Agent'}
+                <article class="notch-task" class:stack-back={stacked && index > 0}
+                  inert={stacked && index > 0} aria-hidden={stacked && index > 0 ? 'true' : undefined}
+                  style={stacked ? `--stack-depth: ${index}; z-index: ${3 - index}` : undefined}
+                  aria-label={`${task.title}，${petStatusLabel(task.status)}`}>
+                  {#if !group.completed}
+                    <div class="provider-icon" title={providerName}>
                       {#if provider?.icon && !failedIcons.has(provider.icon)}
                         <img src={provider.icon} alt={providerName} referrerpolicy="no-referrer" on:error={() => { failedIcons = new Set([...failedIcons, provider.icon!]); }} />
                       {:else}<Plug size={sizing.portraitWidth * 2 / 3} aria-label={providerName} />{/if}
-                    </button>
-                  {:else if provider?.icon && !failedIcons.has(provider.icon)}
-                    <img src={provider.icon} alt={providerName} referrerpolicy="no-referrer" on:error={() => { failedIcons = new Set([...failedIcons, provider.icon!]); }} />
-                  {:else}<Plug size={sizing.portraitWidth * 2 / 3} aria-label={providerName} />{/if}
-                </div>
-                <div class="task-content">
-                  <div class="task-topline">
-                    <h3 title={task.title}>{task.title}</h3>
-                    <span class="task-state" class:running={task.status === 'running'} class:attention={attention(task)} class:failed={task.status === 'failed'}>{petStatusLabel(task.status)}</span>
-                    <time class="task-time" datetime={new Date(task.updatedAt).toISOString()} title={`最近更新：${new Date(task.updatedAt).toLocaleString()}`} aria-label={`最近更新 ${new Date(task.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}>{new Date(task.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
-                    <span class="provider-badge" class:codex={task.providerId?.toLowerCase().includes('codex')} class:attention={attention(task)} title={providerName}>{providerName}</span>
-                    {#if attention(task)}<span class="task-attention" title={petStatusLabel(task.status)}><Bell size={13} aria-label={petStatusLabel(task.status)} /></span>{/if}
+                    </div>
+                  {/if}
+                  <div class="task-content">
+                    <div class="task-topline">
+                      <h3 title={task.title}>{task.title}</h3>
+                      <span class="task-state" class:running={task.status === 'running'} class:attention={attention(task)} class:failed={task.status === 'failed'}>{petStatusLabel(task.status)}</span>
+                      <time class="task-time" datetime={new Date(task.updatedAt).toISOString()} title={`最近更新：${new Date(task.updatedAt).toLocaleString()}`} aria-label={`最近更新 ${new Date(task.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}>{new Date(task.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
+                      {#if !group.completed}<span class="provider-badge" class:codex={task.providerId?.toLowerCase().includes('codex')} class:attention={attention(task)} title={providerName}>{providerName}</span>{/if}
+                      {#if attention(task)}<span class="task-attention" title={petStatusLabel(task.status)}><Bell size={13} aria-label={petStatusLabel(task.status)} /></span>{/if}
+                    </div>
+                    <div class="task-progress"><MarkdownMessage compact message={task.summary?.trim() || '尚未收到回复内容'} /></div>
+                    <button class="dismiss-task" type="button" aria-label={`隐藏 ${task.title}`} title="隐藏任务" on:click={event => dismissActivity(event, task)}><X size={13} /></button>
                   </div>
-                  <div class="task-progress"><MarkdownMessage compact message={task.summary?.trim() || '尚未收到回复内容'} /></div>
-                  <button class="dismiss-task" type="button" aria-label={`隐藏 ${task.title}`} title="隐藏任务" on:click={event => dismissActivity(event, task)}><X size={13} /></button>
-                </div>
-              </article>
-            {/each}
+                </article>
+              {/each}
+            </div>
           </div>
         {:else}
           <div class="empty-state"><strong>暂时没有任务</strong><span>开始编码后，最新进展会显示在这里</span></div>
@@ -183,20 +193,30 @@
   .panel-actions button { display: grid; place-items: center; width: 22px; height: min(22px, calc(var(--notch-header-height) - 4px)); border-radius: 6px; color: var(--gray-10); }
   .notch-details { display: flex; flex-direction: column; max-height: calc(var(--notch-max-height) - var(--notch-header-height) - 36px); margin-top: 12px; animation: reveal 140ms ease-out; }
   .notch-task-list { min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: var(--gray-7) transparent; padding: 0; }
-  .task-group { display: grid; gap: 12px; }
+  .task-group { min-width: 0; }
+  .task-group.completed { display: grid; grid-template-columns: var(--task-icon-size) minmax(0, 1fr); gap: 2px; align-items: start; }
+  .completed .group-icon { position: relative; top: 6px; }
+  .task-group-items { min-width: 0; display: grid; gap: 12px; }
+  .completed .notch-task { display: flex; flex-direction: column; align-items: stretch; }
   .notch-task { position: relative; min-width: 0; display: grid; grid-template-columns: var(--task-icon-size) minmax(0, 1fr); gap: 8px; align-items: start; }
   .completed-heading { margin: 12px 0 8px; color: var(--gray-11); font-size: 11px; font-weight: 400; line-height: 20px; }
   .completed-count { margin-left: 4px; color: var(--gray-10); font-variant-numeric: tabular-nums; }
   .completed-toggle { display: grid; place-items: center; width: 100%; height: 100%; padding: 0; border-radius: 4px; cursor: pointer; }
   .completed + .completed { margin-top: 12px; }
-  .task-group.stacked { grid-template-columns: minmax(0, 1fr); gap: 0; isolation: isolate; padding-bottom: calc(var(--stack-count) * 7px + 1px); cursor: pointer; }
+  .task-group.stacked { --stack-step: 11px; cursor: pointer; }
+  .stacked .task-group-items { grid-template-columns: minmax(0, 1fr); gap: 0; isolation: isolate; padding-bottom: calc(var(--stack-count) * var(--stack-step) + 1px); }
   .stacked .notch-task { grid-area: 1 / 1; perspective: 600px; perspective-origin: 50% 0; }
   .stacked .stack-back { pointer-events: none; }
-  .completed .task-content::before { content: ''; position: absolute; inset: -4px 0 0 -3px; z-index: -1; background: color-mix(in srgb, var(--color-black) 70%, var(--gray-2)); border-radius: 6px; }
-  .stacked .stack-back .task-content::before { background: color-mix(in srgb, var(--color-black) 55%, var(--gray-2)); box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--color-black) 40%, var(--gray-5)); }
-  .completed .task-content { isolation: isolate; }
-  .stacked .task-content { align-self: stretch; transform: translate3d(0, calc(var(--stack-depth) * 7px), calc(var(--stack-depth) * -18px)); transform-origin: center top; }
-  .stacked .stack-back .provider-icon, .stacked .stack-back .task-content > * { visibility: hidden; }
+  .completed .task-content::before { content: ''; position: absolute; inset: 0; z-index: -1; background: color-mix(in srgb, var(--color-black) 20%, var(--gray-2)); border-radius: 6px; }
+  .stacked .notch-task:not(.stack-back) .task-content::before { box-shadow: inset 0 0 0 1px var(--gray-4); }
+  .stacked .stack-back .task-content::before { background: var(--gray-3); box-shadow: inset 0 -1px 0 var(--gray-6); }
+  .stacked .stack-back:last-child .task-content::before { background: color-mix(in srgb, var(--color-black) 20%, var(--gray-3)); }
+  .completed .task-content { flex: 1; isolation: isolate; padding: 6px; }
+  .completed .task-topline { padding-right: 0; }
+  .completed .notch-task:hover .task-topline, .completed .notch-task:focus-within .task-topline { padding-right: 18px; }
+  .completed .dismiss-task { top: 8px; right: 6px; }
+  .stacked .task-content { align-self: stretch; transform: translate3d(0, calc(var(--stack-depth) * var(--stack-step)), calc(var(--stack-depth) * -18px)); transform-origin: center top; }
+  .stacked .stack-back .task-content > * { visibility: hidden; }
   .provider-icon { margin-top: max(0px, calc((24px - var(--task-icon-size)) / 2)); width: var(--task-icon-size); height: var(--task-icon-size); display: grid; place-items: center; color: var(--gray-11); }
   .provider-icon img { width: var(--task-icon-size); height: var(--task-icon-size); object-fit: contain; border-radius: 4px; }
   .task-content { position: relative; min-width: 0; padding: 0 4px 4px 0; }

@@ -73,13 +73,32 @@ struct Surface {
 pub struct SurfaceState(Mutex<Surface>, tokio::sync::Notify);
 
 impl Surface {
+    // menu_ready describes platform capability, not the presentation of every display.
+    fn uses_menu(&self) -> bool {
+        self.menu_ready && self.display().is_some_and(|d| !d.physical_notch)
+    }
+    fn menu_anchor(&self) -> Option<Rect> {
+        self.menu_rect.filter(|r| {
+            self.uses_menu()
+                && display_for(r.center(), &self.displays)
+                    .is_some_and(|d| d.id == self.display_id && !d.physical_notch)
+        })
+    }
+    fn clear_menu_interaction(&mut self) {
+        self.close_panel();
+        self.menu_down = None;
+        self.menu_rect = None;
+    }
+    fn hide_docked_panel(&self) -> bool {
+        self.mode == Mode::Docked
+            && ((self.uses_menu() && !self.panel_open)
+                || self.layout.is_none_or(|l| l.revision != self.revision))
+    }
     fn open_panel(&mut self, pinned: bool) {
+        if !self.uses_menu() || self.menu_anchor().is_none() {
+            return;
+        }
         if !self.panel_open {
-            if let Some(menu) = self.menu_rect {
-                if let Some(d) = display_for(menu.center(), &self.displays) {
-                    self.display_id = d.id.clone();
-                }
-            }
             self.panel_open = true;
             self.revision += 1;
         }
@@ -103,7 +122,7 @@ impl Surface {
             self.begin_drag(origin);
             return self.move_drag(pointer, false, false);
         }
-        if self.menu_rect.is_some_and(|r| r.contains(pointer)) {
+        if self.menu_anchor().is_some_and(|r| r.contains(pointer)) {
             if self.panel_open && self.pinned {
                 self.close_panel();
             } else {
@@ -186,8 +205,8 @@ impl Surface {
             .display()
             .map(|d| {
                 let top = if self.mode == Mode::Docked {
-                    if self.menu_ready {
-                        self.menu_rect
+                    if self.uses_menu() {
+                        self.menu_anchor()
                             .map(|r| menu_area(d, r).y)
                             .unwrap_or(d.work.y)
                     } else {
@@ -210,7 +229,7 @@ impl Surface {
                 .display()
                 .map(|d| d.work.width / d.unit)
                 .unwrap_or(400.),
-            menu_bar: self.menu_ready,
+            menu_bar: self.uses_menu(),
             panel_open: self.panel_open,
             native_drag: platform::TRACKS_DRAG,
             physical_notch: self.display().is_some_and(|d| d.physical_notch),
@@ -254,7 +273,7 @@ impl Surface {
             }
         }
         self.candidate = self
-            .menu_rect
+            .menu_anchor()
             .filter(|r| r.expanded(24., 28.).contains(anchor))
             .and_then(|r| display_for(r.center(), &self.displays))
             .map(|d| d.id.clone())
@@ -307,22 +326,11 @@ impl Surface {
             self.revision += 1;
         }
     }
-    fn apply(&mut self, app: &AppHandle) -> Result<(), String> {
-        if self.menu_ready {
-            pet_menu::set_visible(app, self.mode == Mode::Docked || self.drag.is_some())?;
-            if self.mode == Mode::Docked
-                && (!self.panel_open || self.layout.is_none_or(|l| l.revision != self.revision))
-            {
-                pet_menu::show_panel(app, false)?;
-                return Ok(());
-            }
-        }
-        let (Some(layout), Some(d), Some(anchor)) = (self.layout, self.display(), self.anchor)
-        else {
-            return Ok(());
-        };
-        let frame = if self.mode == Mode::Docked && d.notch.is_some() {
-            if let Some(menu) = self.menu_rect.filter(|_| self.menu_ready) {
+    fn layout_frame(&self, layout: Layout) -> Option<Rect> {
+        let d = self.display()?;
+        let anchor = self.anchor?;
+        Some(if self.mode == Mode::Docked && d.notch.is_some() {
+            if let Some(menu) = self.menu_anchor() {
                 menu_frame(menu_area(d, menu), menu, layout, d.unit)
             } else {
                 dock_frame(d, layout)
@@ -334,6 +342,24 @@ impl Surface {
             } else {
                 clamp(f, d.work)
             }
+        })
+    }
+    fn apply(&mut self, app: &AppHandle) -> Result<(), String> {
+        if self.menu_ready {
+            pet_menu::set_visible(
+                app,
+                self.uses_menu() && (self.mode == Mode::Docked || self.drag.is_some()),
+            )?;
+            if self.hide_docked_panel() {
+                pet_menu::show_panel(app, false)?;
+                return Ok(());
+            }
+        }
+        let (Some(layout), Some(d)) = (self.layout, self.display()) else {
+            return Ok(());
+        };
+        let Some(frame) = self.layout_frame(layout) else {
+            return Ok(());
         };
         let anchor = anchor_in(frame, layout, d.unit);
         platform::apply(app, frame, self.mode == Mode::Docked || self.drag.is_some())?;
@@ -380,30 +406,47 @@ fn perform_on_main(handle: &AppHandle, action: Action) -> Result<View, String> {
     if !s.initialized {
         s.initialize(&env);
     }
+    let was_menu = s.uses_menu();
     s.update_environment(&env);
+    if was_menu != s.uses_menu() || !s.uses_menu() {
+        // Screen changes must discard a pending menu press before Tick can turn it into a drag.
+        s.clear_menu_interaction();
+    }
     if s.menu_ready {
-        pet_menu::set_visible(handle, s.mode == Mode::Docked || s.drag.is_some())?;
-        s.menu_rect = pet_menu::anchor(handle);
+        pet_menu::set_visible(
+            handle,
+            s.uses_menu() && (s.mode == Mode::Docked || s.drag.is_some()),
+        )?;
+        s.menu_rect = if s.uses_menu() {
+            pet_menu::anchor(handle)
+        } else {
+            None
+        };
     }
     let mut save = false;
     match action {
         Action::Outside(point) => {
-            if s.panel_open
-                && !s.menu_rect.is_some_and(|r| r.contains(point))
+            if s.uses_menu()
+                && s.panel_open
+                && !s.menu_anchor().is_some_and(|r| r.contains(point))
                 && !s.last_frame.is_some_and(|r| r.contains(point))
             {
                 s.close_panel();
-            } else if s.panel_open && s.last_frame.is_some_and(|r| r.contains(point)) {
+            } else if s.uses_menu()
+                && s.panel_open
+                && s.last_frame.is_some_and(|r| r.contains(point))
+            {
                 s.pinned = true;
             }
         }
         Action::Menu(input) => {
-            if s.mode == Mode::Docked && s.drag.is_none() {
+            if s.uses_menu() && s.mode == Mode::Docked && s.drag.is_none() {
                 match input {
                     pet_menu::Input::Enter => {
                         // AppKit can emit Enter while rebuilding a status item's
                         // tracking area. Only a real pointer hover opens the panel.
-                        if !env.pressed && s.menu_rect.is_some_and(|r| r.contains(env.pointer)) {
+                        if !env.pressed && s.menu_anchor().is_some_and(|r| r.contains(env.pointer))
+                        {
                             s.open_panel(false);
                         }
                     }
@@ -417,7 +460,7 @@ fn perform_on_main(handle: &AppHandle, action: Action) -> Result<View, String> {
             }
         }
         Action::Panel(open) => {
-            if s.menu_ready && s.mode == Mode::Docked {
+            if s.uses_menu() && s.mode == Mode::Docked {
                 if open {
                     s.open_panel(true);
                 } else {
@@ -504,8 +547,8 @@ fn perform_on_main(handle: &AppHandle, action: Action) -> Result<View, String> {
                     save |= s.finish_menu_press(env.pointer);
                 }
             }
-            if s.menu_ready && s.panel_open && s.drag.is_none() {
-                let in_menu = s.menu_rect.is_some_and(|r| r.contains(env.pointer));
+            if s.uses_menu() && s.panel_open && s.drag.is_none() {
+                let in_menu = s.menu_anchor().is_some_and(|r| r.contains(env.pointer));
                 let in_panel = s.last_frame.is_some_and(|r| r.contains(env.pointer));
                 if env.cancel || (env.pressed && !s.was_pressed && !in_menu && !in_panel) {
                     s.close_panel();
@@ -535,6 +578,9 @@ fn perform_on_main(handle: &AppHandle, action: Action) -> Result<View, String> {
                 }
             }
         }
+    }
+    if was_menu != s.uses_menu() || !s.uses_menu() {
+        s.clear_menu_interaction();
     }
     s.was_pressed = env.pressed;
     s.apply(&handle)?;
@@ -668,6 +714,159 @@ mod tests {
             ..Default::default()
         }
     }
+    fn measured_layout(s: &Surface, height: f64) -> Layout {
+        Layout {
+            revision: s.revision,
+            width: 440.,
+            height,
+            pet_width: 36.,
+            pet_height: 24.,
+            anchor: Point { x: 30., y: 12. },
+        }
+    }
+    fn menu_surface() -> Surface {
+        let mut s = surface();
+        s.menu_ready = true;
+        s.displays[0].physical_notch = false;
+        s.menu_rect = Some(Rect {
+            x: 750.,
+            y: 0.,
+            width: 100.,
+            height: 24.,
+        });
+        s
+    }
+    #[test]
+    fn reported_retina_notch_wins_over_menu_capability_for_both_panel_sizes() {
+        let mut s = menu_surface();
+        // Values from the user's Built-in Retina Display diagnostic report.
+        s.displays[0] = Display {
+            id: "screen".into(),
+            frame: Rect {
+                x: 0.,
+                y: -982.,
+                width: 1512.,
+                height: 982.,
+            },
+            work: Rect {
+                x: 0.,
+                y: -949.,
+                width: 1512.,
+                height: 949.,
+            },
+            notch: Some(Rect {
+                x: 663.,
+                y: -982.,
+                width: 185.,
+                height: 32.,
+            }),
+            physical_notch: true,
+            unit: 1.,
+        };
+        s.menu_rect = Some(Rect {
+            x: 1100.,
+            y: -982.,
+            width: 100.,
+            height: 32.,
+        });
+        assert!(s.menu_ready);
+        assert!(!s.view().menu_bar);
+        assert!(s.view().physical_notch);
+        assert_eq!(s.view().available_height, 950.);
+        for (width, height) in [(200., 24.), (440., 340.)] {
+            let l = Layout {
+                width,
+                ..measured_layout(&s, height)
+            };
+            s.layout = Some(l);
+            let frame = s.layout_frame(l).unwrap();
+            assert_eq!(frame.center().x, 755.5);
+            assert_eq!(frame.y, -950.);
+            assert!(
+                !s.hide_docked_panel(),
+                "a collapsed physical-notch strip remains visible"
+            );
+        }
+        s.open_panel(true);
+        assert!(
+            !s.panel_open,
+            "stale menu input must not take over notch hover"
+        );
+    }
+    #[test]
+    fn no_notch_still_uses_menu_visibility_position_and_height_budget() {
+        let mut s = menu_surface();
+        assert!(s.view().menu_bar);
+        assert!(!s.view().physical_notch);
+        s.layout = Some(measured_layout(&s, 340.));
+        assert!(s.hide_docked_panel());
+        s.open_panel(true);
+        assert!(s.hide_docked_panel(), "wait for layout of the new revision");
+        let l = measured_layout(&s, 340.);
+        s.layout = Some(l);
+        assert!(!s.hide_docked_panel());
+        let frame = s.layout_frame(l).unwrap();
+        assert_eq!(frame.center().x, 780.); // Clamped to the right screen edge.
+        assert_eq!(frame.y, 24.);
+        assert_eq!(s.view().available_height, 736.);
+    }
+    #[test]
+    fn notch_does_not_accept_a_stale_menu_drag_target() {
+        let mut s = menu_surface();
+        s.displays[0].physical_notch = true;
+        s.mode = Mode::Floating;
+        s.begin_drag(s.anchor.unwrap());
+        assert!(s.move_drag(Point { x: 800., y: 20. }, false, false));
+        assert_eq!(s.mode, Mode::Floating);
+        s.begin_drag(s.anchor.unwrap());
+        assert!(s.move_drag(Point { x: 500., y: 60. }, false, false));
+        assert_eq!(s.mode, Mode::Docked);
+        assert!(!s.view().menu_bar);
+    }
+    #[test]
+    fn dragging_between_external_and_notched_display_switches_route_and_can_cancel() {
+        let mut s = menu_surface();
+        let mut internal = s.displays[0].clone();
+        internal.id = "internal".into();
+        internal.physical_notch = true;
+        internal.frame.x = -1000.;
+        internal.work.x = -1000.;
+        internal.notch.as_mut().unwrap().x -= 1000.;
+        s.displays.push(internal);
+        s.begin_drag(s.anchor.unwrap());
+        s.move_drag(Point { x: -500., y: 60. }, true, false);
+        assert_eq!(s.display_id, "internal");
+        assert!(!s.view().menu_bar);
+        s.cancel_drag();
+        assert_eq!(s.display_id, "screen");
+        assert!(s.view().menu_bar);
+        s.begin_drag(s.anchor.unwrap());
+        s.move_drag(Point { x: -500., y: 60. }, false, false);
+        assert_eq!(s.mode, Mode::Docked);
+        assert_eq!(s.display_id, "internal");
+        let frame = s.layout_frame(measured_layout(&s, 340.)).unwrap();
+        assert_eq!(frame.center().x, -500.);
+        assert_eq!(frame.y, 40.);
+        s.begin_drag(s.anchor.unwrap());
+        s.move_drag(Point { x: 800., y: 20. }, false, false);
+        assert_eq!(s.mode, Mode::Docked);
+        assert!(s.view().menu_bar);
+    }
+    #[test]
+    fn stale_menu_on_another_screen_cannot_retarget_the_selected_display() {
+        let mut s = menu_surface();
+        let mut internal = s.displays[0].clone();
+        internal.id = "internal".into();
+        internal.physical_notch = true;
+        internal.frame.x = -1000.;
+        internal.work.x = -1000.;
+        s.displays.push(internal);
+        s.menu_rect.as_mut().unwrap().x = -800.;
+        s.open_panel(true);
+        assert!(!s.panel_open);
+        assert_eq!(s.display_id, "screen");
+        assert!(s.menu_anchor().is_none());
+    }
     #[test]
     fn detach_preserves_grab_offset_and_release_outside_stays_floating() {
         let mut s = surface();
@@ -756,6 +955,7 @@ mod tests {
     fn fast_menu_drag_finishes_even_before_the_next_pointer_poll() {
         let mut s = surface();
         s.menu_ready = true;
+        s.displays[0].physical_notch = false;
         s.menu_rect = Some(Rect {
             x: 750.,
             y: 0.,
@@ -773,6 +973,7 @@ mod tests {
     fn dropping_on_actual_menu_entry_redocks_and_collapse_is_not_persisted_as_floating() {
         let mut s = surface();
         s.menu_ready = true;
+        s.displays[0].physical_notch = false;
         s.menu_rect = Some(Rect {
             x: 750.,
             y: 0.,
@@ -844,7 +1045,7 @@ pub fn menu_outside(app: &AppHandle, point: Point) {
 pub fn should_show_window(app: &AppHandle) -> bool {
     let state = app.state::<SurfaceState>();
     let s = state.0.lock().unwrap();
-    !s.menu_ready || s.mode != Mode::Docked || s.panel_open
+    !s.menu_ready || !s.hide_docked_panel()
 }
 #[tauri::command]
 pub async fn pet_surface_panel(app: AppHandle, open: bool) -> Result<View, String> {

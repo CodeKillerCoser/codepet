@@ -55,15 +55,15 @@ try {
     return {
       padding: [css.paddingTop, css.paddingRight, css.paddingBottom, css.paddingLeft], headerAligned,
       rowsAligned: rows.every(row => [...row.querySelectorAll('.provider-icon, .task-state, .task-time, .provider-badge, .task-attention')].every(el => Math.abs(center(el) - center(row.querySelector('h3'))) < 1)),
-      sameIconSize: rows.every(row => { const r = rect(row.querySelector('.provider-icon img')); return Math.abs(r.width - rect(avatar).height) < 1 && Math.abs(r.height - rect(avatar).height) < 1; }),
-      sameTextEdge: rows.every(row => Math.abs(rect(row.querySelector('.task-content')).left - rect(rows[0].querySelector('.task-content')).left) < 1),
-      spacing: rows.every(row => Math.abs(rect(row.querySelector('.task-topline')).left - rect(row.querySelector('.provider-icon')).right - 8) < 1 && Math.abs(rect(row.querySelector('.task-progress')).top - rect(row.querySelector('.task-topline')).bottom - 8) < 1),
+      sameIconSize: [...document.querySelectorAll('.provider-icon img')].every(icon => { const r = rect(icon); return Math.abs(r.width - rect(avatar).height) < 1 && Math.abs(r.height - rect(avatar).height) < 1; }),
+      sameTextEdge: rows.every(row => Math.abs(rect(row.querySelector('.task-topline')).left - rect(rows[0].querySelector('.task-topline')).left) < 1),
+      spacing: rows.every(row => Math.abs(rect(row.querySelector('.task-topline')).left - rect(row.querySelector('.provider-icon') || row.closest('.task-group').querySelector('.group-icon')).right - 8) < 1 && Math.abs(rect(row.querySelector('.task-progress')).top - rect(row.querySelector('.task-topline')).bottom - 8) < 1),
       noHorizontalOverflow: document.querySelector('.notch-task-list').scrollWidth <= document.querySelector('.notch-task-list').clientWidth,
       actionsInside: rows.every(row => rect(row.querySelector('.dismiss-task')).right <= rect(row.querySelector('.task-content')).right + 1),
     };
   });
   assert.deepEqual(await checkAlignment(), { padding: ['12px', '12px', '12px', '12px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
-  assert.equal(await page.locator('.provider-badge').count(), 3);
+  assert.equal(await page.locator('.provider-badge').count(), 2);
   assert.deepEqual(await page.locator('.task-state').allTextContents(), ['进行中', '等待输入', '本轮结束']);
   assert.equal(await page.locator('time[title^="最近更新："]').count(), 3);
   assert.equal(await page.locator('.task-time').first().getAttribute('datetime'), await page.evaluate(() => new Date(window.__petQa.tasks[0].updatedAt).toISOString()));
@@ -166,10 +166,15 @@ try {
   await page.waitForTimeout(200);
   await page.screenshot({ path: resolve(output, 'menu-expanded-rounded.png') });
   // Moving an open panel between display types must update the corners without remounting.
-  await page.evaluate(() => { window.__petQa.surface.physicalNotch = true; window.__petQa.finishDrag(true); });
-  await page.waitForFunction(() => document.querySelector('.notch-panel.physical-notch'));
+  await page.mouse.move(-20, -20);
+  await page.evaluate(() => { const q = window.__petQa; q.surface = { ...q.surface, physicalNotch: true, menuBar: false, panelOpen: false }; q.finishDrag(true); });
+  await page.waitForFunction(() => document.querySelector('.notch-panel.physical-notch') && !document.querySelector('.notch-details'));
+  await page.locator('.notch-header').hover();
+  await page.waitForSelector('.notch-details');
   assert.deepEqual(await corners(), ['0px', '0px', '12px', '12px', '""', '""']);
-  await page.evaluate(() => { window.__petQa.surface.physicalNotch = false; window.__petQa.finishDrag(true); });
+  await page.mouse.move(-20, -20);
+  await page.waitForFunction(() => !document.querySelector('.notch-details'));
+  await page.evaluate(() => { const q = window.__petQa; q.surface = { ...q.surface, physicalNotch: false, menuBar: true, panelOpen: true }; q.finishDrag(true); });
   await page.waitForFunction(() => !document.querySelector('.notch-panel.physical-notch'));
   assert.deepEqual(await corners(), ['12px', '12px', '12px', '12px', 'none', 'none']);
   await page.waitForFunction(() => window.__petQa.menuSummary?.count === 14);
@@ -233,8 +238,8 @@ try {
     window.__petQa.settings.pet.kind = 'builtin';
     window.__petQa.updateSettings();
     window.__petQa.tasks = [
-      { id: 'live', title: '调整任务面板布局', summary: '正在检查图标顶对齐与分组堆叠', status: 'running', providerId: 'codex', updatedAt: now },
-      ...['codex', 'claude'].flatMap((providerId, group) => Array.from({ length: 3 }, (_, i) => ({ id: `${providerId}-${i}`, title: ['完成窗口布局检查', '完成角色导入检查', '完成拖动切换检查'][i], summary: i === 0 ? '标题与消息布局检查通过\n已完成小屏和大屏回归' : '检查通过，结果已保存', status: 'completed', providerId, updatedAt: now - 1000 * (1 + group * 3 + i) }))),
+      { id: 'live', title: '调整任务面板布局', summary: '正在检查取消任务归组与单图标布局', status: 'running', providerId: 'codex', updatedAt: now },
+      ...['codex', 'claude'].flatMap((providerId, group) => Array.from({ length: 3 }, (_, i) => ({ id: `${providerId}-${i}`, title: [providerId === 'codex' ? '已取消的窗口布局检查' : '完成窗口布局检查', '完成角色导入检查', '完成拖动切换检查'][i], summary: i === 0 ? '标题与消息布局检查通过\n已完成小屏和大屏回归' : '检查通过，结果已保存', status: providerId === 'codex' && i === 0 ? 'interrupted' : 'completed', providerId, updatedAt: now - 1000 * (1 + group * 3 + i) }))),
     ];
   });
   await page.waitForFunction(() => document.querySelectorAll('.completed-toggle').length === 2);
@@ -245,6 +250,10 @@ try {
   assert.equal(await page.locator('.completed-heading').count(), 1);
   assert.equal(await page.locator('.completed-count').innerText(), '6');
   assert.equal(await page.locator('.completed .notch-task:not([inert])').count(), 2);
+  assert.equal(await page.locator('#notch-active .notch-task').count(), 1);
+  assert.equal(await page.locator('#notch-completed-codex .task-state').first().innerText(), '已取消');
+  assert.equal(await page.locator('.completed .provider-icon').count(), 2);
+  assert.equal(await page.locator('.completed .provider-badge').count(), 0);
   await page.locator('.notch-task-list').evaluate(el => el.scrollTop = 0);
   await page.mouse.move(-20, -20); await page.waitForTimeout(200);
   await page.screenshot({ path: resolve(output, 'agent-stacks.png') });
@@ -253,7 +262,38 @@ try {
   assert.equal(await claudeToggle.getAttribute('aria-expanded'), 'false');
   assert.equal(await page.locator('#notch-completed-codex .notch-task:not([inert])').count(), 3);
   assert.equal(await page.locator('#notch-completed-claude .notch-task:not([inert])').count(), 1);
+  assert.equal(await page.locator('#notch-completed-codex .provider-icon').count(), 1);
+  assert.equal(await page.locator('#notch-completed-codex .completed-toggle').count(), 1);
+  assert.equal(await page.locator('.completed .provider-badge').count(), 0);
+  assert.ok(await page.locator('#notch-completed-codex').evaluate(group => {
+    const column = group.querySelector('.task-group-items').getBoundingClientRect();
+    return [...group.querySelectorAll('.task-content')].every(content => {
+      const box = content.getBoundingClientRect();
+      return Math.abs(box.left - column.left) < 1 && Math.abs(box.right - column.right) < 1;
+    });
+  }), 'expanded task content must fill the whole shared right column');
+  assert.deepEqual(await checkAlignment(), { padding: ['12px', '12px', '12px', '12px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
+  assert.ok(await page.locator('#notch-completed-codex').evaluate(group => {
+    const icon = group.querySelector('.group-icon').getBoundingClientRect();
+    const heading = group.querySelector('h3').getBoundingClientRect();
+    return Math.abs(icon.top + icon.height / 2 - heading.top - heading.height / 2) < 1;
+  }));
   await page.screenshot({ path: resolve(output, 'agent-expanded.png') });
+  // The whole expanded group keeps one icon column at narrow widths, too.
+  await page.evaluate(() => { window.__petQa.surface.availableWidth = 280; window.__petQa.finishDrag(true); });
+  await page.waitForFunction(() => innerWidth === 280);
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+  assert.equal(await page.locator('#notch-completed-codex .provider-icon').count(), 1);
+  await page.screenshot({ path: resolve(output, 'agent-expanded-narrow.png') });
+  await page.evaluate(() => { window.__petQa.surface.availableWidth = 1440; window.__petQa.finishDrag(true); });
+  await page.waitForFunction(() => innerWidth === 440);
+  // Cancelled tasks can resume and then return to the same provider group.
+  await page.evaluate(() => { window.__petQa.tasks.find(t => t.id === 'codex-0').status = 'running'; });
+  await page.waitForFunction(() => document.querySelector('#notch-active')?.querySelectorAll('.notch-task').length === 2);
+  assert.equal(await page.locator('#notch-completed-codex .notch-task').count(), 2);
+  await page.evaluate(() => { window.__petQa.tasks.find(t => t.id === 'codex-0').status = 'interrupted'; });
+  await page.waitForFunction(() => document.querySelector('#notch-active')?.querySelectorAll('.notch-task').length === 1);
+  assert.equal(await page.locator('#notch-completed-codex .notch-task').count(), 3);
   await codexToggle.click();
   assert.equal(await codexToggle.getAttribute('aria-expanded'), 'false');
   await codexToggle.click();
