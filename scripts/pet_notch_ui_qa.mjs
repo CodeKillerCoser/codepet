@@ -71,7 +71,7 @@ try {
     };
   });
   assert.deepEqual(await checkAlignment(), { padding: ['0px', '0px', '0px', '0px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
-  assert.equal(await page.locator('.provider-badge').count(), 2);
+  assert.equal(await page.locator('.provider-badge').count(), 0);
   assert.deepEqual(await page.locator('.task-state').allTextContents(), ['进行中', '等待输入', '本轮结束']);
   assert.equal(await page.locator('time[title^="最近更新："]').count(), 3);
   assert.equal(await page.locator('.task-time').first().getAttribute('datetime'), await page.evaluate(() => new Date(window.__petQa.tasks[0].updatedAt).toISOString()));
@@ -231,6 +231,30 @@ try {
   assert.deepEqual(await checkAlignment(), { padding: ['0px', '0px', '0px', '0px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
   await page.waitForTimeout(200);
   await page.screenshot({ path: resolve(output, 'completed-stacked.png') });
+  // Collapsed groups consume vertical wheel input and cycle through every task,
+  // not just the three rendered layers. Expanded lists keep native scrolling.
+  const stack = page.locator('#notch-completed-codex');
+  const topTitle = () => stack.locator('.notch-task:not([inert]) h3').innerText();
+  await stack.locator('.notch-task:not([inert])').hover();
+  const scrollBeforeWheel = await page.locator('.notch-task-list').evaluate(el => el.scrollTop);
+  await page.mouse.wheel(0, 100);
+  await page.waitForFunction(() => document.querySelector('#notch-completed-codex .notch-task:not([inert]) h3')?.textContent === '已完成任务 2');
+  assert.equal(await completedToggle.getAttribute('aria-expanded'), 'false');
+  assert.equal(await page.locator('.notch-task-list').evaluate(el => el.scrollTop), scrollBeforeWheel);
+  await page.waitForTimeout(200);
+  await page.mouse.wheel(0, 100);
+  await page.waitForTimeout(200);
+  await page.mouse.wheel(0, 100);
+  await page.waitForFunction(() => document.querySelector('#notch-completed-codex .notch-task:not([inert]) h3')?.textContent === '已完成任务 4');
+  await page.waitForTimeout(200);
+  await page.screenshot({ path: resolve(output, 'completed-wheel-next.png') });
+  // Returning backwards wraps from first to last; tiny trackpad deltas accumulate.
+  for (let i = 0; i < 4; i++) { await page.mouse.wheel(0, -100); await page.waitForTimeout(200); }
+  assert.equal(await topTitle(), '已完成任务 18');
+  await page.mouse.wheel(0, 10); await page.waitForTimeout(25);
+  assert.equal(await topTitle(), '已完成任务 18');
+  for (let i = 0; i < 3; i++) { await page.mouse.wheel(0, 10); await page.waitForTimeout(25); }
+  await page.waitForFunction(() => document.querySelector('#notch-completed-codex .notch-task:not([inert]) h3')?.textContent === '已完成任务 1');
   await page.evaluate(() => { window.__petQa.surface.availableWidth = 280; window.__petQa.finishDrag(true); });
   await page.waitForFunction(() => innerWidth === 280);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
@@ -244,6 +268,13 @@ try {
   await page.waitForFunction(() => innerHeight === 340);
   assert.ok(await page.locator('.notch-task-list').evaluate(el => el.scrollHeight > el.clientHeight));
   await page.screenshot({ path: resolve(output, 'completed-expanded.png') });
+  await stack.locator('.notch-task').first().hover();
+  const expandedTitles = await stack.locator('h3').allTextContents();
+  const expandedScroll = await page.locator('.notch-task-list').evaluate(el => el.scrollTop);
+  await page.mouse.wheel(0, 180);
+  await page.waitForFunction(before => document.querySelector('.notch-task-list').scrollTop > before, expandedScroll);
+  assert.deepEqual(await stack.locator('h3').allTextContents(), expandedTitles);
+  assert.equal(await completedToggle.getAttribute('aria-expanded'), 'true');
   await completedToggle.focus(); await page.keyboard.press('Space');
   assert.equal(await completedToggle.getAttribute('aria-expanded'), 'false');
   assert.equal(await completedToggle.evaluate(el => el === document.activeElement), true);
@@ -280,9 +311,17 @@ try {
   assert.equal(await page.locator('.completed .provider-badge').count(), 0);
   await page.locator('.notch-task-list').evaluate(el => el.scrollTop = 0);
   await page.keyboard.press('Tab');
-  await page.locator('.notch-task-list').focus();
-  await page.mouse.move(-20, -20); await page.waitForTimeout(200);
+  await page.locator('.notch-header').hover();
+  await page.evaluate(() => document.activeElement?.blur());
+  await settled('open');
   await page.screenshot({ path: resolve(output, 'agent-stacks.png') });
+  await stack.locator('.notch-task:not([inert])').hover();
+  await page.mouse.wheel(0, 100);
+  await page.waitForFunction(() => document.querySelector('#notch-completed-codex .notch-task:not([inert]) h3')?.textContent === '完成角色导入检查');
+  assert.equal(await page.locator('#notch-completed-claude .notch-task:not([inert]) h3').innerText(), '完成窗口布局检查');
+  await page.waitForTimeout(200);
+  await page.mouse.wheel(0, -100);
+  await page.waitForFunction(() => document.querySelector('#notch-completed-codex .notch-task:not([inert]) h3')?.textContent === '已取消的窗口布局检查');
   await codexToggle.click();
   assert.equal(await codexToggle.getAttribute('aria-expanded'), 'true');
   assert.equal(await claudeToggle.getAttribute('aria-expanded'), 'false');
@@ -433,7 +472,7 @@ try {
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   console.log('Responsive display matrix:', JSON.stringify(matrix));
   assert.deepEqual(errors, []);
-  console.log('Notch UI QA passed: compact/hover, keyboard/Escape, shared dismissals, imported atlas, detach/redock, responsive bounds, corners, live-first order, completed stacking/toggle/resume, capped scrolling and visible actions.');
+  console.log('Notch UI QA passed: compact/hover, keyboard/Escape, shared dismissals, imported atlas, detach/redock, responsive bounds, corners, live-first order, completed stacking/wheel cycling/toggle/resume, native expanded scrolling, capped scrolling and visible actions.');
 } catch (error) {
   if (page) {
     await page.screenshot({path: resolve(output, 'failure.png')}).catch(() => {});

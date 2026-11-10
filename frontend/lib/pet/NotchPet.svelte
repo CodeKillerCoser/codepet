@@ -24,6 +24,9 @@
   export let dismissActivity: (event: MouseEvent, task: PetTask) => void;
   let failedIcons = new Set<string>();
   let expandedCompleted = new Set<string>();
+  let stackSelection = new Map<string, string>();
+  const wheelProgress = new Map<string, { delta: number; at: number; flippedAt: number }>();
+
   const attention = (task: PetTask) => ['waiting-approval', 'waiting-input'].includes(task.status);
   const live = (task: PetTask) => task.status === 'running' || attention(task);
   const completedOrCancelled = (task: PetTask) => task.status === 'completed' || task.status === 'interrupted';
@@ -46,7 +49,39 @@
   $: if ([...expandedCompleted].some(id => !completedGroups.some(group => group.id === id))) {
     expandedCompleted = new Set([...expandedCompleted].filter(id => completedGroups.some(group => group.id === id)));
   }
+  $: if ([...stackSelection].some(([id, taskId]) => !completedGroups.some(group => group.id === id && group.tasks.some(task => task.id === taskId)))) {
+    stackSelection = new Map([...stackSelection].filter(([id, taskId]) => completedGroups.some(group => group.id === id && group.tasks.some(task => task.id === taskId))));
+  }
+  $: for (const id of wheelProgress.keys()) {
+    if (!completedGroups.some(group => group.id === id)) wheelProgress.delete(id);
+  }
+  function stackTasks(tasks: PetTask[], selectedId: string | undefined) {
+    const start = Math.max(0, tasks.findIndex(task => task.id === selectedId));
+    return Array.from({ length: Math.min(tasks.length, 3) }, (_, index) => tasks[(start + index) % tasks.length]);
+  }
+  function rotateStack(event: WheelEvent, id: string, tasks: PetTask[]) {
+    // Preserve pinch zoom and horizontal gestures. Expanded/single rows never call this.
+    if (event.ctrlKey || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const now = performance.now();
+    const previous = wheelProgress.get(id);
+    const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 240 : 1);
+    // Trackpad micro-deltas accumulate, while momentum cannot race through the pile.
+    if (previous && now - previous.flippedAt < 160) return;
+    const accumulated = previous && now - previous.at < 180 && Math.sign(previous.delta) === Math.sign(delta)
+      ? previous.delta + delta : delta;
+    if (Math.abs(accumulated) < 40) {
+      wheelProgress.set(id, { delta: accumulated, at: now, flippedAt: previous?.flippedAt ?? -Infinity });
+      return;
+    }
+    const current = Math.max(0, tasks.findIndex(task => task.id === stackSelection.get(id)));
+    const next = (current + Math.sign(accumulated) + tasks.length) % tasks.length;
+    stackSelection = new Map(stackSelection).set(id, tasks[next].id);
+    wheelProgress.set(id, { delta: 0, at: now, flippedAt: now });
+  }
   function toggleCompleted(id: string) {
+    wheelProgress.delete(id);
     const next = new Set(expandedCompleted);
     if (next.has(id)) next.delete(id); else next.add(id);
     expandedCompleted = next;
@@ -87,7 +122,8 @@
           <div class="task-group" class:stacked class:completed={group.completed} role="group" aria-label={group.completed ? `${group.providerId || 'Agent'} 已完成任务` : '当前任务'}
             id={`notch-${group.id}`}
             style={`--stack-count: ${Math.min(group.tasks.length - 1, 2)}`}
-            on:click={event => { if (group.completed) expandCompleted(event, group.id); }}>
+            on:click={event => { if (group.completed) expandCompleted(event, group.id); }}
+            on:wheel|nonpassive={event => { if (stacked) rotateStack(event, group.id, group.tasks); }}>
             {#if group.completed}
               {@const provider = data.providers.find(item => item.providerId === group.providerId)}
               {@const providerName = provider?.displayName || data.sources.find(source => source.id === group.providerId)?.displayName || group.providerId || 'Agent'}
@@ -103,7 +139,7 @@
               </div>
             {/if}
             <div class="task-group-items" id={`notch-${group.id}-tasks`}>
-              {#each stacked ? group.tasks.slice(0, 3) : group.tasks as task, index (task.id)}
+              {#each stacked ? stackTasks(group.tasks, stackSelection.get(group.id)) : group.tasks as task, index (task.id)}
                 {@const provider = data.providers.find(item => item.providerId === task.providerId)}
                 {@const providerName = provider?.displayName || data.sources.find(source => source.id === task.providerId)?.displayName || task.providerId || 'Agent'}
                 <article class="notch-task" class:stack-back={stacked && index > 0}
@@ -122,7 +158,6 @@
                       <h3 title={task.title}>{task.title}</h3>
                       <span class="task-state" class:running={task.status === 'running'} class:attention={attention(task)} class:failed={task.status === 'failed'}>{petStatusLabel(task.status)}</span>
                       <time class="task-time" datetime={new Date(task.updatedAt).toISOString()} title={`最近更新：${new Date(task.updatedAt).toLocaleString()}`} aria-label={`最近更新 ${new Date(task.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}>{new Date(task.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
-                      {#if !group.completed}<span class="provider-badge" class:codex={task.providerId?.toLowerCase().includes('codex')} class:attention={attention(task)} title={providerName}>{providerName}</span>{/if}
                       {#if attention(task)}<span class="task-attention" title={petStatusLabel(task.status)}><Bell size={13} aria-label={petStatusLabel(task.status)} /></span>{/if}
                     </div>
                     <div class="task-progress"><MarkdownMessage compact message={task.summary?.trim() || '尚未收到回复内容'} /></div>
@@ -173,16 +208,13 @@
   .completed .task-topline { padding-right: 0; }
   .completed .notch-task:hover .task-topline, .completed .notch-task:focus-within .task-topline { padding-right: 18px; }
   .completed .dismiss-task { top: 8px; right: 6px; }
-  .stacked .task-content { align-self: stretch; transform: translate3d(0, calc(var(--stack-depth) * var(--stack-step)), calc(var(--stack-depth) * -18px)); transform-origin: center top; }
+  .stacked .task-content { align-self: stretch; transform: translate3d(0, calc(var(--stack-depth) * var(--stack-step)), calc(var(--stack-depth) * -18px)); transform-origin: center top; transition: transform 140ms ease-out; }
   .stacked .stack-back .task-content > * { visibility: hidden; }
   .provider-icon { margin-top: max(0px, calc((24px - var(--task-icon-size)) / 2)); width: var(--task-icon-size); height: var(--task-icon-size); display: grid; place-items: center; color: var(--gray-11); }
   .provider-icon img { width: var(--task-icon-size); height: var(--task-icon-size); object-fit: contain; border-radius: 4px; }
   .task-content { position: relative; min-width: 0; padding: 0 4px 4px 0; }
   .task-topline { display: flex; align-items: center; gap: 8px; min-height: 24px; padding-right: 18px; }
   h3 { flex: 1; min-width: 0; margin: 0; font-size: 14px; font-weight: 600; line-height: 1.5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .provider-badge { flex: none; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 4px 9px; border-radius: 16px; font: 600 11px/1.3 var(--font-family-mono, monospace); color: var(--gray-12); background: var(--gray-3); }
-  .provider-badge.codex { background: var(--blue-4); color: var(--blue-12); }
-  .provider-badge.attention { background: var(--amber-4); color: var(--amber-12); }
   .latest-status, .task-state, .task-time { flex: none; white-space: nowrap; font-size: 10px; color: var(--gray-11); }
   .latest-status { font-size: 11px; }
   .task-time { font-variant-numeric: tabular-nums; }
@@ -201,6 +233,6 @@
   .connection-error, .action-notice { margin: 8px 0; font-size: 12px; }
   .action-notice { flex: none; }
   @keyframes pulse { 50% { opacity: .45; } }
-  @media (prefers-reduced-motion: reduce) { .status-dot.busy { animation: none; } }
-  @container (max-width: 344px) { .provider-icon { margin-top: max(0px, calc((21px - var(--task-icon-size)) / 2)); } .task-topline { flex-wrap: wrap; gap: 4px; } h3 { flex-basis: 100%; } .provider-badge { max-width: 80%; padding: 3px 7px; font-size: 10px; } }
+  @media (prefers-reduced-motion: reduce) { .status-dot.busy { animation: none; } .stacked .task-content { transition: none; } }
+  @container (max-width: 344px) { .provider-icon { margin-top: max(0px, calc((21px - var(--task-icon-size)) / 2)); } .task-topline { flex-wrap: wrap; gap: 4px; } h3 { flex-basis: 100%; } }
 </style>
