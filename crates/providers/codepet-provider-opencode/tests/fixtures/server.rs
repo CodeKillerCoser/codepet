@@ -21,6 +21,11 @@ fn main() {
     if matches!(args.get(1).map(String::as_str), Some("auth" | "stats")) {
         let config = startup_config();
         let name = &args[1];
+        if let Some(root) = config["catalogControlDirectory"].as_str() {
+            let mut log = std::fs::OpenOptions::new().create(true).append(true)
+                .open(std::path::Path::new(root).join("metadata-calls")).unwrap();
+            writeln!(log, "{name}").unwrap();
+        }
         if let Some(root) = config["probeDirectory"].as_str() {
             let root = std::path::Path::new(root);
             std::fs::write(root.join(format!("{name}.pid")), std::process::id().to_string()).unwrap();
@@ -72,6 +77,30 @@ fn main() {
         state.sessions.insert("ses_active_hidden".into(), session("ses_active_hidden", "Active outside list", &fixture_directory, 0));
         state.active.insert("ses_active_hidden".into());
     }
+    if let Some(root) = startup["catalogControlDirectory"].as_str() {
+        let root = std::path::PathBuf::from(root);
+        let state = state.clone();
+        thread::spawn(move || {
+            let mut previous = String::new();
+            loop {
+                if !lock(&state).subscribers.is_empty() {
+                    if let Ok(command) = std::fs::read_to_string(root.join("catalog-event.json")) {
+                        if command != previous {
+                            if let Ok(value) = serde_json::from_str::<Value>(&command) {
+                                for index in 0..value["count"].as_u64().unwrap_or(1) {
+                                    broadcast(&state, json!({"id": format!("catalog-{}-{index}", value["serial"]),
+                                        "created": 1700000000000u64, "type": value["type"], "data": {}}));
+                                }
+                                previous = command;
+                                std::fs::write(root.join("catalog-event-ack"), value["serial"].to_string()).unwrap();
+                            }
+                        }
+                    }
+                }
+                thread::sleep(std::time::Duration::from_millis(10));
+            }
+        });
+    }
     let listener = bind_listener(hostname, argument(&args, "--port"));
     let port = listener.local_addr().unwrap().port();
     println!("opencode server listening on http://{hostname}:{port}/");
@@ -83,6 +112,11 @@ fn main() {
         let state = state.clone();
         thread::spawn(move || handle_connection(stream, state));
     }
+}
+
+fn catalog_response(root: &std::path::Path) -> Option<Value> {
+    std::fs::read(root.join("catalog-response.json")).ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
 }
 
 fn startup_config() -> Value {
@@ -195,6 +229,20 @@ fn route(
                 return (200, json!({"data":[]}).to_string());
             }
         }
+        if let Some(root) = startup["catalogControlDirectory"].as_str() {
+            let root = std::path::Path::new(root);
+            let reads = lock(state).model_reads;
+            std::fs::write(root.join("model-reads"), reads.to_string()).unwrap();
+            let value = catalog_response(root);
+            if root.join("block-model").exists() {
+                std::fs::write(root.join("model-blocked"), "").unwrap();
+                while !root.join("release-model").exists() { thread::sleep(std::time::Duration::from_millis(10)); }
+            }
+            if let Some(value) = value {
+                return (value["status"].as_u64().unwrap_or(200) as u16,
+                    json!({"data": value["models"]}).to_string());
+            }
+        }
         if let Some(marker) = startup["modelEntered"].as_str() {
             std::fs::write(marker, "entered").unwrap();
             thread::sleep(std::time::Duration::from_secs(3));
@@ -209,6 +257,10 @@ fn route(
         }]}).to_string());
     }
     if method == "GET" && path == "/api/provider" {
+        if let Some(value) = startup_config()["catalogControlDirectory"].as_str()
+            .and_then(|root| catalog_response(std::path::Path::new(root))) {
+            if value["providers"].is_array() { return (200, json!({"data":value["providers"]}).to_string()); }
+        }
         return (200, json!({"data": [{
             "id": "fixture", "name": "Fixture Provider", "disabled": false
         }]}).to_string());

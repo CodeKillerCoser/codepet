@@ -799,6 +799,9 @@ async fn run_gateway_requests(
     admission: Arc<Mutex<Arc<AtomicBool>>>,
 ) {
     let mut tasks = JoinSet::new();
+    // Unlike stderr-only trace spans, this sink reaches the installed app's
+    // rotating log even when macOS launches it with stderr=/dev/null.
+    let diagnostic = super::webrtc::diagnostics::Diagnostic::new(&uuid::Uuid::new_v4().to_string());
     loop {
         tokio::select! {
             biased;
@@ -824,6 +827,7 @@ async fn run_gateway_requests(
                 let request_transport_failed = transport_failed.clone();
                 let mut request_stop = stop.clone();
                 let request_trace_links = trace_links.clone();
+                let request_diagnostic = diagnostic.clone();
                 tasks.spawn(async move {
                     let GatewayRequestDelivery {
                         request,
@@ -845,6 +849,14 @@ async fn run_gateway_requests(
                     let trace_request = request.clone();
                     let method = request.method();
                     let request_id = request.id().clone();
+                    let observe_interaction = matches!(method,
+                        gateway::ProtocolMethod::ConversationAcquireInteraction |
+                        gateway::ProtocolMethod::ConversationResume);
+                    if observe_interaction {
+                        request_diagnostic.emit("interaction.rpc.started", serde_json::json!({
+                            "method": method.as_str(), "requestId": request_id,
+                        }));
+                    }
                     let response = tokio::select! {
                         biased;
                         changed = request_stop.changed() => {
@@ -870,6 +882,23 @@ async fn run_gateway_requests(
                             "status": if matches!(&response.response, gateway::JsonRpcResponsePayload::Ok { .. }) { "ok" } else { "error" },
                         }),
                     );
+                    if observe_interaction {
+                        let (status, acquired, interaction_error) = match &response.response {
+                            gateway::JsonRpcResponsePayload::Ok { result } => ("ok",
+                                result.get("interactionAcquired").and_then(serde_json::Value::as_bool)
+                                    .or_else(|| (method == gateway::ProtocolMethod::ConversationAcquireInteraction).then_some(true)),
+                                result.get("interactionError").and_then(|error| error.get("code"))
+                                    .and_then(serde_json::Value::as_str)),
+                            gateway::JsonRpcResponsePayload::Error { error } => ("error", None,
+                                error.data.as_ref().and_then(|data| data.get("code"))
+                                    .and_then(serde_json::Value::as_str)),
+                        };
+                        request_diagnostic.emit("interaction.rpc.completed", serde_json::json!({
+                            "method": method.as_str(), "requestId": request_id,
+                            "elapsedMs": received_at.elapsed().as_millis(), "status": status,
+                            "interactionAcquired": acquired, "interactionError": interaction_error,
+                        }));
+                    }
                     let text = match serde_json::to_string(&response) {
                         Ok(text) => text,
                         Err(_) => {

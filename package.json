@@ -1,6 +1,6 @@
 {
   "name": "code-pet",
-  "version": "0.3.10-beta",
+  "version": "0.3.11-beta",
   "private": true,
   "type": "module",
   "scripts": {

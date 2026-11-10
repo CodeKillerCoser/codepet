@@ -22,7 +22,7 @@
 1. 校验活动：读取 thread/read 完整 turns，拒绝 active 状态、inProgress turn、等待审批/输入，以及系统错误或不可读取的活动信息。额外拒绝本 Provider 已知的任意活动 Hook 会话或活动 execution slot，因为退出桌面影响整个应用。进程内读写锁阻止 force 与正常 turn 操作同时执行。
 2. 普通 acquire 已成功则复核活动并直接返回，不关闭任何桌面。仅标准写入冲突进入关闭路径，其他错误保持原错误。
 3. `client.rs::codex_app_server_command` 在启动 harness 前显式注入 `CODEPET_CODEX_HARNESS=<provider PID>`，覆盖继承值；子进程继承此标记。标记非空就保护，不要求 PID 等于当前 Provider，因此其他 Provider 实例创建的 harness 也不会被误杀。标记仅用于进程归属保护，不是安全认证凭证。
-4. 先枚举同用户的 `codex` / `codex.exe`，并识别 Windows `WindowsApps/OpenAI.Codex_*/app/{ChatGPT,Codex}.exe` 的桌面根进程；只有环境可读取、且不含非空标记的候选才可结束。不按桌面根进程扩大到所有后代；普通工具进程不在目标内。读取环境只针对候选，绝不输出其他环境变量的值。环境为空或不可读取一律视为未知，拒绝此次关闭。
+4. 先枚举同用户的 `codex` / `codex.exe`，并识别 Windows `WindowsApps/OpenAI.Codex_*/app/{ChatGPT,Codex}.exe` 的桌面根进程，以及 macOS `Codex.app/Contents/MacOS/Codex` 和 `ChatGPT.app/Contents/MacOS/ChatGPT`；先向这些桌面主程序发送终止信号，再处理其余 CLI/App Server，桌面终止失败不得继续处理后面的 CLI。只有环境可读取、且不含非空标记的候选才可结束。不按桌面根进程扩大到所有后代；普通工具进程不在目标内。读取环境只针对候选，绝不输出其他环境变量的值。环境为空或不可读取一律视为未知，拒绝此次关闭。
 5. 额外保留 Codepet/Provider 子树及当前进程祖先，保护升级前未注入标记的自有 harness；带标记的孤儿或重挂父进程的 harness 也保留。执行前重新枚举并检查身份/标记，任一候选变化即中止。Windows 使用同一个进程 handle 检查路径/创建时间并结束；退出后重新扫描未标记 Codex，最多等待三秒，再按既有流程复核活动、最多十次尝试写锁。找不到待关闭进程时直接重试 acquire，不因没有桌面根进程而拒绝独立 CLI 的接管场景。
 6. `conversation_active` 表示目标或已知其他 Codex 会话活动；`force_takeover_failed` 表示无法确认、关闭失败或超时；二者放在 resume 的 `interactionError`。`capability_unsupported` 表示 Provider 不支持此行为。后续 history 失败保留 `interactionAcquired=true`，沿用原分阶段结果。
 
@@ -55,3 +55,10 @@
 用户纠正关闭范围后，增加独立 CLI 应被选择、重挂父进程的带标记 harness 保留、标记变化终止前拒绝、环境不可读取拒绝的 mock 断言。命令构建测试检查注入值等于 Provider PID；force fixture 启动时检查实际继承到非空标记。此前将独立 CLI 排除的结论已被本修订替换；没有执行真实本机终止验证。
 
 修订后执行 `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --lib --target-dir D:/17633/Documents/Code/codepet/crates/target`：76 项通过；同 target 下 `--test provider_vertical force_takeover`：2 项通过（包括实际 fixture 子进程接收到标记）。`git diff --check` 通过。
+
+## macOS ChatGPT 主程序补齐（2026-11-10）
+
+用户明确要求强制接管先结束 Codex / ChatGPT App，再结束其他 Codex CLI 或 App Server。
+补齐精确 bundle 主程序路径，沿用既有桌面优先排序、强制终止和进程保护，不增加重启 App。
+不按任意 `ChatGPT` 文件名匹配，也未扩大 Windows 独立 ChatGPT 的识别范围。
+Remote 提示同步说明会关闭桌面 App。测试使用进程表和终止回调，不关闭本机真实应用。

@@ -117,6 +117,36 @@ struct ActiveTurnState {
     latest_step_ended_at: Option<u64>,
 }
 
+// Model catalogs are snapshots: nonempty does not imply plugins have settled.
+// Updates arrive through the native event stream and are read by the same worker.
+async fn discover_catalog(
+    settings: &OpenCodeInstanceSettings,
+    session: Option<&OpenCodeServerSession>,
+) -> Option<ProviderCapabilities> {
+    let client = session?.client();
+    let settle_until = Instant::now() + Duration::from_secs(3);
+    let (agents, mut models, providers) = loop {
+        let client = client.clone();
+        let discovered = tokio::task::spawn_blocking(move || {
+            std::thread::scope(|scope| {
+                let models = scope.spawn(|| client.list_models());
+                let agents = scope.spawn(|| client.list_agents());
+                let providers = scope.spawn(|| client.list_providers());
+                Some((agents.join().ok()?.ok()?, models.join().ok()?.ok()?, providers.join().ok()?.ok()?))
+            })
+        }).await.ok().flatten()?;
+        if (!discovered.0.is_empty() && !discovered.1.is_empty() && !discovered.2.is_empty())
+            || Instant::now() >= settle_until { break discovered; }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
+    if models.is_empty() {
+        let cwd = settings.workspace_root.clone().or_else(default_server_working_directory);
+        models = discover_cli_models(&settings.server_executable, cwd.as_deref(),
+            settings.data_directory.as_deref(), Some(&client)).await.ok()?;
+    }
+    OpenCodeProtocolMapper::capabilities(&agents, &models, &providers).ok()
+}
+
 struct InstanceMutable {
     atomic_task: Option<tokio::task::JoinHandle<()>>,
     atomic_facts_ready: bool,
@@ -133,6 +163,7 @@ struct InstanceMutable {
     pending_native_inputs: HashMap<(String, String), String>,
     metadata_epoch: u64,
     metadata_task: Option<tokio::task::JoinHandle<()>>,
+    catalog_refresh: Option<tokio::sync::watch::Sender<()>>,
     version: Option<String>,
     authentication: Option<ProviderAuthentication>,
     usage: Option<ProviderUsage>,
@@ -185,6 +216,7 @@ impl OpenCodeInstanceRuntime {
                 pending_native_inputs: HashMap::new(),
                 metadata_epoch: 0,
                 metadata_task: None,
+                catalog_refresh: None,
                 version: (!settings.server_version.is_empty()).then(|| settings.server_version.clone()),
                 authentication: None,
                 usage: None,
@@ -224,6 +256,7 @@ impl OpenCodeInstanceRuntime {
 
     fn cancel_metadata(mutable: &mut InstanceMutable) {
         mutable.metadata_epoch = mutable.metadata_epoch.saturating_add(1);
+        mutable.catalog_refresh = None;
         if let Some(task) = mutable.metadata_task.take() {
             task.abort();
         }
@@ -239,6 +272,8 @@ impl OpenCodeInstanceRuntime {
         }
         Self::cancel_metadata(&mut mutable);
         let epoch = mutable.metadata_epoch;
+        let (catalog_refresh, mut catalog_changes) = tokio::sync::watch::channel(());
+        mutable.catalog_refresh = Some(catalog_refresh);
         let owner = Arc::downgrade(self);
         let settings = self.settings.clone();
         let session = mutable.session.clone();
@@ -266,33 +301,7 @@ impl OpenCodeInstanceRuntime {
                 let result = probe(&["stats", "--days", "30"]).await.ok();
                 usage_from_output(result.as_deref())
             };
-            let catalog = async {
-                let session = session?;
-                let client = session.client();
-                // A newly opened location can return empty snapshots while
-                // OpenCode's built-in/config plugins settle (notably 1.18.25).
-                // Retry only successful empty catalogs before using the CLI fallback.
-                let settle_until = Instant::now() + Duration::from_secs(3);
-                let (agents, mut models, providers) = loop {
-                    let client = client.clone();
-                    let discovered = tokio::task::spawn_blocking(move || {
-                        std::thread::scope(|scope| {
-                            let models = scope.spawn(|| client.list_models());
-                            let agents = scope.spawn(|| client.list_agents());
-                            let providers = scope.spawn(|| client.list_providers());
-                            Some((agents.join().ok()?.ok()?, models.join().ok()?.ok()?, providers.join().ok()?.ok()?))
-                        })
-                    }).await.ok().flatten()?;
-                    if (!discovered.0.is_empty() && !discovered.1.is_empty() && !discovered.2.is_empty())
-                        || Instant::now() >= settle_until { break discovered; }
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                };
-                if models.is_empty() {
-                    models = discover_cli_models(&settings.server_executable, cwd.as_deref(),
-                        settings.data_directory.as_deref(), probe_client.as_ref()).await.ok()?;
-                }
-                OpenCodeProtocolMapper::capabilities(&agents, &models, &providers).ok()
-            };
+            let catalog = discover_catalog(&settings, session.as_ref());
             let version = async {
                 let output = probe(&["--version"]).await.ok()?;
                 output.split_whitespace().find(|part| part.trim_start_matches('v').chars()
@@ -300,8 +309,36 @@ impl OpenCodeInstanceRuntime {
                     .map(|version| version.trim_start_matches('v').to_string())
             };
             let (authentication, usage, capabilities, version) = tokio::join!(auth, usage, catalog, version);
+            let mut retry = capabilities.is_none();
             if let Some(owner) = owner.upgrade() {
                 owner.apply_metadata(epoch, Some(authentication), Some(usage), capabilities, version);
+            }
+            // Keep one refresh worker for this metadata generation. Notifications
+            // received during discovery remain pending; a burst needs only one read.
+            let mut retries = 0;
+            loop {
+                if retry {
+                    tokio::select! {
+                        changed = catalog_changes.changed() => {
+                            if changed.is_err() { return; }
+                            retries = 0;
+                        }
+                        _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                    }
+                } else if catalog_changes.changed().await.is_err() {
+                    return;
+                } else {
+                    retries = 0;
+                }
+                tokio::time::sleep(Duration::from_millis(150)).await;
+                catalog_changes.borrow_and_update();
+                let capabilities = discover_catalog(&settings, session.as_ref()).await;
+                retry = capabilities.is_none() && retries < 3;
+                retries += 1;
+                if let Some(capabilities) = capabilities {
+                    let Some(owner) = owner.upgrade() else { return; };
+                    owner.apply_catalog(epoch, capabilities);
+                }
             }
         }));
     }
@@ -324,7 +361,7 @@ impl OpenCodeInstanceRuntime {
         if let Some(usage) = usage {
             mutable.usage = Some(usage);
         }
-        if let Some(capabilities) = capabilities { *lock(&self.capabilities) = capabilities; }
+        if let Some(capabilities) = capabilities { self.replace_catalog(capabilities); }
         if let Some(version) = version { mutable.version = Some(version); }
         let previous = mutable.status;
         mutable.status = InstanceStatus::Ready;
@@ -338,6 +375,32 @@ impl OpenCodeInstanceRuntime {
                     previous_status: Some(previous),
                 },
             });
+    }
+
+    // Caller holds mutable so publication cannot race stop or a new scan.
+    fn replace_catalog(&self, mut capabilities: ProviderCapabilities) -> bool {
+        let mut previous = lock(&self.capabilities);
+        capabilities.revision = previous.revision.clone();
+        if *previous == capabilities { return false; }
+        capabilities.revision = format!("opencode-catalog-{}", Uuid::new_v4());
+        *previous = capabilities;
+        true
+    }
+
+    fn apply_catalog(&self, epoch: u64, capabilities: ProviderCapabilities) {
+        let mutable = lock(&self.mutable);
+        if mutable.metadata_epoch != epoch || mutable.status != InstanceStatus::Ready {
+            return;
+        }
+        if self.replace_catalog(capabilities) {
+            let _ = self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
+                jsonrpc: "2.0".into(),
+                params: InstanceStatusChangedEvent {
+                    instance: self.snapshot_locked(&mutable),
+                    previous_status: Some(mutable.status),
+                },
+            });
+        }
     }
 
     fn starting_is_current(&self, attempt: u64) -> bool {
@@ -500,6 +563,16 @@ impl OpenCodeInstanceRuntime {
         event: OpenCodeEvent,
     ) -> Result<Vec<ProtocolEvent>, ProtocolError> {
         match event.kind.as_str() {
+            "model.updated" | "provider.updated" | "agent.updated" | "config.updated"
+            | "models-dev.refreshed" | "credential.updated" | "credential.switched"
+            | "integration.updated" | "plugin.updated" => {
+                let mutable = lock(&self.mutable);
+                if mutable.session_generation.as_deref() == Some(generation) {
+                    if let Some(refresh) = &mutable.catalog_refresh { refresh.send_replace(()); }
+                }
+                Ok(Vec::new())
+            }
+
             "session.next.prompted" => {
                 // 1.x's prompted event, not prompt.admitted, is the durable
                 // boundary that appends the user message to native history.

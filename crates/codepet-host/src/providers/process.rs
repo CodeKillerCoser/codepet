@@ -27,6 +27,8 @@ use tokio::time::Instant;
 pub struct PluginProcessOptions {
     pub max_frame_bytes: usize,
     pub request_timeout: Duration,
+    /// Includes runtime initialization and the native thread/resume round trip.
+    pub interaction_timeout: Duration,
     pub shutdown_timeout: Duration,
     pub inbound_capacity: usize,
     pub stderr_line_bytes: usize,
@@ -39,6 +41,7 @@ impl Default for PluginProcessOptions {
         Self {
             max_frame_bytes: MAX_PROVIDER_FRAME_BYTES,
             request_timeout: Duration::from_secs(10),
+            interaction_timeout: Duration::from_secs(45),
             shutdown_timeout: Duration::from_secs(3),
             inbound_capacity: 256,
             stderr_line_bytes: 16 * 1024,
@@ -71,6 +74,7 @@ struct RpcShared {
     inbound: StdMutex<Option<mpsc::Sender<ProviderWireMessage>>>,
     next_request_id: AtomicU64,
     request_timeout: Duration,
+    interaction_timeout: Duration,
     shutting_down: AtomicBool,
     close_error: StdMutex<Option<ProtocolError>>,
 }
@@ -184,7 +188,11 @@ impl ProviderRpcClient {
         self.request_value_until(
             method,
             params,
-            Instant::now() + self.shared.request_timeout,
+            Instant::now() + if method == ProtocolMethod::ConversationAcquireInteraction {
+                self.shared.interaction_timeout
+            } else {
+                self.shared.request_timeout
+            },
             false,
         )
         .await
@@ -361,6 +369,7 @@ impl PluginProcess {
             inbound: StdMutex::new(Some(inbound_sender)),
             next_request_id: AtomicU64::new(1),
             request_timeout: options.request_timeout,
+            interaction_timeout: options.interaction_timeout,
             shutting_down: AtomicBool::new(false),
             close_error: StdMutex::new(None),
         });

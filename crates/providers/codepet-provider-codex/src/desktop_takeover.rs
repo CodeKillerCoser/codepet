@@ -34,6 +34,7 @@ fn desktop_root(path: &str) -> bool {
         });
     (store && matches!(parts.last(), Some(&"codex.exe") | Some(&"chatgpt.exe")))
         || path.ends_with("/codex.app/contents/macos/codex")
+        || path.ends_with("/chatgpt.app/contents/macos/chatgpt")
 }
 
 fn codex_process(path: &str) -> bool {
@@ -345,7 +346,7 @@ mod tests {
                 "C:/Users/me/AppData/Local/OpenAI/Codex/bin/version/codex.exe",
             ),
             p(30, 1, "C:/tools/codex.exe"),
-            p(40, 1, "C:/ChatGPT.app/Contents/MacOS/ChatGPT"),
+            p(40, 1, "C:/unrelated/ChatGPT.exe"),
         ]
     }
     #[test]
@@ -359,6 +360,44 @@ mod tests {
         })
         .unwrap();
         assert_eq!(killed, vec![10, 11, 30]);
+    }
+
+    #[test]
+    fn mac_desktop_apps_are_terminated_before_any_cli_or_app_server() {
+        let mut rows = fixture();
+        rows.extend([
+            p(90, 1, "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"),
+            p(80, 1, "/Applications/Codex.app/Contents/MacOS/Codex"),
+            // Smaller PIDs must not cause CLI/server termination before the apps.
+            p(2, 90, "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"),
+            p(3, 80, "/Applications/Codex.app/Contents/Resources/codex"),
+        ]);
+        let targets = plan(&rows, 21).unwrap();
+        let mut killed = Vec::new();
+        execute(&targets, &rows, 21, |target| { killed.push(target.pid); Ok(()) }).unwrap();
+        assert_eq!(killed, vec![10, 80, 90, 2, 3, 11, 30]);
+        let mut attempted = Vec::new();
+        assert!(execute(&targets, &rows, 21, |target| {
+            attempted.push(target.pid);
+            if target.pid == 90 { Err("cannot terminate ChatGPT".into()) } else { Ok(()) }
+        }).is_err());
+        assert_eq!(attempted, vec![10, 80, 90]);
+    }
+
+    #[test]
+    fn chatgpt_recognition_keeps_harness_and_ancestor_protection() {
+        let mut rows = fixture();
+        rows.extend([
+            p(90, 1, "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"),
+            p(91, 21, "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"),
+        ]);
+        rows[3].parent = Some(90); // ChatGPT launched CodePet.
+        assert_eq!(plan(&rows, 21).unwrap().iter().map(|p| p.pid).collect::<Vec<_>>(), vec![10, 11, 30]);
+        rows[3].parent = Some(1);
+        rows.iter_mut().find(|p| p.pid == 90).unwrap().marked = Some(true);
+        assert!(!plan(&rows, 21).unwrap().iter().any(|p| matches!(p.pid, 90 | 91)));
+        assert!(!desktop_root("/Applications/Other.app/Contents/MacOS/ChatGPT"));
+        assert!(!desktop_root("/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex"));
     }
     #[test]
     fn preserves_codepet_subtrees_even_beneath_desktop() {

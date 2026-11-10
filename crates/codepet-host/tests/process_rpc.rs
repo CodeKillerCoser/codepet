@@ -265,6 +265,26 @@ async fn shutdown_discards_late_events_without_closing_provider_stdout() {
 }
 
 #[tokio::test]
+async fn slow_interaction_acquire_outlives_ordinary_rpc_deadline_without_blocking_other_requests() {
+    let process = ready_process("dev.codepet.slow-acquire", "instance-acquire").await;
+    let acquire = process.client().conversation_acquire_interaction(
+        codepet_provider_sdk::ConversationAcquireInteractionRequest {
+            conversation: conversation("dev.codepet.slow-acquire", "instance-acquire", "slow-acquire"),
+            force: None,
+        },
+    );
+    let concurrent = async {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        tokio::time::timeout(Duration::from_secs(1), process.client().provider_describe(
+            ProviderDescribeRequest {},
+        )).await.unwrap().unwrap();
+    };
+    let (result, ()) = tokio::join!(acquire, concurrent);
+    process.shutdown().await.unwrap();
+    assert!(result.is_ok(), "acquire must await its own deadline: {result:?}");
+}
+
+#[tokio::test]
 async fn timeout_does_not_poison_later_requests() {
     let process = ready_process("dev.codepet.timeout", "instance-timeout").await;
     let error = process

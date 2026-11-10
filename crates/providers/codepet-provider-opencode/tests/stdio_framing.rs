@@ -74,7 +74,8 @@ fn start_turn_resource_from_fresh_provider() -> String {
         "providerInstanceId": "generation-opencode"
     });
     let mut resource = None;
-    for frame in [
+    let mut capability_revision = Value::Null;
+    for mut frame in [
         serde_json::json!({
             "jsonrpc": "2.0",
             "id": "initialize",
@@ -119,13 +120,14 @@ fn start_turn_resource_from_fresh_provider() -> String {
                     "nativeResourceId": "ses_fixture"
                 },
                 "clientRequestId": "same-client-message",
-                "capabilityRevision": "opencode-server-1.18.25-controls-v2",
+                "capabilityRevision": null,
                 "input": { "kind": "text", "text": "needs approval" },
                 "selection": {}
             }
         }),
     ] {
         let expected_id = frame["id"].as_str().unwrap().to_string();
+        if expected_id == "turn" { frame["params"]["capabilityRevision"] = capability_revision.clone(); }
         write_frame(&mut stdin, &frame);
         let mut response = read_response(&mut stdout, &expected_id);
         assert!(response.get("error").is_none(), "{response}");
@@ -139,6 +141,7 @@ fn start_turn_resource_from_fresh_provider() -> String {
                 assert!(response.get("error").is_none(), "{response}");
             }
         }
+        if expected_id == "start" { capability_revision = response["result"]["instance"]["capabilities"]["revision"].clone(); }
         if expected_id == "turn" {
             resource = Some(
                 response["result"]["turn"]["resource"]["nativeResourceId"]

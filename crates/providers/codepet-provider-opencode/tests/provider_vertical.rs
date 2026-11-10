@@ -29,6 +29,7 @@ fn all_project_filter() -> ConversationProjectFilter {
 }
 
 fn turn_start_request(
+    revision: &str,
     conversation: ProviderResourceId,
     client_request_id: &str,
     message: &str,
@@ -36,7 +37,7 @@ fn turn_start_request(
     TurnStartRequest {
         conversation,
         client_request_id: client_request_id.to_string(),
-        capability_revision: "opencode-server-1.18.25-controls-v2".to_string(),
+        capability_revision: revision.to_string(),
         input: TurnInput {
             kind: TurnInputKind::Text,
             text: message.to_string(),
@@ -296,6 +297,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     }
 
     let mut selected_turn = turn_start_request(
+        &capabilities.revision,
         fixture_conversation.clone(),
         "shared-client-id",
         "complete normally",
@@ -337,7 +339,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         TurnStatus::Completed,
     );
 
-    let failed = provider.turn_start(turn_start_request(fixture_conversation.clone(), "quota-test", "quota failure")).await.unwrap();
+    let failed = provider.turn_start(turn_start_request(&capabilities.revision, fixture_conversation.clone(), "quota-test", "quota failure")).await.unwrap();
     let terminal = wait_for_turn_status(&event_receiver, &failed.turn.resource, TurnStatus::Failed);
     let error = terminal.error.as_ref().unwrap();
     assert_eq!(error.code, "quota_exceeded");
@@ -349,6 +351,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     let created_conversation = new_conversation.conversation.resource.clone();
     let same_client_other_session = provider
         .turn_start(turn_start_request(
+            &capabilities.revision,
             provider_resource(&route, &created_conversation),
             "shared-client-id",
             "complete normally",
@@ -367,6 +370,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 
     let multi_step = provider
         .turn_start(turn_start_request(
+            &capabilities.revision,
             fixture_conversation.clone(),
             "client-multiple-steps",
             "multiple steps",
@@ -387,6 +391,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 
     let reordered = provider
         .turn_start(turn_start_request(
+            &capabilities.revision,
             fixture_conversation.clone(),
             "client-response-after-completion",
             "response after completion",
@@ -396,6 +401,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
     assert_eq!(reordered.code, "turn_not_active");
     let after_reordered = provider
         .turn_start(turn_start_request(
+            &capabilities.revision,
             fixture_conversation.clone(),
             "client-after-reordered",
             "complete normally",
@@ -410,6 +416,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 
     let delayed = provider
         .turn_start(turn_start_request(
+            &capabilities.revision,
             fixture_conversation.clone(),
             "client-delayed-old",
             "delay previous step",
@@ -427,6 +434,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         .unwrap();
     let after_delayed = provider
         .turn_start(turn_start_request(
+            &capabilities.revision,
             fixture_conversation.clone(),
             "client-after-delayed",
             "complete after delayed",
@@ -447,6 +455,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 
     let started_turn = provider
         .turn_start(turn_start_request(
+            &capabilities.revision,
             fixture_conversation.clone(),
             "client-start-approval",
             "needs approval",
@@ -537,6 +546,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 
     let idle_turn = provider
         .turn_start(turn_start_request(
+            &capabilities.revision,
             provider_resource(&route, &created_conversation),
             "idle-interrupt",
             "idle interrupt",
@@ -556,6 +566,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 
     let stale_turn = provider
         .turn_start(turn_start_request(
+            &capabilities.revision,
             fixture_conversation.clone(),
             "stale-after-restart",
             "needs approval",
@@ -587,12 +598,13 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
         })
         .await
         .unwrap();
-    wait_for_capabilities(&provider, &route).await;
+    let capabilities = wait_for_capabilities(&provider, &route).await;
     let second_server_pid = read_pid(&second_pid_file);
     attacker.assert_never_contacted();
 
     let current_turn = provider
         .turn_start(turn_start_request(
+            &capabilities.revision,
             fixture_conversation.clone(),
             "stale-after-restart",
             "needs approval",
@@ -626,6 +638,7 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
 
     let long_wait = provider
         .turn_start(turn_start_request(
+            &capabilities.revision,
             fixture_conversation,
             "long-wait-cancel",
             "wait until cancelled",

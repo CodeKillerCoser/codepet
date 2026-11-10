@@ -19,7 +19,8 @@ Provider 插件连通不等于 Harness Ready。Harness 建立通信后保持 Sta
 - `instance.start` 完成必要通信建立后可返回 Starting；后台任务持有生命周期所有权，整轮探测结束才进入 Ready。重复 start 返回当前状态，不重复启动探测。Provider 插件可以一直在线，Harness 状态独立展示。
 - 各项并发启动，依赖结果在本轮内部合成。所有项成功、失败或超时都算本轮结束；失败值沿用现有未知/缺省语义，不伪造模型、登录状态或项目支持。网络错误不是接口不支持。
 - 首次探测之前不发布 Ready，不对外发布中间结果。Ready 后显式重检保留可用状态，同一轮仍汇总后一次通知。
-- 本次不改变 revision 方案。Remote 必须以 Starting→Ready 边界丢弃临时能力；Ready 后一次 describe，同代同 revision 的在途 describe 合并，完整结果到达后加载会话和项目。重复心跳不重复读取列表。
+- Remote 必须以 Starting→Ready 边界丢弃临时能力；Ready 后一次 describe，同代同 revision 的在途 describe 合并，完整结果到达后加载会话和项目。重复心跳不重复读取列表。
+- Ready 后模型、Agent 等动态目录变化必须更新能力 revision，并通过既有通知/心跳摘要使 Remote 重新 describe；成功且内容不变则保留 revision。上游首次非空快照不代表插件已完成加载，须处理目录更新事件，合并并发刷新且保留请求期间的新通知。刷新不重复执行无关账号/用量探测；失败不得用残缺结果覆盖上次成功目录，旧代结果不得回写。
 - CLI 使用 SDK background_probe 和 process：Windows 隐藏窗口及 Job Object、Unix 进程组；命令、数据目录、超时、输出预算沿用现有约束。Codex RPC 有 30 秒上限，关闭 session 唤醒等待者。OpenCode 模型 HTTP 查询为空时允许有界 CLI 回退。
 - 停止、失败、销毁与 shutdown 取消探测并使 epoch 失效。结果应用在锁内复核 Starting/Ready 与 epoch，并与状态通知串行；迟到结果不得让已停止实例回到 Ready。
 - Host 原子合并状态：在启动 RPC 期间收到的完整 Ready 或停止/错误状态，不能被迟到的 Starting 响应覆盖。
@@ -28,6 +29,8 @@ Provider 插件连通不等于 Harness Ready。Harness 建立通信后保持 Sta
 ## 来源
 
 2026-09-07 用户明确调整启动边界：全部探测结束前 Harness 保持启动状态，完成后统一通知 Host；revision 暂不修改。证据见 [Mac 发现与项目加载排查](../40-runbooks/runtime-discovery-and-project-catalog-revision.md)。此约定替代先 Ready 后分批探测的旧实现。
+
+2026-11-11 补充动态目录规则：OpenCode 自定义模型晚到时，固定 revision 和缺失目录更新监听会使 Remote 复用旧列表，见 [模型目录刷新记录](../40-runbooks/opencode-model-catalog-refresh.md)。首次启动边界不变，目录变化后更新 revision。
 
 ## 验证方式
 
