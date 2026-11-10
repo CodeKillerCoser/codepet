@@ -84,3 +84,5 @@ NSStatusItem 插入或恢复显示时可能暂时位于零坐标，并重建鼠�
 动画只能延迟视觉状态，不能延迟回写整个交互状态机快照；hover、focus、Escape 和拖动输入必须立即生效，否则排队动画会覆盖后续输入并把刚收起的面板重新打开。`DockPanel` 的状态机保持最新输入，私有动效驱动只维护呈现进度。用后台 hover → focus → Escape → 保持鼠标不动的完整 UI 回归验证。
 
 顶部动效只能访问组件拥有的容器，禁止查询任务标题/Provider 等业务后代或克隆业务 DOM；正文与顶栏节点在展开收起之间保持挂载，关闭正文退出键盘和鼠标交互。内容尺寸变化合并测量，不能逐帧写原生窗口；真实指针移动与几何变化合成的 enter/leave 要分开，避免收缩后重新打开。任务 UI 变更运行 `npm run test:pet`、`npm run test:pet:ui`、`npm run test:pet:motion`，来源及取舍见[顶部动效组件边界](../10-architecture/dock-panel-motion-boundary.md)。
+
+UI 回归默认使用与 CI 相同的 Playwright Chromium。键盘导航用例必须建立明确的文档内导航起点，并断言真实 Tab 的焦点结果；不能把 body 为 activeElement 等同于浏览器已重置导航位置。终态布局断言等待组件动效完成，连续帧断言单独验证过程，不能用增加固定 sleep 替代状态条件。依据见[UI CI 键盘超时复盘](../40-runbooks/pet-ui-ci-keyboard-timeout.md)。

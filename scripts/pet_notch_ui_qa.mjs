@@ -1,7 +1,7 @@
 // Runs the actual two views and shared model against simulated native IPC.
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { build, preview } from 'vite';
 const require = createRequire(import.meta.url);
@@ -10,11 +10,19 @@ const output = resolve('artifacts/pet-notch-qa'), outDir = resolve(output, 'site
 await mkdir(output, { recursive: true });
 await build({ build: { outDir, emptyOutDir: false, rollupOptions: { input: resolve('frontend/qa/pet-module.html') } } });
 const server = await preview({ build: { outDir }, preview: { host: '127.0.0.1', port: 1435, strictPort: true } });
-let browser;
+let browser, page;
 try {
-  browser = await chromium.launch({ channel: process.env.CODEPET_QA_BROWSER ?? 'chrome', headless: true });
-  const page = await browser.newPage({ viewport: { width: 320, height: 584 } });
+  browser = await chromium.launch({ channel: process.env.CODEPET_QA_BROWSER ?? 'chromium', headless: true });
+  page = await browser.newPage({ viewport: { width: 320, height: 584 } });
   page.setDefaultTimeout(15000);
+  const settled = phase => page.waitForFunction(expected => {
+    const frame = document.querySelector('[data-dock-frame]');
+    return frame?.dataset.phase === expected && !frame.hasAttribute('data-morphing');
+  }, phase);
+  const waitForExpandedPanel = async () => {
+    await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
+    await settled('open');
+  };
   const errors = []; page.on('pageerror', error => errors.push(error.message));
   await page.exposeFunction('__resizeNativeWindow', size => page.setViewportSize(size));
   await page.goto('http://127.0.0.1:1435/frontend/qa/pet-module.html?frame');
@@ -76,12 +84,25 @@ try {
   await page.mouse.move(-20, -20); await page.waitForTimeout(80); await page.locator('.notch-header').hover();
   await page.waitForTimeout(300); assert.equal(await page.locator('.notch-task').count(), 3);
   await page.mouse.move(-20, -20); await page.waitForFunction(() => innerHeight === 24);
-  // Keyboard entry opens the same panel; Escape returns focus to the bar.
-  await page.keyboard.press('Tab'); await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
+  // Start keyboard navigation before the panel. A previous mouse interaction can
+  // leave Chromium's sequential focus origin after the panel even with body active;
+  // pressing Tab from that implicit origin may focus browser chrome instead.
+  await page.waitForFunction(() => document.querySelector('[data-dock-frame]')?.dataset.phase === 'closed');
+  await page.evaluate(() => {
+    const start = document.createElement('button');
+    start.id = 'qa-keyboard-start';
+    start.style.cssText = 'position:fixed;left:-1000px;top:0';
+    document.body.prepend(start);
+    start.focus();
+  });
+  await page.keyboard.press('Tab');
+  assert.equal(await page.locator('.pet-avatar').evaluate(el => el === document.activeElement && el.matches(':focus-visible')), true, 'Tab must enter the panel from the explicit keyboard start');
+  await page.locator('#qa-keyboard-start').evaluate(el => el.remove());
+  await waitForExpandedPanel();
   await page.getByRole('button', { name: '打开主窗口', exact: true }).focus();
   await page.keyboard.press('Escape'); await page.waitForFunction(() => innerHeight === 24);
   assert.equal(await page.getByRole('button', { name: '展开任务面板', exact: true }).evaluate(el => el === document.activeElement), true);
-  await page.keyboard.press('Enter'); await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
+  await page.keyboard.press('Enter'); await waitForExpandedPanel();
   await page.waitForFunction(() => !document.querySelector('[data-morphing]'));
   assert.equal(await page.locator('.notch-summary').evaluate(el => el === document.activeElement), true, 'native resize preparation must preserve keyboard focus');
   await page.getByRole('button', { name: '隐藏 完成窗口尺寸回归检查', exact: true }).click();
@@ -160,18 +181,20 @@ try {
   // One UI on every screen; only the camera clearance changes.
   await page.evaluate(() => { const q = window.__petQa; q.surface = { ...q.surface, physicalNotch: false, topInset: 0 }; q.finishDrag(true); });
   await page.locator('.notch-header').hover();
-  await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
+  await waitForExpandedPanel();
   await page.keyboard.press('Tab');
   await page.locator('.notch-task-list').focus();
   const corners = () => page.locator('.notch-panel').evaluate(el => {
     const css = getComputedStyle(el);
     return [css.borderTopLeftRadius, css.borderTopRightRadius, css.borderBottomLeftRadius, css.borderBottomRightRadius, getComputedStyle(el.querySelector('.notch-backdrop'), '::before').content, getComputedStyle(el.querySelector('.notch-backdrop'), '::after').content];
   });
+  await settled('open');
   assert.deepEqual(await corners(), ['0px', '0px', '12px', '12px', '\"\"', '\"\"']);
   await page.waitForFunction(() => innerWidth === 640 && innerHeight === 440);
   await page.screenshot({ path: resolve(output, 'top-edge-expanded.png') });
   await page.evaluate(() => { const q = window.__petQa; q.surface = { ...q.surface, physicalNotch: true, topInset: 32, notchWidth: 185 }; q.finishDrag(true); });
   await page.waitForFunction(() => getComputedStyle(document.querySelector('.notch-panel')).paddingTop === '32px');
+  await settled('open');
   assert.deepEqual(await corners(), ['0px', '0px', '12px', '12px', '\"\"', '\"\"']);
   assert.ok(await page.locator('.notch-header').evaluate(el => el.getBoundingClientRect().top >= 32));
   await page.screenshot({ path: resolve(output, 'notch-fused-expanded.png') });
@@ -185,7 +208,7 @@ try {
   assert.deepEqual(await corners(), ['0px', '0px', '8px', '8px', '\"\"', '\"\"']);
   await page.mouse.move(-20, -20);
   await page.locator('.notch-header').hover();
-  await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
+  await waitForExpandedPanel();
   await page.keyboard.press('Tab');
   await page.locator('.notch-task-list').focus();
   // Completed history stays below live/approval tasks even when it is newer.
@@ -332,7 +355,7 @@ try {
   });
   await page.waitForFunction(() => !document.querySelector('.dock-body-clip:not([inert]) .notch-details'));
   await page.evaluate(() => { const q=window.__petQa; q.cursorScreen = { x: q.native.position.x / q.native.scale + innerWidth / 2, y: q.native.position.y / q.native.scale + 12 }; });
-  await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
+  await waitForExpandedPanel();
   assert.equal(await page.evaluate(() => document.hasFocus()), false);
   assert.equal(await page.evaluate(() => window.__petQa.ignored), false);
   assert.equal(await page.evaluate(() => document.activeElement === document.body), true, 'background hover must not take keyboard focus');
@@ -344,7 +367,7 @@ try {
   await page.evaluate(() => { window.__petQa.cursorScreen = null; window.__petQa.cursor = { x: -20, y: -20 }; });
   await page.waitForFunction(() => window.__petQa.ignored);
   await page.evaluate(() => { const q=window.__petQa; q.cursorScreen = { x: q.native.position.x / q.native.scale + innerWidth / 2, y: q.native.position.y / q.native.scale + 12 }; });
-  await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
+  await waitForExpandedPanel();
   await page.evaluate(() => { document.activeElement?.blur(); window.__petQa.cursorScreen = null; window.__petQa.cursor = { x: -20, y: -20 }; });
   await page.waitForFunction(() => !document.querySelector('.dock-body-clip:not([inert]) .notch-details'));
   await page.evaluate(() => { delete document.hasFocus; });
@@ -369,7 +392,7 @@ try {
   await page.waitForTimeout(300);
   assert.equal(await page.locator('.dock-body-clip:not([inert]) .notch-details').count(), 0, 'release must not resurrect the cancelled dwell');
   await page.mouse.move(-20, -20); await page.locator('.notch-header').hover();
-  await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
+  await waitForExpandedPanel();
   assert.equal(await header.evaluate(el => getComputedStyle(el).animationName), 'none');
   await page.waitForTimeout(300);
   const largeAvatar = await page.locator('.pet-avatar').boundingBox();
@@ -401,7 +424,7 @@ try {
   await page.getByRole('button', { name: '收起任务面板', exact: true }).click();
   await page.waitForFunction(() => !document.querySelector('.dock-body-clip:not([inert]) .notch-details'));
   await page.getByRole('button', { name: '展开任务面板', exact: true }).click();
-  await page.waitForSelector('.dock-body-clip:not([inert]) .notch-details');
+  await waitForExpandedPanel();
   assert.equal(await page.evaluate(() => window.__stableHeader.every(el => el.isConnected)), true);
   assert.deepEqual(await header.evaluate(el => { const s = getComputedStyle(el); return [s.animationName, s.clipPath, s.opacity]; }), ['none', 'none', '1']);
   assert.equal(await page.locator('.notch-header').evaluate(el => getComputedStyle(el).opacity), '1');
@@ -411,4 +434,14 @@ try {
   console.log('Responsive display matrix:', JSON.stringify(matrix));
   assert.deepEqual(errors, []);
   console.log('Notch UI QA passed: compact/hover, keyboard/Escape, shared dismissals, imported atlas, detach/redock, responsive bounds, corners, live-first order, completed stacking/toggle/resume, capped scrolling and visible actions.');
+} catch (error) {
+  if (page) {
+    await page.screenshot({path: resolve(output, 'failure.png')}).catch(() => {});
+    await writeFile(resolve(output, 'failure.json'), JSON.stringify(await page.evaluate(() => ({
+      focus: { tag: document.activeElement?.tagName, className: document.activeElement?.className, label: document.activeElement?.getAttribute('aria-label') }, hasFocus: document.hasFocus(),
+      frame: document.querySelector('[data-dock-frame]')?.outerHTML,
+      viewport: [innerWidth, innerHeight], native: window.__petQa?.native,
+    })), null, 2)).catch(diagnosticError => console.error('Could not save failure state:', diagnosticError));
+  }
+  throw error;
 } finally { await browser?.close(); await new Promise(resolve => server.httpServer.close(resolve)); }

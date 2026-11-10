@@ -12,7 +12,7 @@ await build({ build: { outDir, emptyOutDir: false, rollupOptions: { input: resol
 const server = await preview({ build: { outDir }, preview: { host: '127.0.0.1', port: 1436, strictPort: true } });
 let browser;
 try {
-  browser = await chromium.launch({ channel: process.env.CODEPET_QA_BROWSER ?? 'chrome', headless: true });
+  browser = await chromium.launch({ channel: process.env.CODEPET_QA_BROWSER ?? 'chromium', headless: true });
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.setDefaultTimeout(15000);
   const errors = []; page.on('pageerror', e => errors.push(e.message));

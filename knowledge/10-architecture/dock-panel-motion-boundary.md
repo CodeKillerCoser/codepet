@@ -39,7 +39,7 @@
 - `npm run test:pet:ui`：任务堆叠、导入图集、焦点/Escape、后台 hover、拖动冻结、四档屏幕、刘海安全区与固定顶栏通过。
 - `npm run test:pet:motion`：8 种位置/反向场景和真实 gateway 在展开期间更新内容通过；标题、头像和正文节点保持身份。`uv run --with pillow python scripts/pet_motion_images_qa.py` 检查 312 张浏览器帧的头像像素轨迹。
 - `npm run build:webcontent`、`TMPDIR=/private/tmp npm run test:webcontent` 通过。原生 `pet_surface_qa --motion` 的展开/收起/反向共 132 帧通过几何检查，报告在 `artifacts/dock-panel-refactor/native-frames.json`。
-- `.github/workflows/pet-ui-quality.yml` 在相关 PR/main 变更时执行单元、UI、连续帧及像素检查并保存产物；Playwright 固定为开发依赖。当前尚未在 GitHub 执行此新工作流。
+- `.github/workflows/pet-ui-quality.yml` 在相关 PR/main 变更时执行单元、UI、连续帧及像素检查并保存产物；Playwright 固定为开发依赖。首轮 GitHub 运行发现键盘导航起点与动画终态等待问题，见 [UI CI 修复记录](../40-runbooks/pet-ui-ci-keyboard-timeout.md)。
 - `npx tsc --noEmit` 未通过：仓库已有 Node/CSS 类型声明和其他测试 fixture 错误；对 HEAD 的临时副本执行同一命令也失败，本次新增动效文件没有报告错误。构建仅有既存 `ProviderRuntimeInfo.svelte` 未使用选择器提示。
 
 原生坐标采样不等于桌面合成像素验收。完整桌面录屏、真实刘海/混合 DPI、原生鼠标拖动仍遵循[原生闪烁排查](../40-runbooks/pet-native-motion-flicker.md)的实机验证要求。本次构建前端包和隔离原生测试，未替换 Applications 中已安装的应用。
