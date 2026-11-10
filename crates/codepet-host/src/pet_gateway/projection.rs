@@ -79,9 +79,12 @@ impl Projection {
         } else if matches!(status, Status::Idle | Status::Unknown) || (provider == "opencode" && status == Status::Completed) { return; }
         let title = text(&raw, &["title", "thread_name", "prompt"]).or_else(|| raw.get("session").and_then(|s| text(s, &["title"]))).or_else(|| text(native, &["title"]));
         let cwd = text(&raw, &["cwd"]);
-        // This field is exclusively the current turn's assistant reply, never a
-        // user prompt, tool operation or error diagnostic.
-        let summary = if name == "UserPromptSubmit" { None } else { text(&raw, &["last_assistant_message"]) };
+        // Activity summary also describes work in progress: tool hooks do not
+        // carry assistant replies. A new prompt must not reuse the previous reply.
+        let summary = (if name == "UserPromptSubmit" { None } else { text(&raw, &["last_assistant_message"]) })
+            .or_else(|| text(&raw, &["prompt", "error"]))
+            .or_else(|| native.pointer("/error/data").and_then(|v| text(v, &["message"])))
+            .or_else(|| raw.get("tool_input").and_then(|v| text(v, &["description", "command", "file_path"])));
         let a = self.tasks.entry(id.clone()).or_insert_with(|| Activity { task: PetTask { id, title: title.clone().unwrap_or_else(|| "正在处理任务".into()),
             summary: None, status, updated_at: time, provider_id: Some(provider.into()), cwd: cwd.clone(), tool_name: None }, turn: turn.clone(), retired_turns: VecDeque::new(), time });
         if starts {
@@ -108,7 +111,7 @@ mod tests {
         ProviderNotificationEvent { subscription_id:"pet".into(), event_id:id.into(), received_at:time, payload:json!({"hook_event_name":name,"session_id":"session","turn_id":turn,"codepet_observed_at":time}).as_object().unwrap().clone().into_iter().collect() }
     }
     #[test]
-    fn summary_only_contains_latest_current_turn_assistant_reply() {
+    fn activity_summary_tracks_progress_and_reply_without_crossing_turns() {
         let mut p = state();
         let mut send = |id, name, turn, time, extra: Value| {
             let mut input = event(id, name, turn, time);
@@ -118,14 +121,32 @@ mod tests {
         };
         let task = send("1", "UserPromptSubmit", "a", 10, json!({"prompt":"用户要求", "last_assistant_message":"上轮回复"}));
         assert_eq!(task.title, "用户要求");
-        assert_eq!(task.summary, None);
-        assert_eq!(send("2", "PreToolUse", "a", 11, json!({"tool_name":"Shell", "tool_input":{"command":"echo private"}})).summary, None);
+        assert_eq!(task.summary.as_deref(), Some("用户要求"));
+        assert_eq!(send("2", "PreToolUse", "a", 11, json!({"tool_name":"Shell", "tool_input":{"command":"cargo test"}})).summary.as_deref(), Some("cargo test"));
         assert_eq!(send("3", "PostToolUse", "a", 12, json!({"last_assistant_message":"正在检查实现"})).summary.as_deref(), Some("正在检查实现"));
-        assert_eq!(send("4", "PostToolUseFailure", "a", 13, json!({"error":"工具错误", "prompt":"用户消息"})).summary.as_deref(), Some("正在检查实现"));
+        assert_eq!(send("4", "PostToolUseFailure", "a", 13, json!({"error":"工具错误"})).summary.as_deref(), Some("工具错误"));
         assert_eq!(send("5", "Stop", "a", 14, json!({"last_assistant_message":"本轮最终回复"})).summary.as_deref(), Some("本轮最终回复"));
-        assert_eq!(send("6", "UserPromptSubmit", "b", 15, json!({"prompt":"下一轮问题"})).summary, None);
-        assert_eq!(send("7", "Stop", "a", 16, json!({"last_assistant_message":"迟到的旧回复"})).summary, None);
+        assert_eq!(send("6", "UserPromptSubmit", "b", 15, json!({"prompt":"下一轮问题"})).summary.as_deref(), Some("下一轮问题"));
+        assert_eq!(send("7", "Stop", "a", 16, json!({"last_assistant_message":"迟到的旧回复"})).summary.as_deref(), Some("下一轮问题"));
         assert_eq!(send("8", "Stop", "b", 17, json!({"last_assistant_message":"新的回答"})).summary.as_deref(), Some("新的回答"));
+        assert_eq!(send("9", "UserPromptSubmit", "c", 18, json!({"last_assistant_message":"旧回答"})).summary, None);
+    }
+
+    #[test]
+    fn activity_summary_falls_back_to_nonempty_tool_details_and_preserves_on_empty_event() {
+        let mut p = state();
+        for (index, (extra, expected)) in [
+            (json!({"tool_input":{"description":"检查实现", "command":"cargo check", "file_path":"src/main.rs"}}), "检查实现"),
+            (json!({"tool_input":{"description":"  ", "command":"cargo check"}}), "cargo check"),
+            (json!({"tool_input":{"file_path":"src/main.rs"}}), "src/main.rs"),
+            (json!({"last_assistant_message":"检查完成", "tool_input":{"description":"旧工具描述"}}), "检查完成"),
+            (json!({"tool_input":{"description":" "}}), "检查完成"),
+        ].into_iter().enumerate() {
+            let mut input = event(&index.to_string(), "PostToolUse", "a", index as u64 + 10);
+            input.payload.extend(extra.as_object().unwrap().clone());
+            p.apply("codex", input);
+            assert_eq!(p.snapshot().tasks[0].summary.as_deref(), Some(expected));
+        }
     }
 
     #[test]
@@ -217,7 +238,7 @@ mod tests {
         apply(&mut p, "session.status", json!({"status":{"type":"idle"}}));
         apply(&mut p, "session.idle", json!({}));
         assert_eq!(p.snapshot().tasks[0].status, Status::Failed);
-        assert_eq!(p.snapshot().tasks[0].summary, None);
+        assert_eq!(p.snapshot().tasks[0].summary.as_deref(), Some("Model not found"));
         apply(&mut p, "session.status", json!({"status":{"type":"busy"}}));
         assert_eq!(p.snapshot().tasks[0].status, Status::Running);
         apply(&mut p, "session.error", json!({"error":{"name":"MessageAbortedError"}}));

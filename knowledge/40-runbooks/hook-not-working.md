@@ -29,6 +29,24 @@ Windows Codex 非 Interrupt hook 给 shell 启动留 10 秒上限；Interrupt �
 5. 在真实原应用提交任务验证。必要时临时记录执行阶段和 HTTP 状态，禁止记录提示词、工具输入或 token，结束后恢复脚本。
 6. 若 HTTP 已成功，继续检查 Host 上游订阅 ID、generation、PetGateway 来源状态和任务投影，不重复要求用户信任。
 
+## 2026-11-10 macOS：运行中显示“尚未收到回复内容”
+
+现象：用户确认任务仍在执行，hooks 正常工作，但顶部桌宠没有显示过程回复。
+
+证据：本机 `logs/events.jsonl` 的 Codex 事件含 `PreToolUse/PostToolUse`；抽查最新事件只有工具输入、输出、会话与 turn 等字段，没有 `last_assistant_message`。检查时当前日志中两类事件分别出现 116、104 次（日志会继续增长，计数不代表唯一工具调用）。[官方 Hooks 定义](https://learn.chatgpt.com/docs/hooks) 的工具事件不提供此回复字段，`Stop` 才提供可空的 `last_assistant_message`。
+
+修复前链路：`codepet-observation/src/forward.mjs` 原样转发；Host `pet_gateway/projection.rs` 在 UserPromptSubmit 清空 summary，随后只从 `last_assistant_message` 更新正文；`pet_gateway/mod.rs` 只消费活动订阅，没有正文补拉；`NotchPet.svelte` 对空 summary 显示占位提示。Provider 的空 item 内容更新提示虽供 Remote 补拉，但桌宠没有消费这条正文链路。
+
+根因：桌宠将活动摘要收窄为助手回复，移除了执行中可用的内容回退，导致正常工具事件无法更新摘要。该现象不能用于判断 hooks 未生效。
+
+用户补充“之前正常”后追查 Git：`ea9ee1e` 明确将 summary 从 `last_assistant_message → prompt → error → tool_input.description/command/file_path` 的回退链改成只读取 `last_assistant_message`，并在 UserPromptSubmit 忽略回复字段。`421d05c` 的顶部视图使用“尚未收到回复内容”作为空正文提示。由此证实本项目改变过运行中展示行为；目前没有证据证明 Codex 官方删改了工具 hook 的回复字段，也尚未确定用户此前使用的具体安装版本。旧版有文字不等于旧版拿到了中途助手正文。
+
+修复：按用户要求恢复活动摘要回退，依次读取助手回复、prompt、error、OpenCode error.data.message、工具 description/command/file_path。新 UserPromptSubmit 忽略可能携带的上轮助手回复，仍先清空旧摘要；空事件保留本轮已有摘要。仅更改共享 Host 投影，前端直接消费恢复后的 summary，无需修改 hooks 或新增正文补拉。
+
+验证：`cargo test --manifest-path crates/Cargo.toml -p codepet-host --lib pet_gateway::projection::tests -- --nocapture`，7 项通过；`git diff --check` 通过。覆盖工具描述/命令/路径回退、空白字段、回复优先、新轮清空、迟到旧回复，以及 OpenCode 错误摘要和终态保留。回归约束见 [桌宠活动摘要](../60-rules/pet-activity-summary.md)。
+
+未知项：尚未构建替换已安装应用或进行修复后实机验收；用户此前使用的安装版本未确认。若任务结束后仍为空，另查 Stop 是否到达、字段是否为空，以及时间和 turn 过滤。
+
 ## 回归防线与验证
 
 `cargo test --manifest-path crates/Cargo.toml -p codepet-observation --lib` 覆盖重复安装、用户 handlers 保留、多订阅、多个 Hook 进程、CMD / PowerShell 命令执行、噪声过滤和离线退出。2026-09-07 三项通过；本机 CMD / PowerShell 独立投递均返回 204；用户确认真实桌面任务恢复。
