@@ -54,7 +54,7 @@ Provider 已有 `turn.steer`，继续复用它：Codex 使用原生 `turn/steer`
 
 Host 调度器由事件唤醒并定期扫描，派发前检查 Provider、活动 turn、能力、selection 及交互权；不强制接管。completed 允许下一条；failed/interrupted、主动停止、释放交互权和 Provider 不可用会暂停。等待审批/结构化输入时可以排队，但不派发、不开放 Steer。
 
-Host 重启后暂停保存的待发项；遗留 dispatching/steering 改为 outcomeUnknown。RPC future 被取消也记录结果未知。恢复须由用户核对后继续。Host 持久化受理不等于 Harness exactly-once，不能凭客户端请求 ID 承诺原生执行去重。
+Host 重启时清除上一进程的 input_queue_runtime 占用，派发前仍查询 Provider 的实际 active turn；accepted 输入不会重发。Host 重启后暂停保存的待发项；遗留 dispatching/steering 改为 outcomeUnknown。RPC future 被取消也记录结果未知。正常发送新消息即为继续处理的显式意图：若无 blocked/outcomeUnknown 项，解除暂停并按 FIFO 派发，无需另点“继续队列”；有失败或结果未知项时明确拒绝新发送并保留草稿，核对移除旧项后再发送。Host 持久化受理不等于 Harness exactly-once，不能凭客户端请求 ID 承诺原生执行去重。
 
 队列项不作为乐观聊天消息插入，也不按 turn ID 或相同正文匹配用户消息。Steer 仅返回 turn 时等待正式 item 事件，支持同轮多次输入而不覆盖原消息。
 

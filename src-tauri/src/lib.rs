@@ -80,6 +80,17 @@ async fn detect_agent_runtime(
 }
 
 #[tauri::command]
+async fn remove_provider_plugin(
+    app: AppHandle,
+    provider_host: tauri::State<'_, ProviderHostState>,
+    provider_id: String,
+) -> Result<(), String> {
+    provider_host.remove_plugin(provider_id).await?;
+    let _ = app.emit("provider-connection-status", provider_host.connection_views().await);
+    Ok(())
+}
+
+#[tauri::command]
 async fn import_provider_plugin(
     app: AppHandle,
     provider_host: tauri::State<'_, ProviderHostState>,
@@ -519,6 +530,7 @@ pub fn run() {
             detect_agent_runtime,
             refresh_agent_runtimes,
             import_provider_plugin,
+            remove_provider_plugin,
             set_agent_runtime_executable,
             clear_agent_runtime_executable,
             get_app_settings,

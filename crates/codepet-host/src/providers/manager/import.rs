@@ -129,6 +129,39 @@ fn prepare_import(manifest: &Path, root: &Path) -> HostResult<PreparedImport> {
 }
 
 impl PluginManager {
+    /// Stop and archive an imported package, retaining all Provider data and history.
+    pub async fn remove_plugin(&self, plugin_id: &str, root: PathBuf) -> HostResult<()> {
+        let _import = self.inner.import_operation.lock().await;
+        let operation = self.plugin_operation(plugin_id)?;
+        let _operation = operation.lock().await;
+        let snapshot = self.snapshot(plugin_id).await?;
+        let root = root.canonicalize().map_err(import_error)?;
+        let installed = root.join(plugin_id);
+        let package = snapshot.catalog.env.get("CODEPET_PROVIDER_PACKAGE_DIRECTORY")
+            .map(PathBuf::from).ok_or_else(|| import_error("Only imported Provider packages can be removed"))?;
+        // Never move built-ins, external search directories, or symlink escapes.
+        if installed.parent() != Some(root.as_path()) || installed.is_symlink()
+            || package.canonicalize().map_err(import_error)? != installed {
+            return Err(import_error("Only imported Provider packages can be removed"));
+        }
+        self.stop_plugin(plugin_id).await?;
+        let archive_root = root.parent().ok_or_else(|| import_error("Missing archive directory"))?.join("removed-providers");
+        std::fs::create_dir_all(&archive_root).map_err(import_error)?;
+        let archive = archive_root.join(format!("{}-{}", plugin_id, uuid::Uuid::new_v4()));
+        std::fs::rename(&installed, &archive).map_err(import_error)?;
+        let mut plugins = self.inner.plugins.write().await;
+        let catalog = PluginCatalog::from_entries(plugins.iter().filter(|(id, _)| id.as_str() != plugin_id).map(|(_, entry)| entry.catalog.clone()))?;
+        if let Err(error) = self.inner.instances.synchronize_catalog(&catalog) {
+            let _ = std::fs::rename(&archive, &installed);
+            return Err(error);
+        }
+        plugins.remove(plugin_id);
+        drop(plugins);
+        self.inner.status_changes.send_modify(|r| *r = r.saturating_add(1));
+        self.inner.runtime_changes.send_modify(|r| *r = r.saturating_add(1));
+        Ok(())
+    }
+
     /// Adds a new package to this running manager. Existing routes/processes remain intact.
     pub async fn import_plugin(&self, manifest: PathBuf, root: PathBuf) -> HostResult<ProviderImportResult> {
         let _import = self.inner.import_operation.lock().await;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Plug, ChevronDown, ShieldAlert } from "@lucide/svelte";
+  import { Plug, ChevronDown, ShieldAlert, Trash2 } from "@lucide/svelte";
   import type { AgentRuntime } from "./types";
   import type { ProviderConnectionState } from "./providerRuntimes";
   import ProviderConnectionStatus from "./ProviderConnectionStatus.svelte";
@@ -9,6 +9,7 @@
   export let connectionsLoaded = false;
   export let busy = false;
   export let onSelect: (runtime: AgentRuntime, path: string) => void;
+  export let onRemove: ((runtime: AgentRuntime) => void) | undefined = undefined;
   let failedIcon: string | null = null;
   $: name = connection?.displayName || runtime.displayName;
 </script>
@@ -24,6 +25,7 @@
       <h3>{name}</h3>
       <ProviderConnectionStatus current={connection} available={connectionsLoaded} />
     </div>
+    {#if onRemove}<button class="remove-provider" disabled={busy} aria-label={`移除 ${name}`} on:click={() => onRemove?.(runtime)}><Trash2 size={16} />移除</button>{/if}
   </header>
   <dl>
     {#if runtime.status === "not-required"}
@@ -63,6 +65,9 @@
   header { display: flex; align-items: center; gap: 12px; }
   .provider-icon { width: 40px; height: 40px; flex: 0 0 40px; display: grid; place-items: center; color: var(--app-muted); }
   .provider-icon img { width: 32px; height: 32px; object-fit: contain; }
+  .remove-provider { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; color: var(--app-danger); background: var(--app-surface); border: 1px solid var(--app-border); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  .remove-provider:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+  .remove-provider:disabled { opacity: .5; cursor: default; }
   .provider-identity { min-width: 0; display: grid; gap: 5px; }
   h3 { margin: 0; font-size: var(--font-size-md); overflow-wrap: anywhere; }
   .provider-identity :global(.provider-connection) { margin: 0; }

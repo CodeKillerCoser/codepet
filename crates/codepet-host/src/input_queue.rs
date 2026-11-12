@@ -68,6 +68,9 @@ impl InputQueueStore {
             .map_err(crate::storage::error)?;
         tx.execute_batch(include_str!("input_queue.sql"))
             .map_err(crate::storage::error)?;
+        // Runtime occupancy belongs to the previous Host session. Revalidate live
+        // occupancy with conversation.get before dispatch; never replay unknown sends.
+        tx.execute("DELETE FROM input_queue_runtime", []).map_err(crate::storage::error)?;
         // A crash between intent and acknowledgement cannot safely be retried.
         tx.execute("UPDATE conversation_inputs SET state='outcomeUnknown',error_code='host_restarted',error_message='Host restarted before the send outcome was confirmed' WHERE state IN ('dispatching','steering')",[]).map_err(crate::storage::error)?;
         tx.execute("UPDATE conversations SET queue_paused=1,queue_revision=queue_revision+1,updated_at=?1 WHERE EXISTS(SELECT 1 FROM conversation_inputs i WHERE i.conversation_id=conversations.id AND i.state IN ('queued','blocked','outcomeUnknown'))",[now()]).map_err(crate::storage::error)?;
@@ -158,6 +161,16 @@ impl InputQueueStore {
         if count >= 100 || bytes + request.input.text.len() as i64 > 1024 * 1024 {
             return Err(error("input_queue_full", "Pending inputs and recoverable edits are limited to 100 messages and 1 MiB per conversation"));
         }
+        // A fresh send is the user's explicit intent to continue. Do not require
+        // a separate resume control for a paused, otherwise safe FIFO queue.
+        let needs_attention: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM conversation_inputs WHERE conversation_id=?1 AND state IN ('blocked','outcomeUnknown'))",
+            [cid], |r| r.get(0),
+        ).map_err(db_error)?;
+        if needs_attention {
+            return Err(error("input_queue_requires_attention", "请先核对并移除待发送列表中发送失败或结果未知的消息，再发送新消息。"));
+        }
+        tx.execute("UPDATE conversations SET queue_paused=0 WHERE id=?1", [cid]).map_err(db_error)?;
         let seq: u64 = tx
             .query_row(
                 "SELECT next_queue_sequence FROM conversations WHERE id=?1",
@@ -763,6 +776,44 @@ mod tests {
     }
     fn turn(c: &g::Conversation, status: &str) -> g::TurnTask {
         serde_json::from_value(json!({"conversation":c.resource,"resource":{"providerId":"i","nativeResourceId":"turn"},"status":status})).unwrap()
+    }
+    #[test]
+    fn restart_clears_accepted_turn_occupancy_so_new_idle_input_can_dispatch() {
+        let (temp, store, c) = fixture();
+        let first = store.enqueue("phone", &request(&c, "before"), &c).unwrap();
+        store.claim_start(&c.resource, &first.item.id).unwrap();
+        store.finish(&c.resource, &first.item.id, Some(&turn(&c, "running")), None).unwrap();
+        assert!(store.head(&c.resource).unwrap().is_none());
+        let reopened = InputQueueStore::open(&temp.path().join("app-state.sqlite")).unwrap();
+        let next = reopened.enqueue("phone", &request(&c, "after"), &c).unwrap();
+        assert!(!reopened.snapshot(&c.resource, "phone", "cursor".into()).unwrap().paused);
+        assert_eq!(reopened.head(&c.resource).unwrap().unwrap().item.id, next.item.id);
+    }
+    #[test]
+    fn fresh_send_continues_restarted_pending_queue_without_resume_command() {
+        let (temp, store, c) = fixture();
+        let earlier = store.enqueue("phone", &request(&c, "earlier"), &c).unwrap();
+        drop(store);
+        let store = InputQueueStore::open(&temp.path().join("app-state.sqlite")).unwrap();
+        assert!(store.snapshot(&c.resource, "phone", "c".into()).unwrap().paused);
+        let next = store.enqueue("phone", &request(&c, "继续执行"), &c).unwrap();
+        assert!(!store.snapshot(&c.resource, "phone", "c".into()).unwrap().paused);
+        assert_eq!(store.head(&c.resource).unwrap().unwrap().item.id, earlier.item.id);
+        assert_ne!(earlier.item.id, next.item.id);
+    }
+    #[test]
+    fn fresh_send_continues_empty_paused_idle_queue_but_rejects_unknown_outcomes() {
+        let (_temp, store, c) = fixture();
+        let first = store.enqueue("phone", &request(&c, "first"), &c).unwrap();
+        store.claim_start(&c.resource, &first.item.id).unwrap();
+        store.finish(&c.resource, &first.item.id, Some(&turn(&c, "running")), None).unwrap();
+        store.observe_turn(&turn(&c, "interrupted")).unwrap();
+        let next = store.enqueue("phone", &request(&c, "继续执行"), &c).unwrap();
+        assert_eq!(store.head(&c.resource).unwrap().unwrap().item.id, next.item.id);
+        store.claim_start(&c.resource, &next.item.id).unwrap();
+        drop(store.dispatch_guard(&c.resource, &next.item.id));
+        assert_eq!(store.enqueue("phone", &request(&c, "another"), &c).unwrap_err().code, "input_queue_requires_attention");
+        assert_eq!(store.snapshot(&c.resource, "phone", "c".into()).unwrap().items.len(), 1);
     }
     #[test]
     fn cancelled_dispatch_is_not_retried_and_snapshot_budget_includes_edits() {

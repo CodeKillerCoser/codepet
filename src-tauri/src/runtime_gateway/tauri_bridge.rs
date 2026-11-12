@@ -284,6 +284,14 @@ impl ProviderHostState {
         views
     }
 
+    pub(crate) async fn remove_plugin(&self, plugin_id: String) -> Result<(), String> {
+        let manager = self.manager.as_ref().ok_or("Provider Host is unavailable")?.clone();
+        let settings = load_app_settings().map_err(|e| e.to_string())?;
+        let root = crate::paths::data(&settings).join("versions/providers");
+        tokio::spawn(async move { manager.remove_plugin(&plugin_id, root).await })
+            .await.map_err(|e| e.to_string())?.map_err(|e| e.to_string())
+    }
+
     pub(crate) async fn import_plugin(&self, manifest: PathBuf) -> Result<codepet_host::ProviderImportResult, String> {
         let manager = self.manager.as_ref().ok_or("Provider Host is unavailable")?.clone();
         let settings = load_app_settings().map_err(|error| error.to_string())?;

@@ -94,6 +94,12 @@ mockIPC((command, raw) => {
   if (command === "record_perf_event") return null;
   if (command === "plugin:dialog|open") return "/fixture/provider/codepet-provider.json";
   if (command === "plugin:path|basename") return "codepet-provider.json";
+  if (command === "plugin:dialog|message") return args.buttons?.OkCancelCustom?.[0] ?? "Ok";
+  if (command === "remove_provider_plugin") {
+    runtimeInventory = runtimeInventory.filter(item => item.providerId !== args.providerId);
+    void emit("provider-connection-status", runtimeConnections());
+    return null;
+  }
   if (command === "import_provider_plugin") {
     runtimeInventory = [...runtimeInventory, {...runtime, version:"1.0.0", providerId:"dev.example.custom", displayName:"Custom Provider", installed:[{executablePath:"/fixture/custom", version:"1.0.0", source:"configured"}], resolvedExecutable:"/fixture/custom"}];
     void emit("provider-connection-status", runtimeConnections());

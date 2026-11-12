@@ -152,3 +152,7 @@ export async function openMainWindow(): Promise<void> {
 export async function importProviderPlugin(manifestPath: string): Promise<{providerId: string; displayName: string; loaded: boolean; diagnostic?: string | null}> {
   return invoke("import_provider_plugin", { manifestPath });
 }
+
+export async function removeProviderPlugin(providerId: string): Promise<void> {
+  return invoke("remove_provider_plugin", { providerId });
+}

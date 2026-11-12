@@ -49,7 +49,7 @@
   import ProviderRuntimeInfo from "./lib/ProviderRuntimeInfo.svelte";
   import { shouldShowRuntime, isBuiltinProvider } from "./lib/agentRuntime";
   import { observeProviderRuntimes, type ProviderConnectionState } from "./lib/providerRuntimes";
-  import { getAppPaths, importProviderPlugin, type AppPaths, checkAppUpdate, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setPathManagerData, setLaunchAtLoginEnabled, setPathManagerPets, updateAppSettings, importPetPackage } from "./lib/api";
+  import { getAppPaths, removeProviderPlugin, importProviderPlugin, type AppPaths, checkAppUpdate, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setPathManagerData, setLaunchAtLoginEnabled, setPathManagerPets, updateAppSettings, importPetPackage } from "./lib/api";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
   import { mergeEventFeed } from "./lib/eventFeed";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
@@ -455,8 +455,24 @@
     }
   }
 
+  let providerAddButton: HTMLButtonElement;
   let providerImportNotice = "";
   let providerImportBusy = false;
+
+  async function removeCustomProvider(runtime: AgentRuntime) {
+    if (providerImportBusy || busyRuntime !== null) return;
+    if (!await confirmDialog(`移除 ${runtime.displayName}？这会停止该 Provider 的运行任务，并从加载列表移除。插件包将归档，历史和数据库保留。`, { title: "移除自定义 Provider", kind: "warning", okLabel: "移除", cancelLabel: "取消" })) return;
+    providerImportBusy = true;
+    busyRuntime = runtime.providerId;
+    providerImportNotice = "";
+    error = "";
+    try {
+      await removeProviderPlugin(runtime.providerId);
+      await runtimeObserver.refresh();
+      providerImportNotice = `${runtime.displayName} 已移除，历史数据已保留。`;
+    } catch (currentError) { error = String(currentError); }
+    finally { providerImportBusy = false; busyRuntime = null; await tick(); providerAddButton?.focus(); }
+  }
 
   async function addCustomProvider() {
     if (providerImportBusy) return;
@@ -1828,14 +1844,14 @@
               <h3 class="runtime-group-title">自定义 Provider</h3>
               <div class="runtime-list">
                 {#each agentRuntimes.filter((runtime) => !isBuiltinProvider(runtime.providerId)) as runtime (runtime.providerId)}
-                  <ProviderRuntimeInfo {runtime} connection={providerConnections.find((state) => state.providerId === runtime.providerId)} connectionsLoaded={providerConnectionsLoaded} busy={busyRuntime === "all" || busyRuntime === runtime.providerId} onSelect={selectInstalledRuntime} />
+                  <ProviderRuntimeInfo {runtime} connection={providerConnections.find((state) => state.providerId === runtime.providerId)} connectionsLoaded={providerConnectionsLoaded} busy={busyRuntime === "all" || busyRuntime === runtime.providerId} onSelect={selectInstalledRuntime} onRemove={removeCustomProvider} />
                 {/each}
               </div>
             </div>
           {/if}
           <div class="runtime-custom-provider">
             <h3>添加自定义 Provider</h3>
-            <button class="runtime-add-provider" type="button" aria-label="添加自定义 Provider" title="选择 Provider manifest" disabled={providerImportBusy} on:click={addCustomProvider}><Plus size={24} aria-hidden="true" /></button>
+            <button bind:this={providerAddButton} class="runtime-add-provider" type="button" aria-label="添加自定义 Provider" title="选择 Provider manifest" disabled={providerImportBusy} on:click={addCustomProvider}><Plus size={24} aria-hidden="true" /></button>
             {#if providerImportNotice}<p role="status">{providerImportNotice}</p>{/if}
           </div>
         </section>

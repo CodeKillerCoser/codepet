@@ -115,3 +115,26 @@ async fn import_plugin_rejects_package_symlinks_and_removes_staging() {
     assert!(manager.snapshots().await.is_empty());
     manager.shutdown().await;
 }
+
+#[tokio::test]
+async fn remove_imported_plugin_archives_package_and_preserves_other_providers_and_reimport() {
+    let directory = tempfile::tempdir().unwrap();
+    let manager = build_manager("device-remove", vec![plugin("existing", &["existing-instance"])]);
+    assert!(manager.start_enabled().await[0].1.is_ok());
+    let before = manager.snapshot("existing").await.unwrap();
+    let root = directory.path().join("installed");
+    let manifest = package(&directory.path().join("source"), "custom");
+    manager.import_plugin(manifest.clone(), root.clone()).await.unwrap();
+    assert!(manager.remove_plugin("existing", root.clone()).await.is_err());
+    assert_eq!(manager.snapshot("existing").await.unwrap().generation, before.generation);
+    manager.remove_plugin("custom", root.clone()).await.unwrap();
+    assert!(manager.snapshot("custom").await.is_err());
+    assert!(!root.join("custom").exists());
+    let archive = std::fs::read_dir(directory.path().join("removed-providers")).unwrap().next().unwrap().unwrap().path();
+    assert_eq!(std::fs::read_to_string(archive.join("asset.txt")).unwrap(), "retained asset");
+    let catalog = PluginCatalog::discover(PluginCatalogConfig::default().with_directory(&root));
+    assert!(catalog.diagnostics().is_empty());
+    assert!(manager.import_plugin(manifest, root).await.unwrap().loaded);
+    assert_eq!(manager.snapshot("existing").await.unwrap().generation, before.generation);
+    manager.shutdown().await;
+}

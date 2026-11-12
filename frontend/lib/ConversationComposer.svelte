@@ -111,9 +111,7 @@
     if (!activeTurn) return;
     await action(async () => { await codepetGateway('turn.interrupt', { conversation, turn: activeTurn!.resource }); });
   }
-  async function resume() {
-    await action(async () => { const generation = epoch; const snapshot = await codepetGateway('conversation.inputQueue.resume', { conversation, expectedRevision: queue!.revision }); if (generation === epoch) queue = snapshot; });
-  }
+
   function restoreDraft() {
     const backups = conversationDraftBackups.get(key) ?? []; const old = backups.pop(); if (!old) return;
     if (text.trim()) backups.push({ text, selection }); text = old.text; selection = old.selection; backupCount = backups.length; textarea?.focus();
@@ -137,7 +135,7 @@
 </script>
 <div class="conversation-composer" aria-label="会话输入与待发队列">
   {#if supportsQueue}
-    <div class="queue-heading"><strong>待发送 {queue?.items.length ?? 0} 条{queue?.paused ? ' · 已暂停' : ''}</strong><div>{#if queue?.paused && queue.items.length}<button disabled={busy || !ready} on:click={resume}>继续队列</button>{/if}<button disabled={loading} on:click={initialize}>刷新</button></div></div>
+    <div class="queue-heading"><strong>待发送 {queue?.items.length ?? 0} 条{queue?.paused ? ' · 已暂停' : ''}</strong><div><button disabled={loading} on:click={initialize}>刷新</button></div></div>
     <div class="queue-items" aria-label="待发消息">
       {#each queue?.items ?? [] as item (item.id)}
         <article><p class="preview">{item.input.text}</p>

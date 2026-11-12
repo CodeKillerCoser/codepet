@@ -77,3 +77,11 @@ it('consumes canonical event payloads, refreshes queue, and disables steering af
   events.callback!({ payload: { jsonrpc: '2.0', method: 'turn.upserted', params: { eventCursor: '3', payload: { turn: { ...active, status: 'completed' } } } } });
   await settle(); expect(button('引导').disabled).toBe(true);
 });
+it('sends a new message without exposing or invoking a separate resume control', async () => {
+  queue.paused = true;
+  await type('继续执行');
+  expect([...document.querySelectorAll('button')].some(b => b.textContent === '继续队列')).toBe(false);
+  button('加入队列').click(); await settle();
+  expect(calls.some(c => c.method === 'conversation.inputQueue.enqueue' && c.params.input.text === '继续执行')).toBe(true);
+  expect(calls.some(c => c.method === 'conversation.inputQueue.resume')).toBe(false);
+});
