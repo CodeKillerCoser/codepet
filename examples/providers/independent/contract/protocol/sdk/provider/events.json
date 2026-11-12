@@ -1,0 +1,136 @@
+{
+  "description": "由 Provider 功能模块生成的事件注册表。",
+  "events": [
+    {
+      "name": "event.instanceStatusChanged",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "instance",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/InstanceStatusChangedEvent"
+      },
+      "description": "实例状态变化事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    {
+      "name": "runtime.inventoryChanged",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "plugin",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/RuntimeGetInstalledResponse"
+      },
+      "description": "运行时读取安装库存响应，作为对应方法成功响应的 result。"
+    },
+    {
+      "name": "event.conversationActiveChanged",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationActiveChangedEvent"
+      },
+      "description": "Ordered active-set invalidation and current fact, including active=false on exit. revision identifies this invalidation, not any active enumeration snapshot. Events must cover externally observed execution too. Host tracks a local event fence during snapshot construction."
+    },
+    {
+      "name": "event.conversationUnreadChanged",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationUnreadChangedEvent"
+      },
+      "description": "Ordered reader-scoped unread fact/invalidation, including unread=false after markRead. revision identifies this invalidation, not any unread enumeration snapshot. Host must not forward scope or read state to other readers; every activity or markRead event invalidates the affected reader view."
+    },
+    {
+      "name": "event.conversationDeleted",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationDeletedEvent"
+      },
+      "description": "Ordered authoritative deletion invalidation. Missing requested IDs are not evidence of deletion unless the Provider established absence. Invalidate affected list/active/unread snapshots."
+    },
+    {
+      "name": "event.conversationUpserted",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationUpsertedEvent"
+      },
+      "description": "会话新增或更新事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    {
+      "name": "event.conversationItemUpserted",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationItemUpsertedEvent"
+      },
+      "description": "Canonical item update, or a content invalidation with conversation and no item. Receivers fetch the latest page only when they do not hold interaction control. At least one of item or conversation is required; when both exist their conversation routes must agree."
+    },
+    {
+      "name": "event.projectChanged",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "project",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ProjectChangedEvent"
+      },
+      "description": "项目变化事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    {
+      "name": "event.turnUpserted",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "turn",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/TurnUpsertedEvent"
+      },
+      "description": "任务新增或更新事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    {
+      "name": "event.turnOutputDelta",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "turn",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/TurnOutputDeltaEvent"
+      },
+      "description": "任务输出增量事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    {
+      "name": "event.approvalRequested",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "approval",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ApprovalRequestedEvent"
+      },
+      "description": "审批请求事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    {
+      "name": "event.approvalResolved",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "approval",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ApprovalResolvedEvent"
+      },
+      "description": "审批已处理事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    {
+      "name": "event.notification",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "subscription",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ProviderNotificationEvent"
+      },
+      "description": "Provider通知事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    }
+  ],
+  "version": 1
+}

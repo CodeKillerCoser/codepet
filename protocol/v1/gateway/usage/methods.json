@@ -1,0 +1,18 @@
+{
+  "description": "gateway usage 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "codepet.usage.query",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "codepet.usage.query",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/UsageQueryRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/UsageQueryResponse"
+      },
+      "description": "codepet.usage.query 的调用定义；请求、结果与幂等性以本条目为准。"
+    }
+  ]
+}

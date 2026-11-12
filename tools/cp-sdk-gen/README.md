@@ -1,3 +1,5 @@
+> 分发更新：App 随附 SDK 已改为仅包含 Provider 的 JSON Schema、methods/events、profile 与作者文档。外部作者入口为 `protocol/v1/provider/README.md`；本文生成器仍作为开发用 Rust/Dart 导出工具，不再要求外部插件作者使用或随 App 分发。
+
 # CodePet Provider SDK 与接入指南
 
 > 当前 `cp-sdk-gen` 是统一协议编译器，不只生成 Provider SDK。Provider 教程保留在本文后半；Gateway 和 LAN admission 使用下面的 role/package 命令。
@@ -20,27 +22,9 @@ cp-sdk-gen --package lan-channel --role models --lang dart --output ./lan-sdk
 
 Gateway Rust 还支持 `--role client` 和 `--role both`。生成目录包含 Core 依赖、目标 package、README 和记录 package/role/schema digest 的 `cp-sdk-gen.lock.json`。`--check` 用相同参数检查已生成目录是否漂移。
 
-App Resources 使用 canonical 协议布局：
+此工具面向仓库开发者和内置 Rust Provider，输入为完整的 canonical 协议目录。它可导出多种内部 role，不能作为 App 公共 SDK 的文件清单。外部作者只使用 App 分发的 Provider 合同，不需要生成器、Host 源码或 Rust bridge。
 
-```text
-provider-sdk/
-├── cp-sdk-gen
-├── codepet-sdk.json
-├── README.md
-└── protocol/
-    ├── core/v1/
-    ├── provider/v1/
-    ├── gateway/v1/
-    └── channel/lan/v1/
-```
-
-JSON Schema 定义 DTO 与约束；相邻 manifest 定义 method/event、方向、幂等性、capability 与 transport。两者缺一不可生成 service client/server。Gateway client 生成 typed 方法包装；Gateway server 生成 trait/dispatcher，trait 业务实现由接入者手写。channel（LAN HTTPS/WSS 或未来 WebRTC；本机使用 LAN 回环地址）只实现 transport contract。
-
-这份文档随 Code Pet App 和 `cp-sdk-gen` 生成结果一起分发，面向开发独立
-Provider 插件的作者。Provider 是由 Code Pet Host 启动的独立进程，业务实现只面对
-生成的 JSON-RPC 强类型接口；SDK Runtime 会把 JSON payload 自动封装为 stdin/stdout
-协商后的 `stdio-codepet-mux-v1` 通道。Provider 不需要感知分片、窗口、raw/zstd、尺寸检查，也不需要依赖
-Tauri、Code Pet Host 或 Desktop 私有 IPC。
+下文的 Rust runtime 示例使用内置的 `stdio-codepet-mux-v1`；其他语言作者可以根据公开 profile 自行实现 stdout/stdin 通信。
 
 SDK runtime 分发心跳和 release-control 安全准入：GatewayHeartbeatClient / GatewayHeartbeat 管理连通性；Host→Provider 的 run_provider_heartbeats 传播连接快照。Provider serve_stdio 确认 provider.ping，不根据心跳调用 start/stop。Host 按 `instance.releaseControl` 能力调度，默认要求持续业务空闲 300 秒；SDK 的 Activity 与独占执行门验证无任务、审批、等待输入、未完成请求或未知发送结果，再调用适配器实现。SDK 内不再创建空闲定时器，`StdioServerOptions.idle_timeout` / `restart_after_idle` 已移除；旧调用方应删除这些配置。需要参与的 Provider 在能力中声明新方法并实现它，未声明者保持原生命周期。Codex 实现释放旧 Server 并启动干净 Server，不恢复旧会话；Claude/OpenCode 不声明。Host 的 `PluginManagerConfig.release_control_idle_timeout` 取代原 Codex 进程的环境变量覆盖。
 
@@ -48,32 +32,24 @@ SDK runtime 分发心跳和 release-control 安全准入：GatewayHeartbeatClien
 
 ## 1. 分发内容
 
-macOS App 中的入口如下；Windows 使用相同资源结构，生成器文件名为
-`cp-sdk-gen.exe`。
+macOS App 的 `Contents/Resources/provider-sdk/`（其他平台资源路径不同）包含：
 
 ```text
-Code Pet.app/Contents/Resources/provider-sdk/
-├── cp-sdk-gen
-├── codepet-sdk.json
-├── codepet-provider-sdk.json
-├── README.md
-└── protocol/
-    ├── core/v1/
-    ├── provider/v1/
-    ├── gateway/v1/
-    └── channel/lan/v1/
+provider-sdk/
+└── v1/
+    ├── sdk-manifest.json
+    ├── README.md
+    └── protocol/
+        ├── manifest.schema.json
+        └── sdk/
+            ├── common/types.schema.json
+            ├── agent-domain/domain.schema.json
+            ├── transport/{profiles.json,handshake.schema.json}
+            ├── rpc/envelope.schema.json
+            └── provider/{lifecycle.schema.json,messages.schema.json,methods.json,events.json}
 ```
 
-- `protocol/core/v1`：跨协议共享的 ID、route、错误和分页等基础类型。
-- `protocol/provider/v1`：Provider JSON-RPC 方法、事件、模型和 fixtures。
-- `protocol/gateway/v1`：Gateway JSON-RPC 业务方法、事件和路由模型。
-- `protocol/channel/lan/v1`：LAN pairing/admission 与凭据撤销 DTO。
-- `codepet-sdk.json`：当前 App 携带的协议包、role、资源路径和生成器版本。
-- `codepet-provider-sdk.json`：为旧 Provider 接入流程保留的兼容索引。
-- `cp-sdk-gen`：导出与当前 App 协议严格匹配的 typed SDK。
-
-资源目录保留 canonical layer-first 布局，各 schema 的相对 `$ref` 可从
-App Resources 中直接解析，不需要另一份重定位协议。
+Schema 的相对 `$ref` 在此目录内闭合。App 不携带本生成器、Gateway/LAN 合同或 fixtures。仓库运行 `npm run sdk:export -- <空目录>` 可导出同一份公开合同；App staging 调用相同的导出函数。对外完整说明见 `protocol/v1/provider/README.md`。
 
 ## 2. cp-sdk-gen 是什么
 
@@ -96,38 +72,23 @@ bun build tools/cp-sdk-gen/cp-sdk-gen.mjs \
   --outfile ./cp-sdk-gen
 ```
 
-Windows 输出名为 `cp-sdk-gen.exe`。Code Pet staging 会为目标平台执行 Bun compile；
-macOS universal 构建分别产生 arm64 和 x86_64 executable，再通过 `lipo` 合并。最终
-生成器运行时不需要 Bun、Node.js、网络或 Code Pet 源码仓库。
+Windows 输出名为 `cp-sdk-gen.exe`。这是一种手动开发工具产物，不属于 App staging；生成器运行时不需要 Bun、Node.js、网络或 Code Pet 源码仓库，但需要完整的兼容协议目录。
 
 ## 3. 导出 Rust SDK
 
-从安装后的 macOS App 导出：
-
-```sh
-"/Applications/Code Pet.app/Contents/Resources/provider-sdk/cp-sdk-gen" \
-  --package provider \
-  --role server \
-  --lang rust \
-  --output ./codepet-sdk
-```
-
-安装包内的生成器默认读取同目录的 `protocol/`。也可以显式指定任意兼容协议包：
-
-```sh
-cp-sdk-gen \
-  --protocol ./protocol \
-  --package provider \
-  --role server \
-  --lang rust \
-  --output ./codepet-sdk
-```
-
-在 Code Pet 源码仓库中开发时也可以运行：
+在 Code Pet 源码仓库中运行（需要 Bun）：
 
 ```sh
 npm run cp-sdk-gen -- --package provider --role server --lang rust --output ./codepet-sdk
 ```
+
+也可以把完整的内部协议目录显式传入单体生成器：
+
+```sh
+cp-sdk-gen --protocol ./protocol --package provider --role server --lang rust --output ./codepet-sdk
+```
+
+公开合同导出目录没有生成器所需的内部 manifest/fixtures，因此不作为这个开发工具的输入。
 
 输出是一个自包含 Cargo workspace：
 
@@ -137,10 +98,12 @@ codepet-sdk/
 ├── README.md
 ├── cp-sdk-gen.lock.json
 ├── codepet-core-sdk/
+├── codepet-agent-sdk/
+├── codepet-transport/
 └── codepet-provider-sdk/
 ```
 
-不要修改生成目录中的 SDK 文件。升级 Code Pet 后，用新 App 中的生成器重新导出；CI
+不要修改生成目录中的 SDK 文件。升级协议后，用同版本仓库中的生成器重新导出；CI
 可以使用下面的命令检查目录是否仍与生成器匹配：
 
 ```sh
@@ -366,7 +329,7 @@ my-provider/
 
 Provider 必须以 `provider.initialize` 协商版本，不应根据 Code Pet 版本字符串猜协议。
 升级 SDK 时重新运行生成器并提交新的 `cp-sdk-gen.lock.json`。新增字段、方法或事件以
-App Resources 中的 schema/manifest 为准；SDK 生成文件和 transport runtime 不应在
+仓库内 canonical schema/manifest 为准；SDK 生成文件和 transport runtime 不应在
 Provider 项目里复制维护。
 
 所有 Agent item variant 支持可选开放 `_meta`；Rust/Dart 字段为 `meta`，wire 为 `_meta`，未提供时省略。Provider Rust 导出包包含可选 mapper helper `truncate_tool_item_text` 与默认单文本阈值 `DEFAULT_TOOL_TEXT_BYTES`（256 KiB）。helper 只处理 `kind: tool`，将路径和字节数写入 item `_meta.truncations`；Runtime 不自动应用，也不改变 caller 分页。详见 `knowledge/60-rules/provider-item-text-and-pagination.md`。

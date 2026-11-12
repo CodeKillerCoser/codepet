@@ -1,0 +1,14 @@
+{
+  "core/v1/schema.json": "cb5e31212500c9f6723fcee6f471fd819ed3b620003dad633b8525a2fe7d7090",
+  "core/v1/manifest.json": "b57031379e703b015c73785bfa2c8c874d1f1214e5d10cad130efb564ca23764",
+  "agent/v1/schema.json": "0ec9ad13e15eb08f63c7163ee96dab71532f437ce2e47a8ecd69e1055bba975b",
+  "agent/v1/manifest.json": "0c271179825dd8f58a8cca4e3ccc0881cc9b57300c9b7e4d636edad5f66f7653",
+  "provider/v1/schema.json": "2480d29ca8609b0ba7ec8437259c8638af81d7a3e9de4aaa2e4183354b7857f6",
+  "provider/v1/manifest.json": "3145b0fe2ff5babeaaeb49dba8b6e11933ea3ef8b1acc017fbf2e8be672fae45",
+  "gateway/v1/schema.json": "c1ecaa2b4321e54b3d6c47fb156eb7c534b15d708600aff1570cd0f1588ef211",
+  "gateway/v1/manifest.json": "7beceb09b0b3941ea325bc9119015ada17dbdba9b3c8f1fa0a169c5f5b6113a7",
+  "channel/lan/v1/schema.json": "c462bda97991aadd196c2e8b484f50ab92aa4adc2c49b321415e08549fbbb069",
+  "channel/lan/v1/manifest.json": "04d84891215b2b58b0cd1a54fdc14407397eb15cdea37b42b212f359e5489077",
+  "channel/control/v1/schema.json": "1ad372a79829d884f3a8181bb5e59f98374b74a238433d666b3b23fb4d4de1b2",
+  "channel/control/v1/manifest.json": "70ce463b7f10528e66517056cb166ee21fea2da56565a707b64b1a845ae173d8"
+}

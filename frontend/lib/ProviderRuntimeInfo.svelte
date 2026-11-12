@@ -26,6 +26,10 @@
     </div>
   </header>
   <dl>
+    {#if runtime.status === "not-required"}
+      {#if connection?.version}<div><dt>Provider 版本</dt><dd>{connection.version}</dd></div>{/if}
+      <div><dt>运行时</dt><dd>由 Provider 管理，无需选择</dd></div>
+    {:else}
     {#if connection?.version}<div><dt>Provider 版本</dt><dd>{connection.version}</dd></div>{/if}
     <div>
       <dt><label for={`runtime-path-${runtime.providerId}`}>运行时路径</label></dt>
@@ -45,6 +49,7 @@
       </dd>
     </div>
     <div><dt>运行时版本</dt><dd>{runtime.version ?? "—"}</dd></div>
+    {/if}
     {#if connection?.defaultWorkspaceRoot}<div><dt>默认工作目录</dt><dd class="path-value">{connection.defaultWorkspaceRoot}</dd></div>{/if}
   </dl>
   {#if runtime.diagnostic}

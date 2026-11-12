@@ -1,136 +1,74 @@
-# CodePet protocol IDL
+# CodePet 协议 IDL
 
-## Single source of truth
+## 权威源与依赖
 
-Everything under `protocol/` is language-neutral, handwritten protocol input. Generated Rust, TypeScript, and Dart files are outputs only; they must not be edited as an alternative model source.
+Provider 是插件与 Host 之间的协议；Gateway 是 UI、手机、TUI 等操作端与 Host 之间的协议。两段分别编码和解码。两者共享业务对象的结构，不共享进程生命周期，也不要求使用同一种通道或压缩方式。
 
-The current layers are:
+权威输入位于 `protocol/v1/`，版本统一放在这一层：
 
-- `core/v1` — stable IDs, timestamps, versions, pagination, errors, JSON primitives, and opaque client resource identity (`providerId + nativeResourceId`).
-- `agent/v1` — types-only shared Agent domain: projects, conversations, turns, approvals, conversation items, tool/content payloads, selections, authentication, and usage. It declares no methods or transport.
-- `pet/v1` — Desktop Companion-driven `PetTask`, `PetApproval`, `PetAction`, snapshot, and patch contracts. It does not reference Provider conversation, turn, or approval models.
-- `provider/v1` — public Host ↔ independent Provider binary JSON-RPC 2.0 over negotiated multiplexed stdio. It owns initialize, describe, instance lifecycle/capability, business method/event envelopes, Provider-private four-part `ProviderResourceId`, and shutdown; client-visible business objects come from `agent/v1`.
-- `gateway/v1` — Host ↔ Remote Client JSON-RPC 2.0 methods and replayable notifications over a channel-provided WebSocket. Resources use opaque `providerId + nativeResourceId`; the gateway exposes neither plugin process lifecycle nor pet-private state.
-- `channel/lan/v1` — LAN admission DTOs for QR pairing, TLS identity and credential revocation. It declares no Gateway business methods.
+```text
+v1/
+├── protocol.json                 # 共享对象与服务入口
+├── common/                       # ID、时间、分页、错误和基础 RPC 信封
+├── agent-domain/                 # Message、Conversation、Turn、Project、Approval 等
+├── provider/
+│   ├── protocol.json             # 模块文件登记和服务元数据
+│   ├── sdk-manifest.json          # 对外 SDK 发布元数据
+│   ├── README.md                 # 对外说明的维护源
+│   ├── manifest.schema.json      # 插件安装清单
+│   ├── transport/                # 三种 stdio profile、传输握手
+│   └── <功能>/                   # Schema、methods.json、可选 events.json
+├── gateway/
+│   ├── protocol.json
+│   ├── README.md
+│   └── <功能>/                   # 包括独立的 pairing 模块
+└── channel-control/              # 通道准备、切换、状态控制
+```
 
-The legacy Gateway protocol has been removed. Host/Remote integration has one Gateway business protocol: Gateway v1. Discovery, channel establishment, trust admission and Gateway business RPC remain separate runtime layers.
+common 不依赖上层；agent-domain 只依赖 common。Provider、Gateway 分别引用 common、agent-domain 及本层模块，不互相引用。共享对象含义与结构都相同时才复用。Host 面向客户端的聚合结果、快照游标、输入队列归 Gateway；插件目录、实例启动和运行时选择归 Provider。
 
-`codegen.json` declares packages, dependency direction, output targets, and the shared `codepet.protocol.codegen/v1` adapter interface. Agent depends only on Core; Provider and Gateway depend on Core plus Agent. Rust is active for Core, Agent, Pet, Provider, Gateway v1, LAN admission and the desktop-only v0 contract. TypeScript covers Core, Agent, Provider, Gateway v1 and the desktop-only v0 contract. Dart is active for Core, Agent, Gateway v1 and LAN admission. Python remains explicitly registered but unimplemented; selecting it fails closed before generation.
+`pet/v1` 与 `desktop/v0` 保留既有独立合同。本轮未迁移旧桌面调用，不把桌宠或任务谱系加入 Agent 共享对象。
 
-## Versioning and discriminators
+## 按功能维护
 
-Every public initialize/handshake request carries an explicit supported `VersionRange`, and the response selects one `ProtocolVersion`. Method and event names live in each layer's manifest rather than language-specific code.
+Provider 包含 lifecycle、instance、runtime、conversation、project、turn、approval、subscription、usage。Gateway 包含 session、subscription、provider、project、conversation、input-queue、turn、approval、usage、pairing。
 
-- Pet and the desktop-only v0 contract use CodePet envelopes discriminated by `method` and `event`; Gateway v1 uses standard JSON-RPC 2.0 requests/responses and event notifications.
-- Provider uses JSON-RPC 2.0 requests discriminated by `method`, strict result/error responses, and notification events also discriminated by `method`. Generated codecs classify the JSON business messages; the handwritten SDK Runtime owns the physical mux bootstrap, Yamux streams, raw/zstd encoding, bounded messages and transport budgets. Mux is the default and only Provider STDIO profile.
-- Gateway v1 events carry an opaque `eventCursor` for replay.
-- Domain unions use a required singleton `kind` on every closed `oneOf` variant. The generator rejects ambiguous or open variants before emitting Rust, Dart, or TypeScript models. Agent conversation items, tool inputs, tool outcomes, and content blocks use this shape so Provider and Gateway share one canonical definition and each full payload has one canonical owner.
+每个功能的 `messages.schema.json` 定义请求、结果、事件载荷和本模块辅助类型；`methods.json` 与 `events.json` 是本功能方法和事件的唯一登记。没有事件的模块不创建空事件文件。服务 `protocol.json` 只登记模块文件，不再手写汇总方法列表。模块之间以明确的相对 `$ref` 引用对象。
 
-The generator supports a deliberately small JSON Schema Draft 2020-12 subset. Unsupported keywords, unresolved references, duplicate method/event names, invalid fixtures, or undeclared cross-layer dependencies fail generation.
+所有 Schema 的根、对象、字段、数组元素和联合分支都要有 description。字段含义和约束放 Schema，使用流程与生命周期放 README。方法名、方向、幂等性、能力关联、事件作用域与投递语义由登记文件定义。生成器聚合后检查重名、引用闭包、跨层依赖、能力关联、约束与 fixtures。
 
-## LAN admission v1 and Gateway v1 contract
+JSON-RPC 使用字符串请求 ID、标准数字错误码与业务错误信息；成功结果与错误互斥。基础信封来自 common，专用方法/事件联合从注册表派生。Gateway 的 trace metadata 和事件游标由本层 service 元数据定义。心跳值由 lifecycle/session 策略生成到运行时，不另手写常量。
 
-The LAN transport uses three fixed routes without adding them as CodePet-envelope methods:
+## 通信生命周期
 
-- `POST /remote/v1/pairings/{pairingId}/exchange`
-- `GET /remote/v1/gateway` with WebSocket upgrade
-- `DELETE /remote/v1/credentials/current`
+Host 按插件安装清单的 command、args、env 启动独立 Provider，组装选择的 stdio profile；需要传输协商的 profile 先完成传输握手，再调用 provider.initialize 注入身份、目录等上下文。随后进行描述、实例管理和业务调用；应用心跳独立处理，结束时调用 shutdown 并监管退出。三种 profile 的完整 wire 和限制定义在 Provider transport，使用说明见 Provider README。
 
-REST/QR bodies are generated from `channel/lan/v1/schema.json`; Gateway business DTOs and methods are generated from `gateway/v1`. `PairingExchangeRequest` contains `pairingSecret`, the existing stable `clientId`, and one required `DeviceDescriptor { deviceName, operatingSystem, systemVersion }`; `pairingId` remains the REST path parameter. `PairingExchangeResponse` contains the stable LAN Host identity, Gateway URL, and opaque credential. These admission types are not JSON-RPC methods.
+Gateway 的配对归 `gateway/pairing`，不归 LAN。现有配对类型仍保留 LAN/TLS 字段和旧 SDK 包名，以保证兼容；其 HTTP 绑定记录在 pairing/bindings.json。它们不作为已认证业务 RPC 注册。当前文件覆盖原有 IDL 的配对对象与绑定，不声称已经把所有云端邀请/信令实现都迁成 IDL。新增跨通道字段需要另行设计与验证，不能只靠移动目录改变 wire。
 
-`PairingQrPayload` is the only encodable QR wire payload. Its fields are exactly `version`, `hostDeviceId`, `displayName`, `httpsBaseUrl`, `certSha256`, `pairingId`, `pairingSecret`, and `expiresAt`. The plaintext pairing secret may flow from Host memory into the QR encoder, but must not be rendered as ordinary UI text or logged. Pairing display state and countdown values remain Host/UI implementation state rather than remote schema fields.
+完成通道建立和相应身份授权后，远程客户端调用 protocol.handshake，交换客户端身份、版本、Host 与 Provider 摘要；随后查询业务快照，通过 event.subscribe 从不透明 snapshotCursor 恢复事件，并维护 protocol.ping。桌面本地 IPC 使用 Host 的本地调用入口，不机械套用远程准入流程。
 
-DNS-SD advertises `_codepet._tcp.local.` and its TXT record is limited to `id`, `name`, `vmin`, `vmax`, and `pair`. `pair` is `1` only while the Host actively offers one-time pairing and is otherwise `0`. Identity, explicit IP, and actual TLS port all come from the same validated listener handle; the IP must belong to a local interface, and Host start/update succeeds only after the active daemon generation reports an announcement for the target fullname. A changed `pair` value unregisters the old generation before starting the new one, so discovery has a short non-atomic gap; an unchanged value is a no-op. Discovery does not establish trust and must never publish a certificate fingerprint, pairing secret, credential, Provider, project, or conversation data.
+IPC、WebSocket、WebRTC 是 Gateway 的承载适配器，不需要每种通道都新增一套业务 Schema。LAN 发现、TLS 证书、RTC ICE/DTLS、分片和压缩属于通道规则；通道切换控制有自己的协议，不能混入业务 dispatcher。业务请求并发执行，控制消息和心跳不等待慢业务。
 
-The WSS upgrade authenticates the opaque bearer. The first business request is `protocol.handshake`; its `clientId` must equal the client identity bound to that credential. `identityFingerprint` and QR `certSha256` belong only to LAN channel/admission and are checked against the actual leaf certificate DER. Gateway `HandshakeResponse.device` contains only `deviceId + descriptor`; `ProviderGatewayService` never receives a bearer, pairing secret or certificate fingerprint.
+## 共享对象与同步语义
 
-## Gateway v1 snapshot and live-event boundary
+资源在客户端使用不透明 `providerId + nativeResourceId`；Host 与 Provider 使用完整实例路由，并校验跨资源实例一致性。客户端不能解析或拼接事件游标。快照边界在发起查询前捕获；客户端原样保存 snapshotCursor，按订阅结果衔接 replay 与实时事件。分页逐页返回，不在中间层聚合全量历史。
 
-`EventCursor` is an opaque replay token. A client may persist it, compare it for equality, and return it to the Gateway, but must never parse, order, or increment it. In particular, clients must pass the exact last applied cursor as `event.subscribe.afterCursor`; they must not calculate a numeric `+1`. The Gateway acknowledges that exact boundary as `subscribedAfterCursor`, then the transport session delivers events after it. Whether one WebSocket may call `event.subscribe` more than once is a future transport-session policy, not part of the v1 IDL or Host service contract.
+领域联合使用必填的单值 kind 判别，生成器拒绝歧义联合和开放结构。工具调用的输入、结果各只有一个完整载荷所有者；终态正文归完整 item，进行中正文通过 delta 投递。具体约束继续遵循 `knowledge/60-rules/` 中的协议分层、工具载荷所有权、分页与同步规约。
 
-`conversation.list`, `conversation.search`, and `conversation.get` return `snapshotCursor`. The Host captures this cursor immediately before issuing the corresponding Provider query, never after the query completes. A client can therefore obtain the snapshot and subscribe after its returned cursor without losing events that arrived while the Provider query was in flight. `conversation.search` is a separate, route-scoped Provider query with its own cursor; clients must not merge search pages into the recent `conversation.list` cursor stream.
+## 生成、构建和分发
 
-`conversation.get.items` is the ordered, provider-neutral committed history projection. Each item carries its routed native item identity, turn, and owning conversation; the Host rejects any item whose conversation does not exactly match the requested routed conversation. Each content block has a deterministic `contentId` derived from the native item ID plus its stable semantic position. `turn.outputDelta` carries the same `itemId/contentId/kind`, so clients first install the committed snapshot, then replay after `snapshotCursor`, and upsert or discard replayed deltas whose content ID is already committed instead of appending duplicate text. In-progress mutable bodies stay live-only until their authoritative item completes. Metadata upserts remain idempotent and may restate state already visible in the snapshot.
+`tools/protocol-codegen/modular-contract.mjs` 加载权威模块并组装视图；`generate.mjs` 根据 `codegen.json` 的包与 target 配置生成 Rust、TypeScript、Dart。Python target 尚未实现，选择时明确失败。手写代码负责业务、连接和编解码机制，不能成为第二份 DTO 或方法注册表。
 
-The common history surface covers user and assistant messages, readable reasoning summaries, command/file/tool activity, and approval records actually observed by a Provider. It never exposes a native Provider DTO. Raw reasoning content is excluded, unknown native items become safe `unknown` activity without raw payload, and command completion must not be used to invent an approval that was never requested.
+`core/v1/schema.json`、`agent/v1/schema.json`、`provider/v1/{schema,manifest}.json`、`gateway/v1/{schema,manifest}.json` 以及 `channel/{lan,control}/v1/{schema,manifest}.json` 是生成的兼容视图，保留既有语言包、Host、桌面、手机的引用路径，不可直接修改。旧路径下的 fixtures 是回归样本。仓库默认生成必须读取 protocol/v1，不能退回兼容视图作为事实源。
 
-Conversation history uses closed, `kind`-discriminated item variants rather than one object with mutually incompatible optional fields. A message owns message content; a reasoning item owns readable summaries; a tool/command item owns one typed invocation; file-change, approval, and unknown activity expose only their branch-specific fields. Unknown activity never carries a native Provider payload. UI placement such as inline expansion, a drawer, or a detail page is not a protocol concern.
-
-A tool invocation has exactly one input variant: `command` for a semantic command execution, `structured` for reliably parsed JSON parameters, or `opaque` for input whose semantics cannot be understood reliably. Size is orthogonal to this classification. Its terminal outcome is a `success` or `failure` variant and owns the only canonical result content blocks; full command/output text is not copied into item contents, a command facet, structured result, or error message. Failure messages are bounded summaries, while stdout, stderr, diagnostics, diffs, and JSON results remain typed content blocks. Provider-only extensions do not exist on shared Agent business objects. Provider request/instance/capability extensions remain private; Host validates and forwards Agent objects without field-by-field copying.
-
-Content blocks carry stable content identity and structured truncation metadata when incomplete, including original and retained byte counts plus the truncation strategy. Command, structured, and opaque tool inputs use the same truncation metadata, so semantic input kind remains independent from payload size. Absence of that metadata means complete content. Content policy is applied while a Provider maps native harness data into the Agent domain; the transport runtime must not mutate an already formed response to make it fit. Provider STDIO uses SDK-owned negotiated mux streams with JSON payloads and automatic raw/zstd selection. The default limits are 16 MiB per encoded message including its inner CPRF header and 128 MiB per decoded JSON message; stream and byte budgets are negotiated before business initialization. Oversized responses become `provider_response_too_large`; the final caller may retry the same cursor with a smaller page limit, while Host/Gateway do not truncate or retry. `conversation.itemUpserted` replaces the same routed item as it moves from pending/running to a terminal result, while `turn.outputDelta` remains the append-only text channel. These contract corrections remain in Provider/Gateway v1 because there is no deployed compatibility boundary requiring a v2 dual stack.
-
-## Provider descriptors and existing-conversation turns
-
-Every Provider instance exposes two separate identities: adapter metadata (`pluginId`, `displayName`, and adapter `version`) and a required `harness { id, displayName, version? }` supplied by the Provider runtime. Gateway maps this descriptor as data and never branches on a harness name. Capabilities carry a required opaque `revision`; a client must send that exact value with `turn.send`, and a changed runtime/catalog revision makes an older selection stale.
-
-`turnSend` contains only controls that the current Provider can honestly execute. Access mode and reasoning effort are option sets with stable IDs, user-facing labels, optional disabled state, and optional defaults. A model catalog is an explicit discriminated union: flat catalogs and selections use `kind: "flat"`, while grouped catalogs and selections use `kind: "grouped"` plus `providerId`. Remote clients render only advertised controls and return the selected shape unchanged; they must not infer a catalog shape from fields or from the harness descriptor.
-
-Gateway `turn.send` starts a new turn in an existing, idle conversation. Its Provider route is derived from the routed conversation, avoiding two independently supplied route values. The request also contains `clientRequestId`, capability revision, typed text input, and a complete selection object. Gateway validates route ownership, instance readiness, advertised method, revision, option membership/enabled state, and catalog/selection kind before calling Provider `turn.start`.
-
-Duplicate suppression is deliberately bounded to one running `ProviderGatewayService`: it retains the latest 1,024 `(callerScope, route, clientRequestId)` outcomes in memory. WSS derives the opaque scope from the authenticated logical `clientId`, while local compatibility callers use their own stable scope; bearer material is never part of this key. Within one scope and cache window, an identical replay returns the cached success or error without sending another Provider request, while reusing the same key with different payload is `client_request_conflict`. `turn.send` remains `nonIdempotent`: Host restart, eviction, or an unknown transport outcome can remove this protection. A Remote client must not promise an automatic safe retry; it should refresh the conversation and live state first. An explicit same-ID retry is only best-effort deduplication within the current process/cache window, never exactly-once execution.
-
-The current advertised execution matrix is intentionally conservative:
-
-- Codex discovers its live flat model catalog through official `model/list`, publishes only the reasoning efforts common to every advertised model, includes the App Server version from initialize, advertises `turn.start`/Gateway `turn.send`, and applies selected access mode, model, and reasoning effort to official `turn/start`. Its immediate start acknowledgement may return `userItem: null`; item notifications and later snapshots provide the authoritative history.
-- OpenCode 1.18.25 retains its existing Provider-internal prompt/control implementation, but does not advertise `turn.start` or Gateway `turn.send` because a complete user-selectable model/reasoning discovery contract is not yet established.
-- Claude Code retains its direct CLI execution implementation, but does not advertise `turn.start` or Gateway `turn.send`; its CLI stream surface has no App Server-equivalent discovery/control contract that can honestly populate these selectors.
-
-## Generated SDKs
-
-Rust packages are located at:
-
-- `sdk/rust/codepet-core-sdk`
-- `sdk/rust/codepet-desktop-sdk`
-- `sdk/rust/codepet-pet-sdk`
-- `sdk/rust/codepet-provider-sdk`
-- `sdk/rust/codepet-gateway-sdk`
-- `sdk/rust/codepet-lan-channel-sdk`
-
-Dart packages are located at:
-
-- `sdk/dart/codepet-core-sdk`
-- `sdk/dart/codepet-agent-sdk`
-- `sdk/dart/codepet-gateway-sdk`
-- `sdk/dart/codepet-lan-channel-sdk`
-
-The Dart Gateway package is pure null-safe Dart and re-exports Core plus Agent. It contains immutable generated DTOs, strict unknown-field and schema-constraint validation, `kind`-discriminated sealed unions, secret-redacted diagnostics, manifest-derived method/event metadata, JSON-RPC 2.0 codecs, and a transport-neutral typed `ProtocolClient`. WebSocket framing, request correlation storage, TLS pinning, credentials, reconnect/retry policy, and event persistence remain consumer-runtime concerns.
-
-Service SDKs contain serde DTOs, method/event enums, async server traits, dispatchers, typed client/transport shells, wire envelopes, and codecs. Provider additionally generates `ProtocolRequest::from_method_params`, request method/id accessors, and `ProtocolMethod::dispatch_lane()`, so Host and Provider runtimes do not maintain second method/envelope/control-lane tables. Provider/Gateway capability enums and `ProtocolMethod::capability()` are generated from checked manifest/schema metadata. Provider descriptors expose protocol validation for non-empty supported instance kinds, and `instance.create` plus returned instances carry the selected `instanceKind`.
-
-The Rust Provider SDK also exposes a stable, handwritten `serve_stdio` runtime around the generated contract. It owns the negotiated `stdio-codepet-mux-v1` profile, bounded JSON serialization/decompression, stream flow control, independent normal/small/control budgets, concurrent dispatch, ordered event publication, cancellation, terminal I/O handling, shutdown and drain. Transport limits are separate generated bootstrap DTOs; they do not change business initialize DTOs. It does not own Provider business state or Host process supervision. `crates/codepet-host` remains the process and routing owner, while Provider binaries implement only the generated server trait plus harness-specific behavior and do not handle framing or compression.
-
-`cp-sdk-gen --package <provider|gateway|lan-channel> --role <client|server|both|models> --lang <rust|dart> --output <sdk-dir>` reads canonical adjacent schema/manifest/fixtures, rebuilds normalized typed IR, and writes a standalone SDK plus protocol digest lock. Provider and Gateway exports recursively include Core and Agent; LAN admission includes Core only. Provider supports Rust server; Gateway supports Dart client and Rust client/server/both; LAN admission supports Dart/Rust models. The Bun-compiled native executable and canonical `protocol/{core,agent,provider,gateway,channel}` tree ship under App `provider-sdk/` resources.
-
-The six Rust SDK manifests are packageable crates rather than permanently private workspace crates. Their local path dependencies also declare version `0.1.0`, allowing local workspace development while preserving a publishable dependency graph. Repository tests are excluded from crate tarballs because they read the canonical fixtures outside each crate under `protocol/`; the tests still run from the SDK workspace, while published source remains self-contained without copying fixture facts. The Provider SDK runtime is consumed by the standalone Codex, Claude, and OpenCode Provider binaries; their all-target dependency graphs do not include Host or Gateway. The repository currently has no license file; `cargo package` content checks can run, but the project should not publish until the repository owner makes an explicit license decision.
-
-## Runtime Gateway compatibility
-
-The existing in-process Runtime Gateway and Desktop Companion still use the unchanged desktop-only v0 wire profile. That profile lives at `desktop/v0` and is generated into `codepet-desktop-sdk` plus the TypeScript desktop SDK. It is not a Gateway version and is independent from the production Remote path, which uses Gateway v1 JSON-RPC. The Tauri and frontend files named `generated` are thin re-export shims only.
-
-This compatibility path preserves current dual-channel behavior: remote App Server operations run only through Provider v1 and `codepet-host`, then map to the existing remote v0 Tauri surface; Desktop IPC remains on the companion bus. The compat layer is stateless, uses resource-carried four-part identity, and never forwards Provider events into companion/Pet channels.
-
-## Commands
+对外导出仍为 `provider-sdk/v1/{sdk-manifest.json,README.md,protocol/}`；protocol 内分安装清单 Schema 与 sdk 通信生成输入。导出器复制所需依赖闭包、聚合功能模块、重写相对引用并生成源摘要。包内不包含 Gateway、配对、通道控制、fixtures、Host 源码或语言生成工具。App staging 使用同一导出器。内部 cp-sdk-gen 仍供开发者导出语言 SDK，不随 App 公开 SDK 分发。
 
 ```sh
 npm run protocol:generate
 npm run protocol:check
-cargo test --manifest-path sdk/rust/Cargo.toml
-npm test --prefix sdk/typescript/codepet-desktop-sdk
-dart analyze sdk/dart/codepet-core-sdk sdk/dart/codepet-gateway-sdk sdk/dart/codepet-lan-channel-sdk
-# Run `dart test` with sdk/dart/codepet-gateway-sdk as the working directory.
-node tools/protocol-codegen/generate.mjs --target=rust --check
-npm run cp-sdk-gen -- --package provider --role server --lang rust --output /tmp/codepet-provider-sdk
-python3 scripts/test_codex_provider_stdio.py --provider crates/target/debug/codepet-provider-codex --app-server crates/target/debug/codex-app-server-fixture
+npm run sdk:export -- <空输出目录>
+npm run providers:test
+npm run sdkgen:test
 ```
 
-`protocol:check` validates schema/manifest consistency, positive and negative fixtures, schema and manifest dependency direction, capability mappings, target fail-closed behavior, and generated-file freshness. Runtime compatibility is covered by `runtime_gateway_protocol_tests` and `runtime_gateway_core_tests` in the Tauri crate.
-
-## Current limits
-
-Usage is a Provider-owned query: Provider `usage.query` is exposed as Gateway `codepet.usage.query` with `providerId` plus the shared Agent `UsageQuery`. Inspect `usageDatasets` before requesting metrics, model filters or bucket sizes. `halfHour` means clock-aligned 30-minute buckets, not a polling interval. Query summaries apply before pagination; native account summaries remain unfiltered. Host supplies private Provider storage directories during initialization. See [Provider usage and storage](../knowledge/10-architecture/provider-usage-query-and-storage.md) for collection, SQLite ownership, coverage and cursor semantics.
-
-- A reusable Plugin Manager and process supervisor exists in `crates/codepet-host`, and Codex remote operations run through the standalone Provider binary. Signature, marketplace, sandbox, and automatic restart policy remain deliberately out of scope.
-- LAN admission v1 defines identity, QR, pairing REST bodies and credential revocation; `codepet-host` owns the TLS/HTTP/WSS listener and mDNS lifecycle. The production Remote business session uses Gateway v1 JSON-RPC after admission. A persistent cross-process event-cursor store remains absent.
-- The v0 compatibility profile remains in use only by the desktop process until a separate Pet-protocol migration; it is not the Remote network protocol.
-- `turn.send` is non-idempotent. Same-ID duplicate suppression is caller-scoped, process-local, and bounded; no persistent exactly-once ledger exists.
+协议检查覆盖迁移前后的 wire 结构摘要、模块重名、description、引用/依赖、默认值、能力关联、fixtures 和生成新鲜度。再以语言 SDK 测试及 Host 的真实 Provider 进程、Gateway、LAN/RTC 测试验证运行行为。内部代码生成工具不能代替独立 Provider 的跨进程互通验收。

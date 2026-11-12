@@ -1,0 +1,81 @@
+{
+  "description": "provider instance 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "instance.releaseControl",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "capability": "instance.releaseControl",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/InstanceReleaseControlRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/InstanceReleaseControlResponse"
+      },
+      "dispatchLane": "control",
+      "description": "Host-scheduled, conditional release of idle native control. The Provider must atomically reject active/uncertain work and requests in flight, and must never reacquire old conversations. Unsupported Providers return unsupported without side effects."
+    },
+    {
+      "name": "instance.create",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/InstanceCreateRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/InstanceCreateResponse"
+      },
+      "description": "实例创建方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    },
+    {
+      "name": "instance.start",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/InstanceStartRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/InstanceStartResponse"
+      },
+      "description": "实例启动方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    },
+    {
+      "name": "instance.stop",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "dispatchLane": "control",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/InstanceStopRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/InstanceStopResponse"
+      },
+      "description": "实例停止方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    },
+    {
+      "name": "instance.destroy",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "dispatchLane": "control",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/InstanceDestroyRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/InstanceDestroyResponse"
+      },
+      "description": "实例销毁方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    },
+    {
+      "name": "instance.capabilities",
+      "direction": "hostToPlugin",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/InstanceCapabilitiesRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/InstanceCapabilitiesResponse"
+      },
+      "description": "实例能力方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    }
+  ]
+}

@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 
 import { createHash } from "node:crypto";
+import { loadModularContract, modularCompatibilityViews } from "../protocol-codegen/modular-contract.mjs";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
@@ -8,6 +9,8 @@ import coreCargo from "../../sdk/rust/codepet-core-sdk/Cargo.toml" with { type: 
 import coreLib from "../../sdk/rust/codepet-core-sdk/src/lib.rs" with { type: "text" };
 import agentCargo from "../../sdk/rust/codepet-agent-sdk/Cargo.toml" with { type: "text" };
 import agentLib from "../../sdk/rust/codepet-agent-sdk/src/lib.rs" with { type: "text" };
+import transportCargo from "../../sdk/rust/codepet-transport/Cargo.toml" with { type: "text" };
+import { transportRuntimeFiles } from "./transport-runtime.mjs";
 import { providerRuntimeFiles } from "./provider-runtime.mjs";
 import providerCargo from "../../sdk/rust/codepet-provider-sdk/Cargo.toml" with { type: "text" };
 import gatewayRustHeartbeat from "../../sdk/rust/codepet-gateway-sdk/src/heartbeat.rs" with { type: "text" };
@@ -24,6 +27,11 @@ import gatewayDartPubspec from "../../sdk/dart/codepet-gateway-sdk/pubspec.yaml"
 import gatewayDartLib from "../../sdk/dart/codepet-gateway-sdk/lib/codepet_gateway_sdk.dart" with { type: "text" };
 import lanDartPubspec from "../../sdk/dart/codepet-lan-channel-sdk/pubspec.yaml" with { type: "text" };
 import lanDartLib from "../../sdk/dart/codepet-lan-channel-sdk/lib/codepet_lan_channel_sdk.dart" with { type: "text" };
+import controlDartPubspec from "../../sdk/dart/codepet-channel-control-sdk/pubspec.yaml" with { type: "text" };
+import controlDartLib from "../../sdk/dart/codepet-channel-control-sdk/lib/codepet_channel_control_sdk.dart" with { type: "text" };
+import gatewayGuide from "../../protocol/v1/gateway/README.md" with { type: "text" };
+import pairingGuide from "../../protocol/v1/gateway/pairing/README.md" with { type: "text" };
+import controlGuide from "../../protocol/v1/channel-control/README.md" with { type: "text" };
 import guide from "./README.md" with { type: "text" };
 import {
   GENERATOR_TARGET_INTERFACE,
@@ -32,7 +40,7 @@ import {
 } from "../protocol-codegen/generate.mjs";
 
 const VERSION = "0.1.0";
-const PACKAGE_IDS = new Set(["provider", "gateway", "lan-channel"]);
+const PACKAGE_IDS = new Set(["provider", "gateway", "lan-channel", "channel-control"]);
 
 function fail(message) {
   throw new Error(message);
@@ -70,7 +78,7 @@ function parseArguments(arguments_) {
   }
   if (!options.language) fail("--lang is required");
   if (!options.output) fail("--output is required");
-  if (!PACKAGE_IDS.has(options.package)) fail(`--package must be provider, gateway, or lan-channel`);
+  if (!PACKAGE_IDS.has(options.package)) fail(`--package must be provider, gateway, lan-channel, or channel-control`);
   if (!["rust", "dart"].includes(options.language)) fail(`SDK target is not implemented for language: ${options.language}`);
   const defaultRole = options.package === "provider" ? "server" : options.package === "gateway" ? "client" : "models";
   options.role ??= defaultRole;
@@ -79,6 +87,7 @@ function parseArguments(arguments_) {
     : new Set([defaultRole]);
   if (!supportedRoles.has(options.role)) fail(`unsupported role ${options.role} for ${options.package}/${options.language}`);
   if (options.package === "provider" && options.language !== "rust") fail("Provider server SDK currently supports Rust only");
+  if (options.package === "channel-control" && options.language !== "dart") fail("Channel control models currently support Dart only");
   return options;
 }
 
@@ -100,35 +109,22 @@ async function defaultProtocolDirectory() {
 }
 
 async function protocolLayout(protocolDirectory) {
-  const distributedCore = resolve(protocolDirectory, "v1", "core");
-  const distributedProvider = resolve(protocolDirectory, "v1", "schema");
-  if (await exists(resolve(distributedCore, "schema.json")) && await exists(resolve(distributedProvider, "schema.json"))) {
-    return { core: "v1/core", provider: "v1/schema" };
+  if (!(await exists(resolve(protocolDirectory, 'v1/protocol.json')))) {
+    fail(`${protocolDirectory} does not contain canonical protocol/v1; generated compatibility views are not source inputs`);
   }
-  const sourceCore = resolve(protocolDirectory, "core", "v1");
-  const sourceAgent = resolve(protocolDirectory, "agent", "v1");
-  const sourceProvider = resolve(protocolDirectory, "provider", "v1");
-  if (await exists(resolve(sourceCore, "schema.json")) && await exists(resolve(sourceAgent, "schema.json")) && await exists(resolve(sourceProvider, "schema.json"))) {
-    return {
-      core: "core/v1",
-      agent: "agent/v1",
-      provider: "provider/v1",
-      gateway: "gateway/v1",
-      "lan-channel": "channel/lan/v1",
-    };
-  }
-  fail(`${protocolDirectory} does not contain protocol/v1/{core,schema} or source core/provider v1 resources`);
+  return { core: 'core/v1', agent: 'agent/v1', provider: 'provider/v1', gateway: 'gateway/v1', 'lan-channel': 'channel/lan/v1', 'channel-control': 'channel/control/v1' };
 }
 
-async function buildConfig(protocolDirectory, layout, options) {
-  const coreSchema = JSON.parse(await readFile(resolve(protocolDirectory, layout.core, "schema.json"), "utf8"));
+async function buildConfig(protocolDirectory, layout, options, views) {
+  const readSchema = async file => JSON.parse(views.get(file) ?? await readFile(resolve(protocolDirectory, file), 'utf8'));
+  const coreSchema = await readSchema(`${layout.core}/schema.json`);
   const includeAgent = options.package === "provider" || options.package === "gateway";
   const agentSchema = includeAgent
-    ? JSON.parse(await readFile(resolve(protocolDirectory, layout.agent, "schema.json"), "utf8"))
+    ? await readSchema(`${layout.agent}/schema.json`)
     : undefined;
   const selectedPath = layout[options.package];
   if (!selectedPath) fail(`protocol resources do not contain package: ${options.package}`);
-  const selectedSchema = JSON.parse(await readFile(resolve(protocolDirectory, selectedPath, "schema.json"), "utf8"));
+  const selectedSchema = await readSchema(`${selectedPath}/schema.json`);
   const language = options.language;
   const packageMetadata = {
     provider: { id: "provider-v1", layer: "provider", version: 1, output: "codepet-provider-sdk/src/generated.rs" },
@@ -138,6 +134,7 @@ async function buildConfig(protocolDirectory, layout, options) {
       version: 1,
       output: language === "rust" ? "codepet-gateway-sdk/src/generated.rs" : "codepet-gateway-sdk/lib/src/generated.dart",
     },
+    "channel-control": { id: "channel-control-v1", layer: "channel", version: 1, output: "codepet-channel-control-sdk/lib/src/generated.dart" },
     "lan-channel": {
       id: "channel-lan-v1",
       layer: "channel",
@@ -160,7 +157,7 @@ async function buildConfig(protocolDirectory, layout, options) {
       { id: "python", interface: GENERATOR_TARGET_INTERFACE, status: "planned" },
     ],
     packages: [
-      {
+      ...(options.package === "channel-control" ? [] : [{
         id: "core-v1",
         layer: "core",
         version: 1,
@@ -169,7 +166,7 @@ async function buildConfig(protocolDirectory, layout, options) {
         dependencies: [],
         publicTypes: Object.keys(coreSchema.$defs ?? {}),
         outputs: { [language]: coreOutput },
-      },
+      }]),
       ...(includeAgent ? [{
         id: "agent-v1",
         layer: "agent",
@@ -186,25 +183,20 @@ async function buildConfig(protocolDirectory, layout, options) {
         version: packageMetadata.version,
         schema: `${selectedPath}/schema.json`,
         manifest: `${selectedPath}/manifest.json`,
-        dependencies: includeAgent ? ["core-v1", "agent-v1"] : ["core-v1"],
-        ...(options.package === "lan-channel" ? { publicTypes: Object.keys(selectedSchema.$defs ?? {}) } : {}),
+        dependencies: includeAgent ? ["core-v1", "agent-v1"] : options.package === "channel-control" ? [] : ["core-v1"],
+        ...(["lan-channel", "channel-control"].includes(options.package) ? { publicTypes: Object.keys(selectedSchema.$defs ?? {}) } : {}),
         outputs: { [language]: packageMetadata.output },
       },
     ],
   };
 }
 
-async function digestProtocol(protocolDirectory, config) {
-  const hash = createHash("sha256");
-  for (const package_ of config.packages) {
-    for (const key of ["schema", "manifest"]) {
-      hash.update(package_[key]);
-      hash.update("\0");
-      hash.update(await readFile(resolve(protocolDirectory, package_[key])));
-      hash.update("\0");
-    }
+function digestProtocol(canonical) {
+  const hash = createHash('sha256');
+  for (const [file, document] of [...canonical.files].sort(([a], [b]) => a.localeCompare(b))) {
+    hash.update(file); hash.update('\0'); hash.update(JSON.stringify(document)); hash.update('\0');
   }
-  return `sha256:${hash.digest("hex")}`;
+  return `sha256:${hash.digest('hex')}`;
 }
 
 async function updateFile(outputDirectory, path, content, check, stale) {
@@ -222,14 +214,15 @@ async function updateFile(outputDirectory, path, content, check, stale) {
 export async function runCpSdkGen(arguments_, currentDirectory = process.cwd()) {
   const options = parseArguments(arguments_);
   if (options.help) {
-    return "Usage: cp-sdk-gen --package provider|gateway|lan-channel --role client|server|both|models --lang rust|dart --output <sdk-dir> [--protocol <protocol-dir>] [--check]";
+    return "Usage: cp-sdk-gen --package provider|gateway|lan-channel|channel-control --role client|server|both|models --lang rust|dart --output <sdk-dir> [--protocol <protocol-dir>] [--check]";
   }
   const outputDirectory = resolve(currentDirectory, options.output);
   const protocolDirectory = options.protocol
     ? resolve(currentDirectory, options.protocol)
     : await defaultProtocolDirectory();
   const layout = await protocolLayout(protocolDirectory);
-  const config = await buildConfig(protocolDirectory, layout, options);
+  const canonical = await loadModularContract(protocolDirectory);
+  const config = await buildConfig(protocolDirectory, layout, options, modularCompatibilityViews(canonical));
   configureProtocolGenerator({
     sourceRoot: dirname(protocolDirectory),
     protocolDirectory,
@@ -242,12 +235,12 @@ export async function runCpSdkGen(arguments_, currentDirectory = process.cwd()) 
     generatorVersion: VERSION,
     package: options.package,
     role: options.role,
-    protocolVersion: config.packages.find((package_) => package_.id === `${options.package === "lan-channel" ? "channel-lan" : options.package}-v1`).version,
-    protocolDigest: await digestProtocol(protocolDirectory, config),
+    protocolVersion: config.packages.at(-1).version,
+    protocolDigest: digestProtocol(canonical),
     language: options.language,
   }, null, 2)}\n`;
   const staticFiles = new Map([
-    ["README.md", guide],
+    ["README.md", options.package === "gateway" ? gatewayGuide : options.package === "lan-channel" ? pairingGuide : options.package === "channel-control" ? controlGuide : guide],
     ["cp-sdk-gen.lock.json", lock],
   ]);
   if (options.language === "rust") {
@@ -256,7 +249,7 @@ export async function runCpSdkGen(arguments_, currentDirectory = process.cwd()) 
       : options.package === "gateway"
         ? "codepet-gateway-sdk"
         : "codepet-lan-channel-sdk";
-    const members = ["codepet-core-sdk", ...(options.package === "lan-channel" ? [] : ["codepet-agent-sdk"]), packageDirectory];
+    const members = [...(options.package === "provider" ? ["codepet-transport"] : []), "codepet-core-sdk", ...(options.package === "lan-channel" ? [] : ["codepet-agent-sdk"]), packageDirectory];
     staticFiles.set("Cargo.toml", `[workspace]\nmembers = [\n${members.map((member) => `    "${member}",`).join("\n")}\n]\nresolver = "2"\n`);
     staticFiles.set("codepet-core-sdk/Cargo.toml", coreCargo);
     staticFiles.set("codepet-core-sdk/src/lib.rs", coreLib);
@@ -266,6 +259,8 @@ export async function runCpSdkGen(arguments_, currentDirectory = process.cwd()) 
     }
     if (options.package === "provider") {
       staticFiles.set("codepet-provider-sdk/Cargo.toml", providerCargo);
+      staticFiles.set("codepet-transport/Cargo.toml", transportCargo);
+      for (const [relativePath, source] of transportRuntimeFiles) staticFiles.set(`codepet-transport/src/${relativePath}`, source);
       for (const [relativePath, source] of providerRuntimeFiles) {
         staticFiles.set(`codepet-provider-sdk/src/${relativePath}`, source);
       }
@@ -277,6 +272,9 @@ export async function runCpSdkGen(arguments_, currentDirectory = process.cwd()) 
       staticFiles.set("codepet-lan-channel-sdk/Cargo.toml", lanRustCargo);
       staticFiles.set("codepet-lan-channel-sdk/src/lib.rs", lanRustLib);
     }
+  } else if (options.package === "channel-control") {
+    staticFiles.set("codepet-channel-control-sdk/pubspec.yaml", controlDartPubspec);
+    staticFiles.set("codepet-channel-control-sdk/lib/codepet_channel_control_sdk.dart", controlDartLib);
   } else {
     staticFiles.set("codepet-core-sdk/pubspec.yaml", coreDartPubspec);
     staticFiles.set("codepet-core-sdk/lib/codepet_core_sdk.dart", coreDartLib);

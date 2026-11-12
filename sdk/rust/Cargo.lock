@@ -112,6 +112,7 @@ version = "0.1.0"
 dependencies = [
  "codepet-agent-sdk",
  "codepet-core-sdk",
+ "codepet-transport",
  "dirs",
  "fs2",
  "futures",
@@ -125,6 +126,19 @@ dependencies = [
  "tokio",
  "tokio-util",
  "windows",
+ "zstd",
+]
+
+[[package]]
+name = "codepet-transport"
+version = "0.1.0"
+dependencies = [
+ "codepet-core-sdk",
+ "futures",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
  "yamux",
  "zstd",
 ]

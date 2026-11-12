@@ -1,5 +1,7 @@
 # Provider 与 Gateway 共享 Agent 领域协议
 
+> 维护源更新：共享对象已迁至 `protocol/v1/agent-domain/`，`agent/v1/schema.json` 为生成兼容视图；Provider 与 Gateway 的功能模块分别引用同一权威源。
+
 ## 背景与证据
 
 此前 `provider/v1` 与 `gateway/v1` 分别声明 Conversation、Project、Turn、Approval、ConversationItem、Tool、Content、Model Selection、Authentication 和 Usage。它们在 wire 上大体同构，但生成后是两个不同的 Rust 类型，Host 只能通过逐字段 mapper 转换整棵对象。

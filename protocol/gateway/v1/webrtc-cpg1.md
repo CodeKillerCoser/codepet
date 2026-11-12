@@ -1,6 +1,12 @@
 # Gateway WebRTC CPG1 channel profile
 
-Status: implemented as an opt-in LAN-signaled RTC adapter. The existing
+Scope: this document describes CPG1 framing and the original LAN signaling
+binding. Cloud signaling, TURN and incremental candidates also exist; their
+current behavior is described in [the ICE/compression runbook](../../../knowledge/40-runbooks/webrtc-incremental-ice-and-compression.md).
+Gateway IDL now lives in `protocol/v1/gateway`; the schema and manifest in this
+directory are generated compatibility views.
+
+The original LAN-signaled RTC adapter uses the existing
 `websocket-text` profile remains the default. This profile changes transport
 framing only; Gateway JSON-RPC methods, DTOs, request IDs, trace metadata and
 event cursors retain their existing definitions.
@@ -26,9 +32,9 @@ A PeerConnection represents one shared Gateway session and credential slot.
 The first complete JSON message must still be `protocol.handshake` with the
 credential's clientId. TLS signaling is not the business data path.
 
-The bootstrap has no STUN/TURN servers and still needs a reachable LAN signaling
-endpoint. Public rendezvous, TURN credentials and ICE restart are separate
-delivery work; do not describe this version as Internet-ready.
+This original local bootstrap requires a reachable LAN signaling endpoint. It does
+not describe the separate cloud/TURN bootstrap; do not infer the capabilities of
+all RTC connections from this local binding.
 
 ## Wire format
 
@@ -50,8 +56,16 @@ assembly deadline, not extended by additional fragments.
 
 Complete JSON limits are 256 KiB Remote→Host and 4 MiB Host→Remote. Responses are
 assembled before being given to the unchanged Gateway client. The RTC response
-cap is a known limit; callers must continue existing pagination. No compression,
-files, stream multiplexing or yamux is part of this profile.
+cap is a known limit; callers must continue existing pagination. Files, stream
+multiplexing and yamux are not part of this profile.
+
+Compression is an optional negotiated extension: both SDPs advertise
+`a=x-codepet-compression:gzip`. Only after negotiation may the sender use magic
+`CPGZ` for a gzip message of at least 16 KiB that saves at least 10%. Total/offset
+then refer to encoded bytes. The decoded message remains bounded by the same
+request/response limits; receivers reject unnegotiated CPGZ, changed encoding
+within a message and invalid or oversized decompressed data. Close control stays
+CPG1. The implementation is `crates/codepet-host/src/remote/channels/webrtc/framing.rs`.
 
 Close control uses total=0, offset=0, payload=u16 code followed by UTF-8 reason,
 maximum 125 payload bytes. It may interrupt a partial message. Codes preserve

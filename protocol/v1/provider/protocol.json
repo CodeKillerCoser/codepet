@@ -1,0 +1,80 @@
+{
+  "description": "provider 协议模块入口；只登记模块文件，方法与事件在所属模块定义。",
+  "version": 1,
+  "service": {
+    "name": "codepet-provider",
+    "layer": "provider",
+    "kind": "service",
+    "error": {
+      "$ref": "../common/types.schema.json#/$defs/ProtocolError"
+    },
+    "capabilities": {
+      "type": {
+        "$ref": "instance/messages.schema.json#/$defs/ProviderCapability"
+      },
+      "container": {
+        "$ref": "instance/messages.schema.json#/$defs/ProviderCapabilities"
+      },
+      "field": "methods"
+    }
+  },
+  "modules": [
+    {
+      "id": "lifecycle",
+      "schema": "lifecycle/messages.schema.json",
+      "methods": "lifecycle/methods.json"
+    },
+    {
+      "id": "instance",
+      "schema": "instance/messages.schema.json",
+      "methods": "instance/methods.json",
+      "events": "instance/events.json"
+    },
+    {
+      "id": "runtime",
+      "schema": "runtime/messages.schema.json",
+      "methods": "runtime/methods.json",
+      "events": "runtime/events.json"
+    },
+    {
+      "id": "conversation",
+      "schema": "conversation/messages.schema.json",
+      "methods": "conversation/methods.json",
+      "events": "conversation/events.json"
+    },
+    {
+      "id": "project",
+      "schema": "project/messages.schema.json",
+      "methods": "project/methods.json",
+      "events": "project/events.json"
+    },
+    {
+      "id": "turn",
+      "schema": "turn/messages.schema.json",
+      "methods": "turn/methods.json",
+      "events": "turn/events.json"
+    },
+    {
+      "id": "approval",
+      "schema": "approval/messages.schema.json",
+      "methods": "approval/methods.json",
+      "events": "approval/events.json"
+    },
+    {
+      "id": "subscription",
+      "schema": "subscription/messages.schema.json",
+      "methods": "subscription/methods.json",
+      "events": "subscription/events.json"
+    },
+    {
+      "id": "usage",
+      "schema": "usage/messages.schema.json",
+      "methods": "usage/methods.json"
+    }
+  ],
+  "manifestSchema": "manifest.schema.json",
+  "profiles": "transport/profiles.json",
+  "transportHandshakeSchema": "transport/handshake.schema.json",
+  "sdkManifest": "sdk-manifest.json",
+  "guide": "README.md"
+}

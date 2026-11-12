@@ -3748,15 +3748,6 @@ enum ProtocolIdempotency {
 }
 
 enum ProtocolMethod {
-  turnSteer('turn.steer', direction: 'clientToGateway', idempotency: ProtocolIdempotency.nonIdempotent, capability: GatewayCapability.turnSteer, requestType: TurnSteerRequest, responseType: TurnSteerResponse),
-  conversationInputQueueGet('conversation.inputQueue.get', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationInputQueueGet, requestType: InputQueueGetRequest, responseType: InputQueueSnapshot),
-  conversationInputQueueEnqueue('conversation.inputQueue.enqueue', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueEnqueue, requestType: InputQueueEnqueueRequest, responseType: InputQueueMutationResponse),
-  conversationInputQueueWithdraw('conversation.inputQueue.withdraw', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueWithdraw, requestType: InputQueueWithdrawRequest, responseType: InputQueueMutationResponse),
-  conversationInputQueueSteer('conversation.inputQueue.steer', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueSteer, requestType: InputQueueSteerRequest, responseType: InputQueueMutationResponse),
-  conversationInputQueueResume('conversation.inputQueue.resume', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueResume, requestType: InputQueueResumeRequest, responseType: InputQueueSnapshot),
-  conversationInputQueueAcknowledgeEdit('conversation.inputQueue.acknowledgeEdit', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueAcknowledgeEdit, requestType: InputQueueAcknowledgeEditRequest, responseType: InputQueueSnapshot),
-  conversationReleaseInteraction('conversation.releaseInteraction', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationReleaseInteraction, requestType: ConversationReleaseInteractionRequest, responseType: ConversationReleaseInteractionResponse),
-  conversationRecent('conversation.recent', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationRecent, requestType: ConversationRecentRequest, responseType: ConversationRecentResponse),
   protocolPing('protocol.ping', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: PingRequest, responseType: PingResponse),
   protocolHandshake('protocol.handshake', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: HandshakeRequest, responseType: HandshakeResponse),
   protocolDescribe('protocol.describe', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: null, requestType: ProtocolDescribeRequest, responseType: ProtocolDescribeResponse),
@@ -3768,6 +3759,8 @@ enum ProtocolMethod {
   projectCreate('project.create', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.projectCreate, requestType: ProjectCreateRequest, responseType: ProjectCreateResponse),
   projectUpdate('project.update', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.projectUpdate, requestType: ProjectUpdateRequest, responseType: ProjectUpdateResponse),
   projectDelete('project.delete', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.projectDelete, requestType: ProjectDeleteRequest, responseType: ProjectDeleteResponse),
+  conversationReleaseInteraction('conversation.releaseInteraction', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationReleaseInteraction, requestType: ConversationReleaseInteractionRequest, responseType: ConversationReleaseInteractionResponse),
+  conversationRecent('conversation.recent', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationRecent, requestType: ConversationRecentRequest, responseType: ConversationRecentResponse),
   conversationList('conversation.list', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationList, requestType: ConversationListRequest, responseType: ConversationListResponse),
   conversationSearch('conversation.search', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationSearch, requestType: ConversationSearchRequest, responseType: ConversationSearchResponse),
   conversationGet('conversation.get', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationGet, requestType: ConversationGetRequest, responseType: ConversationGetResponse),
@@ -3775,6 +3768,13 @@ enum ProtocolMethod {
   conversationAcquireInteraction('conversation.acquireInteraction', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: null, requestType: ConversationAcquireInteractionRequest, responseType: ConversationAcquireInteractionResponse),
   conversationResume('conversation.resume', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: null, requestType: ConversationResumeRequest, responseType: ConversationResumeResponse),
   conversationCreate('conversation.create', direction: 'clientToGateway', idempotency: ProtocolIdempotency.nonIdempotent, capability: GatewayCapability.conversationCreate, requestType: ConversationCreateRequest, responseType: ConversationCreateResponse),
+  conversationInputQueueGet('conversation.inputQueue.get', direction: 'clientToGateway', idempotency: ProtocolIdempotency.safe, capability: GatewayCapability.conversationInputQueueGet, requestType: InputQueueGetRequest, responseType: InputQueueSnapshot),
+  conversationInputQueueEnqueue('conversation.inputQueue.enqueue', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueEnqueue, requestType: InputQueueEnqueueRequest, responseType: InputQueueMutationResponse),
+  conversationInputQueueWithdraw('conversation.inputQueue.withdraw', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueWithdraw, requestType: InputQueueWithdrawRequest, responseType: InputQueueMutationResponse),
+  conversationInputQueueSteer('conversation.inputQueue.steer', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueSteer, requestType: InputQueueSteerRequest, responseType: InputQueueMutationResponse),
+  conversationInputQueueResume('conversation.inputQueue.resume', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueResume, requestType: InputQueueResumeRequest, responseType: InputQueueSnapshot),
+  conversationInputQueueAcknowledgeEdit('conversation.inputQueue.acknowledgeEdit', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.conversationInputQueueAcknowledgeEdit, requestType: InputQueueAcknowledgeEditRequest, responseType: InputQueueSnapshot),
+  turnSteer('turn.steer', direction: 'clientToGateway', idempotency: ProtocolIdempotency.nonIdempotent, capability: GatewayCapability.turnSteer, requestType: TurnSteerRequest, responseType: TurnSteerResponse),
   turnSend('turn.send', direction: 'clientToGateway', idempotency: ProtocolIdempotency.nonIdempotent, capability: GatewayCapability.turnSend, requestType: TurnSendRequest, responseType: TurnSendResponse),
   turnInterrupt('turn.interrupt', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.turnInterrupt, requestType: TurnInterruptRequest, responseType: TurnInterruptResponse),
   approvalResolve('approval.resolve', direction: 'clientToGateway', idempotency: ProtocolIdempotency.idempotent, capability: GatewayCapability.approvalResolve, requestType: ApprovalResolveRequest, responseType: ApprovalResolveResponse),
@@ -3801,13 +3801,13 @@ enum ProtocolMethod {
 }
 
 enum ProtocolEventName {
-  conversationInputQueueChanged('conversation.inputQueueChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'conversation', payloadType: InputQueueChangedEvent),
-  conversationRecentChanged('conversation.recentChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'provider', payloadType: ConversationRecentChangedEvent),
-  projectChanged('project.changed', direction: 'gatewayToClient', delivery: 'replayable', scope: 'project', payloadType: ProjectChangedEvent),
   providerChanged('provider.changed', direction: 'gatewayToClient', delivery: 'replayable', scope: 'provider', payloadType: ProviderChangedEvent),
+  projectChanged('project.changed', direction: 'gatewayToClient', delivery: 'replayable', scope: 'project', payloadType: ProjectChangedEvent),
+  conversationRecentChanged('conversation.recentChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'provider', payloadType: ConversationRecentChangedEvent),
   conversationUpserted('conversation.upserted', direction: 'gatewayToClient', delivery: 'replayable', scope: 'conversation', payloadType: ConversationUpsertedEvent),
   conversationItemUpserted('conversation.itemUpserted', direction: 'gatewayToClient', delivery: 'replayable', scope: 'conversation', payloadType: ConversationItemUpsertedEvent),
   conversationActivityChanged('conversation.activityChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'conversation', payloadType: ConversationActivityChangedEvent),
+  conversationInputQueueChanged('conversation.inputQueueChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'conversation', payloadType: InputQueueChangedEvent),
   turnUpserted('turn.upserted', direction: 'gatewayToClient', delivery: 'replayable', scope: 'turn', payloadType: TurnUpsertedEvent),
   turnOutputDelta('turn.outputDelta', direction: 'gatewayToClient', delivery: 'replayable', scope: 'turn', payloadType: TurnOutputDeltaEvent),
   approvalRequested('approval.requested', direction: 'gatewayToClient', delivery: 'replayable', scope: 'approval', payloadType: ApprovalRequestedEvent),
@@ -3834,24 +3834,6 @@ enum ProtocolEventName {
 
 Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
   switch (method) {
-    case ProtocolMethod.turnSteer:
-      return TurnSteerRequest.fromJson(value, path: path);
-    case ProtocolMethod.conversationInputQueueGet:
-      return InputQueueGetRequest.fromJson(value, path: path);
-    case ProtocolMethod.conversationInputQueueEnqueue:
-      return InputQueueEnqueueRequest.fromJson(value, path: path);
-    case ProtocolMethod.conversationInputQueueWithdraw:
-      return InputQueueWithdrawRequest.fromJson(value, path: path);
-    case ProtocolMethod.conversationInputQueueSteer:
-      return InputQueueSteerRequest.fromJson(value, path: path);
-    case ProtocolMethod.conversationInputQueueResume:
-      return InputQueueResumeRequest.fromJson(value, path: path);
-    case ProtocolMethod.conversationInputQueueAcknowledgeEdit:
-      return InputQueueAcknowledgeEditRequest.fromJson(value, path: path);
-    case ProtocolMethod.conversationReleaseInteraction:
-      return ConversationReleaseInteractionRequest.fromJson(value, path: path);
-    case ProtocolMethod.conversationRecent:
-      return ConversationRecentRequest.fromJson(value, path: path);
     case ProtocolMethod.protocolPing:
       return PingRequest.fromJson(value, path: path);
     case ProtocolMethod.protocolHandshake:
@@ -3874,6 +3856,10 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
       return ProjectUpdateRequest.fromJson(value, path: path);
     case ProtocolMethod.projectDelete:
       return ProjectDeleteRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationReleaseInteraction:
+      return ConversationReleaseInteractionRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationRecent:
+      return ConversationRecentRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationList:
       return ConversationListRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationSearch:
@@ -3888,6 +3874,20 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
       return ConversationResumeRequest.fromJson(value, path: path);
     case ProtocolMethod.conversationCreate:
       return ConversationCreateRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueGet:
+      return InputQueueGetRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueEnqueue:
+      return InputQueueEnqueueRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueWithdraw:
+      return InputQueueWithdrawRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueSteer:
+      return InputQueueSteerRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueResume:
+      return InputQueueResumeRequest.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueAcknowledgeEdit:
+      return InputQueueAcknowledgeEditRequest.fromJson(value, path: path);
+    case ProtocolMethod.turnSteer:
+      return TurnSteerRequest.fromJson(value, path: path);
     case ProtocolMethod.turnSend:
       return TurnSendRequest.fromJson(value, path: path);
     case ProtocolMethod.turnInterrupt:
@@ -3901,33 +3901,6 @@ Object _decodeRequestParams(ProtocolMethod method, Object? value, String path) {
 
 Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, String path) {
   switch (method) {
-    case ProtocolMethod.turnSteer:
-      if (value is! TurnSteerRequest) throw ProtocolCodecException(path, 'expected TurnSteerRequest');
-      return value.toJson();
-    case ProtocolMethod.conversationInputQueueGet:
-      if (value is! InputQueueGetRequest) throw ProtocolCodecException(path, 'expected InputQueueGetRequest');
-      return value.toJson();
-    case ProtocolMethod.conversationInputQueueEnqueue:
-      if (value is! InputQueueEnqueueRequest) throw ProtocolCodecException(path, 'expected InputQueueEnqueueRequest');
-      return value.toJson();
-    case ProtocolMethod.conversationInputQueueWithdraw:
-      if (value is! InputQueueWithdrawRequest) throw ProtocolCodecException(path, 'expected InputQueueWithdrawRequest');
-      return value.toJson();
-    case ProtocolMethod.conversationInputQueueSteer:
-      if (value is! InputQueueSteerRequest) throw ProtocolCodecException(path, 'expected InputQueueSteerRequest');
-      return value.toJson();
-    case ProtocolMethod.conversationInputQueueResume:
-      if (value is! InputQueueResumeRequest) throw ProtocolCodecException(path, 'expected InputQueueResumeRequest');
-      return value.toJson();
-    case ProtocolMethod.conversationInputQueueAcknowledgeEdit:
-      if (value is! InputQueueAcknowledgeEditRequest) throw ProtocolCodecException(path, 'expected InputQueueAcknowledgeEditRequest');
-      return value.toJson();
-    case ProtocolMethod.conversationReleaseInteraction:
-      if (value is! ConversationReleaseInteractionRequest) throw ProtocolCodecException(path, 'expected ConversationReleaseInteractionRequest');
-      return value.toJson();
-    case ProtocolMethod.conversationRecent:
-      if (value is! ConversationRecentRequest) throw ProtocolCodecException(path, 'expected ConversationRecentRequest');
-      return value.toJson();
     case ProtocolMethod.protocolPing:
       if (value is! PingRequest) throw ProtocolCodecException(path, 'expected PingRequest');
       return value.toJson();
@@ -3961,6 +3934,12 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
     case ProtocolMethod.projectDelete:
       if (value is! ProjectDeleteRequest) throw ProtocolCodecException(path, 'expected ProjectDeleteRequest');
       return value.toJson();
+    case ProtocolMethod.conversationReleaseInteraction:
+      if (value is! ConversationReleaseInteractionRequest) throw ProtocolCodecException(path, 'expected ConversationReleaseInteractionRequest');
+      return value.toJson();
+    case ProtocolMethod.conversationRecent:
+      if (value is! ConversationRecentRequest) throw ProtocolCodecException(path, 'expected ConversationRecentRequest');
+      return value.toJson();
     case ProtocolMethod.conversationList:
       if (value is! ConversationListRequest) throw ProtocolCodecException(path, 'expected ConversationListRequest');
       return value.toJson();
@@ -3982,6 +3961,27 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
     case ProtocolMethod.conversationCreate:
       if (value is! ConversationCreateRequest) throw ProtocolCodecException(path, 'expected ConversationCreateRequest');
       return value.toJson();
+    case ProtocolMethod.conversationInputQueueGet:
+      if (value is! InputQueueGetRequest) throw ProtocolCodecException(path, 'expected InputQueueGetRequest');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueEnqueue:
+      if (value is! InputQueueEnqueueRequest) throw ProtocolCodecException(path, 'expected InputQueueEnqueueRequest');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueWithdraw:
+      if (value is! InputQueueWithdrawRequest) throw ProtocolCodecException(path, 'expected InputQueueWithdrawRequest');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueSteer:
+      if (value is! InputQueueSteerRequest) throw ProtocolCodecException(path, 'expected InputQueueSteerRequest');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueResume:
+      if (value is! InputQueueResumeRequest) throw ProtocolCodecException(path, 'expected InputQueueResumeRequest');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueAcknowledgeEdit:
+      if (value is! InputQueueAcknowledgeEditRequest) throw ProtocolCodecException(path, 'expected InputQueueAcknowledgeEditRequest');
+      return value.toJson();
+    case ProtocolMethod.turnSteer:
+      if (value is! TurnSteerRequest) throw ProtocolCodecException(path, 'expected TurnSteerRequest');
+      return value.toJson();
     case ProtocolMethod.turnSend:
       if (value is! TurnSendRequest) throw ProtocolCodecException(path, 'expected TurnSendRequest');
       return value.toJson();
@@ -3999,24 +3999,6 @@ Map<String, Object?> _encodeRequestParams(ProtocolMethod method, Object value, S
 
 Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) {
   switch (method) {
-    case ProtocolMethod.turnSteer:
-      return TurnSteerResponse.fromJson(value, path: path);
-    case ProtocolMethod.conversationInputQueueGet:
-      return InputQueueSnapshot.fromJson(value, path: path);
-    case ProtocolMethod.conversationInputQueueEnqueue:
-      return InputQueueMutationResponse.fromJson(value, path: path);
-    case ProtocolMethod.conversationInputQueueWithdraw:
-      return InputQueueMutationResponse.fromJson(value, path: path);
-    case ProtocolMethod.conversationInputQueueSteer:
-      return InputQueueMutationResponse.fromJson(value, path: path);
-    case ProtocolMethod.conversationInputQueueResume:
-      return InputQueueSnapshot.fromJson(value, path: path);
-    case ProtocolMethod.conversationInputQueueAcknowledgeEdit:
-      return InputQueueSnapshot.fromJson(value, path: path);
-    case ProtocolMethod.conversationReleaseInteraction:
-      return ConversationReleaseInteractionResponse.fromJson(value, path: path);
-    case ProtocolMethod.conversationRecent:
-      return ConversationRecentResponse.fromJson(value, path: path);
     case ProtocolMethod.protocolPing:
       return PingResponse.fromJson(value, path: path);
     case ProtocolMethod.protocolHandshake:
@@ -4039,6 +4021,10 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
       return ProjectUpdateResponse.fromJson(value, path: path);
     case ProtocolMethod.projectDelete:
       return ProjectDeleteResponse.fromJson(value, path: path);
+    case ProtocolMethod.conversationReleaseInteraction:
+      return ConversationReleaseInteractionResponse.fromJson(value, path: path);
+    case ProtocolMethod.conversationRecent:
+      return ConversationRecentResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationList:
       return ConversationListResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationSearch:
@@ -4053,6 +4039,20 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
       return ConversationResumeResponse.fromJson(value, path: path);
     case ProtocolMethod.conversationCreate:
       return ConversationCreateResponse.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueGet:
+      return InputQueueSnapshot.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueEnqueue:
+      return InputQueueMutationResponse.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueWithdraw:
+      return InputQueueMutationResponse.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueSteer:
+      return InputQueueMutationResponse.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueResume:
+      return InputQueueSnapshot.fromJson(value, path: path);
+    case ProtocolMethod.conversationInputQueueAcknowledgeEdit:
+      return InputQueueSnapshot.fromJson(value, path: path);
+    case ProtocolMethod.turnSteer:
+      return TurnSteerResponse.fromJson(value, path: path);
     case ProtocolMethod.turnSend:
       return TurnSendResponse.fromJson(value, path: path);
     case ProtocolMethod.turnInterrupt:
@@ -4066,33 +4066,6 @@ Object _decodeResponseResult(ProtocolMethod method, Object? value, String path) 
 
 Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, String path) {
   switch (method) {
-    case ProtocolMethod.turnSteer:
-      if (value is! TurnSteerResponse) throw ProtocolCodecException(path, 'expected TurnSteerResponse');
-      return value.toJson();
-    case ProtocolMethod.conversationInputQueueGet:
-      if (value is! InputQueueSnapshot) throw ProtocolCodecException(path, 'expected InputQueueSnapshot');
-      return value.toJson();
-    case ProtocolMethod.conversationInputQueueEnqueue:
-      if (value is! InputQueueMutationResponse) throw ProtocolCodecException(path, 'expected InputQueueMutationResponse');
-      return value.toJson();
-    case ProtocolMethod.conversationInputQueueWithdraw:
-      if (value is! InputQueueMutationResponse) throw ProtocolCodecException(path, 'expected InputQueueMutationResponse');
-      return value.toJson();
-    case ProtocolMethod.conversationInputQueueSteer:
-      if (value is! InputQueueMutationResponse) throw ProtocolCodecException(path, 'expected InputQueueMutationResponse');
-      return value.toJson();
-    case ProtocolMethod.conversationInputQueueResume:
-      if (value is! InputQueueSnapshot) throw ProtocolCodecException(path, 'expected InputQueueSnapshot');
-      return value.toJson();
-    case ProtocolMethod.conversationInputQueueAcknowledgeEdit:
-      if (value is! InputQueueSnapshot) throw ProtocolCodecException(path, 'expected InputQueueSnapshot');
-      return value.toJson();
-    case ProtocolMethod.conversationReleaseInteraction:
-      if (value is! ConversationReleaseInteractionResponse) throw ProtocolCodecException(path, 'expected ConversationReleaseInteractionResponse');
-      return value.toJson();
-    case ProtocolMethod.conversationRecent:
-      if (value is! ConversationRecentResponse) throw ProtocolCodecException(path, 'expected ConversationRecentResponse');
-      return value.toJson();
     case ProtocolMethod.protocolPing:
       if (value is! PingResponse) throw ProtocolCodecException(path, 'expected PingResponse');
       return value.toJson();
@@ -4126,6 +4099,12 @@ Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, 
     case ProtocolMethod.projectDelete:
       if (value is! ProjectDeleteResponse) throw ProtocolCodecException(path, 'expected ProjectDeleteResponse');
       return value.toJson();
+    case ProtocolMethod.conversationReleaseInteraction:
+      if (value is! ConversationReleaseInteractionResponse) throw ProtocolCodecException(path, 'expected ConversationReleaseInteractionResponse');
+      return value.toJson();
+    case ProtocolMethod.conversationRecent:
+      if (value is! ConversationRecentResponse) throw ProtocolCodecException(path, 'expected ConversationRecentResponse');
+      return value.toJson();
     case ProtocolMethod.conversationList:
       if (value is! ConversationListResponse) throw ProtocolCodecException(path, 'expected ConversationListResponse');
       return value.toJson();
@@ -4147,6 +4126,27 @@ Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, 
     case ProtocolMethod.conversationCreate:
       if (value is! ConversationCreateResponse) throw ProtocolCodecException(path, 'expected ConversationCreateResponse');
       return value.toJson();
+    case ProtocolMethod.conversationInputQueueGet:
+      if (value is! InputQueueSnapshot) throw ProtocolCodecException(path, 'expected InputQueueSnapshot');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueEnqueue:
+      if (value is! InputQueueMutationResponse) throw ProtocolCodecException(path, 'expected InputQueueMutationResponse');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueWithdraw:
+      if (value is! InputQueueMutationResponse) throw ProtocolCodecException(path, 'expected InputQueueMutationResponse');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueSteer:
+      if (value is! InputQueueMutationResponse) throw ProtocolCodecException(path, 'expected InputQueueMutationResponse');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueResume:
+      if (value is! InputQueueSnapshot) throw ProtocolCodecException(path, 'expected InputQueueSnapshot');
+      return value.toJson();
+    case ProtocolMethod.conversationInputQueueAcknowledgeEdit:
+      if (value is! InputQueueSnapshot) throw ProtocolCodecException(path, 'expected InputQueueSnapshot');
+      return value.toJson();
+    case ProtocolMethod.turnSteer:
+      if (value is! TurnSteerResponse) throw ProtocolCodecException(path, 'expected TurnSteerResponse');
+      return value.toJson();
     case ProtocolMethod.turnSend:
       if (value is! TurnSendResponse) throw ProtocolCodecException(path, 'expected TurnSendResponse');
       return value.toJson();
@@ -4164,20 +4164,20 @@ Map<String, Object?> _encodeResponseResult(ProtocolMethod method, Object value, 
 
 Object _decodeEventPayload(ProtocolEventName event, Object? value, String path) {
   switch (event) {
-    case ProtocolEventName.conversationInputQueueChanged:
-      return InputQueueChangedEvent.fromJson(value, path: path);
-    case ProtocolEventName.conversationRecentChanged:
-      return ConversationRecentChangedEvent.fromJson(value, path: path);
-    case ProtocolEventName.projectChanged:
-      return ProjectChangedEvent.fromJson(value, path: path);
     case ProtocolEventName.providerChanged:
       return ProviderChangedEvent.fromJson(value, path: path);
+    case ProtocolEventName.projectChanged:
+      return ProjectChangedEvent.fromJson(value, path: path);
+    case ProtocolEventName.conversationRecentChanged:
+      return ConversationRecentChangedEvent.fromJson(value, path: path);
     case ProtocolEventName.conversationUpserted:
       return ConversationUpsertedEvent.fromJson(value, path: path);
     case ProtocolEventName.conversationItemUpserted:
       return ConversationItemUpsertedEvent.fromJson(value, path: path);
     case ProtocolEventName.conversationActivityChanged:
       return ConversationActivityChangedEvent.fromJson(value, path: path);
+    case ProtocolEventName.conversationInputQueueChanged:
+      return InputQueueChangedEvent.fromJson(value, path: path);
     case ProtocolEventName.turnUpserted:
       return TurnUpsertedEvent.fromJson(value, path: path);
     case ProtocolEventName.turnOutputDelta:
@@ -4191,17 +4191,14 @@ Object _decodeEventPayload(ProtocolEventName event, Object? value, String path) 
 
 Map<String, Object?> _encodeEventPayload(ProtocolEventName event, Object value, String path) {
   switch (event) {
-    case ProtocolEventName.conversationInputQueueChanged:
-      if (value is! InputQueueChangedEvent) throw ProtocolCodecException(path, 'expected InputQueueChangedEvent');
-      return value.toJson();
-    case ProtocolEventName.conversationRecentChanged:
-      if (value is! ConversationRecentChangedEvent) throw ProtocolCodecException(path, 'expected ConversationRecentChangedEvent');
+    case ProtocolEventName.providerChanged:
+      if (value is! ProviderChangedEvent) throw ProtocolCodecException(path, 'expected ProviderChangedEvent');
       return value.toJson();
     case ProtocolEventName.projectChanged:
       if (value is! ProjectChangedEvent) throw ProtocolCodecException(path, 'expected ProjectChangedEvent');
       return value.toJson();
-    case ProtocolEventName.providerChanged:
-      if (value is! ProviderChangedEvent) throw ProtocolCodecException(path, 'expected ProviderChangedEvent');
+    case ProtocolEventName.conversationRecentChanged:
+      if (value is! ConversationRecentChangedEvent) throw ProtocolCodecException(path, 'expected ConversationRecentChangedEvent');
       return value.toJson();
     case ProtocolEventName.conversationUpserted:
       if (value is! ConversationUpsertedEvent) throw ProtocolCodecException(path, 'expected ConversationUpsertedEvent');
@@ -4211,6 +4208,9 @@ Map<String, Object?> _encodeEventPayload(ProtocolEventName event, Object value, 
       return value.toJson();
     case ProtocolEventName.conversationActivityChanged:
       if (value is! ConversationActivityChangedEvent) throw ProtocolCodecException(path, 'expected ConversationActivityChangedEvent');
+      return value.toJson();
+    case ProtocolEventName.conversationInputQueueChanged:
+      if (value is! InputQueueChangedEvent) throw ProtocolCodecException(path, 'expected InputQueueChangedEvent');
       return value.toJson();
     case ProtocolEventName.turnUpserted:
       if (value is! TurnUpsertedEvent) throw ProtocolCodecException(path, 'expected TurnUpsertedEvent');
@@ -4371,24 +4371,6 @@ final class ProtocolClient {
     });
   }
 
-  Future<TurnSteerResponse> turnSteer(TurnSteerRequest request) => _request<TurnSteerResponse>(ProtocolMethod.turnSteer, request);
-
-  Future<InputQueueSnapshot> conversationInputQueueGet(InputQueueGetRequest request) => _request<InputQueueSnapshot>(ProtocolMethod.conversationInputQueueGet, request);
-
-  Future<InputQueueMutationResponse> conversationInputQueueEnqueue(InputQueueEnqueueRequest request) => _request<InputQueueMutationResponse>(ProtocolMethod.conversationInputQueueEnqueue, request);
-
-  Future<InputQueueMutationResponse> conversationInputQueueWithdraw(InputQueueWithdrawRequest request) => _request<InputQueueMutationResponse>(ProtocolMethod.conversationInputQueueWithdraw, request);
-
-  Future<InputQueueMutationResponse> conversationInputQueueSteer(InputQueueSteerRequest request) => _request<InputQueueMutationResponse>(ProtocolMethod.conversationInputQueueSteer, request);
-
-  Future<InputQueueSnapshot> conversationInputQueueResume(InputQueueResumeRequest request) => _request<InputQueueSnapshot>(ProtocolMethod.conversationInputQueueResume, request);
-
-  Future<InputQueueSnapshot> conversationInputQueueAcknowledgeEdit(InputQueueAcknowledgeEditRequest request) => _request<InputQueueSnapshot>(ProtocolMethod.conversationInputQueueAcknowledgeEdit, request);
-
-  Future<ConversationReleaseInteractionResponse> conversationReleaseInteraction(ConversationReleaseInteractionRequest request) => _request<ConversationReleaseInteractionResponse>(ProtocolMethod.conversationReleaseInteraction, request);
-
-  Future<ConversationRecentResponse> conversationRecent(ConversationRecentRequest request) => _request<ConversationRecentResponse>(ProtocolMethod.conversationRecent, request);
-
   Future<PingResponse> protocolPing(PingRequest request) => _request<PingResponse>(ProtocolMethod.protocolPing, request);
 
   Future<HandshakeResponse> protocolHandshake(HandshakeRequest request) => _request<HandshakeResponse>(ProtocolMethod.protocolHandshake, request);
@@ -4411,6 +4393,10 @@ final class ProtocolClient {
 
   Future<ProjectDeleteResponse> projectDelete(ProjectDeleteRequest request) => _request<ProjectDeleteResponse>(ProtocolMethod.projectDelete, request);
 
+  Future<ConversationReleaseInteractionResponse> conversationReleaseInteraction(ConversationReleaseInteractionRequest request) => _request<ConversationReleaseInteractionResponse>(ProtocolMethod.conversationReleaseInteraction, request);
+
+  Future<ConversationRecentResponse> conversationRecent(ConversationRecentRequest request) => _request<ConversationRecentResponse>(ProtocolMethod.conversationRecent, request);
+
   Future<ConversationListResponse> conversationList(ConversationListRequest request) => _request<ConversationListResponse>(ProtocolMethod.conversationList, request);
 
   Future<ConversationSearchResponse> conversationSearch(ConversationSearchRequest request) => _request<ConversationSearchResponse>(ProtocolMethod.conversationSearch, request);
@@ -4425,6 +4411,20 @@ final class ProtocolClient {
 
   Future<ConversationCreateResponse> conversationCreate(ConversationCreateRequest request) => _request<ConversationCreateResponse>(ProtocolMethod.conversationCreate, request);
 
+  Future<InputQueueSnapshot> conversationInputQueueGet(InputQueueGetRequest request) => _request<InputQueueSnapshot>(ProtocolMethod.conversationInputQueueGet, request);
+
+  Future<InputQueueMutationResponse> conversationInputQueueEnqueue(InputQueueEnqueueRequest request) => _request<InputQueueMutationResponse>(ProtocolMethod.conversationInputQueueEnqueue, request);
+
+  Future<InputQueueMutationResponse> conversationInputQueueWithdraw(InputQueueWithdrawRequest request) => _request<InputQueueMutationResponse>(ProtocolMethod.conversationInputQueueWithdraw, request);
+
+  Future<InputQueueMutationResponse> conversationInputQueueSteer(InputQueueSteerRequest request) => _request<InputQueueMutationResponse>(ProtocolMethod.conversationInputQueueSteer, request);
+
+  Future<InputQueueSnapshot> conversationInputQueueResume(InputQueueResumeRequest request) => _request<InputQueueSnapshot>(ProtocolMethod.conversationInputQueueResume, request);
+
+  Future<InputQueueSnapshot> conversationInputQueueAcknowledgeEdit(InputQueueAcknowledgeEditRequest request) => _request<InputQueueSnapshot>(ProtocolMethod.conversationInputQueueAcknowledgeEdit, request);
+
+  Future<TurnSteerResponse> turnSteer(TurnSteerRequest request) => _request<TurnSteerResponse>(ProtocolMethod.turnSteer, request);
+
   Future<TurnSendResponse> turnSend(TurnSendRequest request) => _request<TurnSendResponse>(ProtocolMethod.turnSend, request);
 
   Future<TurnInterruptResponse> turnInterrupt(TurnInterruptRequest request) => _request<TurnInterruptResponse>(ProtocolMethod.turnInterrupt, request);
@@ -4433,3 +4433,7 @@ final class ProtocolClient {
 
   Future<UsageQueryResponse> codepetUsageQuery(UsageQueryRequest request) => _request<UsageQueryResponse>(ProtocolMethod.codepetUsageQuery, request);
 }
+
+const int gatewayHeartbeatIntervalMs = 20000;
+const int gatewayHeartbeatTimeoutMs = 60000;
+const int gatewayHeartbeatRequestTimeoutMs = 10000;

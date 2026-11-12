@@ -1,24 +1,24 @@
 use crate::providers::catalog::{CatalogDiagnostic, PluginCatalog, PluginDescriptor};
 use crate::{
-    DeviceRegistry, HostError, HostResult, PluginProcess, PluginProcessExit,
-    PluginProcessOptions, ProviderInstanceRecord, ProviderInstanceRegistry, StderrDiagnostic,
+    DeviceRegistry, HostError, HostResult, PluginProcess, PluginProcessExit, PluginProcessOptions,
+    ProviderInstanceRecord, ProviderInstanceRegistry, StderrDiagnostic,
 };
 use codepet_provider_sdk::{
-    ApprovalResolveRequest, ApprovalResolveResponse, ClientId, ConversationCreateRequest,
+    ApprovalResolveRequest, ApprovalResolveResponse, ClientId,
     ConversationAcquireInteractionRequest, ConversationAcquireInteractionResponse,
-    ConversationCreateResponse, ConversationGetRequest, ConversationGetResponse,
-    ConversationListRequest, ConversationListResponse,
+    ConversationCreateRequest, ConversationCreateResponse, ConversationGetRequest,
+    ConversationGetResponse, ConversationListRequest, ConversationListResponse,
     ConversationSearchRequest, ConversationSearchResponse, InstanceCapabilitiesRequest,
     InstanceCapabilitiesResponse, InstanceCreateRequest, InstanceStartRequest, InstanceStatus,
     InstanceStopRequest, ProjectCreateRequest, ProjectCreateResponse, ProjectDeleteRequest,
     ProjectDeleteResponse, ProjectGetRequest, ProjectGetResponse, ProjectListRequest,
-    ProjectListResponse, ProjectUpdateRequest, ProjectUpdateResponse, ProtocolEvent, ProtocolMethod,
-    ProviderDescribeRequest, ProviderInitializeRequest, ProviderInstance, ProviderInstanceRoute,
-    ProviderPluginDescriptor, ProviderResourceId, ProviderWireMessage, RoutedResourceId,
-    TurnInterruptRequest,
-    RuntimeGetInstalledRequest, RuntimeGetInstalledResponse, RuntimeSelectRequest,
-    RuntimeSelectResponse, TurnInterruptResponse, TurnStartRequest, TurnStartResponse, TurnSteerRequest,
-    TurnSteerResponse, VersionRange, PROTOCOL_VERSION,
+    ProjectListResponse, ProjectUpdateRequest, ProjectUpdateResponse, ProtocolEvent,
+    ProtocolMethod, ProviderDescribeRequest, ProviderInitializeRequest, ProviderInstance,
+    ProviderInstanceRoute, ProviderPluginDescriptor, ProviderResourceId, ProviderWireMessage,
+    RoutedResourceId, RuntimeGetInstalledRequest, RuntimeGetInstalledResponse,
+    RuntimeSelectRequest, RuntimeSelectResponse, TurnInterruptRequest, TurnInterruptResponse,
+    TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse, VersionRange,
+    PROTOCOL_VERSION,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -68,7 +68,12 @@ pub(crate) enum HostUpdate {
         instance_id: String,
         previous_status: Option<InstanceStatus>,
     },
-    ProviderEvent(ProtocolEvent),
+    ProviderEvent {
+        plugin_id: String,
+        generation: u64,
+        event: ProtocolEvent,
+        permit: Arc<codepet_transport::transport::mux::MessagePermit>,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -187,8 +192,8 @@ pub struct PluginManager {
 }
 
 mod heartbeat;
-mod release_control;
 mod import;
+mod release_control;
 mod runtime_inventory;
 pub use import::ProviderImportResult;
 mod subscriptions;
@@ -398,8 +403,7 @@ impl PluginManager {
             .filter(|entry| entry.catalog.enabled)
             .map(|entry| entry.catalog.plugin_id.clone())
             .collect::<Vec<_>>();
-        let mut outcomes = Vec::new();
-        for plugin_id in plugin_ids {
+        futures_util::future::join_all(plugin_ids.into_iter().map(|plugin_id| async move {
             let outcome = match self.plugin_operation(&plugin_id) {
                 Ok(operation) => {
                     let _operation = operation.lock().await;
@@ -411,9 +415,9 @@ impl PluginManager {
                 }
                 Err(error) => Err(error),
             };
-            outcomes.push((plugin_id, outcome));
-        }
-        outcomes
+            (plugin_id, outcome)
+        }))
+        .await
     }
 
     pub async fn replace_instance_setting(
@@ -796,12 +800,11 @@ impl PluginManager {
             self.inner.shutting_down.store(true, Ordering::SeqCst);
             plugins.keys().cloned().collect::<Vec<_>>()
         };
-        let mut outcomes = Vec::new();
-        for plugin_id in plugin_ids {
+        futures_util::future::join_all(plugin_ids.into_iter().map(|plugin_id| async move {
             let outcome = self.stop_plugin(&plugin_id).await;
-            outcomes.push((plugin_id, outcome));
-        }
-        outcomes
+            (plugin_id, outcome)
+        }))
+        .await
     }
 
     pub async fn force_kill_all(
@@ -1562,17 +1565,22 @@ impl PluginManager {
     async fn accept_provider_event(
         &self,
         plugin_id: &str,
+        generation: u64,
         event: ProtocolEvent,
+        permit: codepet_transport::transport::mux::MessagePermit,
     ) -> HostResult<()> {
         if let Some(journal) = self.inner.event_journal.lock().unwrap().as_ref() {
             journal.provider(plugin_id, &event);
         }
-        if let ProtocolEvent::RuntimeInventoryChanged {params,..} = event {
-            let (start,generation)={
-                let mut plugins=self.inner.plugins.write().await;
-                let entry=plugins.get_mut(plugin_id).ok_or_else(||unknown_plugin(plugin_id))?;
-                let start=runtime_inventory::install_inventory(entry, params);
-                (start,entry.generation)
+        if let ProtocolEvent::RuntimeInventoryChanged { params, .. } = event {
+            runtime_inventory::validate_inventory(&params)?;
+            let (start, generation) = {
+                let mut plugins = self.inner.plugins.write().await;
+                let entry = plugins
+                    .get_mut(plugin_id)
+                    .ok_or_else(|| unknown_plugin(plugin_id))?;
+                let start = runtime_inventory::install_inventory(entry, params);
+                (start, entry.generation)
             };
             self.inventory_updated(plugin_id, generation, start);
             return Ok(());
@@ -1593,11 +1601,15 @@ impl PluginManager {
         let route = record.route();
         validate_event_routes(&event, &route, &record)?;
         if let ProtocolEvent::EventInstanceStatusChanged { params, .. } = event {
-            return self
-                .set_runtime_instance(plugin_id, params.instance)
-                .await;
+            return self.set_runtime_instance(plugin_id, params.instance).await;
         }
-        self.send_update(HostUpdate::ProviderEvent(event)).await
+        self.send_update(HostUpdate::ProviderEvent {
+            plugin_id: plugin_id.to_owned(),
+            generation,
+            event,
+            permit: Arc::new(permit),
+        })
+        .await
     }
 
     async fn instance_context(
@@ -1923,6 +1935,21 @@ impl PluginManager {
         .await
     }
 
+    pub(crate) async fn fail_event_delivery(&self, plugin_id: &str, generation: u64) {
+        let process = {
+            let plugins = self.inner.plugins.read().await;
+            plugins
+                .get(plugin_id)
+                .filter(|entry| entry.generation == generation)
+                .and_then(|entry| entry.process.clone())
+        };
+        if let Some(process) = process {
+            let _ = process
+                .force_kill("Provider event processing queue exceeded its bounded capacity")
+                .await;
+        }
+    }
+
     async fn send_update(&self, update: HostUpdate) -> HostResult<()> {
         if matches!(&update, HostUpdate::PluginStateChanged { .. } | HostUpdate::InstanceChanged { .. }) {
             self.inner.status_changes.send_modify(|version| *version = version.wrapping_add(1));
@@ -1941,14 +1968,15 @@ impl PluginManager {
         generation: u64,
         process_identity: usize,
         process: std::sync::Weak<PluginProcess>,
-        mut inbound: mpsc::Receiver<ProviderWireMessage>,
+        mut inbound: mpsc::Receiver<crate::providers::process::ProviderInboundMessage>,
         mut exit: tokio::sync::watch::Receiver<Option<PluginProcessExit>>,
         diagnostics: Arc<StdMutex<VecDeque<StderrDiagnostic>>>,
     ) {
         let manager = Arc::downgrade(&self.inner);
         let event_plugin_id = plugin_id.clone();
         tokio::spawn(async move {
-            while let Some(message) = inbound.recv().await {
+            while let Some(inbound) = inbound.recv().await {
+                let crate::providers::process::ProviderInboundMessage { message, permit } = inbound;
                 let ProviderWireMessage::Event(event) = message else {
                     continue;
                 };
@@ -1963,7 +1991,7 @@ impl PluginManager {
                     return;
                 }
                 if let Err(error) = manager
-                    .accept_provider_event(&event_plugin_id, event)
+                    .accept_provider_event(&event_plugin_id, generation, event, permit)
                     .await
                 {
                     let _ = manager

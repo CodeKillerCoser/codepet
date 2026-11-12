@@ -8,6 +8,7 @@ edition = "2021"
 exclude = ["tests"]
 
 [dependencies]
+codepet-transport = { path = "../codepet-transport", version = "0.1.0" }
 codepet-agent-sdk = { path = "../codepet-agent-sdk", version = "0.1.0" }
 codepet-core-sdk = { path = "../codepet-core-sdk", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
@@ -20,7 +21,6 @@ semver = "1"
 ring = "0.17"
 tempfile = "3"
 tokio-util = { version = "0.7", features = ["compat"] }
-yamux = "=0.14.0"
 dirs = "6"
 process-wrap = { version = "10", features = ["std", "tokio1"] }
 

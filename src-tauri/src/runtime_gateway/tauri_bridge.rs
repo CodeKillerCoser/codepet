@@ -212,6 +212,15 @@ impl ProviderHostState {
                 .and_then(|current| current.runtime_inventory_diagnostic);
             match inventory {
                 Ok(inventory) => {
+                    if inventory.selection_required == Some(false) {
+                        views.push(AgentRuntime {
+                            provider_id: plugin_id, display_name,
+                            status: AgentRuntimeStatus::NotRequired,
+                            resolved_executable: None, source: None, configured_executable: None,
+                            version: None, diagnostic: None, installed: Vec::new(),
+                        });
+                        continue;
+                    }
                     let installed = inventory.harness_list.into_iter().map(|installation| AgentRuntimeInstallation {
                         executable_path: installation.executable_path,
                         version: installation.version,
@@ -1247,6 +1256,37 @@ mod tests {
             assert_eq!(view.version.as_deref(), Some("2.0.0"));
             assert!(view.diagnostic.is_none());
         }
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn explicit_self_managed_runtime_does_not_report_missing_harness() {
+        let directory = tempfile::tempdir().unwrap();
+        let control = directory.path().join("runtime.json");
+        std::fs::write(&control, r#"{"empty":true}"#).unwrap();
+        let workspace = PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().join("crates/Cargo.toml");
+        assert!(Command::new("cargo").args(["build","--manifest-path"]).arg(workspace).args(["-p","codepet-host","--bin","codepet-host-fake-provider"]).status().unwrap().success());
+        let binary = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join(format!("codepet-host-fake-provider{}",std::env::consts::EXE_SUFFIX));
+        let root = directory.path().join("plugins/self-managed"); std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("codepet-provider.json"),serde_json::to_vec(&serde_json::json!({
+            "manifestVersion":1,"pluginId":"test.self-managed","displayName":"Self managed","executable":binary,
+            "env":{"CODEPET_FAKE_PLUGIN_ID":"test.self-managed","CODEPET_FAKE_RUNTIME_CONTROL":control},"instances":[]
+        })).unwrap()).unwrap();
+        let device = DeviceRegistry::open(directory.path().join("device.json"),"Self managed test").unwrap();
+        let registry = ProviderInstanceRegistry::open(directory.path().join("instances.json"),device.identity().device_id.clone()).unwrap();
+        let manager = Arc::new(PluginManager::new(device,PluginCatalog::discover(PluginCatalogConfig::default().with_directory(root)),registry,PluginManagerConfig::default()).unwrap());
+        let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap()); gateway.start_event_forwarding();
+        let host = ProviderHostState::new(manager.clone(),gateway);
+        assert!(manager.start_enabled().await.iter().all(|(_,r)|r.is_ok()));
+        let views=host.runtime_views().await;
+        assert_eq!(views[0].status,AgentRuntimeStatus::Unavailable);
+        assert_eq!(views[0].diagnostic.as_ref().unwrap().code,"runtime-not-found");
+        std::fs::write(&control,r#"{"selectionRequired":false}"#).unwrap();
+        manager.runtime_get_installed("test.self-managed",codepet_provider_sdk::RuntimeGetInstalledRequest{refresh:Some(true)}).await.unwrap();
+        let views=host.runtime_views().await;
+        assert_eq!(views[0].status,AgentRuntimeStatus::NotRequired);
+        assert!(views[0].diagnostic.is_none());
+        assert!(views[0].resolved_executable.is_none());
         manager.shutdown().await;
     }
 

@@ -3,6 +3,7 @@ import type { AgentRuntime, AgentRuntimeSource, AgentRuntimeStatus } from "./typ
 export type AgentRuntimeTone = "ready" | "neutral" | "danger";
 
 const statusMetadata: Record<AgentRuntimeStatus, { label: string; tone: AgentRuntimeTone }> = {
+  "not-required": { label: "无需选择运行时", tone: "neutral" },
   loading: { label: "启动中", tone: "neutral" },
   ready: { label: "可用", tone: "ready" },
   unavailable: { label: "未检测到", tone: "neutral" },

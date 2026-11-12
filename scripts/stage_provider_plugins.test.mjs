@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { cp, chmod, mkdir, mkdtemp, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -44,7 +44,7 @@ test("Windows Bun discovery resolves npm shims to the native executable", async 
   assert.equal(await resolveBunExecutable({ env: { PATH: root }, platform: "darwin" }), "bun");
 });
 
-test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", async () => {
+test("staging contains Provider plugins and only the language-neutral extension contract", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codepet-provider-stage-"));
   const binaries = new Map();
   for (const provider of PROVIDERS) {
@@ -112,6 +112,7 @@ test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", as
     "{}",
   );
 
+  await cp(path.resolve(import.meta.dirname,"../protocol/v1"),path.join(root,"protocol/v1"),{recursive:true});
   for (const [target, windowsTarget] of [
     [undefined, process.platform === "win32"],
     ["x86_64-unknown-linux-gnu", false],
@@ -153,65 +154,15 @@ test("staging contains Provider plugins, JSON-RPC resources, and cp-sdk-gen", as
       target,
       binaries,
     });
-    const generatorExecutable = `cp-sdk-gen${windowsTarget ? ".exe" : ""}`;
-    assert.equal((await stat(path.join(sdkStagingDirectory, generatorExecutable))).isFile(), true);
-    if (!windowsTarget && process.platform !== "win32") {
-      assert.notEqual((await stat(path.join(sdkStagingDirectory, generatorExecutable))).mode & 0o111, 0);
-    }
-    const index = JSON.parse(
-      await readFile(path.join(sdkStagingDirectory, "codepet-provider-sdk.json"), "utf8"),
-    );
-    assert.equal(index.protocol.name, "codepet-provider");
-    assert.equal(index.protocol.version, 1);
-    assert.equal(index.protocol.schema, "protocol/provider/v1/schema.json");
-    assert.equal(index.protocol.manifest, "protocol/provider/v1/manifest.json");
-    assert.equal(index.protocol.fixtures, "protocol/provider/v1/fixtures/index.json");
-    assert.deepEqual(index.protocol.dependencies, [
-      "protocol/core/v1/schema.json",
-      "protocol/core/v1/manifest.json",
-      "protocol/agent/v1/schema.json",
-      "protocol/agent/v1/manifest.json",
-    ]);
-    assert.equal(index.generator.executable, generatorExecutable);
-    assert.equal(index.generator.implementation, "javascript-bun-compile");
-    assert.equal(index.generator.protocolRoot, "protocol");
-    assert.deepEqual(index.generator.languages, ["rust"]);
-    const guide = await readFile(path.join(sdkStagingDirectory, "README.md"), "utf8");
-    assert.equal(guide.includes("cp-sdk-gen 是什么"), true);
-    assert.equal(guide.includes("安装并让 Code Pet 发现"), true);
-    const providerSchemaPath = path.join(
-      sdkStagingDirectory,
-      "protocol",
-      "provider",
-      "v1",
-      "schema.json",
-    );
-    assert.equal(
-      (await stat(providerSchemaPath)).isFile(),
-      true,
-    );
-    assert.equal(
-      (await stat(path.join(sdkStagingDirectory, "protocol", "provider", "v1", "fixtures", "initialize.json"))).isFile(),
-      true,
-    );
-    assert.equal(
-      (await stat(path.join(sdkStagingDirectory, "protocol", "core", "v1", "schema.json"))).isFile(),
-      true,
-    );
-    assert.equal(
-      (await stat(path.join(sdkStagingDirectory, "protocol", "agent", "v1", "schema.json"))).isFile(),
-      true,
-    );
-    assert.equal(
-      (await readFile(providerSchemaPath, "utf8")).includes("../../core/v1/schema.json"),
-      true,
-    );
-    const providerManifest = await readFile(
-      path.join(sdkStagingDirectory, "protocol", "provider", "v1", "manifest.json"),
-      "utf8",
-    );
-    assert.equal(providerManifest.includes("../../core/v1/schema.json"), true);
-    const sdkIndex = JSON.parse(await readFile(path.join(sdkStagingDirectory, "codepet-sdk.json"), "utf8"));
-    assert.deepEqual(sdkIndex.packages.map((item) => item.package), ["provider", "gateway", "lan-channel"]);
+    assert.deepEqual((await readdir(sdkStagingDirectory)).sort(),["v1"]);
+    const sdkRoot=path.join(sdkStagingDirectory,"v1");
+    assert.deepEqual((await readdir(sdkRoot)).sort(),["README.md","protocol","sdk-manifest.json"]);
+    const index=JSON.parse(await readFile(path.join(sdkRoot,"sdk-manifest.json"),"utf8"));
+    assert.equal(index.package,"provider"); assert.equal(index.sdkVersion,1);
+    assert.equal(index.generator,undefined);
+    assert.equal(index.methods,"protocol/sdk/provider/methods.json");
+    assert.deepEqual((await readdir(path.join(sdkRoot,"protocol"))).sort(),["manifest.schema.json","sdk"]);
+    for(const entry of [index.commonSchema,index.agentDomainSchema,index.providerLifecycleSchema,index.providerMessagesSchema])assert.ok((await stat(path.join(sdkRoot,entry))).isFile());
+
   }
 });

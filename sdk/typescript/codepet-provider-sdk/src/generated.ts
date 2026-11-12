@@ -3,12 +3,12 @@
 
 import type { Approval, ApprovalDecision, Conversation, ConversationContentKind, ConversationCreateCapabilities, ConversationItem, ConversationReadState, ConversationStatus, Project, ProjectChangeType, ProjectRoot, ProviderAuthentication, ProviderUsage, TurnInput, TurnSelection, TurnSendCapabilities, TurnTask, UsageDataset, UsageQuery, UsageQueryResult } from "../../codepet-agent-sdk/src/generated";
 export type * from "../../codepet-agent-sdk/src/generated";
-import type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
-export type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
+import type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, ProviderTransportHello, ProviderTransportSelection, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
+export type { ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, ProviderTransportHello, ProviderTransportSelection, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
 
 export const PROTOCOL_VERSION = 1 as const;
-export const PROTOCOL_METHODS = ["instance.releaseControl", "conversation.releaseInteraction", "conversation.active.list", "conversation.unread.list", "conversation.markRead", "provider.ping", "provider.initialize", "provider.describe", "runtime.getInstalled", "runtime.select", "instance.create", "instance.start", "instance.stop", "instance.destroy", "instance.capabilities", "conversation.list", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.search", "conversation.get", "conversation.acquireInteraction", "conversation.create", "turn.start", "turn.steer", "turn.interrupt", "approval.resolve", "provider.shutdown", "event.subscribe", "event.unsubscribe", "usage.query"] as const;
-export const PROTOCOL_EVENTS = ["event.conversationActiveChanged", "event.conversationUnreadChanged", "event.conversationDeleted", "event.projectChanged", "event.instanceStatusChanged", "event.conversationUpserted", "event.conversationItemUpserted", "event.turnUpserted", "event.turnOutputDelta", "event.approvalRequested", "event.approvalResolved", "event.notification", "runtime.inventoryChanged"] as const;
+export const PROTOCOL_METHODS = ["provider.ping", "provider.initialize", "provider.describe", "provider.shutdown", "instance.releaseControl", "instance.create", "instance.start", "instance.stop", "instance.destroy", "instance.capabilities", "runtime.getInstalled", "runtime.select", "conversation.releaseInteraction", "conversation.active.list", "conversation.unread.list", "conversation.markRead", "conversation.list", "conversation.search", "conversation.get", "conversation.acquireInteraction", "conversation.create", "project.list", "project.get", "project.create", "project.update", "project.delete", "turn.start", "turn.steer", "turn.interrupt", "approval.resolve", "event.subscribe", "event.unsubscribe", "usage.query"] as const;
+export const PROTOCOL_EVENTS = ["event.instanceStatusChanged", "runtime.inventoryChanged", "event.conversationActiveChanged", "event.conversationUnreadChanged", "event.conversationDeleted", "event.conversationUpserted", "event.conversationItemUpserted", "event.projectChanged", "event.turnUpserted", "event.turnOutputDelta", "event.approvalRequested", "event.approvalResolved", "event.notification"] as const;
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -468,35 +468,6 @@ export interface ProviderShutdownResponse {
   accepted: boolean;
 }
 
-export interface ProviderTransportHello {
-  supportedVersions: Array<number>;
-  features: Array<string>;
-  receive: ProviderTransportLimits;
-}
-
-export interface ProviderTransportLimits {
-  maxFramePayloadBytes: number;
-  maxEncodedMessageBytes: number;
-  maxDecodedMessageBytes: number;
-  receiveBudgetBytes: number;
-  normalStreams: number;
-  smallStreams: number;
-  controlStreams: number;
-  smallMessageBytes: number;
-  smallReceiveBudgetBytes: number;
-  controlMessageBytes: number;
-  controlReceiveBudgetBytes: number;
-  connectionWindowBytes: number;
-  idleTimeoutMs: number;
-  streamTimeoutMs: number;
-}
-
-export interface ProviderTransportSelection {
-  selectedVersion: number;
-  features: Array<string>;
-  receive: ProviderTransportLimits;
-}
-
 export type ReaderScope = string;
 
 export interface RuntimeCandidate {
@@ -511,6 +482,7 @@ export interface RuntimeGetInstalledRequest {
 }
 
 export interface RuntimeGetInstalledResponse {
+  selectionRequired?: boolean;
   harnessList: Array<RuntimeInstallation>;
   selected: RuntimeInstallation | null;
   scanning?: boolean;
@@ -592,91 +564,91 @@ export interface UsageQueryResponse {
 }
 
 export interface ProtocolRequestMap {
-  "instance.releaseControl": InstanceReleaseControlRequest;
-  "conversation.releaseInteraction": ConversationReleaseInteractionRequest;
-  "conversation.active.list": ConversationActiveListRequest;
-  "conversation.unread.list": ConversationUnreadListRequest;
-  "conversation.markRead": ConversationMarkReadRequest;
   "provider.ping": ProviderPingRequest;
   "provider.initialize": ProviderInitializeRequest;
   "provider.describe": ProviderDescribeRequest;
-  "runtime.getInstalled": RuntimeGetInstalledRequest;
-  "runtime.select": RuntimeSelectRequest;
+  "provider.shutdown": ProviderShutdownRequest;
+  "instance.releaseControl": InstanceReleaseControlRequest;
   "instance.create": InstanceCreateRequest;
   "instance.start": InstanceStartRequest;
   "instance.stop": InstanceStopRequest;
   "instance.destroy": InstanceDestroyRequest;
   "instance.capabilities": InstanceCapabilitiesRequest;
+  "runtime.getInstalled": RuntimeGetInstalledRequest;
+  "runtime.select": RuntimeSelectRequest;
+  "conversation.releaseInteraction": ConversationReleaseInteractionRequest;
+  "conversation.active.list": ConversationActiveListRequest;
+  "conversation.unread.list": ConversationUnreadListRequest;
+  "conversation.markRead": ConversationMarkReadRequest;
   "conversation.list": ConversationListRequest;
+  "conversation.search": ConversationSearchRequest;
+  "conversation.get": ConversationGetRequest;
+  "conversation.acquireInteraction": ConversationAcquireInteractionRequest;
+  "conversation.create": ConversationCreateRequest;
   "project.list": ProjectListRequest;
   "project.get": ProjectGetRequest;
   "project.create": ProjectCreateRequest;
   "project.update": ProjectUpdateRequest;
   "project.delete": ProjectDeleteRequest;
-  "conversation.search": ConversationSearchRequest;
-  "conversation.get": ConversationGetRequest;
-  "conversation.acquireInteraction": ConversationAcquireInteractionRequest;
-  "conversation.create": ConversationCreateRequest;
   "turn.start": TurnStartRequest;
   "turn.steer": TurnSteerRequest;
   "turn.interrupt": TurnInterruptRequest;
   "approval.resolve": ApprovalResolveRequest;
-  "provider.shutdown": ProviderShutdownRequest;
   "event.subscribe": EventSubscribeRequest;
   "event.unsubscribe": EventUnsubscribeRequest;
   "usage.query": UsageQueryRequest;
 }
 
 export interface ProtocolResponseMap {
-  "instance.releaseControl": InstanceReleaseControlResponse;
-  "conversation.releaseInteraction": ConversationReleaseInteractionResponse;
-  "conversation.active.list": ConversationActiveListResponse;
-  "conversation.unread.list": ConversationUnreadListResponse;
-  "conversation.markRead": ConversationMarkReadResponse;
   "provider.ping": ProviderPingResponse;
   "provider.initialize": ProviderInitializeResponse;
   "provider.describe": ProviderDescribeResponse;
-  "runtime.getInstalled": RuntimeGetInstalledResponse;
-  "runtime.select": RuntimeSelectResponse;
+  "provider.shutdown": ProviderShutdownResponse;
+  "instance.releaseControl": InstanceReleaseControlResponse;
   "instance.create": InstanceCreateResponse;
   "instance.start": InstanceStartResponse;
   "instance.stop": InstanceStopResponse;
   "instance.destroy": InstanceDestroyResponse;
   "instance.capabilities": InstanceCapabilitiesResponse;
+  "runtime.getInstalled": RuntimeGetInstalledResponse;
+  "runtime.select": RuntimeSelectResponse;
+  "conversation.releaseInteraction": ConversationReleaseInteractionResponse;
+  "conversation.active.list": ConversationActiveListResponse;
+  "conversation.unread.list": ConversationUnreadListResponse;
+  "conversation.markRead": ConversationMarkReadResponse;
   "conversation.list": ConversationListResponse;
+  "conversation.search": ConversationSearchResponse;
+  "conversation.get": ConversationGetResponse;
+  "conversation.acquireInteraction": ConversationAcquireInteractionResponse;
+  "conversation.create": ConversationCreateResponse;
   "project.list": ProjectListResponse;
   "project.get": ProjectGetResponse;
   "project.create": ProjectCreateResponse;
   "project.update": ProjectUpdateResponse;
   "project.delete": ProjectDeleteResponse;
-  "conversation.search": ConversationSearchResponse;
-  "conversation.get": ConversationGetResponse;
-  "conversation.acquireInteraction": ConversationAcquireInteractionResponse;
-  "conversation.create": ConversationCreateResponse;
   "turn.start": TurnStartResponse;
   "turn.steer": TurnSteerResponse;
   "turn.interrupt": TurnInterruptResponse;
   "approval.resolve": ApprovalResolveResponse;
-  "provider.shutdown": ProviderShutdownResponse;
   "event.subscribe": EventSubscribeResponse;
   "event.unsubscribe": EventUnsubscribeResponse;
   "usage.query": UsageQueryResponse;
 }
 
 export interface ProtocolEventMap {
+  "event.instanceStatusChanged": InstanceStatusChangedEvent;
+  "runtime.inventoryChanged": RuntimeGetInstalledResponse;
   "event.conversationActiveChanged": ConversationActiveChangedEvent;
   "event.conversationUnreadChanged": ConversationUnreadChangedEvent;
   "event.conversationDeleted": ConversationDeletedEvent;
-  "event.projectChanged": ProjectChangedEvent;
-  "event.instanceStatusChanged": InstanceStatusChangedEvent;
   "event.conversationUpserted": ConversationUpsertedEvent;
   "event.conversationItemUpserted": ConversationItemUpsertedEvent;
+  "event.projectChanged": ProjectChangedEvent;
   "event.turnUpserted": TurnUpsertedEvent;
   "event.turnOutputDelta": TurnOutputDeltaEvent;
   "event.approvalRequested": ApprovalRequestedEvent;
   "event.approvalResolved": ApprovalResolvedEvent;
   "event.notification": ProviderNotificationEvent;
-  "runtime.inventoryChanged": RuntimeGetInstalledResponse;
 }
 
 export type ProtocolMethod = keyof ProtocolRequestMap;

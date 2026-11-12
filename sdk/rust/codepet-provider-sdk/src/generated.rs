@@ -8,7 +8,7 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub use codepet_agent_sdk::*;
-pub use codepet_core_sdk::{ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange};
+pub use codepet_core_sdk::{ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, ProviderPluginId, ProviderTransportHello, ProviderTransportSelection, RequestId, RoutedResourceId, RpcError, TimestampMs, VersionRange};
 
 pub const PROTOCOL_VERSION: ProtocolVersion = 1;
 
@@ -846,44 +846,6 @@ pub struct ProviderShutdownResponse {
     pub accepted: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ProviderTransportHello {
-    pub supported_versions: Vec<u64>,
-    pub features: Vec<String>,
-    pub receive: ProviderTransportLimits,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ProviderTransportLimits {
-    pub max_frame_payload_bytes: u64,
-    pub max_encoded_message_bytes: u64,
-    pub max_decoded_message_bytes: u64,
-    pub receive_budget_bytes: u64,
-    pub normal_streams: u64,
-    pub small_streams: u64,
-    pub control_streams: u64,
-    pub small_message_bytes: u64,
-    pub small_receive_budget_bytes: u64,
-    pub control_message_bytes: u64,
-    pub control_receive_budget_bytes: u64,
-    pub connection_window_bytes: u64,
-    pub idle_timeout_ms: u64,
-    pub stream_timeout_ms: u64,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct ProviderTransportSelection {
-    pub selected_version: u64,
-    pub features: Vec<String>,
-    pub receive: ProviderTransportLimits,
-}
-
 pub type ReaderScope = String;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -922,6 +884,8 @@ pub struct RuntimeGetInstalledRequest {
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeGetInstalledResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selection_required: Option<bool>,
     pub harness_list: Vec<RuntimeInstallation>,
     pub selected: Option<RuntimeInstallation>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1103,26 +1067,16 @@ pub enum ProtocolDispatchLane {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolMethod {
-    #[serde(rename = "instance.releaseControl")]
-    InstanceReleaseControl,
-    #[serde(rename = "conversation.releaseInteraction")]
-    ConversationReleaseInteraction,
-    #[serde(rename = "conversation.active.list")]
-    ConversationActiveList,
-    #[serde(rename = "conversation.unread.list")]
-    ConversationUnreadList,
-    #[serde(rename = "conversation.markRead")]
-    ConversationMarkRead,
     #[serde(rename = "provider.ping")]
     ProviderPing,
     #[serde(rename = "provider.initialize")]
     ProviderInitialize,
     #[serde(rename = "provider.describe")]
     ProviderDescribe,
-    #[serde(rename = "runtime.getInstalled")]
-    RuntimeGetInstalled,
-    #[serde(rename = "runtime.select")]
-    RuntimeSelect,
+    #[serde(rename = "provider.shutdown")]
+    ProviderShutdown,
+    #[serde(rename = "instance.releaseControl")]
+    InstanceReleaseControl,
     #[serde(rename = "instance.create")]
     InstanceCreate,
     #[serde(rename = "instance.start")]
@@ -1133,8 +1087,28 @@ pub enum ProtocolMethod {
     InstanceDestroy,
     #[serde(rename = "instance.capabilities")]
     InstanceCapabilities,
+    #[serde(rename = "runtime.getInstalled")]
+    RuntimeGetInstalled,
+    #[serde(rename = "runtime.select")]
+    RuntimeSelect,
+    #[serde(rename = "conversation.releaseInteraction")]
+    ConversationReleaseInteraction,
+    #[serde(rename = "conversation.active.list")]
+    ConversationActiveList,
+    #[serde(rename = "conversation.unread.list")]
+    ConversationUnreadList,
+    #[serde(rename = "conversation.markRead")]
+    ConversationMarkRead,
     #[serde(rename = "conversation.list")]
     ConversationList,
+    #[serde(rename = "conversation.search")]
+    ConversationSearch,
+    #[serde(rename = "conversation.get")]
+    ConversationGet,
+    #[serde(rename = "conversation.acquireInteraction")]
+    ConversationAcquireInteraction,
+    #[serde(rename = "conversation.create")]
+    ConversationCreate,
     #[serde(rename = "project.list")]
     ProjectList,
     #[serde(rename = "project.get")]
@@ -1145,14 +1119,6 @@ pub enum ProtocolMethod {
     ProjectUpdate,
     #[serde(rename = "project.delete")]
     ProjectDelete,
-    #[serde(rename = "conversation.search")]
-    ConversationSearch,
-    #[serde(rename = "conversation.get")]
-    ConversationGet,
-    #[serde(rename = "conversation.acquireInteraction")]
-    ConversationAcquireInteraction,
-    #[serde(rename = "conversation.create")]
-    ConversationCreate,
     #[serde(rename = "turn.start")]
     TurnStart,
     #[serde(rename = "turn.steer")]
@@ -1161,8 +1127,6 @@ pub enum ProtocolMethod {
     TurnInterrupt,
     #[serde(rename = "approval.resolve")]
     ApprovalResolve,
-    #[serde(rename = "provider.shutdown")]
-    ProviderShutdown,
     #[serde(rename = "event.subscribe")]
     EventSubscribe,
     #[serde(rename = "event.unsubscribe")]
@@ -1174,36 +1138,36 @@ pub enum ProtocolMethod {
 impl ProtocolMethod {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::InstanceReleaseControl => "instance.releaseControl",
-            Self::ConversationReleaseInteraction => "conversation.releaseInteraction",
-            Self::ConversationActiveList => "conversation.active.list",
-            Self::ConversationUnreadList => "conversation.unread.list",
-            Self::ConversationMarkRead => "conversation.markRead",
             Self::ProviderPing => "provider.ping",
             Self::ProviderInitialize => "provider.initialize",
             Self::ProviderDescribe => "provider.describe",
-            Self::RuntimeGetInstalled => "runtime.getInstalled",
-            Self::RuntimeSelect => "runtime.select",
+            Self::ProviderShutdown => "provider.shutdown",
+            Self::InstanceReleaseControl => "instance.releaseControl",
             Self::InstanceCreate => "instance.create",
             Self::InstanceStart => "instance.start",
             Self::InstanceStop => "instance.stop",
             Self::InstanceDestroy => "instance.destroy",
             Self::InstanceCapabilities => "instance.capabilities",
+            Self::RuntimeGetInstalled => "runtime.getInstalled",
+            Self::RuntimeSelect => "runtime.select",
+            Self::ConversationReleaseInteraction => "conversation.releaseInteraction",
+            Self::ConversationActiveList => "conversation.active.list",
+            Self::ConversationUnreadList => "conversation.unread.list",
+            Self::ConversationMarkRead => "conversation.markRead",
             Self::ConversationList => "conversation.list",
+            Self::ConversationSearch => "conversation.search",
+            Self::ConversationGet => "conversation.get",
+            Self::ConversationAcquireInteraction => "conversation.acquireInteraction",
+            Self::ConversationCreate => "conversation.create",
             Self::ProjectList => "project.list",
             Self::ProjectGet => "project.get",
             Self::ProjectCreate => "project.create",
             Self::ProjectUpdate => "project.update",
             Self::ProjectDelete => "project.delete",
-            Self::ConversationSearch => "conversation.search",
-            Self::ConversationGet => "conversation.get",
-            Self::ConversationAcquireInteraction => "conversation.acquireInteraction",
-            Self::ConversationCreate => "conversation.create",
             Self::TurnStart => "turn.start",
             Self::TurnSteer => "turn.steer",
             Self::TurnInterrupt => "turn.interrupt",
             Self::ApprovalResolve => "approval.resolve",
-            Self::ProviderShutdown => "provider.shutdown",
             Self::EventSubscribe => "event.subscribe",
             Self::EventUnsubscribe => "event.unsubscribe",
             Self::UsageQuery => "usage.query",
@@ -1212,36 +1176,36 @@ impl ProtocolMethod {
 
     pub const fn dispatch_lane(self) -> ProtocolDispatchLane {
         match self {
-            Self::InstanceReleaseControl => ProtocolDispatchLane::Control,
-            Self::ConversationReleaseInteraction => ProtocolDispatchLane::Control,
-            Self::ConversationActiveList => ProtocolDispatchLane::Normal,
-            Self::ConversationUnreadList => ProtocolDispatchLane::Normal,
-            Self::ConversationMarkRead => ProtocolDispatchLane::Normal,
             Self::ProviderPing => ProtocolDispatchLane::Control,
             Self::ProviderInitialize => ProtocolDispatchLane::Normal,
             Self::ProviderDescribe => ProtocolDispatchLane::Normal,
-            Self::RuntimeGetInstalled => ProtocolDispatchLane::Normal,
-            Self::RuntimeSelect => ProtocolDispatchLane::Normal,
+            Self::ProviderShutdown => ProtocolDispatchLane::Control,
+            Self::InstanceReleaseControl => ProtocolDispatchLane::Control,
             Self::InstanceCreate => ProtocolDispatchLane::Normal,
             Self::InstanceStart => ProtocolDispatchLane::Normal,
             Self::InstanceStop => ProtocolDispatchLane::Control,
             Self::InstanceDestroy => ProtocolDispatchLane::Control,
             Self::InstanceCapabilities => ProtocolDispatchLane::Normal,
+            Self::RuntimeGetInstalled => ProtocolDispatchLane::Normal,
+            Self::RuntimeSelect => ProtocolDispatchLane::Normal,
+            Self::ConversationReleaseInteraction => ProtocolDispatchLane::Control,
+            Self::ConversationActiveList => ProtocolDispatchLane::Normal,
+            Self::ConversationUnreadList => ProtocolDispatchLane::Normal,
+            Self::ConversationMarkRead => ProtocolDispatchLane::Normal,
             Self::ConversationList => ProtocolDispatchLane::Normal,
+            Self::ConversationSearch => ProtocolDispatchLane::Normal,
+            Self::ConversationGet => ProtocolDispatchLane::Normal,
+            Self::ConversationAcquireInteraction => ProtocolDispatchLane::Normal,
+            Self::ConversationCreate => ProtocolDispatchLane::Normal,
             Self::ProjectList => ProtocolDispatchLane::Normal,
             Self::ProjectGet => ProtocolDispatchLane::Normal,
             Self::ProjectCreate => ProtocolDispatchLane::Normal,
             Self::ProjectUpdate => ProtocolDispatchLane::Normal,
             Self::ProjectDelete => ProtocolDispatchLane::Normal,
-            Self::ConversationSearch => ProtocolDispatchLane::Normal,
-            Self::ConversationGet => ProtocolDispatchLane::Normal,
-            Self::ConversationAcquireInteraction => ProtocolDispatchLane::Normal,
-            Self::ConversationCreate => ProtocolDispatchLane::Normal,
             Self::TurnStart => ProtocolDispatchLane::Normal,
             Self::TurnSteer => ProtocolDispatchLane::Normal,
             Self::TurnInterrupt => ProtocolDispatchLane::Normal,
             Self::ApprovalResolve => ProtocolDispatchLane::Normal,
-            Self::ProviderShutdown => ProtocolDispatchLane::Control,
             Self::EventSubscribe => ProtocolDispatchLane::Normal,
             Self::EventUnsubscribe => ProtocolDispatchLane::Normal,
             Self::UsageQuery => ProtocolDispatchLane::Normal,
@@ -1250,36 +1214,36 @@ impl ProtocolMethod {
 
     pub const fn capability(self) -> Option<ProviderCapability> {
         match self {
-            Self::InstanceReleaseControl => Some(ProviderCapability::InstanceReleaseControl),
-            Self::ConversationReleaseInteraction => Some(ProviderCapability::ConversationReleaseInteraction),
-            Self::ConversationActiveList => Some(ProviderCapability::ConversationActiveList),
-            Self::ConversationUnreadList => Some(ProviderCapability::ConversationUnreadList),
-            Self::ConversationMarkRead => Some(ProviderCapability::ConversationMarkRead),
             Self::ProviderPing => None,
             Self::ProviderInitialize => None,
             Self::ProviderDescribe => None,
-            Self::RuntimeGetInstalled => None,
-            Self::RuntimeSelect => None,
+            Self::ProviderShutdown => None,
+            Self::InstanceReleaseControl => Some(ProviderCapability::InstanceReleaseControl),
             Self::InstanceCreate => None,
             Self::InstanceStart => None,
             Self::InstanceStop => None,
             Self::InstanceDestroy => None,
             Self::InstanceCapabilities => None,
+            Self::RuntimeGetInstalled => None,
+            Self::RuntimeSelect => None,
+            Self::ConversationReleaseInteraction => Some(ProviderCapability::ConversationReleaseInteraction),
+            Self::ConversationActiveList => Some(ProviderCapability::ConversationActiveList),
+            Self::ConversationUnreadList => Some(ProviderCapability::ConversationUnreadList),
+            Self::ConversationMarkRead => Some(ProviderCapability::ConversationMarkRead),
             Self::ConversationList => Some(ProviderCapability::ConversationList),
+            Self::ConversationSearch => Some(ProviderCapability::ConversationSearch),
+            Self::ConversationGet => Some(ProviderCapability::ConversationGet),
+            Self::ConversationAcquireInteraction => None,
+            Self::ConversationCreate => Some(ProviderCapability::ConversationCreate),
             Self::ProjectList => Some(ProviderCapability::ProjectList),
             Self::ProjectGet => Some(ProviderCapability::ProjectGet),
             Self::ProjectCreate => Some(ProviderCapability::ProjectCreate),
             Self::ProjectUpdate => Some(ProviderCapability::ProjectUpdate),
             Self::ProjectDelete => Some(ProviderCapability::ProjectDelete),
-            Self::ConversationSearch => Some(ProviderCapability::ConversationSearch),
-            Self::ConversationGet => Some(ProviderCapability::ConversationGet),
-            Self::ConversationAcquireInteraction => None,
-            Self::ConversationCreate => Some(ProviderCapability::ConversationCreate),
             Self::TurnStart => Some(ProviderCapability::TurnStart),
             Self::TurnSteer => Some(ProviderCapability::TurnSteer),
             Self::TurnInterrupt => Some(ProviderCapability::TurnInterrupt),
             Self::ApprovalResolve => Some(ProviderCapability::ApprovalResolve),
-            Self::ProviderShutdown => None,
             Self::EventSubscribe => None,
             Self::EventUnsubscribe => None,
             Self::UsageQuery => Some(ProviderCapability::UsageQuery),
@@ -1292,36 +1256,36 @@ impl std::str::FromStr for ProtocolMethod {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "instance.releaseControl" => Ok(Self::InstanceReleaseControl),
-            "conversation.releaseInteraction" => Ok(Self::ConversationReleaseInteraction),
-            "conversation.active.list" => Ok(Self::ConversationActiveList),
-            "conversation.unread.list" => Ok(Self::ConversationUnreadList),
-            "conversation.markRead" => Ok(Self::ConversationMarkRead),
             "provider.ping" => Ok(Self::ProviderPing),
             "provider.initialize" => Ok(Self::ProviderInitialize),
             "provider.describe" => Ok(Self::ProviderDescribe),
-            "runtime.getInstalled" => Ok(Self::RuntimeGetInstalled),
-            "runtime.select" => Ok(Self::RuntimeSelect),
+            "provider.shutdown" => Ok(Self::ProviderShutdown),
+            "instance.releaseControl" => Ok(Self::InstanceReleaseControl),
             "instance.create" => Ok(Self::InstanceCreate),
             "instance.start" => Ok(Self::InstanceStart),
             "instance.stop" => Ok(Self::InstanceStop),
             "instance.destroy" => Ok(Self::InstanceDestroy),
             "instance.capabilities" => Ok(Self::InstanceCapabilities),
+            "runtime.getInstalled" => Ok(Self::RuntimeGetInstalled),
+            "runtime.select" => Ok(Self::RuntimeSelect),
+            "conversation.releaseInteraction" => Ok(Self::ConversationReleaseInteraction),
+            "conversation.active.list" => Ok(Self::ConversationActiveList),
+            "conversation.unread.list" => Ok(Self::ConversationUnreadList),
+            "conversation.markRead" => Ok(Self::ConversationMarkRead),
             "conversation.list" => Ok(Self::ConversationList),
+            "conversation.search" => Ok(Self::ConversationSearch),
+            "conversation.get" => Ok(Self::ConversationGet),
+            "conversation.acquireInteraction" => Ok(Self::ConversationAcquireInteraction),
+            "conversation.create" => Ok(Self::ConversationCreate),
             "project.list" => Ok(Self::ProjectList),
             "project.get" => Ok(Self::ProjectGet),
             "project.create" => Ok(Self::ProjectCreate),
             "project.update" => Ok(Self::ProjectUpdate),
             "project.delete" => Ok(Self::ProjectDelete),
-            "conversation.search" => Ok(Self::ConversationSearch),
-            "conversation.get" => Ok(Self::ConversationGet),
-            "conversation.acquireInteraction" => Ok(Self::ConversationAcquireInteraction),
-            "conversation.create" => Ok(Self::ConversationCreate),
             "turn.start" => Ok(Self::TurnStart),
             "turn.steer" => Ok(Self::TurnSteer),
             "turn.interrupt" => Ok(Self::TurnInterrupt),
             "approval.resolve" => Ok(Self::ApprovalResolve),
-            "provider.shutdown" => Ok(Self::ProviderShutdown),
             "event.subscribe" => Ok(Self::EventSubscribe),
             "event.unsubscribe" => Ok(Self::EventUnsubscribe),
             "usage.query" => Ok(Self::UsageQuery),
@@ -1332,20 +1296,22 @@ impl std::str::FromStr for ProtocolMethod {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolEventName {
+    #[serde(rename = "event.instanceStatusChanged")]
+    EventInstanceStatusChanged,
+    #[serde(rename = "runtime.inventoryChanged")]
+    RuntimeInventoryChanged,
     #[serde(rename = "event.conversationActiveChanged")]
     EventConversationActiveChanged,
     #[serde(rename = "event.conversationUnreadChanged")]
     EventConversationUnreadChanged,
     #[serde(rename = "event.conversationDeleted")]
     EventConversationDeleted,
-    #[serde(rename = "event.projectChanged")]
-    EventProjectChanged,
-    #[serde(rename = "event.instanceStatusChanged")]
-    EventInstanceStatusChanged,
     #[serde(rename = "event.conversationUpserted")]
     EventConversationUpserted,
     #[serde(rename = "event.conversationItemUpserted")]
     EventConversationItemUpserted,
+    #[serde(rename = "event.projectChanged")]
+    EventProjectChanged,
     #[serde(rename = "event.turnUpserted")]
     EventTurnUpserted,
     #[serde(rename = "event.turnOutputDelta")]
@@ -1356,26 +1322,24 @@ pub enum ProtocolEventName {
     EventApprovalResolved,
     #[serde(rename = "event.notification")]
     EventNotification,
-    #[serde(rename = "runtime.inventoryChanged")]
-    RuntimeInventoryChanged,
 }
 
 impl ProtocolEventName {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::EventInstanceStatusChanged => "event.instanceStatusChanged",
+            Self::RuntimeInventoryChanged => "runtime.inventoryChanged",
             Self::EventConversationActiveChanged => "event.conversationActiveChanged",
             Self::EventConversationUnreadChanged => "event.conversationUnreadChanged",
             Self::EventConversationDeleted => "event.conversationDeleted",
-            Self::EventProjectChanged => "event.projectChanged",
-            Self::EventInstanceStatusChanged => "event.instanceStatusChanged",
             Self::EventConversationUpserted => "event.conversationUpserted",
             Self::EventConversationItemUpserted => "event.conversationItemUpserted",
+            Self::EventProjectChanged => "event.projectChanged",
             Self::EventTurnUpserted => "event.turnUpserted",
             Self::EventTurnOutputDelta => "event.turnOutputDelta",
             Self::EventApprovalRequested => "event.approvalRequested",
             Self::EventApprovalResolved => "event.approvalResolved",
             Self::EventNotification => "event.notification",
-            Self::RuntimeInventoryChanged => "runtime.inventoryChanged",
         }
     }
 }
@@ -1385,19 +1349,19 @@ impl std::str::FromStr for ProtocolEventName {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
+            "event.instanceStatusChanged" => Ok(Self::EventInstanceStatusChanged),
+            "runtime.inventoryChanged" => Ok(Self::RuntimeInventoryChanged),
             "event.conversationActiveChanged" => Ok(Self::EventConversationActiveChanged),
             "event.conversationUnreadChanged" => Ok(Self::EventConversationUnreadChanged),
             "event.conversationDeleted" => Ok(Self::EventConversationDeleted),
-            "event.projectChanged" => Ok(Self::EventProjectChanged),
-            "event.instanceStatusChanged" => Ok(Self::EventInstanceStatusChanged),
             "event.conversationUpserted" => Ok(Self::EventConversationUpserted),
             "event.conversationItemUpserted" => Ok(Self::EventConversationItemUpserted),
+            "event.projectChanged" => Ok(Self::EventProjectChanged),
             "event.turnUpserted" => Ok(Self::EventTurnUpserted),
             "event.turnOutputDelta" => Ok(Self::EventTurnOutputDelta),
             "event.approvalRequested" => Ok(Self::EventApprovalRequested),
             "event.approvalResolved" => Ok(Self::EventApprovalResolved),
             "event.notification" => Ok(Self::EventNotification),
-            "runtime.inventoryChanged" => Ok(Self::RuntimeInventoryChanged),
             _ => Err(()),
         }
     }
@@ -1413,36 +1377,6 @@ pub const DEFAULT_MAX_JSON_LINE_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ProtocolRequest {
-    #[serde(rename = "instance.releaseControl")]
-    InstanceReleaseControl {
-        jsonrpc: String,
-        id: RequestId,
-        params: InstanceReleaseControlRequest,
-    },
-    #[serde(rename = "conversation.releaseInteraction")]
-    ConversationReleaseInteraction {
-        jsonrpc: String,
-        id: RequestId,
-        params: ConversationReleaseInteractionRequest,
-    },
-    #[serde(rename = "conversation.active.list")]
-    ConversationActiveList {
-        jsonrpc: String,
-        id: RequestId,
-        params: ConversationActiveListRequest,
-    },
-    #[serde(rename = "conversation.unread.list")]
-    ConversationUnreadList {
-        jsonrpc: String,
-        id: RequestId,
-        params: ConversationUnreadListRequest,
-    },
-    #[serde(rename = "conversation.markRead")]
-    ConversationMarkRead {
-        jsonrpc: String,
-        id: RequestId,
-        params: ConversationMarkReadRequest,
-    },
     #[serde(rename = "provider.ping")]
     ProviderPing {
         jsonrpc: String,
@@ -1461,17 +1395,17 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: ProviderDescribeRequest,
     },
-    #[serde(rename = "runtime.getInstalled")]
-    RuntimeGetInstalled {
+    #[serde(rename = "provider.shutdown")]
+    ProviderShutdown {
         jsonrpc: String,
         id: RequestId,
-        params: RuntimeGetInstalledRequest,
+        params: ProviderShutdownRequest,
     },
-    #[serde(rename = "runtime.select")]
-    RuntimeSelect {
+    #[serde(rename = "instance.releaseControl")]
+    InstanceReleaseControl {
         jsonrpc: String,
         id: RequestId,
-        params: RuntimeSelectRequest,
+        params: InstanceReleaseControlRequest,
     },
     #[serde(rename = "instance.create")]
     InstanceCreate {
@@ -1503,11 +1437,71 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: InstanceCapabilitiesRequest,
     },
+    #[serde(rename = "runtime.getInstalled")]
+    RuntimeGetInstalled {
+        jsonrpc: String,
+        id: RequestId,
+        params: RuntimeGetInstalledRequest,
+    },
+    #[serde(rename = "runtime.select")]
+    RuntimeSelect {
+        jsonrpc: String,
+        id: RequestId,
+        params: RuntimeSelectRequest,
+    },
+    #[serde(rename = "conversation.releaseInteraction")]
+    ConversationReleaseInteraction {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationReleaseInteractionRequest,
+    },
+    #[serde(rename = "conversation.active.list")]
+    ConversationActiveList {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationActiveListRequest,
+    },
+    #[serde(rename = "conversation.unread.list")]
+    ConversationUnreadList {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationUnreadListRequest,
+    },
+    #[serde(rename = "conversation.markRead")]
+    ConversationMarkRead {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationMarkReadRequest,
+    },
     #[serde(rename = "conversation.list")]
     ConversationList {
         jsonrpc: String,
         id: RequestId,
         params: ConversationListRequest,
+    },
+    #[serde(rename = "conversation.search")]
+    ConversationSearch {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationSearchRequest,
+    },
+    #[serde(rename = "conversation.get")]
+    ConversationGet {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationGetRequest,
+    },
+    #[serde(rename = "conversation.acquireInteraction")]
+    ConversationAcquireInteraction {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationAcquireInteractionRequest,
+    },
+    #[serde(rename = "conversation.create")]
+    ConversationCreate {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationCreateRequest,
     },
     #[serde(rename = "project.list")]
     ProjectList {
@@ -1539,30 +1533,6 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: ProjectDeleteRequest,
     },
-    #[serde(rename = "conversation.search")]
-    ConversationSearch {
-        jsonrpc: String,
-        id: RequestId,
-        params: ConversationSearchRequest,
-    },
-    #[serde(rename = "conversation.get")]
-    ConversationGet {
-        jsonrpc: String,
-        id: RequestId,
-        params: ConversationGetRequest,
-    },
-    #[serde(rename = "conversation.acquireInteraction")]
-    ConversationAcquireInteraction {
-        jsonrpc: String,
-        id: RequestId,
-        params: ConversationAcquireInteractionRequest,
-    },
-    #[serde(rename = "conversation.create")]
-    ConversationCreate {
-        jsonrpc: String,
-        id: RequestId,
-        params: ConversationCreateRequest,
-    },
     #[serde(rename = "turn.start")]
     TurnStart {
         jsonrpc: String,
@@ -1586,12 +1556,6 @@ pub enum ProtocolRequest {
         jsonrpc: String,
         id: RequestId,
         params: ApprovalResolveRequest,
-    },
-    #[serde(rename = "provider.shutdown")]
-    ProviderShutdown {
-        jsonrpc: String,
-        id: RequestId,
-        params: ProviderShutdownRequest,
     },
     #[serde(rename = "event.subscribe")]
     EventSubscribe {
@@ -1621,31 +1585,6 @@ impl ProtocolRequest {
     ) -> Result<Self, ProtocolError> {
         let jsonrpc = "2.0".to_string();
         match method {
-            ProtocolMethod::InstanceReleaseControl => Ok(Self::InstanceReleaseControl {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode instance.releaseControl request params", error))?,
-            }),
-            ProtocolMethod::ConversationReleaseInteraction => Ok(Self::ConversationReleaseInteraction {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.releaseInteraction request params", error))?,
-            }),
-            ProtocolMethod::ConversationActiveList => Ok(Self::ConversationActiveList {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.active.list request params", error))?,
-            }),
-            ProtocolMethod::ConversationUnreadList => Ok(Self::ConversationUnreadList {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.unread.list request params", error))?,
-            }),
-            ProtocolMethod::ConversationMarkRead => Ok(Self::ConversationMarkRead {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.markRead request params", error))?,
-            }),
             ProtocolMethod::ProviderPing => Ok(Self::ProviderPing {
                 jsonrpc,
                 id,
@@ -1661,15 +1600,15 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode provider.describe request params", error))?,
             }),
-            ProtocolMethod::RuntimeGetInstalled => Ok(Self::RuntimeGetInstalled {
+            ProtocolMethod::ProviderShutdown => Ok(Self::ProviderShutdown {
                 jsonrpc,
                 id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode runtime.getInstalled request params", error))?,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode provider.shutdown request params", error))?,
             }),
-            ProtocolMethod::RuntimeSelect => Ok(Self::RuntimeSelect {
+            ProtocolMethod::InstanceReleaseControl => Ok(Self::InstanceReleaseControl {
                 jsonrpc,
                 id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode runtime.select request params", error))?,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode instance.releaseControl request params", error))?,
             }),
             ProtocolMethod::InstanceCreate => Ok(Self::InstanceCreate {
                 jsonrpc,
@@ -1696,10 +1635,60 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode instance.capabilities request params", error))?,
             }),
+            ProtocolMethod::RuntimeGetInstalled => Ok(Self::RuntimeGetInstalled {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode runtime.getInstalled request params", error))?,
+            }),
+            ProtocolMethod::RuntimeSelect => Ok(Self::RuntimeSelect {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode runtime.select request params", error))?,
+            }),
+            ProtocolMethod::ConversationReleaseInteraction => Ok(Self::ConversationReleaseInteraction {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.releaseInteraction request params", error))?,
+            }),
+            ProtocolMethod::ConversationActiveList => Ok(Self::ConversationActiveList {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.active.list request params", error))?,
+            }),
+            ProtocolMethod::ConversationUnreadList => Ok(Self::ConversationUnreadList {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.unread.list request params", error))?,
+            }),
+            ProtocolMethod::ConversationMarkRead => Ok(Self::ConversationMarkRead {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.markRead request params", error))?,
+            }),
             ProtocolMethod::ConversationList => Ok(Self::ConversationList {
                 jsonrpc,
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.list request params", error))?,
+            }),
+            ProtocolMethod::ConversationSearch => Ok(Self::ConversationSearch {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.search request params", error))?,
+            }),
+            ProtocolMethod::ConversationGet => Ok(Self::ConversationGet {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.get request params", error))?,
+            }),
+            ProtocolMethod::ConversationAcquireInteraction => Ok(Self::ConversationAcquireInteraction {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.acquireInteraction request params", error))?,
+            }),
+            ProtocolMethod::ConversationCreate => Ok(Self::ConversationCreate {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.create request params", error))?,
             }),
             ProtocolMethod::ProjectList => Ok(Self::ProjectList {
                 jsonrpc,
@@ -1726,26 +1715,6 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode project.delete request params", error))?,
             }),
-            ProtocolMethod::ConversationSearch => Ok(Self::ConversationSearch {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.search request params", error))?,
-            }),
-            ProtocolMethod::ConversationGet => Ok(Self::ConversationGet {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.get request params", error))?,
-            }),
-            ProtocolMethod::ConversationAcquireInteraction => Ok(Self::ConversationAcquireInteraction {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.acquireInteraction request params", error))?,
-            }),
-            ProtocolMethod::ConversationCreate => Ok(Self::ConversationCreate {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.create request params", error))?,
-            }),
             ProtocolMethod::TurnStart => Ok(Self::TurnStart {
                 jsonrpc,
                 id,
@@ -1765,11 +1734,6 @@ impl ProtocolRequest {
                 jsonrpc,
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode approval.resolve request params", error))?,
-            }),
-            ProtocolMethod::ProviderShutdown => Ok(Self::ProviderShutdown {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode provider.shutdown request params", error))?,
             }),
             ProtocolMethod::EventSubscribe => Ok(Self::EventSubscribe {
                 jsonrpc,
@@ -1791,36 +1755,36 @@ impl ProtocolRequest {
 
     pub fn jsonrpc_version(&self) -> &str {
         match self {
-            Self::InstanceReleaseControl { jsonrpc, .. } => jsonrpc,
-            Self::ConversationReleaseInteraction { jsonrpc, .. } => jsonrpc,
-            Self::ConversationActiveList { jsonrpc, .. } => jsonrpc,
-            Self::ConversationUnreadList { jsonrpc, .. } => jsonrpc,
-            Self::ConversationMarkRead { jsonrpc, .. } => jsonrpc,
             Self::ProviderPing { jsonrpc, .. } => jsonrpc,
             Self::ProviderInitialize { jsonrpc, .. } => jsonrpc,
             Self::ProviderDescribe { jsonrpc, .. } => jsonrpc,
-            Self::RuntimeGetInstalled { jsonrpc, .. } => jsonrpc,
-            Self::RuntimeSelect { jsonrpc, .. } => jsonrpc,
+            Self::ProviderShutdown { jsonrpc, .. } => jsonrpc,
+            Self::InstanceReleaseControl { jsonrpc, .. } => jsonrpc,
             Self::InstanceCreate { jsonrpc, .. } => jsonrpc,
             Self::InstanceStart { jsonrpc, .. } => jsonrpc,
             Self::InstanceStop { jsonrpc, .. } => jsonrpc,
             Self::InstanceDestroy { jsonrpc, .. } => jsonrpc,
             Self::InstanceCapabilities { jsonrpc, .. } => jsonrpc,
+            Self::RuntimeGetInstalled { jsonrpc, .. } => jsonrpc,
+            Self::RuntimeSelect { jsonrpc, .. } => jsonrpc,
+            Self::ConversationReleaseInteraction { jsonrpc, .. } => jsonrpc,
+            Self::ConversationActiveList { jsonrpc, .. } => jsonrpc,
+            Self::ConversationUnreadList { jsonrpc, .. } => jsonrpc,
+            Self::ConversationMarkRead { jsonrpc, .. } => jsonrpc,
             Self::ConversationList { jsonrpc, .. } => jsonrpc,
+            Self::ConversationSearch { jsonrpc, .. } => jsonrpc,
+            Self::ConversationGet { jsonrpc, .. } => jsonrpc,
+            Self::ConversationAcquireInteraction { jsonrpc, .. } => jsonrpc,
+            Self::ConversationCreate { jsonrpc, .. } => jsonrpc,
             Self::ProjectList { jsonrpc, .. } => jsonrpc,
             Self::ProjectGet { jsonrpc, .. } => jsonrpc,
             Self::ProjectCreate { jsonrpc, .. } => jsonrpc,
             Self::ProjectUpdate { jsonrpc, .. } => jsonrpc,
             Self::ProjectDelete { jsonrpc, .. } => jsonrpc,
-            Self::ConversationSearch { jsonrpc, .. } => jsonrpc,
-            Self::ConversationGet { jsonrpc, .. } => jsonrpc,
-            Self::ConversationAcquireInteraction { jsonrpc, .. } => jsonrpc,
-            Self::ConversationCreate { jsonrpc, .. } => jsonrpc,
             Self::TurnStart { jsonrpc, .. } => jsonrpc,
             Self::TurnSteer { jsonrpc, .. } => jsonrpc,
             Self::TurnInterrupt { jsonrpc, .. } => jsonrpc,
             Self::ApprovalResolve { jsonrpc, .. } => jsonrpc,
-            Self::ProviderShutdown { jsonrpc, .. } => jsonrpc,
             Self::EventSubscribe { jsonrpc, .. } => jsonrpc,
             Self::EventUnsubscribe { jsonrpc, .. } => jsonrpc,
             Self::UsageQuery { jsonrpc, .. } => jsonrpc,
@@ -1829,36 +1793,36 @@ impl ProtocolRequest {
 
     pub fn id(&self) -> &RequestId {
         match self {
-            Self::InstanceReleaseControl { id, .. } => id,
-            Self::ConversationReleaseInteraction { id, .. } => id,
-            Self::ConversationActiveList { id, .. } => id,
-            Self::ConversationUnreadList { id, .. } => id,
-            Self::ConversationMarkRead { id, .. } => id,
             Self::ProviderPing { id, .. } => id,
             Self::ProviderInitialize { id, .. } => id,
             Self::ProviderDescribe { id, .. } => id,
-            Self::RuntimeGetInstalled { id, .. } => id,
-            Self::RuntimeSelect { id, .. } => id,
+            Self::ProviderShutdown { id, .. } => id,
+            Self::InstanceReleaseControl { id, .. } => id,
             Self::InstanceCreate { id, .. } => id,
             Self::InstanceStart { id, .. } => id,
             Self::InstanceStop { id, .. } => id,
             Self::InstanceDestroy { id, .. } => id,
             Self::InstanceCapabilities { id, .. } => id,
+            Self::RuntimeGetInstalled { id, .. } => id,
+            Self::RuntimeSelect { id, .. } => id,
+            Self::ConversationReleaseInteraction { id, .. } => id,
+            Self::ConversationActiveList { id, .. } => id,
+            Self::ConversationUnreadList { id, .. } => id,
+            Self::ConversationMarkRead { id, .. } => id,
             Self::ConversationList { id, .. } => id,
+            Self::ConversationSearch { id, .. } => id,
+            Self::ConversationGet { id, .. } => id,
+            Self::ConversationAcquireInteraction { id, .. } => id,
+            Self::ConversationCreate { id, .. } => id,
             Self::ProjectList { id, .. } => id,
             Self::ProjectGet { id, .. } => id,
             Self::ProjectCreate { id, .. } => id,
             Self::ProjectUpdate { id, .. } => id,
             Self::ProjectDelete { id, .. } => id,
-            Self::ConversationSearch { id, .. } => id,
-            Self::ConversationGet { id, .. } => id,
-            Self::ConversationAcquireInteraction { id, .. } => id,
-            Self::ConversationCreate { id, .. } => id,
             Self::TurnStart { id, .. } => id,
             Self::TurnSteer { id, .. } => id,
             Self::TurnInterrupt { id, .. } => id,
             Self::ApprovalResolve { id, .. } => id,
-            Self::ProviderShutdown { id, .. } => id,
             Self::EventSubscribe { id, .. } => id,
             Self::EventUnsubscribe { id, .. } => id,
             Self::UsageQuery { id, .. } => id,
@@ -1867,36 +1831,36 @@ impl ProtocolRequest {
 
     pub const fn method(&self) -> ProtocolMethod {
         match self {
-            Self::InstanceReleaseControl { .. } => ProtocolMethod::InstanceReleaseControl,
-            Self::ConversationReleaseInteraction { .. } => ProtocolMethod::ConversationReleaseInteraction,
-            Self::ConversationActiveList { .. } => ProtocolMethod::ConversationActiveList,
-            Self::ConversationUnreadList { .. } => ProtocolMethod::ConversationUnreadList,
-            Self::ConversationMarkRead { .. } => ProtocolMethod::ConversationMarkRead,
             Self::ProviderPing { .. } => ProtocolMethod::ProviderPing,
             Self::ProviderInitialize { .. } => ProtocolMethod::ProviderInitialize,
             Self::ProviderDescribe { .. } => ProtocolMethod::ProviderDescribe,
-            Self::RuntimeGetInstalled { .. } => ProtocolMethod::RuntimeGetInstalled,
-            Self::RuntimeSelect { .. } => ProtocolMethod::RuntimeSelect,
+            Self::ProviderShutdown { .. } => ProtocolMethod::ProviderShutdown,
+            Self::InstanceReleaseControl { .. } => ProtocolMethod::InstanceReleaseControl,
             Self::InstanceCreate { .. } => ProtocolMethod::InstanceCreate,
             Self::InstanceStart { .. } => ProtocolMethod::InstanceStart,
             Self::InstanceStop { .. } => ProtocolMethod::InstanceStop,
             Self::InstanceDestroy { .. } => ProtocolMethod::InstanceDestroy,
             Self::InstanceCapabilities { .. } => ProtocolMethod::InstanceCapabilities,
+            Self::RuntimeGetInstalled { .. } => ProtocolMethod::RuntimeGetInstalled,
+            Self::RuntimeSelect { .. } => ProtocolMethod::RuntimeSelect,
+            Self::ConversationReleaseInteraction { .. } => ProtocolMethod::ConversationReleaseInteraction,
+            Self::ConversationActiveList { .. } => ProtocolMethod::ConversationActiveList,
+            Self::ConversationUnreadList { .. } => ProtocolMethod::ConversationUnreadList,
+            Self::ConversationMarkRead { .. } => ProtocolMethod::ConversationMarkRead,
             Self::ConversationList { .. } => ProtocolMethod::ConversationList,
+            Self::ConversationSearch { .. } => ProtocolMethod::ConversationSearch,
+            Self::ConversationGet { .. } => ProtocolMethod::ConversationGet,
+            Self::ConversationAcquireInteraction { .. } => ProtocolMethod::ConversationAcquireInteraction,
+            Self::ConversationCreate { .. } => ProtocolMethod::ConversationCreate,
             Self::ProjectList { .. } => ProtocolMethod::ProjectList,
             Self::ProjectGet { .. } => ProtocolMethod::ProjectGet,
             Self::ProjectCreate { .. } => ProtocolMethod::ProjectCreate,
             Self::ProjectUpdate { .. } => ProtocolMethod::ProjectUpdate,
             Self::ProjectDelete { .. } => ProtocolMethod::ProjectDelete,
-            Self::ConversationSearch { .. } => ProtocolMethod::ConversationSearch,
-            Self::ConversationGet { .. } => ProtocolMethod::ConversationGet,
-            Self::ConversationAcquireInteraction { .. } => ProtocolMethod::ConversationAcquireInteraction,
-            Self::ConversationCreate { .. } => ProtocolMethod::ConversationCreate,
             Self::TurnStart { .. } => ProtocolMethod::TurnStart,
             Self::TurnSteer { .. } => ProtocolMethod::TurnSteer,
             Self::TurnInterrupt { .. } => ProtocolMethod::TurnInterrupt,
             Self::ApprovalResolve { .. } => ProtocolMethod::ApprovalResolve,
-            Self::ProviderShutdown { .. } => ProtocolMethod::ProviderShutdown,
             Self::EventSubscribe { .. } => ProtocolMethod::EventSubscribe,
             Self::EventUnsubscribe { .. } => ProtocolMethod::EventUnsubscribe,
             Self::UsageQuery { .. } => ProtocolMethod::UsageQuery,
@@ -1907,6 +1871,16 @@ impl ProtocolRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ProtocolEvent {
+    #[serde(rename = "event.instanceStatusChanged")]
+    EventInstanceStatusChanged {
+        jsonrpc: String,
+        params: InstanceStatusChangedEvent,
+    },
+    #[serde(rename = "runtime.inventoryChanged")]
+    RuntimeInventoryChanged {
+        jsonrpc: String,
+        params: RuntimeGetInstalledResponse,
+    },
     #[serde(rename = "event.conversationActiveChanged")]
     EventConversationActiveChanged {
         jsonrpc: String,
@@ -1922,16 +1896,6 @@ pub enum ProtocolEvent {
         jsonrpc: String,
         params: ConversationDeletedEvent,
     },
-    #[serde(rename = "event.projectChanged")]
-    EventProjectChanged {
-        jsonrpc: String,
-        params: ProjectChangedEvent,
-    },
-    #[serde(rename = "event.instanceStatusChanged")]
-    EventInstanceStatusChanged {
-        jsonrpc: String,
-        params: InstanceStatusChangedEvent,
-    },
     #[serde(rename = "event.conversationUpserted")]
     EventConversationUpserted {
         jsonrpc: String,
@@ -1941,6 +1905,11 @@ pub enum ProtocolEvent {
     EventConversationItemUpserted {
         jsonrpc: String,
         params: ConversationItemUpsertedEvent,
+    },
+    #[serde(rename = "event.projectChanged")]
+    EventProjectChanged {
+        jsonrpc: String,
+        params: ProjectChangedEvent,
     },
     #[serde(rename = "event.turnUpserted")]
     EventTurnUpserted {
@@ -1967,29 +1936,24 @@ pub enum ProtocolEvent {
         jsonrpc: String,
         params: ProviderNotificationEvent,
     },
-    #[serde(rename = "runtime.inventoryChanged")]
-    RuntimeInventoryChanged {
-        jsonrpc: String,
-        params: RuntimeGetInstalledResponse,
-    },
 }
 
 impl ProtocolEvent {
     pub fn jsonrpc_version(&self) -> &str {
         match self {
+            Self::EventInstanceStatusChanged { jsonrpc, .. } => jsonrpc,
+            Self::RuntimeInventoryChanged { jsonrpc, .. } => jsonrpc,
             Self::EventConversationActiveChanged { jsonrpc, .. } => jsonrpc,
             Self::EventConversationUnreadChanged { jsonrpc, .. } => jsonrpc,
             Self::EventConversationDeleted { jsonrpc, .. } => jsonrpc,
-            Self::EventProjectChanged { jsonrpc, .. } => jsonrpc,
-            Self::EventInstanceStatusChanged { jsonrpc, .. } => jsonrpc,
             Self::EventConversationUpserted { jsonrpc, .. } => jsonrpc,
             Self::EventConversationItemUpserted { jsonrpc, .. } => jsonrpc,
+            Self::EventProjectChanged { jsonrpc, .. } => jsonrpc,
             Self::EventTurnUpserted { jsonrpc, .. } => jsonrpc,
             Self::EventTurnOutputDelta { jsonrpc, .. } => jsonrpc,
             Self::EventApprovalRequested { jsonrpc, .. } => jsonrpc,
             Self::EventApprovalResolved { jsonrpc, .. } => jsonrpc,
             Self::EventNotification { jsonrpc, .. } => jsonrpc,
-            Self::RuntimeInventoryChanged { jsonrpc, .. } => jsonrpc,
         }
     }
 }
@@ -2088,26 +2052,6 @@ impl std::error::Error for JsonRpcInboundError {}
 pub type ProtocolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ProtocolError>> + Send + 'a>>;
 
 pub trait ProtocolServer: Send + Sync {
-    fn instance_release_control<'a>(&'a self, _request: InstanceReleaseControlRequest) -> ProtocolFuture<'a, InstanceReleaseControlResponse> {
-        Box::pin(async { Err(method_not_implemented("instance.releaseControl")) })
-    }
-
-    fn conversation_release_interaction<'a>(&'a self, _request: ConversationReleaseInteractionRequest) -> ProtocolFuture<'a, ConversationReleaseInteractionResponse> {
-        Box::pin(async { Err(method_not_implemented("conversation.releaseInteraction")) })
-    }
-
-    fn conversation_active_list<'a>(&'a self, _request: ConversationActiveListRequest) -> ProtocolFuture<'a, ConversationActiveListResponse> {
-        Box::pin(async { Err(method_not_implemented("conversation.active.list")) })
-    }
-
-    fn conversation_unread_list<'a>(&'a self, _request: ConversationUnreadListRequest) -> ProtocolFuture<'a, ConversationUnreadListResponse> {
-        Box::pin(async { Err(method_not_implemented("conversation.unread.list")) })
-    }
-
-    fn conversation_mark_read<'a>(&'a self, _request: ConversationMarkReadRequest) -> ProtocolFuture<'a, ConversationMarkReadResponse> {
-        Box::pin(async { Err(method_not_implemented("conversation.markRead")) })
-    }
-
     fn provider_ping<'a>(&'a self, _request: ProviderPingRequest) -> ProtocolFuture<'a, ProviderPingResponse> {
         Box::pin(async { Err(method_not_implemented("provider.ping")) })
     }
@@ -2120,12 +2064,12 @@ pub trait ProtocolServer: Send + Sync {
         Box::pin(async { Err(method_not_implemented("provider.describe")) })
     }
 
-    fn runtime_get_installed<'a>(&'a self, _request: RuntimeGetInstalledRequest) -> ProtocolFuture<'a, RuntimeGetInstalledResponse> {
-        Box::pin(async { Err(method_not_implemented("runtime.getInstalled")) })
+    fn provider_shutdown<'a>(&'a self, _request: ProviderShutdownRequest) -> ProtocolFuture<'a, ProviderShutdownResponse> {
+        Box::pin(async { Err(method_not_implemented("provider.shutdown")) })
     }
 
-    fn runtime_select<'a>(&'a self, _request: RuntimeSelectRequest) -> ProtocolFuture<'a, RuntimeSelectResponse> {
-        Box::pin(async { Err(method_not_implemented("runtime.select")) })
+    fn instance_release_control<'a>(&'a self, _request: InstanceReleaseControlRequest) -> ProtocolFuture<'a, InstanceReleaseControlResponse> {
+        Box::pin(async { Err(method_not_implemented("instance.releaseControl")) })
     }
 
     fn instance_create<'a>(&'a self, _request: InstanceCreateRequest) -> ProtocolFuture<'a, InstanceCreateResponse> {
@@ -2148,8 +2092,48 @@ pub trait ProtocolServer: Send + Sync {
         Box::pin(async { Err(method_not_implemented("instance.capabilities")) })
     }
 
+    fn runtime_get_installed<'a>(&'a self, _request: RuntimeGetInstalledRequest) -> ProtocolFuture<'a, RuntimeGetInstalledResponse> {
+        Box::pin(async { Err(method_not_implemented("runtime.getInstalled")) })
+    }
+
+    fn runtime_select<'a>(&'a self, _request: RuntimeSelectRequest) -> ProtocolFuture<'a, RuntimeSelectResponse> {
+        Box::pin(async { Err(method_not_implemented("runtime.select")) })
+    }
+
+    fn conversation_release_interaction<'a>(&'a self, _request: ConversationReleaseInteractionRequest) -> ProtocolFuture<'a, ConversationReleaseInteractionResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.releaseInteraction")) })
+    }
+
+    fn conversation_active_list<'a>(&'a self, _request: ConversationActiveListRequest) -> ProtocolFuture<'a, ConversationActiveListResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.active.list")) })
+    }
+
+    fn conversation_unread_list<'a>(&'a self, _request: ConversationUnreadListRequest) -> ProtocolFuture<'a, ConversationUnreadListResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.unread.list")) })
+    }
+
+    fn conversation_mark_read<'a>(&'a self, _request: ConversationMarkReadRequest) -> ProtocolFuture<'a, ConversationMarkReadResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.markRead")) })
+    }
+
     fn conversation_list<'a>(&'a self, _request: ConversationListRequest) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async { Err(method_not_implemented("conversation.list")) })
+    }
+
+    fn conversation_search<'a>(&'a self, _request: ConversationSearchRequest) -> ProtocolFuture<'a, ConversationSearchResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.search")) })
+    }
+
+    fn conversation_get<'a>(&'a self, _request: ConversationGetRequest) -> ProtocolFuture<'a, ConversationGetResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.get")) })
+    }
+
+    fn conversation_acquire_interaction<'a>(&'a self, _request: ConversationAcquireInteractionRequest) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.acquireInteraction")) })
+    }
+
+    fn conversation_create<'a>(&'a self, _request: ConversationCreateRequest) -> ProtocolFuture<'a, ConversationCreateResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.create")) })
     }
 
     fn project_list<'a>(&'a self, _request: ProjectListRequest) -> ProtocolFuture<'a, ProjectListResponse> {
@@ -2172,22 +2156,6 @@ pub trait ProtocolServer: Send + Sync {
         Box::pin(async { Err(method_not_implemented("project.delete")) })
     }
 
-    fn conversation_search<'a>(&'a self, _request: ConversationSearchRequest) -> ProtocolFuture<'a, ConversationSearchResponse> {
-        Box::pin(async { Err(method_not_implemented("conversation.search")) })
-    }
-
-    fn conversation_get<'a>(&'a self, _request: ConversationGetRequest) -> ProtocolFuture<'a, ConversationGetResponse> {
-        Box::pin(async { Err(method_not_implemented("conversation.get")) })
-    }
-
-    fn conversation_acquire_interaction<'a>(&'a self, _request: ConversationAcquireInteractionRequest) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
-        Box::pin(async { Err(method_not_implemented("conversation.acquireInteraction")) })
-    }
-
-    fn conversation_create<'a>(&'a self, _request: ConversationCreateRequest) -> ProtocolFuture<'a, ConversationCreateResponse> {
-        Box::pin(async { Err(method_not_implemented("conversation.create")) })
-    }
-
     fn turn_start<'a>(&'a self, _request: TurnStartRequest) -> ProtocolFuture<'a, TurnStartResponse> {
         Box::pin(async { Err(method_not_implemented("turn.start")) })
     }
@@ -2202,10 +2170,6 @@ pub trait ProtocolServer: Send + Sync {
 
     fn approval_resolve<'a>(&'a self, _request: ApprovalResolveRequest) -> ProtocolFuture<'a, ApprovalResolveResponse> {
         Box::pin(async { Err(method_not_implemented("approval.resolve")) })
-    }
-
-    fn provider_shutdown<'a>(&'a self, _request: ProviderShutdownRequest) -> ProtocolFuture<'a, ProviderShutdownResponse> {
-        Box::pin(async { Err(method_not_implemented("provider.shutdown")) })
     }
 
     fn event_subscribe<'a>(&'a self, _request: EventSubscribeRequest) -> ProtocolFuture<'a, EventSubscribeResponse> {
@@ -2232,56 +2196,6 @@ fn method_not_implemented(method: &str) -> ProtocolError {
 
 pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolRequest) -> JsonRpcResponse {
     match request {
-        ProtocolRequest::InstanceReleaseControl { jsonrpc, id, params } => {
-            let response = match server.instance_release_control(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationReleaseInteraction { jsonrpc, id, params } => {
-            let response = match server.conversation_release_interaction(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationActiveList { jsonrpc, id, params } => {
-            let response = match server.conversation_active_list(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationUnreadList { jsonrpc, id, params } => {
-            let response = match server.conversation_unread_list(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationMarkRead { jsonrpc, id, params } => {
-            let response = match server.conversation_mark_read(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
         ProtocolRequest::ProviderPing { jsonrpc, id, params } => {
             let response = match server.provider_ping(params).await {
                 Ok(result) => match serde_json::to_value(result) {
@@ -2312,8 +2226,8 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
             };
             JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
-        ProtocolRequest::RuntimeGetInstalled { jsonrpc, id, params } => {
-            let response = match server.runtime_get_installed(params).await {
+        ProtocolRequest::ProviderShutdown { jsonrpc, id, params } => {
+            let response = match server.provider_shutdown(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -2322,8 +2236,8 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
             };
             JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
-        ProtocolRequest::RuntimeSelect { jsonrpc, id, params } => {
-            let response = match server.runtime_select(params).await {
+        ProtocolRequest::InstanceReleaseControl { jsonrpc, id, params } => {
+            let response = match server.instance_release_control(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -2382,8 +2296,108 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
             };
             JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
+        ProtocolRequest::RuntimeGetInstalled { jsonrpc, id, params } => {
+            let response = match server.runtime_get_installed(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::RuntimeSelect { jsonrpc, id, params } => {
+            let response = match server.runtime_select(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationReleaseInteraction { jsonrpc, id, params } => {
+            let response = match server.conversation_release_interaction(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationActiveList { jsonrpc, id, params } => {
+            let response = match server.conversation_active_list(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationUnreadList { jsonrpc, id, params } => {
+            let response = match server.conversation_unread_list(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationMarkRead { jsonrpc, id, params } => {
+            let response = match server.conversation_mark_read(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
         ProtocolRequest::ConversationList { jsonrpc, id, params } => {
             let response = match server.conversation_list(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationSearch { jsonrpc, id, params } => {
+            let response = match server.conversation_search(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationGet { jsonrpc, id, params } => {
+            let response = match server.conversation_get(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationAcquireInteraction { jsonrpc, id, params } => {
+            let response = match server.conversation_acquire_interaction(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationCreate { jsonrpc, id, params } => {
+            let response = match server.conversation_create(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -2442,46 +2456,6 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
             };
             JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
-        ProtocolRequest::ConversationSearch { jsonrpc, id, params } => {
-            let response = match server.conversation_search(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationGet { jsonrpc, id, params } => {
-            let response = match server.conversation_get(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationAcquireInteraction { jsonrpc, id, params } => {
-            let response = match server.conversation_acquire_interaction(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationCreate { jsonrpc, id, params } => {
-            let response = match server.conversation_create(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
         ProtocolRequest::TurnStart { jsonrpc, id, params } => {
             let response = match server.turn_start(params).await {
                 Ok(result) => match serde_json::to_value(result) {
@@ -2514,16 +2488,6 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
         },
         ProtocolRequest::ApprovalResolve { jsonrpc, id, params } => {
             let response = match server.approval_resolve(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ProviderShutdown { jsonrpc, id, params } => {
-            let response = match server.provider_shutdown(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -2609,46 +2573,6 @@ impl<T> ProtocolClient<T> {
 }
 
 impl<T: ProtocolTransport> ProtocolClient<T> {
-    pub fn instance_release_control<'a>(&'a self, request: InstanceReleaseControlRequest) -> ProtocolFuture<'a, InstanceReleaseControlResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::InstanceReleaseControl, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_release_interaction<'a>(&'a self, request: ConversationReleaseInteractionRequest) -> ProtocolFuture<'a, ConversationReleaseInteractionResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationReleaseInteraction, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_active_list<'a>(&'a self, request: ConversationActiveListRequest) -> ProtocolFuture<'a, ConversationActiveListResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationActiveList, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_unread_list<'a>(&'a self, request: ConversationUnreadListRequest) -> ProtocolFuture<'a, ConversationUnreadListResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationUnreadList, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_mark_read<'a>(&'a self, request: ConversationMarkReadRequest) -> ProtocolFuture<'a, ConversationMarkReadResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationMarkRead, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
     pub fn provider_ping<'a>(&'a self, request: ProviderPingRequest) -> ProtocolFuture<'a, ProviderPingResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
@@ -2673,18 +2597,18 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         })
     }
 
-    pub fn runtime_get_installed<'a>(&'a self, request: RuntimeGetInstalledRequest) -> ProtocolFuture<'a, RuntimeGetInstalledResponse> {
+    pub fn provider_shutdown<'a>(&'a self, request: ProviderShutdownRequest) -> ProtocolFuture<'a, ProviderShutdownResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::RuntimeGetInstalled, params).await?;
+            let result = self.transport.request(ProtocolMethod::ProviderShutdown, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
 
-    pub fn runtime_select<'a>(&'a self, request: RuntimeSelectRequest) -> ProtocolFuture<'a, RuntimeSelectResponse> {
+    pub fn instance_release_control<'a>(&'a self, request: InstanceReleaseControlRequest) -> ProtocolFuture<'a, InstanceReleaseControlResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::RuntimeSelect, params).await?;
+            let result = self.transport.request(ProtocolMethod::InstanceReleaseControl, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
@@ -2729,10 +2653,90 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         })
     }
 
+    pub fn runtime_get_installed<'a>(&'a self, request: RuntimeGetInstalledRequest) -> ProtocolFuture<'a, RuntimeGetInstalledResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::RuntimeGetInstalled, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn runtime_select<'a>(&'a self, request: RuntimeSelectRequest) -> ProtocolFuture<'a, RuntimeSelectResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::RuntimeSelect, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_release_interaction<'a>(&'a self, request: ConversationReleaseInteractionRequest) -> ProtocolFuture<'a, ConversationReleaseInteractionResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationReleaseInteraction, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_active_list<'a>(&'a self, request: ConversationActiveListRequest) -> ProtocolFuture<'a, ConversationActiveListResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationActiveList, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_unread_list<'a>(&'a self, request: ConversationUnreadListRequest) -> ProtocolFuture<'a, ConversationUnreadListResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationUnreadList, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_mark_read<'a>(&'a self, request: ConversationMarkReadRequest) -> ProtocolFuture<'a, ConversationMarkReadResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationMarkRead, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
     pub fn conversation_list<'a>(&'a self, request: ConversationListRequest) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::ConversationList, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_search<'a>(&'a self, request: ConversationSearchRequest) -> ProtocolFuture<'a, ConversationSearchResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationSearch, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_get<'a>(&'a self, request: ConversationGetRequest) -> ProtocolFuture<'a, ConversationGetResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationGet, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_acquire_interaction<'a>(&'a self, request: ConversationAcquireInteractionRequest) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationAcquireInteraction, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_create<'a>(&'a self, request: ConversationCreateRequest) -> ProtocolFuture<'a, ConversationCreateResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationCreate, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
@@ -2777,38 +2781,6 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         })
     }
 
-    pub fn conversation_search<'a>(&'a self, request: ConversationSearchRequest) -> ProtocolFuture<'a, ConversationSearchResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationSearch, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_get<'a>(&'a self, request: ConversationGetRequest) -> ProtocolFuture<'a, ConversationGetResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationGet, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_acquire_interaction<'a>(&'a self, request: ConversationAcquireInteractionRequest) -> ProtocolFuture<'a, ConversationAcquireInteractionResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationAcquireInteraction, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_create<'a>(&'a self, request: ConversationCreateRequest) -> ProtocolFuture<'a, ConversationCreateResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationCreate, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
     pub fn turn_start<'a>(&'a self, request: TurnStartRequest) -> ProtocolFuture<'a, TurnStartResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
@@ -2837,14 +2809,6 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::ApprovalResolve, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn provider_shutdown<'a>(&'a self, request: ProviderShutdownRequest) -> ProtocolFuture<'a, ProviderShutdownResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ProviderShutdown, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

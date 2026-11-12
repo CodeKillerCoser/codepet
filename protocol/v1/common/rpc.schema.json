@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/common/rpc.schema.json",
+  "description": "两层协议共用的基础 JSON-RPC 请求、响应和通知信封；各服务按自己的方法与事件注册表组合载荷。",
+  "$defs": {
+    "Request": {
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0",
+          "description": "JSON-RPC 版本，固定为 2.0。"
+        },
+        "id": {
+          "$ref": "types.schema.json#/$defs/RequestId",
+          "description": "调用方提供的字符串请求 ID。"
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "description": "注册表中的方法或事件名。"
+        },
+        "params": {
+          "type": "object",
+          "description": "参数载荷，按注册方法的 request 或事件的 payload Schema 校验。"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false,
+      "description": "JSON-RPC 请求外层结构；方法/事件名及参数约束由注册表关联。"
+    },
+    "Event": {
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0",
+          "description": "JSON-RPC 版本，固定为 2.0。"
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "description": "注册表中的方法或事件名。"
+        },
+        "params": {
+          "type": "object",
+          "description": "参数载荷，按注册方法的 request 或事件的 payload Schema 校验。"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "method",
+        "params"
+      ],
+      "additionalProperties": false,
+      "description": "JSON-RPC 事件外层结构；方法/事件名及参数约束由注册表关联。"
+    },
+    "SuccessResponse": {
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0",
+          "description": "JSON-RPC 版本，固定为 2.0。"
+        },
+        "id": {
+          "$ref": "types.schema.json#/$defs/RequestId",
+          "description": "调用方提供的字符串请求 ID。"
+        },
+        "result": {
+          "description": "成功结果，必须按关联方法的 response Schema 进一步校验。"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "result"
+      ],
+      "additionalProperties": false,
+      "description": "成功响应；result 按关联方法校验。"
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "properties": {
+        "jsonrpc": {
+          "const": "2.0",
+          "description": "JSON-RPC 版本，固定为 2.0。"
+        },
+        "id": {
+          "oneOf": [
+            {
+              "$ref": "types.schema.json#/$defs/RequestId",
+              "description": "调用方提供的字符串请求 ID。"
+            },
+            {
+              "type": "null",
+              "description": "允许的结构分支 2。"
+            }
+          ],
+          "description": "请求关联 ID；正常响应回显，请求无法关联时错误响应可为 null。"
+        },
+        "error": {
+          "$ref": "types.schema.json#/$defs/RpcError",
+          "description": "JSON-RPC 错误对象，含数字错误码与可选业务诊断。"
+        }
+      },
+      "required": [
+        "jsonrpc",
+        "id",
+        "error"
+      ],
+      "additionalProperties": false,
+      "description": "失败响应；无法确定请求 ID 时可以为 null。"
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/Request",
+      "description": "允许的结构分支 1。"
+    },
+    {
+      "$ref": "#/$defs/Event",
+      "description": "允许的结构分支 2。"
+    },
+    {
+      "$ref": "#/$defs/SuccessResponse",
+      "description": "允许的结构分支 3。"
+    },
+    {
+      "$ref": "#/$defs/ErrorResponse",
+      "description": "允许的结构分支 4。"
+    }
+  ]
+}

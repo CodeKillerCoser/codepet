@@ -1,0 +1,343 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/gateway/input-queue/messages.schema.json",
+  "description": "gateway 的 input-queue 功能模块交互对象。",
+  "$defs": {
+    "InputQueueItemState": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "dispatching",
+        "steering",
+        "accepted",
+        "blocked",
+        "outcomeUnknown",
+        "withdrawn"
+      ],
+      "description": "InputQueueItemState 的允许取值；调用方必须按枚举处理。"
+    },
+    "InputQueueWithdrawKind": {
+      "type": "string",
+      "enum": [
+        "edit",
+        "delete"
+      ],
+      "description": "InputQueueWithdrawKind 的允许取值；调用方必须按枚举处理。"
+    },
+    "InputQueueItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "对象在所属集合内的稳定标识。"
+        },
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前连接内的心跳递增序号；响应原样回显。"
+        },
+        "input": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnInput",
+          "description": "引用 TurnInput 的结构与约束。"
+        },
+        "selection": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnSelection",
+          "description": "引用 TurnSelection 的结构与约束。"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "调用方据以构造请求的能力快照版本。"
+        },
+        "state": {
+          "$ref": "#/$defs/InputQueueItemState",
+          "description": "引用 InputQueueItemState 的结构与约束。"
+        },
+        "createdAt": {
+          "$ref": "../../common/types.schema.json#/$defs/TimestampMs",
+          "description": "引用 TimestampMs 的结构与约束。"
+        },
+        "targetTurn": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "errorCode": {
+          "type": "string",
+          "minLength": 1,
+          "description": "条目处理失败时的稳定错误码。"
+        },
+        "errorMessage": {
+          "type": "string",
+          "description": "条目处理失败时的说明。"
+        }
+      },
+      "required": [
+        "id",
+        "sequence",
+        "input",
+        "selection",
+        "capabilityRevision",
+        "state",
+        "createdAt"
+      ],
+      "additionalProperties": false,
+      "description": "InputQueueItem 的结构与约束。"
+    },
+    "InputQueueSnapshot": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "所属对象集合或能力快照的版本，用于变化检测；不等同于事件游标。"
+        },
+        "paused": {
+          "type": "boolean",
+          "description": "当前会话的输入队列是否暂停自动处理。"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InputQueueItem",
+            "description": "引用 InputQueueItem 的结构与约束。"
+          },
+          "description": "本次快照包含的条目，顺序由所属快照语义决定。"
+        },
+        "recoverableEdits": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/InputQueueItem",
+            "description": "引用 InputQueueItem 的结构与约束。"
+          },
+          "description": "可恢复到编辑器的输入条目集合。"
+        },
+        "snapshotCursor": {
+          "$ref": "../../common/types.schema.json#/$defs/EventCursor",
+          "description": "引用 EventCursor 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversation",
+        "revision",
+        "paused",
+        "items",
+        "recoverableEdits",
+        "snapshotCursor"
+      ],
+      "additionalProperties": false,
+      "description": "InputQueueSnapshot 的结构与约束。"
+    },
+    "InputQueueGetRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": false,
+      "description": "InputQueueGetRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "InputQueueEnqueueRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "clientRequestId": {
+          "$ref": "../../common/types.schema.json#/$defs/RequestId",
+          "description": "引用 RequestId 的结构与约束。"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "调用方据以构造请求的能力快照版本。"
+        },
+        "input": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnInput",
+          "description": "引用 TurnInput 的结构与约束。"
+        },
+        "selection": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnSelection",
+          "description": "引用 TurnSelection 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversation",
+        "clientRequestId",
+        "capabilityRevision",
+        "input",
+        "selection"
+      ],
+      "additionalProperties": false,
+      "description": "InputQueueEnqueueRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "InputQueueMutationResponse": {
+      "type": "object",
+      "properties": {
+        "item": {
+          "$ref": "#/$defs/InputQueueItem",
+          "description": "引用 InputQueueItem 的结构与约束。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "所属对象集合或能力快照的版本，用于变化检测；不等同于事件游标。"
+        }
+      },
+      "required": [
+        "item",
+        "revision"
+      ],
+      "additionalProperties": false,
+      "description": "InputQueueMutationResponse 的成功返回结果。"
+    },
+    "InputQueueWithdrawRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "itemId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "目标会话条目或队列条目的标识。"
+        },
+        "clientRequestId": {
+          "$ref": "../../common/types.schema.json#/$defs/RequestId",
+          "description": "引用 RequestId 的结构与约束。"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "调用方观察到的队列版本；Host 用它检查并发修改。"
+        },
+        "kind": {
+          "$ref": "#/$defs/InputQueueWithdrawKind",
+          "description": "引用 InputQueueWithdrawKind 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversation",
+        "itemId",
+        "clientRequestId",
+        "expectedRevision",
+        "kind"
+      ],
+      "additionalProperties": false,
+      "description": "InputQueueWithdrawRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "InputQueueSteerRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "itemId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "目标会话条目或队列条目的标识。"
+        },
+        "clientRequestId": {
+          "$ref": "../../common/types.schema.json#/$defs/RequestId",
+          "description": "引用 RequestId 的结构与约束。"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "调用方观察到的队列版本；Host 用它检查并发修改。"
+        },
+        "turn": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "调用方据以构造请求的能力快照版本。"
+        }
+      },
+      "required": [
+        "conversation",
+        "itemId",
+        "clientRequestId",
+        "expectedRevision",
+        "turn",
+        "capabilityRevision"
+      ],
+      "additionalProperties": false,
+      "description": "InputQueueSteerRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "InputQueueResumeRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "调用方观察到的队列版本；Host 用它检查并发修改。"
+        }
+      },
+      "required": [
+        "conversation",
+        "expectedRevision"
+      ],
+      "additionalProperties": false,
+      "description": "InputQueueResumeRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "InputQueueAcknowledgeEditRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "itemId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "目标会话条目或队列条目的标识。"
+        }
+      },
+      "required": [
+        "conversation",
+        "itemId"
+      ],
+      "additionalProperties": false,
+      "description": "InputQueueAcknowledgeEditRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "InputQueueChangedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "所属对象集合或能力快照的版本，用于变化检测；不等同于事件游标。"
+        }
+      },
+      "required": [
+        "conversation",
+        "revision"
+      ],
+      "additionalProperties": false,
+      "description": "InputQueueChangedEvent 的事件载荷。"
+    }
+  }
+}

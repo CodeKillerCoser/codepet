@@ -1,8 +1,8 @@
+use crate::conversation_state::ConversationStateStore;
 use crate::providers::manager::{
     HostUpdate, PluginManager, PluginRuntimeSnapshot, PluginRuntimeState,
     ProviderInstanceRuntimeSnapshot,
 };
-use crate::conversation_state::ConversationStateStore;
 use crate::recent_conversations::RecentSnapshots;
 use crate::{HostError, HostResult};
 use codepet_gateway_sdk as gateway;
@@ -21,8 +21,9 @@ const MAX_USAGE_DETAILS: usize = 8;
 const MAX_USAGE_DETAIL_BYTES: usize = 16 * 1024;
 const MAX_USAGE_DETAILS_BYTES: usize = 32 * 1024;
 
-mod recent;
 mod input_queue;
+mod provider_updates;
+mod recent;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RemoteHostIdentity {
@@ -79,13 +80,13 @@ impl TurnSendCache {
 
 struct GatewayEventState {
     sequence: u64,
-    events: VecDeque<gateway::ProtocolEvent>,
+    events: VecDeque<Arc<gateway::ProtocolEvent>>,
 }
 
 struct GatewayEventBus {
     capacity: usize,
     state: Mutex<GatewayEventState>,
-    sender: broadcast::Sender<gateway::ProtocolEvent>,
+    sender: broadcast::Sender<Arc<gateway::ProtocolEvent>>,
 }
 
 impl GatewayEventBus {
@@ -113,30 +114,48 @@ impl GatewayEventBus {
         &self,
         mut event: gateway::ProtocolEvent,
     ) -> Result<gateway::ProtocolEvent, gateway::ProtocolError> {
-        let assigned = {
+        let (assigned, evicted) = {
             let mut state = self.state.lock().map_err(|_| gateway_state_error())?;
-            let sequence = state.sequence.checked_add(1).ok_or_else(|| gateway::ProtocolError {
-                code: "gateway_event_cursor_exhausted".to_string(),
-                message: "Gateway event cursor is exhausted".to_string(),
-                retryable: false,
-                details: None,
-            })?;
+            let sequence = state
+                .sequence
+                .checked_add(1)
+                .ok_or_else(|| gateway::ProtocolError {
+                    code: "gateway_event_cursor_exhausted".to_string(),
+                    message: "Gateway event cursor is exhausted".to_string(),
+                    retryable: false,
+                    details: None,
+                })?;
             set_event_cursor(&mut event, event_cursor(sequence));
             state.sequence = sequence;
-            state.events.push_back(event.clone());
-            while state.events.len() > self.capacity {
-                state.events.pop_front();
-            }
-            event
+            let assigned = Arc::new(event);
+            state.events.push_back(assigned.clone());
+            let evicted = if state.events.len() > self.capacity {
+                state.events.pop_front()
+            } else {
+                None
+            };
+            // Cursor assignment, replay insertion and broadcast order are one short commit.
+            let _ = self.sender.send(assigned.clone());
+            (assigned, evicted)
         };
-        let _ = self.sender.send(assigned.clone());
-        Ok(assigned)
+        drop(evicted); // Heavy payload destruction is outside the shared cursor lock.
+        Ok((*assigned).clone())
     }
 
     fn replay(
         &self,
         after_cursor: Option<&str>,
     ) -> Result<Vec<gateway::ProtocolEvent>, gateway::ProtocolError> {
+        Ok(self
+            .replay_shared(after_cursor)?
+            .into_iter()
+            .map(|event| (*event).clone())
+            .collect())
+    }
+    fn replay_shared(
+        &self,
+        after_cursor: Option<&str>,
+    ) -> Result<Vec<Arc<gateway::ProtocolEvent>>, gateway::ProtocolError> {
         let state = self.state.lock().map_err(|_| gateway_state_error())?;
         let after_sequence = after_cursor.map(event_cursor_sequence).transpose()?;
         if let Some(after_sequence) = after_sequence {
@@ -148,7 +167,12 @@ impl GatewayEventBus {
                     state.sequence,
                 ));
             }
-            if let Some(oldest) = state.events.front().map(protocol_event_sequence).transpose()? {
+            if let Some(oldest) = state
+                .events
+                .front()
+                .map(|event| protocol_event_sequence(event))
+                .transpose()?
+            {
                 if after_sequence.saturating_add(1) < oldest {
                     return Err(cursor_error(
                         "event_replay_unavailable",
@@ -178,18 +202,21 @@ impl GatewayEventBus {
         after_cursor: Option<&str>,
     ) -> Result<GatewayEventSubscription, gateway::ProtocolError> {
         let receiver = self.sender.subscribe();
-        let replay = self.replay(after_cursor)?;
+        let replay = self.replay_shared(after_cursor)?;
         Ok(GatewayEventSubscription {
             replay: replay.into(),
             receiver,
-            last_sequence: after_cursor.map(event_cursor_sequence).transpose()?.unwrap_or(0),
+            last_sequence: after_cursor
+                .map(event_cursor_sequence)
+                .transpose()?
+                .unwrap_or(0),
         })
     }
 }
 
 pub struct GatewayEventSubscription {
-    replay: VecDeque<gateway::ProtocolEvent>,
-    receiver: broadcast::Receiver<gateway::ProtocolEvent>,
+    replay: VecDeque<Arc<gateway::ProtocolEvent>>,
+    receiver: broadcast::Receiver<Arc<gateway::ProtocolEvent>>,
     last_sequence: u64,
 }
 
@@ -203,9 +230,7 @@ impl GatewayEventSubscription {
                     Err(broadcast::error::RecvError::Lagged(skipped)) => {
                         return Err(gateway::ProtocolError {
                             code: "gateway_event_subscription_lagged".to_string(),
-                            message: format!(
-                                "Gateway event subscriber skipped {skipped} messages"
-                            ),
+                            message: format!("Gateway event subscriber skipped {skipped} messages"),
                             retryable: true,
                             details: None,
                         });
@@ -223,7 +248,7 @@ impl GatewayEventSubscription {
             let sequence = protocol_event_sequence(&event)?;
             if sequence > self.last_sequence {
                 self.last_sequence = sequence;
-                return Ok(event);
+                return Ok((*event).clone());
             }
         }
     }
@@ -239,14 +264,24 @@ pub struct ProviderGatewayService {
     remote_host_identity: Option<RemoteHostIdentity>,
     turn_sends: AsyncMutex<TurnSendCache>,
     input_queue: Option<crate::input_queue::InputQueueStore>,
-    queue_locks: Mutex<BTreeMap<(String,String), std::sync::Weak<AsyncMutex<()>>>>,
-    input_request_locks: Mutex<BTreeMap<(String, String, String, String), std::sync::Weak<AsyncMutex<()>>>>,
+    queue_locks: Mutex<BTreeMap<(String, String), std::sync::Weak<AsyncMutex<()>>>>,
+    input_request_locks:
+        Mutex<BTreeMap<(String, String, String, String), std::sync::Weak<AsyncMutex<()>>>>,
     queue_wake: Arc<tokio::sync::Notify>,
-    turn_steers: AsyncMutex<BTreeMap<(String,String,String), (gateway::TurnSteerRequest, Result<gateway::TurnSteerResponse,gateway::ProtocolError>)>>,
+    turn_steers: AsyncMutex<
+        BTreeMap<
+            (String, String, String),
+            (
+                gateway::TurnSteerRequest,
+                Result<gateway::TurnSteerResponse, gateway::ProtocolError>,
+            ),
+        >,
+    >,
     conversation_state: Arc<ConversationStateStore>,
     recent: Arc<Mutex<RecentSnapshots>>,
     recent_concurrency: tokio::sync::Semaphore,
-    recent_builds: AsyncMutex<BTreeMap<crate::recent_conversations::ViewKey, std::sync::Weak<AsyncMutex<()>>>>,
+    recent_builds:
+        AsyncMutex<BTreeMap<crate::recent_conversations::ViewKey, std::sync::Weak<AsyncMutex<()>>>>,
 }
 
 impl ProviderGatewayService {
@@ -552,7 +587,16 @@ impl ProviderGatewayService {
         };
         self.start_input_queue_worker();
         let service = Arc::downgrade(self);
+        let worker_service = service.clone();
         tokio::spawn(async move {
+            let mut workers = provider_updates::Workers::new(64, move |update| {
+                if let Some(service) = worker_service.upgrade() {
+                    if let Err(error) = service.forward_host_update(update) {
+                        eprintln!("Provider Gateway failed to process update: {error:?}");
+                    }
+                }
+            });
+            let mut failed = std::collections::BTreeSet::new();
             let mut tick = tokio::time::interval(std::time::Duration::from_millis(250));
             loop {
                 let update = tokio::select! {
@@ -562,24 +606,48 @@ impl ProviderGatewayService {
                 let Some(service) = service.upgrade() else {
                     return;
                 };
-                let result = match update {
-                    Some(update) => service.forward_host_update(update),
-                    None => service.publish_recent_invalidations(),
-                };
-                if let Err(error) = result {
-                    eprintln!("Provider Gateway failed to forward Host update: {error:?}");
+                match update {
+                    Some(update) => {
+                        let (plugin_id, generation) = match &update {
+                            HostUpdate::ProviderEvent {
+                                plugin_id,
+                                generation,
+                                ..
+                            } => (plugin_id.clone(), *generation),
+                            HostUpdate::PluginStateChanged { snapshot, .. }
+                            | HostUpdate::InstanceChanged { snapshot, .. } => {
+                                (snapshot.catalog.plugin_id.clone(), snapshot.generation)
+                            }
+                        };
+                        if failed.contains(&(plugin_id.clone(), generation)) {
+                            continue;
+                        }
+                        if workers.dispatch(&plugin_id, update).is_err() {
+                            failed.insert((plugin_id.clone(), generation));
+                            let manager = service.manager.clone();
+                            tokio::spawn(async move {
+                                manager.fail_event_delivery(&plugin_id, generation).await;
+                            });
+                        }
+                    }
+                    None => {
+                        if let Err(error) = service.publish_recent_invalidations() {
+                            eprintln!("Provider Gateway invalidation failed: {error:?}");
+                        }
+                    }
                 }
             }
         });
         true
     }
 
-    fn forward_host_update(
-        &self,
-        update: HostUpdate,
-    ) -> Result<(), gateway::ProtocolError> {
+    fn forward_host_update(&self, update: HostUpdate) -> Result<(), gateway::ProtocolError> {
         match update {
-            HostUpdate::ProviderEvent(event) => {
+            HostUpdate::ProviderEvent {
+                event,
+                permit: _permit,
+                ..
+            } => {
                 match &event {
                     provider::ProtocolEvent::EventConversationActiveChanged { params, .. } => {
                         self.invalidate_recent(&params.conversation.provider_instance_id)?;
@@ -598,7 +666,11 @@ impl ProviderGatewayService {
                         self.invalidate_recent(&params.conversation.resource.provider_id)?;
                     }
                     provider::ProtocolEvent::EventTurnUpserted { params, .. } => {
-                        if let Some(store)=&self.input_queue { store.observe_turn(&params.turn)?; self.publish_queue_changed(&params.turn.conversation)?; self.queue_wake.notify_one(); }
+                        if let Some(store) = &self.input_queue {
+                            store.observe_turn(&params.turn)?;
+                            self.publish_queue_changed(&params.turn.conversation)?;
+                            self.queue_wake.notify_one();
+                        }
                         self.invalidate_recent(&params.turn.conversation.provider_id)?;
                     }
                     _ => {}
@@ -610,16 +682,17 @@ impl ProviderGatewayService {
                 self.events.publish(self.map_provider_event(event))?;
                 if let Some((conversation, version)) = activity {
                     self.invalidate_recent(&conversation.provider_id)?;
-                    self.events.publish(gateway::ProtocolEvent::ConversationActivityChanged {
-                        jsonrpc: "2.0".to_string(),
-                        params: gateway::ProtocolEventParams {
-                            event_cursor: event_cursor(0),
-                            payload: gateway::ConversationActivityChangedEvent {
-                                conversation,
-                                activity_version: format!("activity-{version}"),
+                    self.events
+                        .publish(gateway::ProtocolEvent::ConversationActivityChanged {
+                            jsonrpc: "2.0".to_string(),
+                            params: gateway::ProtocolEventParams {
+                                event_cursor: event_cursor(0),
+                                payload: gateway::ConversationActivityChangedEvent {
+                                    conversation,
+                                    activity_version: format!("activity-{version}"),
+                                },
                             },
-                        },
-                    })?;
+                        })?;
                 }
             }
             HostUpdate::PluginStateChanged {
@@ -631,21 +704,26 @@ impl ProviderGatewayService {
                     for instance in &snapshot.instances {
                         let provider = gateway_provider(&snapshot, instance).summary;
                         if provider.runtime.status != gateway::ProviderStatus::Ready {
-                            for route in store.pause_provider(&provider.id)? { self.publish_queue_changed(&route)?; }
+                            for route in store.pause_provider(&provider.id)? {
+                                self.publish_queue_changed(&route)?;
+                            }
                         }
                     }
                 }
-                if !gateway_plugin_visible(&snapshot) { return Ok(()); }
+                if !gateway_plugin_visible(&snapshot) {
+                    return Ok(());
+                }
                 for instance in &snapshot.instances {
                     let provider = gateway_provider(&snapshot, instance).summary;
                     self.invalidate_recent(&provider.id)?;
-                    self.events.publish(gateway::ProtocolEvent::ProviderChanged {
-                        jsonrpc: "2.0".to_string(),
-                        params: gateway::ProtocolEventParams {
-                            event_cursor: event_cursor(0),
-                            payload: gateway::ProviderChangedEvent { provider },
-                        },
-                    })?;
+                    self.events
+                        .publish(gateway::ProtocolEvent::ProviderChanged {
+                            jsonrpc: "2.0".to_string(),
+                            params: gateway::ProtocolEventParams {
+                                event_cursor: event_cursor(0),
+                                payload: gateway::ProviderChangedEvent { provider },
+                            },
+                        })?;
                 }
             }
             HostUpdate::InstanceChanged {
@@ -658,34 +736,40 @@ impl ProviderGatewayService {
                     for instance in &snapshot.instances {
                         let provider = gateway_provider(&snapshot, instance).summary;
                         if provider.runtime.status != gateway::ProviderStatus::Ready {
-                            for route in store.pause_provider(&provider.id)? { self.publish_queue_changed(&route)?; }
+                            for route in store.pause_provider(&provider.id)? {
+                                self.publish_queue_changed(&route)?;
+                            }
                         }
                     }
                 }
-                if !gateway_plugin_visible(&snapshot) { return Ok(()); }
-                self.conversation_state.configure(self.manager.provider_state_paths().map_err(gateway_error)?).map_err(gateway_error)?;
+                if !gateway_plugin_visible(&snapshot) {
+                    return Ok(());
+                }
+                self.conversation_state
+                    .configure(self.manager.provider_state_paths().map_err(gateway_error)?)
+                    .map_err(gateway_error)?;
                 self.invalidate_recent(&instance_id)?;
                 let runtime = snapshot
                     .instances
                     .iter()
                     .find(|runtime| runtime.record.instance_id == instance_id)
-                    .ok_or_else(|| {
-                        gateway::ProtocolError {
-                            code: "unknown_provider_instance".to_string(),
-                            message: "Provider instance update targets an unknown manifest instance".to_string(),
-                            retryable: false,
-                            details: None,
-                        }
+                    .ok_or_else(|| gateway::ProtocolError {
+                        code: "unknown_provider_instance".to_string(),
+                        message: "Provider instance update targets an unknown manifest instance"
+                            .to_string(),
+                        retryable: false,
+                        details: None,
                     })?;
-                self.events.publish(gateway::ProtocolEvent::ProviderChanged {
-                    jsonrpc: "2.0".to_string(),
-                    params: gateway::ProtocolEventParams {
-                        event_cursor: event_cursor(0),
-                        payload: gateway::ProviderChangedEvent {
-                            provider: gateway_provider(&snapshot, runtime).summary,
+                self.events
+                    .publish(gateway::ProtocolEvent::ProviderChanged {
+                        jsonrpc: "2.0".to_string(),
+                        params: gateway::ProtocolEventParams {
+                            event_cursor: event_cursor(0),
+                            payload: gateway::ProviderChangedEvent {
+                                provider: gateway_provider(&snapshot, runtime).summary,
+                            },
                         },
-                    },
-                })?;
+                    })?;
             }
         }
         Ok(())

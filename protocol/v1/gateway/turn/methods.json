@@ -1,0 +1,44 @@
+{
+  "description": "gateway turn 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "turn.steer",
+      "direction": "clientToGateway",
+      "idempotency": "nonIdempotent",
+      "capability": "turn.steer",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/TurnSteerRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/TurnSteerResponse"
+      },
+      "description": "turn.steer 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "turn.send",
+      "direction": "clientToGateway",
+      "idempotency": "nonIdempotent",
+      "capability": "turn.send",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/TurnSendRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/TurnSendResponse"
+      },
+      "description": "turn.send 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "turn.interrupt",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "turn.interrupt",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/TurnInterruptRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/TurnInterruptResponse"
+      },
+      "description": "turn.interrupt 的调用定义；请求、结果与幂等性以本条目为准。"
+    }
+  ]
+}

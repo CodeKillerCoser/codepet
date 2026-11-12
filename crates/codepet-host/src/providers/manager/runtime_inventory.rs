@@ -45,7 +45,8 @@ impl PluginManager {
             (entry.generation, entry.runtime_inventory_revision)
         };
         // Keep the last known inventory through timeout, cancellation and RPC errors.
-        let result = process.client().runtime_get_installed(request).await.map_err(HostError::from);
+        let result = process.client().runtime_get_installed(request).await.map_err(HostError::from)
+            .and_then(|inventory| { validate_inventory(&inventory)?; Ok(inventory) });
         let (result, start) = {
             let mut plugins = self.inner.plugins.write().await;
             let entry = plugins.get_mut(plugin_id).ok_or_else(|| unknown_plugin(plugin_id))?;
@@ -98,8 +99,8 @@ fn stale_inventory_request() -> HostError {
 pub(super) fn install_inventory(entry: &mut PluginEntry, mut inventory: RuntimeGetInstalledResponse) -> bool {
     let previous = entry.runtime_inventory.as_ref();
     // Scanning/failed discovery is not evidence that the installed runtime vanished.
-    if inventory.scanning == Some(true)
-        || (inventory.scan_error.is_some() && inventory.harness_list.is_empty() && inventory.selected.is_none()) {
+    if inventory.selection_required != Some(false) && (inventory.scanning == Some(true)
+        || (inventory.scan_error.is_some() && inventory.harness_list.is_empty() && inventory.selected.is_none())) {
         if let Some(previous) = previous {
             inventory.harness_list = previous.harness_list.clone();
             inventory.selected = previous.selected.clone();
@@ -111,4 +112,28 @@ pub(super) fn install_inventory(entry: &mut PluginEntry, mut inventory: RuntimeG
     entry.runtime_inventory_diagnostic = None;
     entry.runtime_inventory_revision = entry.runtime_inventory_revision.wrapping_add(1);
     start
+}
+
+// An explicit self-managed response must not hide a scan failure or stale selection.
+pub(super) fn validate_inventory(inventory: &RuntimeGetInstalledResponse) -> HostResult<()> {
+    if inventory.selection_required == Some(false) && (!inventory.harness_list.is_empty()
+        || inventory.selected.is_some() || inventory.scanning == Some(true) || inventory.scan_error.is_some()) {
+        return Err(HostError::new("invalid_runtime_inventory", "Self-managed runtime inventory must be empty, completed, and error-free"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn explicit_self_management_is_distinct_from_a_missing_runtime() {
+        let old: RuntimeGetInstalledResponse = serde_json::from_value(serde_json::json!({"harnessList":[],"selected":null})).unwrap();
+        assert_eq!(old.selection_required, None);
+        validate_inventory(&old).unwrap();
+        let mut managed = old.clone(); managed.selection_required=Some(false);
+        validate_inventory(&managed).unwrap();
+        managed.scanning=Some(true); assert!(validate_inventory(&managed).is_err());
+        managed.scanning=None; managed.scan_error=Some("failed".into()); assert!(validate_inventory(&managed).is_err());
+    }
 }

@@ -36,7 +36,7 @@ void main() {
     }
   });
 
-  test('negative union fixtures are rejected by generated codecs', () {
+  test('negative schema fixtures are rejected by generated codecs', () {
     final index = fixture('index.json') as List;
     for (final rawEntry in index) {
       final entry = (rawEntry as Map).cast<String, Object?>();
@@ -49,6 +49,10 @@ void main() {
           'ToolInput' => ToolInput.fromJson(json),
           'ToolOutcome' => ToolOutcome.fromJson(json),
           'ConversationItem' => ConversationItem.fromJson(json),
+          'ConversationRecentRequest' => ConversationRecentRequest.fromJson(json),
+          'ConversationRecentResponse' => ConversationRecentResponse.fromJson(json),
+          'UsageQueryRequest' => UsageQueryRequest.fromJson(json),
+          'InputQueueSteerRequest' => InputQueueSteerRequest.fromJson(json),
           _ => throw StateError('unhandled negative fixture type: $name'),
         },
         throwsA(isA<ProtocolCodecException>()),
@@ -163,8 +167,11 @@ void main() {
   });
 
   test('method and event metadata come from the manifest IR', () {
-    expect(ProtocolMethod.values, hasLength(21));
-    expect(ProtocolEventName.values, hasLength(9));
+    final manifest = (jsonDecode(File('$fixtureRoot/../manifest.json').readAsStringSync()) as Map).cast<String, Object?>();
+    expect(ProtocolMethod.values.map((method) => method.wireName),
+        unorderedEquals((manifest['methods'] as List).map((method) => (method as Map)['name'])));
+    expect(ProtocolEventName.values.map((event) => event.wireName),
+        unorderedEquals((manifest['events'] as List).map((event) => (event as Map)['name'])));
     expect(ProtocolMethod.projectList.wireName, 'project.list');
     expect(ProtocolMethod.projectDelete.capability, GatewayCapability.projectDelete);
     expect(ProtocolEventName.projectChanged.wireName, 'project.changed');

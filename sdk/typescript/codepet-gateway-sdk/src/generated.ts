@@ -7,8 +7,8 @@ import type { ClientId, ConnectionStatus, Cursor, DeviceDescriptor, EventCursor,
 export type { ClientId, ConnectionStatus, Cursor, DeviceDescriptor, EventCursor, NativeResourceId, PageInfo, ProtocolError, ProtocolVersion, ProviderInstanceId, RequestId, RoutedResourceId, RpcError, TimestampMs, TraceContext, VersionRange } from "../../codepet-core-sdk/src/generated";
 
 export const PROTOCOL_VERSION = 1 as const;
-export const PROTOCOL_METHODS = ["turn.steer", "conversation.inputQueue.get", "conversation.inputQueue.enqueue", "conversation.inputQueue.withdraw", "conversation.inputQueue.steer", "conversation.inputQueue.resume", "conversation.inputQueue.acknowledgeEdit", "conversation.releaseInteraction", "conversation.recent", "protocol.ping", "protocol.handshake", "protocol.describe", "event.subscribe", "provider.list", "provider.describe", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.list", "conversation.search", "conversation.get", "conversation.markRead", "conversation.acquireInteraction", "conversation.resume", "conversation.create", "turn.send", "turn.interrupt", "approval.resolve", "codepet.usage.query"] as const;
-export const PROTOCOL_EVENTS = ["conversation.inputQueueChanged", "conversation.recentChanged", "project.changed", "provider.changed", "conversation.upserted", "conversation.itemUpserted", "conversation.activityChanged", "turn.upserted", "turn.outputDelta", "approval.requested", "approval.resolved"] as const;
+export const PROTOCOL_METHODS = ["protocol.ping", "protocol.handshake", "protocol.describe", "event.subscribe", "provider.list", "provider.describe", "project.list", "project.get", "project.create", "project.update", "project.delete", "conversation.releaseInteraction", "conversation.recent", "conversation.list", "conversation.search", "conversation.get", "conversation.markRead", "conversation.acquireInteraction", "conversation.resume", "conversation.create", "conversation.inputQueue.get", "conversation.inputQueue.enqueue", "conversation.inputQueue.withdraw", "conversation.inputQueue.steer", "conversation.inputQueue.resume", "conversation.inputQueue.acknowledgeEdit", "turn.steer", "turn.send", "turn.interrupt", "approval.resolve", "codepet.usage.query"] as const;
+export const PROTOCOL_EVENTS = ["provider.changed", "project.changed", "conversation.recentChanged", "conversation.upserted", "conversation.itemUpserted", "conversation.activityChanged", "conversation.inputQueueChanged", "turn.upserted", "turn.outputDelta", "approval.requested", "approval.resolved"] as const;
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -483,15 +483,6 @@ export interface UsageQueryResponse {
 }
 
 export interface ProtocolRequestMap {
-  "turn.steer": TurnSteerRequest;
-  "conversation.inputQueue.get": InputQueueGetRequest;
-  "conversation.inputQueue.enqueue": InputQueueEnqueueRequest;
-  "conversation.inputQueue.withdraw": InputQueueWithdrawRequest;
-  "conversation.inputQueue.steer": InputQueueSteerRequest;
-  "conversation.inputQueue.resume": InputQueueResumeRequest;
-  "conversation.inputQueue.acknowledgeEdit": InputQueueAcknowledgeEditRequest;
-  "conversation.releaseInteraction": ConversationReleaseInteractionRequest;
-  "conversation.recent": ConversationRecentRequest;
   "protocol.ping": PingRequest;
   "protocol.handshake": HandshakeRequest;
   "protocol.describe": ProtocolDescribeRequest;
@@ -503,6 +494,8 @@ export interface ProtocolRequestMap {
   "project.create": ProjectCreateRequest;
   "project.update": ProjectUpdateRequest;
   "project.delete": ProjectDeleteRequest;
+  "conversation.releaseInteraction": ConversationReleaseInteractionRequest;
+  "conversation.recent": ConversationRecentRequest;
   "conversation.list": ConversationListRequest;
   "conversation.search": ConversationSearchRequest;
   "conversation.get": ConversationGetRequest;
@@ -510,6 +503,13 @@ export interface ProtocolRequestMap {
   "conversation.acquireInteraction": ConversationAcquireInteractionRequest;
   "conversation.resume": ConversationResumeRequest;
   "conversation.create": ConversationCreateRequest;
+  "conversation.inputQueue.get": InputQueueGetRequest;
+  "conversation.inputQueue.enqueue": InputQueueEnqueueRequest;
+  "conversation.inputQueue.withdraw": InputQueueWithdrawRequest;
+  "conversation.inputQueue.steer": InputQueueSteerRequest;
+  "conversation.inputQueue.resume": InputQueueResumeRequest;
+  "conversation.inputQueue.acknowledgeEdit": InputQueueAcknowledgeEditRequest;
+  "turn.steer": TurnSteerRequest;
   "turn.send": TurnSendRequest;
   "turn.interrupt": TurnInterruptRequest;
   "approval.resolve": ApprovalResolveRequest;
@@ -517,15 +517,6 @@ export interface ProtocolRequestMap {
 }
 
 export interface ProtocolResponseMap {
-  "turn.steer": TurnSteerResponse;
-  "conversation.inputQueue.get": InputQueueSnapshot;
-  "conversation.inputQueue.enqueue": InputQueueMutationResponse;
-  "conversation.inputQueue.withdraw": InputQueueMutationResponse;
-  "conversation.inputQueue.steer": InputQueueMutationResponse;
-  "conversation.inputQueue.resume": InputQueueSnapshot;
-  "conversation.inputQueue.acknowledgeEdit": InputQueueSnapshot;
-  "conversation.releaseInteraction": ConversationReleaseInteractionResponse;
-  "conversation.recent": ConversationRecentResponse;
   "protocol.ping": PingResponse;
   "protocol.handshake": HandshakeResponse;
   "protocol.describe": ProtocolDescribeResponse;
@@ -537,6 +528,8 @@ export interface ProtocolResponseMap {
   "project.create": ProjectCreateResponse;
   "project.update": ProjectUpdateResponse;
   "project.delete": ProjectDeleteResponse;
+  "conversation.releaseInteraction": ConversationReleaseInteractionResponse;
+  "conversation.recent": ConversationRecentResponse;
   "conversation.list": ConversationListResponse;
   "conversation.search": ConversationSearchResponse;
   "conversation.get": ConversationGetResponse;
@@ -544,6 +537,13 @@ export interface ProtocolResponseMap {
   "conversation.acquireInteraction": ConversationAcquireInteractionResponse;
   "conversation.resume": ConversationResumeResponse;
   "conversation.create": ConversationCreateResponse;
+  "conversation.inputQueue.get": InputQueueSnapshot;
+  "conversation.inputQueue.enqueue": InputQueueMutationResponse;
+  "conversation.inputQueue.withdraw": InputQueueMutationResponse;
+  "conversation.inputQueue.steer": InputQueueMutationResponse;
+  "conversation.inputQueue.resume": InputQueueSnapshot;
+  "conversation.inputQueue.acknowledgeEdit": InputQueueSnapshot;
+  "turn.steer": TurnSteerResponse;
   "turn.send": TurnSendResponse;
   "turn.interrupt": TurnInterruptResponse;
   "approval.resolve": ApprovalResolveResponse;
@@ -551,13 +551,13 @@ export interface ProtocolResponseMap {
 }
 
 export interface ProtocolEventMap {
-  "conversation.inputQueueChanged": InputQueueChangedEvent;
-  "conversation.recentChanged": ConversationRecentChangedEvent;
-  "project.changed": ProjectChangedEvent;
   "provider.changed": ProviderChangedEvent;
+  "project.changed": ProjectChangedEvent;
+  "conversation.recentChanged": ConversationRecentChangedEvent;
   "conversation.upserted": ConversationUpsertedEvent;
   "conversation.itemUpserted": ConversationItemUpsertedEvent;
   "conversation.activityChanged": ConversationActivityChangedEvent;
+  "conversation.inputQueueChanged": InputQueueChangedEvent;
   "turn.upserted": TurnUpsertedEvent;
   "turn.outputDelta": TurnOutputDeltaEvent;
   "approval.requested": ApprovalRequestedEvent;
@@ -579,3 +579,7 @@ export type ProtocolEvent = {
 export interface ProtocolTransport {
   request<M extends ProtocolMethod>(method: M, params: ProtocolRequestMap[M]): Promise<ProtocolResponseMap[M]>;
 }
+
+export const GATEWAY_HEARTBEAT_INTERVAL_MS = 20000;
+export const GATEWAY_HEARTBEAT_TIMEOUT_MS = 60000;
+export const GATEWAY_HEARTBEAT_REQUEST_TIMEOUT_MS = 10000;

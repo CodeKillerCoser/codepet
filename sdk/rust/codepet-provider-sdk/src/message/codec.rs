@@ -1,8 +1,14 @@
 //! Provider JSON semantics and bounded mux encoding, injected into the transport core.
-use crate::generated::{decode_wire_message, JsonRpcInboundRequest, ProtocolDispatchLane, ProtocolError, ProviderWireMessage};
-use crate::transport::{error::TransportError, frame::{encode_header, ProviderFrameHeader, ProviderFrameEncoding, MAX_PROVIDER_FRAME_BYTES}, mux::{Class, MessageCodec}};
-use std::io::{Read, Write};
 use super::error;
+use crate::generated::{
+    decode_wire_message, JsonRpcInboundRequest, ProtocolDispatchLane, ProtocolError,
+    ProviderWireMessage,
+};
+use crate::transport::{
+    frame::MAX_PROVIDER_FRAME_BYTES,
+    mux::{Class, MessageCodec},
+};
+use std::io::Write;
 
 #[derive(Clone)]
 pub struct ProviderMessageCodec;
@@ -10,7 +16,18 @@ pub struct ProviderMessageCodec;
 impl MessageCodec for ProviderMessageCodec {
     type Message = ProviderWireMessage;
     type Error = ProtocolError;
-    const MIN_ENCODED_BYTES: usize = 10;
+    const MIN_ENCODED_BYTES: usize = crate::PROVIDER_FRAME_HEADER_BYTES;
+    fn encode_json(message: &ProviderWireMessage, cap: usize) -> Result<Vec<u8>, ProtocolError> {
+        let mut target = LimitedBuffer {
+            bytes: Vec::new(),
+            cap,
+        };
+        serialize(message, &mut target)?;
+        Ok(target.bytes)
+    }
+    fn decode_json(bytes: &[u8]) -> Result<ProviderWireMessage, ProtocolError> {
+        decode_wire_message(bytes).map_err(|e| error(e.error.message))
+    }
 
     fn classify(message: &ProviderWireMessage, small_message_bytes: usize) -> Result<Class, ProtocolError> {
         classify(message, small_message_bytes)
@@ -41,18 +58,17 @@ impl MessageCodec for ProviderMessageCodec {
     }
 }
 
-impl From<TransportError> for ProtocolError {
-    fn from(value: TransportError) -> Self { error(value.message) }
+struct LimitedBuffer {
+    bytes: Vec<u8>,
+    cap: usize,
 }
-
-struct LimitedBuffer { bytes: Vec<u8>, cap: usize }
 impl Write for LimitedBuffer {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         if bytes.len() > self.cap.saturating_sub(self.bytes.len()) { return Err(std::io::Error::other("message exceeds byte limit")); }
         if self.bytes.capacity() < self.bytes.len() + bytes.len() { let target = (self.bytes.len() + bytes.len()).next_power_of_two().min(self.cap); self.bytes.reserve_exact(target - self.bytes.len()); }
         self.bytes.extend_from_slice(bytes); Ok(bytes.len())
     }
-    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
 }
 fn serialize<W: Write>(message: &ProviderWireMessage, writer: W) -> Result<(), ProtocolError> {
     let version = match message {
@@ -76,37 +92,23 @@ fn classify(message: &ProviderWireMessage, small_message_bytes: usize) -> Result
     let mut prefix = LimitedBuffer { bytes: Vec::new(), cap: small_message_bytes - 10 };
     Ok(if serialize(message, &mut prefix).is_ok() { Class::Small } else { Class::Normal })
 }
-pub(super) fn encode(message: &ProviderWireMessage, encoded_cap: usize, decoded_cap: usize) -> Result<(Vec<u8>, usize), ProtocolError> {
-    let mut json = LimitedBuffer { bytes: Vec::new(), cap: decoded_cap };
-    serialize(message, &mut json)?;
-    let decoded = json.bytes.len();
-    let (encoding, payload) = if decoded >= 32*1024 {
-        let target = LimitedBuffer { bytes: Vec::new(), cap: encoded_cap - 10 };
-        let mut compressor = zstd::stream::write::Encoder::new(target, 1).map_err(error)?;
-        compressor.write_all(&json.bytes).map_err(error)?;
-        (ProviderFrameEncoding::ZstdJson, compressor.finish().map_err(error)?.bytes)
-    } else { (ProviderFrameEncoding::RawJson, std::mem::take(&mut json.bytes)) };
-    drop(json);
-    if payload.len() + 10 > encoded_cap { return Err(error("encoded message exceeds byte limit")); }
-    let payload_len = payload.len();
-    let mut frame = payload;
-    frame.reserve_exact(10); frame.resize(payload_len + 10, 0);
-    frame.copy_within(..payload_len, 10);
-    frame[..10].copy_from_slice(&encode_header(payload_len, encoding));
-    Ok((frame, decoded))
+pub(super) fn encode(
+    message: &ProviderWireMessage,
+    encoded_cap: usize,
+    decoded_cap: usize,
+) -> Result<(Vec<u8>, usize), ProtocolError> {
+    let json = ProviderMessageCodec::encode_json(message, decoded_cap)?;
+    codepet_transport::payload::encode(json, encoded_cap, decoded_cap, false).map_err(Into::into)
 }
 pub(super) fn decode(frame: &[u8], decoded: usize) -> Result<ProviderWireMessage, ProtocolError> {
-    let header: &[u8; 10] = frame.get(..10).ok_or_else(|| error("truncated frame"))?.try_into().unwrap();
-    let parsed = ProviderFrameHeader::decode(header, MAX_PROVIDER_FRAME_BYTES).map_err(error)?;
-    if parsed.payload_length + 10 != frame.len() { return Err(error("frame length mismatch")); }
-    let json = if frame[5] == 1 {
-        let mut decompressor = zstd::stream::read::Decoder::new(&frame[10..]).map_err(error)?.take(decoded as u64 + 1);
-        let mut target = LimitedBuffer { bytes: Vec::new(), cap: decoded };
-        std::io::copy(&mut decompressor, &mut target).map_err(error)?;
-        target.bytes
-    } else { frame[10..].to_vec() };
-    if json.len() != decoded { return Err(error("decoded length differs from reservation")); }
-    decode_wire_message(&json).map_err(|e| error(e.error.message))
+    let json = codepet_transport::payload::decode(
+        frame,
+        MAX_PROVIDER_FRAME_BYTES,
+        decoded,
+        Some(decoded),
+        false,
+    )?;
+    ProviderMessageCodec::decode_json(&json)
 }
 
 pub(crate) fn serialized_size(message: &ProviderWireMessage, cap: usize) -> Result<usize, ProtocolError> {
@@ -124,7 +126,9 @@ pub(crate) fn serialized_size(message: &ProviderWireMessage, cap: usize) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::generated::{JsonRpcResponse, JsonRpcResponsePayload, ProtocolMethod, ProtocolRequest};
+    use crate::generated::{
+        JsonRpcResponse, JsonRpcResponsePayload, ProtocolMethod, ProtocolRequest,
+    };
     fn reply(value: serde_json::Value) -> ProviderWireMessage {
         ProviderWireMessage::Response(JsonRpcResponse { jsonrpc: "2.0".into(), id: Some("test".into()), response: JsonRpcResponsePayload::Ok { result: value } })
     }
@@ -157,5 +161,4 @@ mod tests {
                 "request used the wrong dispatch reserve");
         }
     }
-
 }

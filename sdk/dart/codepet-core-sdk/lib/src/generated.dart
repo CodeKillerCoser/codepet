@@ -448,6 +448,221 @@ Object? encodeProviderPluginId(ProviderPluginId value, {String path = 'ProviderP
   return checked;
 }
 
+final class ProviderTransportHello {
+  factory ProviderTransportHello({
+    required List<int> supportedVersions,
+    required List<String> features,
+    required ProviderTransportLimits receive,
+  }) {
+    final validatedSupportedVersions = _freezeList<int>(supportedVersions, 'ProviderTransportHello.supportedVersions', (item, itemPath) => _integer(item, itemPath, minimum: 1), minItems: 1, encodeItem: (item) => item);
+    final validatedFeatures = _freezeList<String>(features, 'ProviderTransportHello.features', (item, itemPath) => _string(item, itemPath, minLength: 1), encodeItem: (item) => item);
+    final validatedReceive = receive;
+    return ProviderTransportHello._(
+      supportedVersions: validatedSupportedVersions,
+      features: validatedFeatures,
+      receive: validatedReceive,
+    );
+  }
+
+  ProviderTransportHello._({
+    required this.supportedVersions,
+    required this.features,
+    required this.receive,
+  });
+
+  final List<int> supportedVersions;
+  final List<String> features;
+  final ProviderTransportLimits receive;
+
+  factory ProviderTransportHello.fromJson(Object? value, {String path = 'ProviderTransportHello'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'supportedVersions', 'features', 'receive'}, path);
+    return ProviderTransportHello(
+      supportedVersions: _decodeList<int>(_required(json, 'supportedVersions', path), '$path.supportedVersions', (item, itemPath) => _integer(item, itemPath, minimum: 1), minItems: 1, encodeItem: (item) => item),
+      features: _decodeList<String>(_required(json, 'features', path), '$path.features', (item, itemPath) => _string(item, itemPath, minLength: 1), encodeItem: (item) => item),
+      receive: ProviderTransportLimits.fromJson(_required(json, 'receive', path), path: '$path.receive'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'supportedVersions': supportedVersions.map((item) => item).toList(growable: false),
+    'features': features.map((item) => item).toList(growable: false),
+    'receive': receive.toJson(),
+  };
+
+  @override
+  String toString() => 'ProviderTransportHello(supportedVersions: $supportedVersions, features: $features, receive: $receive)';
+}
+
+final class ProviderTransportLimits {
+  factory ProviderTransportLimits({
+    required int maxFramePayloadBytes,
+    required int maxEncodedMessageBytes,
+    required int maxDecodedMessageBytes,
+    required int receiveBudgetBytes,
+    required int normalStreams,
+    required int smallStreams,
+    required int controlStreams,
+    required int smallMessageBytes,
+    required int smallReceiveBudgetBytes,
+    required int controlMessageBytes,
+    required int controlReceiveBudgetBytes,
+    required int connectionWindowBytes,
+    required int idleTimeoutMs,
+    required int streamTimeoutMs,
+  }) {
+    final validatedMaxFramePayloadBytes = _integer(maxFramePayloadBytes, 'ProviderTransportLimits.maxFramePayloadBytes', minimum: 1024, maximum: 65536);
+    final validatedMaxEncodedMessageBytes = _integer(maxEncodedMessageBytes, 'ProviderTransportLimits.maxEncodedMessageBytes', minimum: 1024, maximum: 16777216);
+    final validatedMaxDecodedMessageBytes = _integer(maxDecodedMessageBytes, 'ProviderTransportLimits.maxDecodedMessageBytes', minimum: 1024, maximum: 134217728);
+    final validatedReceiveBudgetBytes = _integer(receiveBudgetBytes, 'ProviderTransportLimits.receiveBudgetBytes', minimum: 2048, maximum: 1073741824);
+    final validatedNormalStreams = _integer(normalStreams, 'ProviderTransportLimits.normalStreams', minimum: 1, maximum: 32);
+    final validatedSmallStreams = _integer(smallStreams, 'ProviderTransportLimits.smallStreams', minimum: 1, maximum: 16);
+    final validatedControlStreams = _integer(controlStreams, 'ProviderTransportLimits.controlStreams', minimum: 1, maximum: 8);
+    final validatedSmallMessageBytes = _integer(smallMessageBytes, 'ProviderTransportLimits.smallMessageBytes', minimum: 1024, maximum: 65536);
+    final validatedSmallReceiveBudgetBytes = _integer(smallReceiveBudgetBytes, 'ProviderTransportLimits.smallReceiveBudgetBytes', minimum: 2048, maximum: 16777216);
+    final validatedControlMessageBytes = _integer(controlMessageBytes, 'ProviderTransportLimits.controlMessageBytes', minimum: 1024, maximum: 16384);
+    final validatedControlReceiveBudgetBytes = _integer(controlReceiveBudgetBytes, 'ProviderTransportLimits.controlReceiveBudgetBytes', minimum: 2048, maximum: 1048576);
+    final validatedConnectionWindowBytes = _integer(connectionWindowBytes, 'ProviderTransportLimits.connectionWindowBytes', minimum: 33554432, maximum: 268435456);
+    final validatedIdleTimeoutMs = _integer(idleTimeoutMs, 'ProviderTransportLimits.idleTimeoutMs', minimum: 100, maximum: 120000);
+    final validatedStreamTimeoutMs = _integer(streamTimeoutMs, 'ProviderTransportLimits.streamTimeoutMs', minimum: 100, maximum: 300000);
+    return ProviderTransportLimits._(
+      maxFramePayloadBytes: validatedMaxFramePayloadBytes,
+      maxEncodedMessageBytes: validatedMaxEncodedMessageBytes,
+      maxDecodedMessageBytes: validatedMaxDecodedMessageBytes,
+      receiveBudgetBytes: validatedReceiveBudgetBytes,
+      normalStreams: validatedNormalStreams,
+      smallStreams: validatedSmallStreams,
+      controlStreams: validatedControlStreams,
+      smallMessageBytes: validatedSmallMessageBytes,
+      smallReceiveBudgetBytes: validatedSmallReceiveBudgetBytes,
+      controlMessageBytes: validatedControlMessageBytes,
+      controlReceiveBudgetBytes: validatedControlReceiveBudgetBytes,
+      connectionWindowBytes: validatedConnectionWindowBytes,
+      idleTimeoutMs: validatedIdleTimeoutMs,
+      streamTimeoutMs: validatedStreamTimeoutMs,
+    );
+  }
+
+  ProviderTransportLimits._({
+    required this.maxFramePayloadBytes,
+    required this.maxEncodedMessageBytes,
+    required this.maxDecodedMessageBytes,
+    required this.receiveBudgetBytes,
+    required this.normalStreams,
+    required this.smallStreams,
+    required this.controlStreams,
+    required this.smallMessageBytes,
+    required this.smallReceiveBudgetBytes,
+    required this.controlMessageBytes,
+    required this.controlReceiveBudgetBytes,
+    required this.connectionWindowBytes,
+    required this.idleTimeoutMs,
+    required this.streamTimeoutMs,
+  });
+
+  final int maxFramePayloadBytes;
+  final int maxEncodedMessageBytes;
+  final int maxDecodedMessageBytes;
+  final int receiveBudgetBytes;
+  final int normalStreams;
+  final int smallStreams;
+  final int controlStreams;
+  final int smallMessageBytes;
+  final int smallReceiveBudgetBytes;
+  final int controlMessageBytes;
+  final int controlReceiveBudgetBytes;
+  final int connectionWindowBytes;
+  final int idleTimeoutMs;
+  final int streamTimeoutMs;
+
+  factory ProviderTransportLimits.fromJson(Object? value, {String path = 'ProviderTransportLimits'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'maxFramePayloadBytes', 'maxEncodedMessageBytes', 'maxDecodedMessageBytes', 'receiveBudgetBytes', 'normalStreams', 'smallStreams', 'controlStreams', 'smallMessageBytes', 'smallReceiveBudgetBytes', 'controlMessageBytes', 'controlReceiveBudgetBytes', 'connectionWindowBytes', 'idleTimeoutMs', 'streamTimeoutMs'}, path);
+    return ProviderTransportLimits(
+      maxFramePayloadBytes: _integer(_required(json, 'maxFramePayloadBytes', path), '$path.maxFramePayloadBytes', minimum: 1024, maximum: 65536),
+      maxEncodedMessageBytes: _integer(_required(json, 'maxEncodedMessageBytes', path), '$path.maxEncodedMessageBytes', minimum: 1024, maximum: 16777216),
+      maxDecodedMessageBytes: _integer(_required(json, 'maxDecodedMessageBytes', path), '$path.maxDecodedMessageBytes', minimum: 1024, maximum: 134217728),
+      receiveBudgetBytes: _integer(_required(json, 'receiveBudgetBytes', path), '$path.receiveBudgetBytes', minimum: 2048, maximum: 1073741824),
+      normalStreams: _integer(_required(json, 'normalStreams', path), '$path.normalStreams', minimum: 1, maximum: 32),
+      smallStreams: _integer(_required(json, 'smallStreams', path), '$path.smallStreams', minimum: 1, maximum: 16),
+      controlStreams: _integer(_required(json, 'controlStreams', path), '$path.controlStreams', minimum: 1, maximum: 8),
+      smallMessageBytes: _integer(_required(json, 'smallMessageBytes', path), '$path.smallMessageBytes', minimum: 1024, maximum: 65536),
+      smallReceiveBudgetBytes: _integer(_required(json, 'smallReceiveBudgetBytes', path), '$path.smallReceiveBudgetBytes', minimum: 2048, maximum: 16777216),
+      controlMessageBytes: _integer(_required(json, 'controlMessageBytes', path), '$path.controlMessageBytes', minimum: 1024, maximum: 16384),
+      controlReceiveBudgetBytes: _integer(_required(json, 'controlReceiveBudgetBytes', path), '$path.controlReceiveBudgetBytes', minimum: 2048, maximum: 1048576),
+      connectionWindowBytes: _integer(_required(json, 'connectionWindowBytes', path), '$path.connectionWindowBytes', minimum: 33554432, maximum: 268435456),
+      idleTimeoutMs: _integer(_required(json, 'idleTimeoutMs', path), '$path.idleTimeoutMs', minimum: 100, maximum: 120000),
+      streamTimeoutMs: _integer(_required(json, 'streamTimeoutMs', path), '$path.streamTimeoutMs', minimum: 100, maximum: 300000),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'maxFramePayloadBytes': maxFramePayloadBytes,
+    'maxEncodedMessageBytes': maxEncodedMessageBytes,
+    'maxDecodedMessageBytes': maxDecodedMessageBytes,
+    'receiveBudgetBytes': receiveBudgetBytes,
+    'normalStreams': normalStreams,
+    'smallStreams': smallStreams,
+    'controlStreams': controlStreams,
+    'smallMessageBytes': smallMessageBytes,
+    'smallReceiveBudgetBytes': smallReceiveBudgetBytes,
+    'controlMessageBytes': controlMessageBytes,
+    'controlReceiveBudgetBytes': controlReceiveBudgetBytes,
+    'connectionWindowBytes': connectionWindowBytes,
+    'idleTimeoutMs': idleTimeoutMs,
+    'streamTimeoutMs': streamTimeoutMs,
+  };
+
+  @override
+  String toString() => 'ProviderTransportLimits(maxFramePayloadBytes: $maxFramePayloadBytes, maxEncodedMessageBytes: $maxEncodedMessageBytes, maxDecodedMessageBytes: $maxDecodedMessageBytes, receiveBudgetBytes: $receiveBudgetBytes, normalStreams: $normalStreams, smallStreams: $smallStreams, controlStreams: $controlStreams, smallMessageBytes: $smallMessageBytes, smallReceiveBudgetBytes: $smallReceiveBudgetBytes, controlMessageBytes: $controlMessageBytes, controlReceiveBudgetBytes: $controlReceiveBudgetBytes, connectionWindowBytes: $connectionWindowBytes, idleTimeoutMs: $idleTimeoutMs, streamTimeoutMs: $streamTimeoutMs)';
+}
+
+final class ProviderTransportSelection {
+  factory ProviderTransportSelection({
+    required int selectedVersion,
+    required List<String> features,
+    required ProviderTransportLimits receive,
+  }) {
+    final validatedSelectedVersion = _integer(selectedVersion, 'ProviderTransportSelection.selectedVersion', minimum: 1);
+    final validatedFeatures = _freezeList<String>(features, 'ProviderTransportSelection.features', (item, itemPath) => _string(item, itemPath, minLength: 1), encodeItem: (item) => item);
+    final validatedReceive = receive;
+    return ProviderTransportSelection._(
+      selectedVersion: validatedSelectedVersion,
+      features: validatedFeatures,
+      receive: validatedReceive,
+    );
+  }
+
+  ProviderTransportSelection._({
+    required this.selectedVersion,
+    required this.features,
+    required this.receive,
+  });
+
+  final int selectedVersion;
+  final List<String> features;
+  final ProviderTransportLimits receive;
+
+  factory ProviderTransportSelection.fromJson(Object? value, {String path = 'ProviderTransportSelection'}) {
+    final json = _object(value, path);
+    _expectKeys(json, const {'selectedVersion', 'features', 'receive'}, path);
+    return ProviderTransportSelection(
+      selectedVersion: _integer(_required(json, 'selectedVersion', path), '$path.selectedVersion', minimum: 1),
+      features: _decodeList<String>(_required(json, 'features', path), '$path.features', (item, itemPath) => _string(item, itemPath, minLength: 1), encodeItem: (item) => item),
+      receive: ProviderTransportLimits.fromJson(_required(json, 'receive', path), path: '$path.receive'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'selectedVersion': selectedVersion,
+    'features': features.map((item) => item).toList(growable: false),
+    'receive': receive.toJson(),
+  };
+
+  @override
+  String toString() => 'ProviderTransportSelection(selectedVersion: $selectedVersion, features: $features, receive: $receive)';
+}
+
 typedef RequestId = String;
 
 RequestId decodeRequestId(Object? value, {String path = 'RequestId'}) => _string(value, path, minLength: 1);

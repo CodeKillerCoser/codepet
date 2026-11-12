@@ -129,10 +129,10 @@ async fn host_recycles_only_capable_codex_while_claude_and_opencode_stay_ready()
 async fn exercise_builtins(recycle_only: bool) {
     let workspace = crates_workspace();
     build_builtin_provider_fixtures(&workspace);
+    // Match Cargo's actual target directory, including CARGO_TARGET_DIR overrides.
+    let target = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().parent().unwrap().to_path_buf();
     let executable = |name: &str| {
-        workspace
-            .join("target/debug")
-            .join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
+        target.join("debug").join(format!("{name}{}", std::env::consts::EXE_SUFFIX))
     };
     let providers = [
         (

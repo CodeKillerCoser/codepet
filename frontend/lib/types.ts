@@ -1,6 +1,6 @@
 export type AgentId = "codex" | "claude" | "qoder" | "cursor";
 export type AgentRuntimeProviderId = string;
-export type AgentRuntimeStatus = "loading" | "ready" | "unavailable" | "invalid-configured-executable";
+export type AgentRuntimeStatus = "not-required" | "loading" | "ready" | "unavailable" | "invalid-configured-executable";
 export type AgentRuntimeSource =
   | "configured"
   | "environment"

@@ -1,0 +1,29 @@
+{
+  "description": "gateway provider 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "provider.list",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ProviderListRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ProviderListResponse"
+      },
+      "description": "provider.list 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "provider.describe",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ProviderDescribeRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ProviderDescribeResponse"
+      },
+      "description": "provider.describe 的调用定义；请求、结果与幂等性以本条目为准。"
+    }
+  ]
+}

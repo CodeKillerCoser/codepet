@@ -878,24 +878,6 @@ pub enum ProtocolDispatchLane {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolMethod {
-    #[serde(rename = "turn.steer")]
-    TurnSteer,
-    #[serde(rename = "conversation.inputQueue.get")]
-    ConversationInputQueueGet,
-    #[serde(rename = "conversation.inputQueue.enqueue")]
-    ConversationInputQueueEnqueue,
-    #[serde(rename = "conversation.inputQueue.withdraw")]
-    ConversationInputQueueWithdraw,
-    #[serde(rename = "conversation.inputQueue.steer")]
-    ConversationInputQueueSteer,
-    #[serde(rename = "conversation.inputQueue.resume")]
-    ConversationInputQueueResume,
-    #[serde(rename = "conversation.inputQueue.acknowledgeEdit")]
-    ConversationInputQueueAcknowledgeEdit,
-    #[serde(rename = "conversation.releaseInteraction")]
-    ConversationReleaseInteraction,
-    #[serde(rename = "conversation.recent")]
-    ConversationRecent,
     #[serde(rename = "protocol.ping")]
     ProtocolPing,
     #[serde(rename = "protocol.handshake")]
@@ -918,6 +900,10 @@ pub enum ProtocolMethod {
     ProjectUpdate,
     #[serde(rename = "project.delete")]
     ProjectDelete,
+    #[serde(rename = "conversation.releaseInteraction")]
+    ConversationReleaseInteraction,
+    #[serde(rename = "conversation.recent")]
+    ConversationRecent,
     #[serde(rename = "conversation.list")]
     ConversationList,
     #[serde(rename = "conversation.search")]
@@ -932,6 +918,20 @@ pub enum ProtocolMethod {
     ConversationResume,
     #[serde(rename = "conversation.create")]
     ConversationCreate,
+    #[serde(rename = "conversation.inputQueue.get")]
+    ConversationInputQueueGet,
+    #[serde(rename = "conversation.inputQueue.enqueue")]
+    ConversationInputQueueEnqueue,
+    #[serde(rename = "conversation.inputQueue.withdraw")]
+    ConversationInputQueueWithdraw,
+    #[serde(rename = "conversation.inputQueue.steer")]
+    ConversationInputQueueSteer,
+    #[serde(rename = "conversation.inputQueue.resume")]
+    ConversationInputQueueResume,
+    #[serde(rename = "conversation.inputQueue.acknowledgeEdit")]
+    ConversationInputQueueAcknowledgeEdit,
+    #[serde(rename = "turn.steer")]
+    TurnSteer,
     #[serde(rename = "turn.send")]
     TurnSend,
     #[serde(rename = "turn.interrupt")]
@@ -945,15 +945,6 @@ pub enum ProtocolMethod {
 impl ProtocolMethod {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::TurnSteer => "turn.steer",
-            Self::ConversationInputQueueGet => "conversation.inputQueue.get",
-            Self::ConversationInputQueueEnqueue => "conversation.inputQueue.enqueue",
-            Self::ConversationInputQueueWithdraw => "conversation.inputQueue.withdraw",
-            Self::ConversationInputQueueSteer => "conversation.inputQueue.steer",
-            Self::ConversationInputQueueResume => "conversation.inputQueue.resume",
-            Self::ConversationInputQueueAcknowledgeEdit => "conversation.inputQueue.acknowledgeEdit",
-            Self::ConversationReleaseInteraction => "conversation.releaseInteraction",
-            Self::ConversationRecent => "conversation.recent",
             Self::ProtocolPing => "protocol.ping",
             Self::ProtocolHandshake => "protocol.handshake",
             Self::ProtocolDescribe => "protocol.describe",
@@ -965,6 +956,8 @@ impl ProtocolMethod {
             Self::ProjectCreate => "project.create",
             Self::ProjectUpdate => "project.update",
             Self::ProjectDelete => "project.delete",
+            Self::ConversationReleaseInteraction => "conversation.releaseInteraction",
+            Self::ConversationRecent => "conversation.recent",
             Self::ConversationList => "conversation.list",
             Self::ConversationSearch => "conversation.search",
             Self::ConversationGet => "conversation.get",
@@ -972,6 +965,13 @@ impl ProtocolMethod {
             Self::ConversationAcquireInteraction => "conversation.acquireInteraction",
             Self::ConversationResume => "conversation.resume",
             Self::ConversationCreate => "conversation.create",
+            Self::ConversationInputQueueGet => "conversation.inputQueue.get",
+            Self::ConversationInputQueueEnqueue => "conversation.inputQueue.enqueue",
+            Self::ConversationInputQueueWithdraw => "conversation.inputQueue.withdraw",
+            Self::ConversationInputQueueSteer => "conversation.inputQueue.steer",
+            Self::ConversationInputQueueResume => "conversation.inputQueue.resume",
+            Self::ConversationInputQueueAcknowledgeEdit => "conversation.inputQueue.acknowledgeEdit",
+            Self::TurnSteer => "turn.steer",
             Self::TurnSend => "turn.send",
             Self::TurnInterrupt => "turn.interrupt",
             Self::ApprovalResolve => "approval.resolve",
@@ -981,15 +981,6 @@ impl ProtocolMethod {
 
     pub const fn dispatch_lane(self) -> ProtocolDispatchLane {
         match self {
-            Self::TurnSteer => ProtocolDispatchLane::Normal,
-            Self::ConversationInputQueueGet => ProtocolDispatchLane::Normal,
-            Self::ConversationInputQueueEnqueue => ProtocolDispatchLane::Normal,
-            Self::ConversationInputQueueWithdraw => ProtocolDispatchLane::Normal,
-            Self::ConversationInputQueueSteer => ProtocolDispatchLane::Normal,
-            Self::ConversationInputQueueResume => ProtocolDispatchLane::Normal,
-            Self::ConversationInputQueueAcknowledgeEdit => ProtocolDispatchLane::Normal,
-            Self::ConversationReleaseInteraction => ProtocolDispatchLane::Normal,
-            Self::ConversationRecent => ProtocolDispatchLane::Normal,
             Self::ProtocolPing => ProtocolDispatchLane::Normal,
             Self::ProtocolHandshake => ProtocolDispatchLane::Normal,
             Self::ProtocolDescribe => ProtocolDispatchLane::Normal,
@@ -1001,6 +992,8 @@ impl ProtocolMethod {
             Self::ProjectCreate => ProtocolDispatchLane::Normal,
             Self::ProjectUpdate => ProtocolDispatchLane::Normal,
             Self::ProjectDelete => ProtocolDispatchLane::Normal,
+            Self::ConversationReleaseInteraction => ProtocolDispatchLane::Normal,
+            Self::ConversationRecent => ProtocolDispatchLane::Normal,
             Self::ConversationList => ProtocolDispatchLane::Normal,
             Self::ConversationSearch => ProtocolDispatchLane::Normal,
             Self::ConversationGet => ProtocolDispatchLane::Normal,
@@ -1008,6 +1001,13 @@ impl ProtocolMethod {
             Self::ConversationAcquireInteraction => ProtocolDispatchLane::Normal,
             Self::ConversationResume => ProtocolDispatchLane::Normal,
             Self::ConversationCreate => ProtocolDispatchLane::Normal,
+            Self::ConversationInputQueueGet => ProtocolDispatchLane::Normal,
+            Self::ConversationInputQueueEnqueue => ProtocolDispatchLane::Normal,
+            Self::ConversationInputQueueWithdraw => ProtocolDispatchLane::Normal,
+            Self::ConversationInputQueueSteer => ProtocolDispatchLane::Normal,
+            Self::ConversationInputQueueResume => ProtocolDispatchLane::Normal,
+            Self::ConversationInputQueueAcknowledgeEdit => ProtocolDispatchLane::Normal,
+            Self::TurnSteer => ProtocolDispatchLane::Normal,
             Self::TurnSend => ProtocolDispatchLane::Normal,
             Self::TurnInterrupt => ProtocolDispatchLane::Normal,
             Self::ApprovalResolve => ProtocolDispatchLane::Normal,
@@ -1017,15 +1017,6 @@ impl ProtocolMethod {
 
     pub const fn capability(self) -> Option<GatewayCapability> {
         match self {
-            Self::TurnSteer => Some(GatewayCapability::TurnSteer),
-            Self::ConversationInputQueueGet => Some(GatewayCapability::ConversationInputQueueGet),
-            Self::ConversationInputQueueEnqueue => Some(GatewayCapability::ConversationInputQueueEnqueue),
-            Self::ConversationInputQueueWithdraw => Some(GatewayCapability::ConversationInputQueueWithdraw),
-            Self::ConversationInputQueueSteer => Some(GatewayCapability::ConversationInputQueueSteer),
-            Self::ConversationInputQueueResume => Some(GatewayCapability::ConversationInputQueueResume),
-            Self::ConversationInputQueueAcknowledgeEdit => Some(GatewayCapability::ConversationInputQueueAcknowledgeEdit),
-            Self::ConversationReleaseInteraction => Some(GatewayCapability::ConversationReleaseInteraction),
-            Self::ConversationRecent => Some(GatewayCapability::ConversationRecent),
             Self::ProtocolPing => None,
             Self::ProtocolHandshake => None,
             Self::ProtocolDescribe => None,
@@ -1037,6 +1028,8 @@ impl ProtocolMethod {
             Self::ProjectCreate => Some(GatewayCapability::ProjectCreate),
             Self::ProjectUpdate => Some(GatewayCapability::ProjectUpdate),
             Self::ProjectDelete => Some(GatewayCapability::ProjectDelete),
+            Self::ConversationReleaseInteraction => Some(GatewayCapability::ConversationReleaseInteraction),
+            Self::ConversationRecent => Some(GatewayCapability::ConversationRecent),
             Self::ConversationList => Some(GatewayCapability::ConversationList),
             Self::ConversationSearch => Some(GatewayCapability::ConversationSearch),
             Self::ConversationGet => Some(GatewayCapability::ConversationGet),
@@ -1044,6 +1037,13 @@ impl ProtocolMethod {
             Self::ConversationAcquireInteraction => None,
             Self::ConversationResume => None,
             Self::ConversationCreate => Some(GatewayCapability::ConversationCreate),
+            Self::ConversationInputQueueGet => Some(GatewayCapability::ConversationInputQueueGet),
+            Self::ConversationInputQueueEnqueue => Some(GatewayCapability::ConversationInputQueueEnqueue),
+            Self::ConversationInputQueueWithdraw => Some(GatewayCapability::ConversationInputQueueWithdraw),
+            Self::ConversationInputQueueSteer => Some(GatewayCapability::ConversationInputQueueSteer),
+            Self::ConversationInputQueueResume => Some(GatewayCapability::ConversationInputQueueResume),
+            Self::ConversationInputQueueAcknowledgeEdit => Some(GatewayCapability::ConversationInputQueueAcknowledgeEdit),
+            Self::TurnSteer => Some(GatewayCapability::TurnSteer),
             Self::TurnSend => Some(GatewayCapability::TurnSend),
             Self::TurnInterrupt => Some(GatewayCapability::TurnInterrupt),
             Self::ApprovalResolve => Some(GatewayCapability::ApprovalResolve),
@@ -1057,15 +1057,6 @@ impl std::str::FromStr for ProtocolMethod {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "turn.steer" => Ok(Self::TurnSteer),
-            "conversation.inputQueue.get" => Ok(Self::ConversationInputQueueGet),
-            "conversation.inputQueue.enqueue" => Ok(Self::ConversationInputQueueEnqueue),
-            "conversation.inputQueue.withdraw" => Ok(Self::ConversationInputQueueWithdraw),
-            "conversation.inputQueue.steer" => Ok(Self::ConversationInputQueueSteer),
-            "conversation.inputQueue.resume" => Ok(Self::ConversationInputQueueResume),
-            "conversation.inputQueue.acknowledgeEdit" => Ok(Self::ConversationInputQueueAcknowledgeEdit),
-            "conversation.releaseInteraction" => Ok(Self::ConversationReleaseInteraction),
-            "conversation.recent" => Ok(Self::ConversationRecent),
             "protocol.ping" => Ok(Self::ProtocolPing),
             "protocol.handshake" => Ok(Self::ProtocolHandshake),
             "protocol.describe" => Ok(Self::ProtocolDescribe),
@@ -1077,6 +1068,8 @@ impl std::str::FromStr for ProtocolMethod {
             "project.create" => Ok(Self::ProjectCreate),
             "project.update" => Ok(Self::ProjectUpdate),
             "project.delete" => Ok(Self::ProjectDelete),
+            "conversation.releaseInteraction" => Ok(Self::ConversationReleaseInteraction),
+            "conversation.recent" => Ok(Self::ConversationRecent),
             "conversation.list" => Ok(Self::ConversationList),
             "conversation.search" => Ok(Self::ConversationSearch),
             "conversation.get" => Ok(Self::ConversationGet),
@@ -1084,6 +1077,13 @@ impl std::str::FromStr for ProtocolMethod {
             "conversation.acquireInteraction" => Ok(Self::ConversationAcquireInteraction),
             "conversation.resume" => Ok(Self::ConversationResume),
             "conversation.create" => Ok(Self::ConversationCreate),
+            "conversation.inputQueue.get" => Ok(Self::ConversationInputQueueGet),
+            "conversation.inputQueue.enqueue" => Ok(Self::ConversationInputQueueEnqueue),
+            "conversation.inputQueue.withdraw" => Ok(Self::ConversationInputQueueWithdraw),
+            "conversation.inputQueue.steer" => Ok(Self::ConversationInputQueueSteer),
+            "conversation.inputQueue.resume" => Ok(Self::ConversationInputQueueResume),
+            "conversation.inputQueue.acknowledgeEdit" => Ok(Self::ConversationInputQueueAcknowledgeEdit),
+            "turn.steer" => Ok(Self::TurnSteer),
             "turn.send" => Ok(Self::TurnSend),
             "turn.interrupt" => Ok(Self::TurnInterrupt),
             "approval.resolve" => Ok(Self::ApprovalResolve),
@@ -1095,20 +1095,20 @@ impl std::str::FromStr for ProtocolMethod {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolEventName {
-    #[serde(rename = "conversation.inputQueueChanged")]
-    ConversationInputQueueChanged,
-    #[serde(rename = "conversation.recentChanged")]
-    ConversationRecentChanged,
-    #[serde(rename = "project.changed")]
-    ProjectChanged,
     #[serde(rename = "provider.changed")]
     ProviderChanged,
+    #[serde(rename = "project.changed")]
+    ProjectChanged,
+    #[serde(rename = "conversation.recentChanged")]
+    ConversationRecentChanged,
     #[serde(rename = "conversation.upserted")]
     ConversationUpserted,
     #[serde(rename = "conversation.itemUpserted")]
     ConversationItemUpserted,
     #[serde(rename = "conversation.activityChanged")]
     ConversationActivityChanged,
+    #[serde(rename = "conversation.inputQueueChanged")]
+    ConversationInputQueueChanged,
     #[serde(rename = "turn.upserted")]
     TurnUpserted,
     #[serde(rename = "turn.outputDelta")]
@@ -1122,13 +1122,13 @@ pub enum ProtocolEventName {
 impl ProtocolEventName {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::ConversationInputQueueChanged => "conversation.inputQueueChanged",
-            Self::ConversationRecentChanged => "conversation.recentChanged",
-            Self::ProjectChanged => "project.changed",
             Self::ProviderChanged => "provider.changed",
+            Self::ProjectChanged => "project.changed",
+            Self::ConversationRecentChanged => "conversation.recentChanged",
             Self::ConversationUpserted => "conversation.upserted",
             Self::ConversationItemUpserted => "conversation.itemUpserted",
             Self::ConversationActivityChanged => "conversation.activityChanged",
+            Self::ConversationInputQueueChanged => "conversation.inputQueueChanged",
             Self::TurnUpserted => "turn.upserted",
             Self::TurnOutputDelta => "turn.outputDelta",
             Self::ApprovalRequested => "approval.requested",
@@ -1142,13 +1142,13 @@ impl std::str::FromStr for ProtocolEventName {
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
-            "conversation.inputQueueChanged" => Ok(Self::ConversationInputQueueChanged),
-            "conversation.recentChanged" => Ok(Self::ConversationRecentChanged),
-            "project.changed" => Ok(Self::ProjectChanged),
             "provider.changed" => Ok(Self::ProviderChanged),
+            "project.changed" => Ok(Self::ProjectChanged),
+            "conversation.recentChanged" => Ok(Self::ConversationRecentChanged),
             "conversation.upserted" => Ok(Self::ConversationUpserted),
             "conversation.itemUpserted" => Ok(Self::ConversationItemUpserted),
             "conversation.activityChanged" => Ok(Self::ConversationActivityChanged),
+            "conversation.inputQueueChanged" => Ok(Self::ConversationInputQueueChanged),
             "turn.upserted" => Ok(Self::TurnUpserted),
             "turn.outputDelta" => Ok(Self::TurnOutputDelta),
             "approval.requested" => Ok(Self::ApprovalRequested),
@@ -1168,60 +1168,6 @@ pub const DEFAULT_MAX_JSON_LINE_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ProtocolRequest {
-    #[serde(rename = "turn.steer")]
-    TurnSteer {
-        jsonrpc: String,
-        id: RequestId,
-        params: TurnSteerRequest,
-    },
-    #[serde(rename = "conversation.inputQueue.get")]
-    ConversationInputQueueGet {
-        jsonrpc: String,
-        id: RequestId,
-        params: InputQueueGetRequest,
-    },
-    #[serde(rename = "conversation.inputQueue.enqueue")]
-    ConversationInputQueueEnqueue {
-        jsonrpc: String,
-        id: RequestId,
-        params: InputQueueEnqueueRequest,
-    },
-    #[serde(rename = "conversation.inputQueue.withdraw")]
-    ConversationInputQueueWithdraw {
-        jsonrpc: String,
-        id: RequestId,
-        params: InputQueueWithdrawRequest,
-    },
-    #[serde(rename = "conversation.inputQueue.steer")]
-    ConversationInputQueueSteer {
-        jsonrpc: String,
-        id: RequestId,
-        params: InputQueueSteerRequest,
-    },
-    #[serde(rename = "conversation.inputQueue.resume")]
-    ConversationInputQueueResume {
-        jsonrpc: String,
-        id: RequestId,
-        params: InputQueueResumeRequest,
-    },
-    #[serde(rename = "conversation.inputQueue.acknowledgeEdit")]
-    ConversationInputQueueAcknowledgeEdit {
-        jsonrpc: String,
-        id: RequestId,
-        params: InputQueueAcknowledgeEditRequest,
-    },
-    #[serde(rename = "conversation.releaseInteraction")]
-    ConversationReleaseInteraction {
-        jsonrpc: String,
-        id: RequestId,
-        params: ConversationReleaseInteractionRequest,
-    },
-    #[serde(rename = "conversation.recent")]
-    ConversationRecent {
-        jsonrpc: String,
-        id: RequestId,
-        params: ConversationRecentRequest,
-    },
     #[serde(rename = "protocol.ping")]
     ProtocolPing {
         jsonrpc: String,
@@ -1288,6 +1234,18 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: ProjectDeleteRequest,
     },
+    #[serde(rename = "conversation.releaseInteraction")]
+    ConversationReleaseInteraction {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationReleaseInteractionRequest,
+    },
+    #[serde(rename = "conversation.recent")]
+    ConversationRecent {
+        jsonrpc: String,
+        id: RequestId,
+        params: ConversationRecentRequest,
+    },
     #[serde(rename = "conversation.list")]
     ConversationList {
         jsonrpc: String,
@@ -1330,6 +1288,48 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: ConversationCreateRequest,
     },
+    #[serde(rename = "conversation.inputQueue.get")]
+    ConversationInputQueueGet {
+        jsonrpc: String,
+        id: RequestId,
+        params: InputQueueGetRequest,
+    },
+    #[serde(rename = "conversation.inputQueue.enqueue")]
+    ConversationInputQueueEnqueue {
+        jsonrpc: String,
+        id: RequestId,
+        params: InputQueueEnqueueRequest,
+    },
+    #[serde(rename = "conversation.inputQueue.withdraw")]
+    ConversationInputQueueWithdraw {
+        jsonrpc: String,
+        id: RequestId,
+        params: InputQueueWithdrawRequest,
+    },
+    #[serde(rename = "conversation.inputQueue.steer")]
+    ConversationInputQueueSteer {
+        jsonrpc: String,
+        id: RequestId,
+        params: InputQueueSteerRequest,
+    },
+    #[serde(rename = "conversation.inputQueue.resume")]
+    ConversationInputQueueResume {
+        jsonrpc: String,
+        id: RequestId,
+        params: InputQueueResumeRequest,
+    },
+    #[serde(rename = "conversation.inputQueue.acknowledgeEdit")]
+    ConversationInputQueueAcknowledgeEdit {
+        jsonrpc: String,
+        id: RequestId,
+        params: InputQueueAcknowledgeEditRequest,
+    },
+    #[serde(rename = "turn.steer")]
+    TurnSteer {
+        jsonrpc: String,
+        id: RequestId,
+        params: TurnSteerRequest,
+    },
     #[serde(rename = "turn.send")]
     TurnSend {
         jsonrpc: String,
@@ -1364,51 +1364,6 @@ impl ProtocolRequest {
     ) -> Result<Self, ProtocolError> {
         let jsonrpc = "2.0".to_string();
         match method {
-            ProtocolMethod::TurnSteer => Ok(Self::TurnSteer {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode turn.steer request params", error))?,
-            }),
-            ProtocolMethod::ConversationInputQueueGet => Ok(Self::ConversationInputQueueGet {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.inputQueue.get request params", error))?,
-            }),
-            ProtocolMethod::ConversationInputQueueEnqueue => Ok(Self::ConversationInputQueueEnqueue {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.inputQueue.enqueue request params", error))?,
-            }),
-            ProtocolMethod::ConversationInputQueueWithdraw => Ok(Self::ConversationInputQueueWithdraw {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.inputQueue.withdraw request params", error))?,
-            }),
-            ProtocolMethod::ConversationInputQueueSteer => Ok(Self::ConversationInputQueueSteer {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.inputQueue.steer request params", error))?,
-            }),
-            ProtocolMethod::ConversationInputQueueResume => Ok(Self::ConversationInputQueueResume {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.inputQueue.resume request params", error))?,
-            }),
-            ProtocolMethod::ConversationInputQueueAcknowledgeEdit => Ok(Self::ConversationInputQueueAcknowledgeEdit {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.inputQueue.acknowledgeEdit request params", error))?,
-            }),
-            ProtocolMethod::ConversationReleaseInteraction => Ok(Self::ConversationReleaseInteraction {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.releaseInteraction request params", error))?,
-            }),
-            ProtocolMethod::ConversationRecent => Ok(Self::ConversationRecent {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.recent request params", error))?,
-            }),
             ProtocolMethod::ProtocolPing => Ok(Self::ProtocolPing {
                 jsonrpc,
                 id,
@@ -1464,6 +1419,16 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode project.delete request params", error))?,
             }),
+            ProtocolMethod::ConversationReleaseInteraction => Ok(Self::ConversationReleaseInteraction {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.releaseInteraction request params", error))?,
+            }),
+            ProtocolMethod::ConversationRecent => Ok(Self::ConversationRecent {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.recent request params", error))?,
+            }),
             ProtocolMethod::ConversationList => Ok(Self::ConversationList {
                 jsonrpc,
                 id,
@@ -1499,6 +1464,41 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.create request params", error))?,
             }),
+            ProtocolMethod::ConversationInputQueueGet => Ok(Self::ConversationInputQueueGet {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.inputQueue.get request params", error))?,
+            }),
+            ProtocolMethod::ConversationInputQueueEnqueue => Ok(Self::ConversationInputQueueEnqueue {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.inputQueue.enqueue request params", error))?,
+            }),
+            ProtocolMethod::ConversationInputQueueWithdraw => Ok(Self::ConversationInputQueueWithdraw {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.inputQueue.withdraw request params", error))?,
+            }),
+            ProtocolMethod::ConversationInputQueueSteer => Ok(Self::ConversationInputQueueSteer {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.inputQueue.steer request params", error))?,
+            }),
+            ProtocolMethod::ConversationInputQueueResume => Ok(Self::ConversationInputQueueResume {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.inputQueue.resume request params", error))?,
+            }),
+            ProtocolMethod::ConversationInputQueueAcknowledgeEdit => Ok(Self::ConversationInputQueueAcknowledgeEdit {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode conversation.inputQueue.acknowledgeEdit request params", error))?,
+            }),
+            ProtocolMethod::TurnSteer => Ok(Self::TurnSteer {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode turn.steer request params", error))?,
+            }),
             ProtocolMethod::TurnSend => Ok(Self::TurnSend {
                 jsonrpc,
                 id,
@@ -1524,15 +1524,6 @@ impl ProtocolRequest {
 
     pub fn jsonrpc_version(&self) -> &str {
         match self {
-            Self::TurnSteer { jsonrpc, .. } => jsonrpc,
-            Self::ConversationInputQueueGet { jsonrpc, .. } => jsonrpc,
-            Self::ConversationInputQueueEnqueue { jsonrpc, .. } => jsonrpc,
-            Self::ConversationInputQueueWithdraw { jsonrpc, .. } => jsonrpc,
-            Self::ConversationInputQueueSteer { jsonrpc, .. } => jsonrpc,
-            Self::ConversationInputQueueResume { jsonrpc, .. } => jsonrpc,
-            Self::ConversationInputQueueAcknowledgeEdit { jsonrpc, .. } => jsonrpc,
-            Self::ConversationReleaseInteraction { jsonrpc, .. } => jsonrpc,
-            Self::ConversationRecent { jsonrpc, .. } => jsonrpc,
             Self::ProtocolPing { jsonrpc, .. } => jsonrpc,
             Self::ProtocolHandshake { jsonrpc, .. } => jsonrpc,
             Self::ProtocolDescribe { jsonrpc, .. } => jsonrpc,
@@ -1544,6 +1535,8 @@ impl ProtocolRequest {
             Self::ProjectCreate { jsonrpc, .. } => jsonrpc,
             Self::ProjectUpdate { jsonrpc, .. } => jsonrpc,
             Self::ProjectDelete { jsonrpc, .. } => jsonrpc,
+            Self::ConversationReleaseInteraction { jsonrpc, .. } => jsonrpc,
+            Self::ConversationRecent { jsonrpc, .. } => jsonrpc,
             Self::ConversationList { jsonrpc, .. } => jsonrpc,
             Self::ConversationSearch { jsonrpc, .. } => jsonrpc,
             Self::ConversationGet { jsonrpc, .. } => jsonrpc,
@@ -1551,6 +1544,13 @@ impl ProtocolRequest {
             Self::ConversationAcquireInteraction { jsonrpc, .. } => jsonrpc,
             Self::ConversationResume { jsonrpc, .. } => jsonrpc,
             Self::ConversationCreate { jsonrpc, .. } => jsonrpc,
+            Self::ConversationInputQueueGet { jsonrpc, .. } => jsonrpc,
+            Self::ConversationInputQueueEnqueue { jsonrpc, .. } => jsonrpc,
+            Self::ConversationInputQueueWithdraw { jsonrpc, .. } => jsonrpc,
+            Self::ConversationInputQueueSteer { jsonrpc, .. } => jsonrpc,
+            Self::ConversationInputQueueResume { jsonrpc, .. } => jsonrpc,
+            Self::ConversationInputQueueAcknowledgeEdit { jsonrpc, .. } => jsonrpc,
+            Self::TurnSteer { jsonrpc, .. } => jsonrpc,
             Self::TurnSend { jsonrpc, .. } => jsonrpc,
             Self::TurnInterrupt { jsonrpc, .. } => jsonrpc,
             Self::ApprovalResolve { jsonrpc, .. } => jsonrpc,
@@ -1560,15 +1560,6 @@ impl ProtocolRequest {
 
     pub fn id(&self) -> &RequestId {
         match self {
-            Self::TurnSteer { id, .. } => id,
-            Self::ConversationInputQueueGet { id, .. } => id,
-            Self::ConversationInputQueueEnqueue { id, .. } => id,
-            Self::ConversationInputQueueWithdraw { id, .. } => id,
-            Self::ConversationInputQueueSteer { id, .. } => id,
-            Self::ConversationInputQueueResume { id, .. } => id,
-            Self::ConversationInputQueueAcknowledgeEdit { id, .. } => id,
-            Self::ConversationReleaseInteraction { id, .. } => id,
-            Self::ConversationRecent { id, .. } => id,
             Self::ProtocolPing { id, .. } => id,
             Self::ProtocolHandshake { id, .. } => id,
             Self::ProtocolDescribe { id, .. } => id,
@@ -1580,6 +1571,8 @@ impl ProtocolRequest {
             Self::ProjectCreate { id, .. } => id,
             Self::ProjectUpdate { id, .. } => id,
             Self::ProjectDelete { id, .. } => id,
+            Self::ConversationReleaseInteraction { id, .. } => id,
+            Self::ConversationRecent { id, .. } => id,
             Self::ConversationList { id, .. } => id,
             Self::ConversationSearch { id, .. } => id,
             Self::ConversationGet { id, .. } => id,
@@ -1587,6 +1580,13 @@ impl ProtocolRequest {
             Self::ConversationAcquireInteraction { id, .. } => id,
             Self::ConversationResume { id, .. } => id,
             Self::ConversationCreate { id, .. } => id,
+            Self::ConversationInputQueueGet { id, .. } => id,
+            Self::ConversationInputQueueEnqueue { id, .. } => id,
+            Self::ConversationInputQueueWithdraw { id, .. } => id,
+            Self::ConversationInputQueueSteer { id, .. } => id,
+            Self::ConversationInputQueueResume { id, .. } => id,
+            Self::ConversationInputQueueAcknowledgeEdit { id, .. } => id,
+            Self::TurnSteer { id, .. } => id,
             Self::TurnSend { id, .. } => id,
             Self::TurnInterrupt { id, .. } => id,
             Self::ApprovalResolve { id, .. } => id,
@@ -1596,15 +1596,6 @@ impl ProtocolRequest {
 
     pub const fn method(&self) -> ProtocolMethod {
         match self {
-            Self::TurnSteer { .. } => ProtocolMethod::TurnSteer,
-            Self::ConversationInputQueueGet { .. } => ProtocolMethod::ConversationInputQueueGet,
-            Self::ConversationInputQueueEnqueue { .. } => ProtocolMethod::ConversationInputQueueEnqueue,
-            Self::ConversationInputQueueWithdraw { .. } => ProtocolMethod::ConversationInputQueueWithdraw,
-            Self::ConversationInputQueueSteer { .. } => ProtocolMethod::ConversationInputQueueSteer,
-            Self::ConversationInputQueueResume { .. } => ProtocolMethod::ConversationInputQueueResume,
-            Self::ConversationInputQueueAcknowledgeEdit { .. } => ProtocolMethod::ConversationInputQueueAcknowledgeEdit,
-            Self::ConversationReleaseInteraction { .. } => ProtocolMethod::ConversationReleaseInteraction,
-            Self::ConversationRecent { .. } => ProtocolMethod::ConversationRecent,
             Self::ProtocolPing { .. } => ProtocolMethod::ProtocolPing,
             Self::ProtocolHandshake { .. } => ProtocolMethod::ProtocolHandshake,
             Self::ProtocolDescribe { .. } => ProtocolMethod::ProtocolDescribe,
@@ -1616,6 +1607,8 @@ impl ProtocolRequest {
             Self::ProjectCreate { .. } => ProtocolMethod::ProjectCreate,
             Self::ProjectUpdate { .. } => ProtocolMethod::ProjectUpdate,
             Self::ProjectDelete { .. } => ProtocolMethod::ProjectDelete,
+            Self::ConversationReleaseInteraction { .. } => ProtocolMethod::ConversationReleaseInteraction,
+            Self::ConversationRecent { .. } => ProtocolMethod::ConversationRecent,
             Self::ConversationList { .. } => ProtocolMethod::ConversationList,
             Self::ConversationSearch { .. } => ProtocolMethod::ConversationSearch,
             Self::ConversationGet { .. } => ProtocolMethod::ConversationGet,
@@ -1623,6 +1616,13 @@ impl ProtocolRequest {
             Self::ConversationAcquireInteraction { .. } => ProtocolMethod::ConversationAcquireInteraction,
             Self::ConversationResume { .. } => ProtocolMethod::ConversationResume,
             Self::ConversationCreate { .. } => ProtocolMethod::ConversationCreate,
+            Self::ConversationInputQueueGet { .. } => ProtocolMethod::ConversationInputQueueGet,
+            Self::ConversationInputQueueEnqueue { .. } => ProtocolMethod::ConversationInputQueueEnqueue,
+            Self::ConversationInputQueueWithdraw { .. } => ProtocolMethod::ConversationInputQueueWithdraw,
+            Self::ConversationInputQueueSteer { .. } => ProtocolMethod::ConversationInputQueueSteer,
+            Self::ConversationInputQueueResume { .. } => ProtocolMethod::ConversationInputQueueResume,
+            Self::ConversationInputQueueAcknowledgeEdit { .. } => ProtocolMethod::ConversationInputQueueAcknowledgeEdit,
+            Self::TurnSteer { .. } => ProtocolMethod::TurnSteer,
             Self::TurnSend { .. } => ProtocolMethod::TurnSend,
             Self::TurnInterrupt { .. } => ProtocolMethod::TurnInterrupt,
             Self::ApprovalResolve { .. } => ProtocolMethod::ApprovalResolve,
@@ -1643,25 +1643,20 @@ pub struct ProtocolEventParams<T> {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "method")]
 pub enum ProtocolEvent {
-    #[serde(rename = "conversation.inputQueueChanged")]
-    ConversationInputQueueChanged {
+    #[serde(rename = "provider.changed")]
+    ProviderChanged {
         jsonrpc: String,
-        params: ProtocolEventParams<InputQueueChangedEvent>,
-    },
-    #[serde(rename = "conversation.recentChanged")]
-    ConversationRecentChanged {
-        jsonrpc: String,
-        params: ProtocolEventParams<ConversationRecentChangedEvent>,
+        params: ProtocolEventParams<ProviderChangedEvent>,
     },
     #[serde(rename = "project.changed")]
     ProjectChanged {
         jsonrpc: String,
         params: ProtocolEventParams<ProjectChangedEvent>,
     },
-    #[serde(rename = "provider.changed")]
-    ProviderChanged {
+    #[serde(rename = "conversation.recentChanged")]
+    ConversationRecentChanged {
         jsonrpc: String,
-        params: ProtocolEventParams<ProviderChangedEvent>,
+        params: ProtocolEventParams<ConversationRecentChangedEvent>,
     },
     #[serde(rename = "conversation.upserted")]
     ConversationUpserted {
@@ -1677,6 +1672,11 @@ pub enum ProtocolEvent {
     ConversationActivityChanged {
         jsonrpc: String,
         params: ProtocolEventParams<ConversationActivityChangedEvent>,
+    },
+    #[serde(rename = "conversation.inputQueueChanged")]
+    ConversationInputQueueChanged {
+        jsonrpc: String,
+        params: ProtocolEventParams<InputQueueChangedEvent>,
     },
     #[serde(rename = "turn.upserted")]
     TurnUpserted {
@@ -1703,13 +1703,13 @@ pub enum ProtocolEvent {
 impl ProtocolEvent {
     pub fn jsonrpc_version(&self) -> &str {
         match self {
-            Self::ConversationInputQueueChanged { jsonrpc, .. } => jsonrpc,
-            Self::ConversationRecentChanged { jsonrpc, .. } => jsonrpc,
-            Self::ProjectChanged { jsonrpc, .. } => jsonrpc,
             Self::ProviderChanged { jsonrpc, .. } => jsonrpc,
+            Self::ProjectChanged { jsonrpc, .. } => jsonrpc,
+            Self::ConversationRecentChanged { jsonrpc, .. } => jsonrpc,
             Self::ConversationUpserted { jsonrpc, .. } => jsonrpc,
             Self::ConversationItemUpserted { jsonrpc, .. } => jsonrpc,
             Self::ConversationActivityChanged { jsonrpc, .. } => jsonrpc,
+            Self::ConversationInputQueueChanged { jsonrpc, .. } => jsonrpc,
             Self::TurnUpserted { jsonrpc, .. } => jsonrpc,
             Self::TurnOutputDelta { jsonrpc, .. } => jsonrpc,
             Self::ApprovalRequested { jsonrpc, .. } => jsonrpc,
@@ -1719,13 +1719,13 @@ impl ProtocolEvent {
 
     pub fn event_cursor(&self) -> &EventCursor {
         match self {
-            Self::ConversationInputQueueChanged { params, .. } => &params.event_cursor,
-            Self::ConversationRecentChanged { params, .. } => &params.event_cursor,
-            Self::ProjectChanged { params, .. } => &params.event_cursor,
             Self::ProviderChanged { params, .. } => &params.event_cursor,
+            Self::ProjectChanged { params, .. } => &params.event_cursor,
+            Self::ConversationRecentChanged { params, .. } => &params.event_cursor,
             Self::ConversationUpserted { params, .. } => &params.event_cursor,
             Self::ConversationItemUpserted { params, .. } => &params.event_cursor,
             Self::ConversationActivityChanged { params, .. } => &params.event_cursor,
+            Self::ConversationInputQueueChanged { params, .. } => &params.event_cursor,
             Self::TurnUpserted { params, .. } => &params.event_cursor,
             Self::TurnOutputDelta { params, .. } => &params.event_cursor,
             Self::ApprovalRequested { params, .. } => &params.event_cursor,
@@ -1735,11 +1735,7 @@ impl ProtocolEvent {
 
     pub fn set_event_cursor(&mut self, cursor: EventCursor) {
         match self {
-            Self::ConversationInputQueueChanged { jsonrpc, params } => {
-                *jsonrpc = "2.0".to_string();
-                params.event_cursor = cursor;
-            },
-            Self::ConversationRecentChanged { jsonrpc, params } => {
+            Self::ProviderChanged { jsonrpc, params } => {
                 *jsonrpc = "2.0".to_string();
                 params.event_cursor = cursor;
             },
@@ -1747,7 +1743,7 @@ impl ProtocolEvent {
                 *jsonrpc = "2.0".to_string();
                 params.event_cursor = cursor;
             },
-            Self::ProviderChanged { jsonrpc, params } => {
+            Self::ConversationRecentChanged { jsonrpc, params } => {
                 *jsonrpc = "2.0".to_string();
                 params.event_cursor = cursor;
             },
@@ -1760,6 +1756,10 @@ impl ProtocolEvent {
                 params.event_cursor = cursor;
             },
             Self::ConversationActivityChanged { jsonrpc, params } => {
+                *jsonrpc = "2.0".to_string();
+                params.event_cursor = cursor;
+            },
+            Self::ConversationInputQueueChanged { jsonrpc, params } => {
                 *jsonrpc = "2.0".to_string();
                 params.event_cursor = cursor;
             },
@@ -1882,42 +1882,6 @@ impl std::error::Error for JsonRpcInboundError {}
 pub type ProtocolFuture<'a, T> = Pin<Box<dyn Future<Output = Result<T, ProtocolError>> + Send + 'a>>;
 
 pub trait ProtocolServer: Send + Sync {
-    fn turn_steer<'a>(&'a self, _request: TurnSteerRequest) -> ProtocolFuture<'a, TurnSteerResponse> {
-        Box::pin(async { Err(method_not_implemented("turn.steer")) })
-    }
-
-    fn conversation_input_queue_get<'a>(&'a self, _request: InputQueueGetRequest) -> ProtocolFuture<'a, InputQueueSnapshot> {
-        Box::pin(async { Err(method_not_implemented("conversation.inputQueue.get")) })
-    }
-
-    fn conversation_input_queue_enqueue<'a>(&'a self, _request: InputQueueEnqueueRequest) -> ProtocolFuture<'a, InputQueueMutationResponse> {
-        Box::pin(async { Err(method_not_implemented("conversation.inputQueue.enqueue")) })
-    }
-
-    fn conversation_input_queue_withdraw<'a>(&'a self, _request: InputQueueWithdrawRequest) -> ProtocolFuture<'a, InputQueueMutationResponse> {
-        Box::pin(async { Err(method_not_implemented("conversation.inputQueue.withdraw")) })
-    }
-
-    fn conversation_input_queue_steer<'a>(&'a self, _request: InputQueueSteerRequest) -> ProtocolFuture<'a, InputQueueMutationResponse> {
-        Box::pin(async { Err(method_not_implemented("conversation.inputQueue.steer")) })
-    }
-
-    fn conversation_input_queue_resume<'a>(&'a self, _request: InputQueueResumeRequest) -> ProtocolFuture<'a, InputQueueSnapshot> {
-        Box::pin(async { Err(method_not_implemented("conversation.inputQueue.resume")) })
-    }
-
-    fn conversation_input_queue_acknowledge_edit<'a>(&'a self, _request: InputQueueAcknowledgeEditRequest) -> ProtocolFuture<'a, InputQueueSnapshot> {
-        Box::pin(async { Err(method_not_implemented("conversation.inputQueue.acknowledgeEdit")) })
-    }
-
-    fn conversation_release_interaction<'a>(&'a self, _request: ConversationReleaseInteractionRequest) -> ProtocolFuture<'a, ConversationReleaseInteractionResponse> {
-        Box::pin(async { Err(method_not_implemented("conversation.releaseInteraction")) })
-    }
-
-    fn conversation_recent<'a>(&'a self, _request: ConversationRecentRequest) -> ProtocolFuture<'a, ConversationRecentResponse> {
-        Box::pin(async { Err(method_not_implemented("conversation.recent")) })
-    }
-
     fn protocol_ping<'a>(&'a self, _request: PingRequest) -> ProtocolFuture<'a, PingResponse> {
         Box::pin(async { Err(method_not_implemented("protocol.ping")) })
     }
@@ -1962,6 +1926,14 @@ pub trait ProtocolServer: Send + Sync {
         Box::pin(async { Err(method_not_implemented("project.delete")) })
     }
 
+    fn conversation_release_interaction<'a>(&'a self, _request: ConversationReleaseInteractionRequest) -> ProtocolFuture<'a, ConversationReleaseInteractionResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.releaseInteraction")) })
+    }
+
+    fn conversation_recent<'a>(&'a self, _request: ConversationRecentRequest) -> ProtocolFuture<'a, ConversationRecentResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.recent")) })
+    }
+
     fn conversation_list<'a>(&'a self, _request: ConversationListRequest) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async { Err(method_not_implemented("conversation.list")) })
     }
@@ -1988,6 +1960,34 @@ pub trait ProtocolServer: Send + Sync {
 
     fn conversation_create<'a>(&'a self, _request: ConversationCreateRequest) -> ProtocolFuture<'a, ConversationCreateResponse> {
         Box::pin(async { Err(method_not_implemented("conversation.create")) })
+    }
+
+    fn conversation_input_queue_get<'a>(&'a self, _request: InputQueueGetRequest) -> ProtocolFuture<'a, InputQueueSnapshot> {
+        Box::pin(async { Err(method_not_implemented("conversation.inputQueue.get")) })
+    }
+
+    fn conversation_input_queue_enqueue<'a>(&'a self, _request: InputQueueEnqueueRequest) -> ProtocolFuture<'a, InputQueueMutationResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.inputQueue.enqueue")) })
+    }
+
+    fn conversation_input_queue_withdraw<'a>(&'a self, _request: InputQueueWithdrawRequest) -> ProtocolFuture<'a, InputQueueMutationResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.inputQueue.withdraw")) })
+    }
+
+    fn conversation_input_queue_steer<'a>(&'a self, _request: InputQueueSteerRequest) -> ProtocolFuture<'a, InputQueueMutationResponse> {
+        Box::pin(async { Err(method_not_implemented("conversation.inputQueue.steer")) })
+    }
+
+    fn conversation_input_queue_resume<'a>(&'a self, _request: InputQueueResumeRequest) -> ProtocolFuture<'a, InputQueueSnapshot> {
+        Box::pin(async { Err(method_not_implemented("conversation.inputQueue.resume")) })
+    }
+
+    fn conversation_input_queue_acknowledge_edit<'a>(&'a self, _request: InputQueueAcknowledgeEditRequest) -> ProtocolFuture<'a, InputQueueSnapshot> {
+        Box::pin(async { Err(method_not_implemented("conversation.inputQueue.acknowledgeEdit")) })
+    }
+
+    fn turn_steer<'a>(&'a self, _request: TurnSteerRequest) -> ProtocolFuture<'a, TurnSteerResponse> {
+        Box::pin(async { Err(method_not_implemented("turn.steer")) })
     }
 
     fn turn_send<'a>(&'a self, _request: TurnSendRequest) -> ProtocolFuture<'a, TurnSendResponse> {
@@ -2018,96 +2018,6 @@ fn method_not_implemented(method: &str) -> ProtocolError {
 
 pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolRequest) -> JsonRpcResponse {
     match request {
-        ProtocolRequest::TurnSteer { jsonrpc, id, params } => {
-            let response = match server.turn_steer(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationInputQueueGet { jsonrpc, id, params } => {
-            let response = match server.conversation_input_queue_get(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationInputQueueEnqueue { jsonrpc, id, params } => {
-            let response = match server.conversation_input_queue_enqueue(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationInputQueueWithdraw { jsonrpc, id, params } => {
-            let response = match server.conversation_input_queue_withdraw(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationInputQueueSteer { jsonrpc, id, params } => {
-            let response = match server.conversation_input_queue_steer(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationInputQueueResume { jsonrpc, id, params } => {
-            let response = match server.conversation_input_queue_resume(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationInputQueueAcknowledgeEdit { jsonrpc, id, params } => {
-            let response = match server.conversation_input_queue_acknowledge_edit(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationReleaseInteraction { jsonrpc, id, params } => {
-            let response = match server.conversation_release_interaction(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::ConversationRecent { jsonrpc, id, params } => {
-            let response = match server.conversation_recent(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
         ProtocolRequest::ProtocolPing { jsonrpc, id, params } => {
             let response = match server.protocol_ping(params).await {
                 Ok(result) => match serde_json::to_value(result) {
@@ -2218,6 +2128,26 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
             };
             JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
+        ProtocolRequest::ConversationReleaseInteraction { jsonrpc, id, params } => {
+            let response = match server.conversation_release_interaction(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationRecent { jsonrpc, id, params } => {
+            let response = match server.conversation_recent(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
         ProtocolRequest::ConversationList { jsonrpc, id, params } => {
             let response = match server.conversation_list(params).await {
                 Ok(result) => match serde_json::to_value(result) {
@@ -2280,6 +2210,76 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
         },
         ProtocolRequest::ConversationCreate { jsonrpc, id, params } => {
             let response = match server.conversation_create(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationInputQueueGet { jsonrpc, id, params } => {
+            let response = match server.conversation_input_queue_get(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationInputQueueEnqueue { jsonrpc, id, params } => {
+            let response = match server.conversation_input_queue_enqueue(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationInputQueueWithdraw { jsonrpc, id, params } => {
+            let response = match server.conversation_input_queue_withdraw(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationInputQueueSteer { jsonrpc, id, params } => {
+            let response = match server.conversation_input_queue_steer(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationInputQueueResume { jsonrpc, id, params } => {
+            let response = match server.conversation_input_queue_resume(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::ConversationInputQueueAcknowledgeEdit { jsonrpc, id, params } => {
+            let response = match server.conversation_input_queue_acknowledge_edit(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::TurnSteer { jsonrpc, id, params } => {
+            let response = match server.turn_steer(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -2375,78 +2375,6 @@ impl<T> ProtocolClient<T> {
 }
 
 impl<T: ProtocolTransport> ProtocolClient<T> {
-    pub fn turn_steer<'a>(&'a self, request: TurnSteerRequest) -> ProtocolFuture<'a, TurnSteerResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::TurnSteer, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_input_queue_get<'a>(&'a self, request: InputQueueGetRequest) -> ProtocolFuture<'a, InputQueueSnapshot> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationInputQueueGet, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_input_queue_enqueue<'a>(&'a self, request: InputQueueEnqueueRequest) -> ProtocolFuture<'a, InputQueueMutationResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationInputQueueEnqueue, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_input_queue_withdraw<'a>(&'a self, request: InputQueueWithdrawRequest) -> ProtocolFuture<'a, InputQueueMutationResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationInputQueueWithdraw, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_input_queue_steer<'a>(&'a self, request: InputQueueSteerRequest) -> ProtocolFuture<'a, InputQueueMutationResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationInputQueueSteer, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_input_queue_resume<'a>(&'a self, request: InputQueueResumeRequest) -> ProtocolFuture<'a, InputQueueSnapshot> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationInputQueueResume, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_input_queue_acknowledge_edit<'a>(&'a self, request: InputQueueAcknowledgeEditRequest) -> ProtocolFuture<'a, InputQueueSnapshot> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationInputQueueAcknowledgeEdit, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_release_interaction<'a>(&'a self, request: ConversationReleaseInteractionRequest) -> ProtocolFuture<'a, ConversationReleaseInteractionResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationReleaseInteraction, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn conversation_recent<'a>(&'a self, request: ConversationRecentRequest) -> ProtocolFuture<'a, ConversationRecentResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            let result = self.transport.request(ProtocolMethod::ConversationRecent, params).await?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
     pub fn protocol_ping<'a>(&'a self, request: PingRequest) -> ProtocolFuture<'a, PingResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
@@ -2535,6 +2463,22 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         })
     }
 
+    pub fn conversation_release_interaction<'a>(&'a self, request: ConversationReleaseInteractionRequest) -> ProtocolFuture<'a, ConversationReleaseInteractionResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationReleaseInteraction, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_recent<'a>(&'a self, request: ConversationRecentRequest) -> ProtocolFuture<'a, ConversationRecentResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationRecent, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
     pub fn conversation_list<'a>(&'a self, request: ConversationListRequest) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
@@ -2587,6 +2531,62 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             let result = self.transport.request(ProtocolMethod::ConversationCreate, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_input_queue_get<'a>(&'a self, request: InputQueueGetRequest) -> ProtocolFuture<'a, InputQueueSnapshot> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationInputQueueGet, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_input_queue_enqueue<'a>(&'a self, request: InputQueueEnqueueRequest) -> ProtocolFuture<'a, InputQueueMutationResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationInputQueueEnqueue, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_input_queue_withdraw<'a>(&'a self, request: InputQueueWithdrawRequest) -> ProtocolFuture<'a, InputQueueMutationResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationInputQueueWithdraw, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_input_queue_steer<'a>(&'a self, request: InputQueueSteerRequest) -> ProtocolFuture<'a, InputQueueMutationResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationInputQueueSteer, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_input_queue_resume<'a>(&'a self, request: InputQueueResumeRequest) -> ProtocolFuture<'a, InputQueueSnapshot> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationInputQueueResume, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn conversation_input_queue_acknowledge_edit<'a>(&'a self, request: InputQueueAcknowledgeEditRequest) -> ProtocolFuture<'a, InputQueueSnapshot> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::ConversationInputQueueAcknowledgeEdit, params).await?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn turn_steer<'a>(&'a self, request: TurnSteerRequest) -> ProtocolFuture<'a, TurnSteerResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            let result = self.transport.request(ProtocolMethod::TurnSteer, params).await?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
@@ -3016,3 +3016,7 @@ impl Default for JsonLineCodec {
         Self { max_frame_bytes: DEFAULT_MAX_JSON_LINE_BYTES }
     }
 }
+
+pub const GATEWAY_HEARTBEAT_INTERVAL_MS: u64 = 20000;
+pub const GATEWAY_HEARTBEAT_TIMEOUT_MS: u64 = 60000;
+pub const GATEWAY_HEARTBEAT_REQUEST_TIMEOUT_MS: u64 = 10000;

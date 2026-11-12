@@ -2,6 +2,8 @@
 
 ## 规则
 
+`runtime.getInstalled.selectionRequired` 缺省/true 表示由 Host 选择 Harness；false 表示依赖由 Provider 管理，必须搭配空清单、selected:null、非扫描且无 scanError。Host 不得根据 Provider 名称、语言、实例 Ready 或空清单推断此职责。桌面为 false 隐藏选择控件，但保持真实实例诊断；详情及回归路径见 [独立 Provider 运行时](../40-runbooks/provider-self-managed-runtime.md)。
+
 文件系统路径使用标准路径 API 构造、取父目录和取文件名，禁止拼接目录分隔符。Rust 使用 `Path` / `PathBuf`，Tauri 前端使用 `@tauri-apps/api/path`，Node 使用 `node:path`。URL、协议 ID 与文件系统路径分别处理；构造文件名不等于拼接目录。
 
 运行时可执行文件属于安装位置，配置、历史、缓存属于数据位置，两者不能互相推导。Provider 可以在自身配置 `env.CODEPET_RUNTIME_MIN_VERSION` 中声明最低 Harness semver；SDK 保留所有已检测安装及版本，对低于下限或无法比较的版本标注原因并拒绝选择。最低版本约束只适用于必要的基础协议，不得因缺少项目等可选能力而阻断整个连接；可选能力由实际探测决定是否广告。未配置下限时保持能力探测判断。满足最低版本仍需通过启动和实际接口探测，不能仅凭版本广告能力。CodePet wire 协议版本协商仍是独立契约。

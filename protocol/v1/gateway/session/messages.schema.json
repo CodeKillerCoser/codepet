@@ -1,0 +1,191 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/gateway/session/messages.schema.json",
+  "description": "gateway 的 session 功能模块交互对象。",
+  "$defs": {
+    "PingRequest": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前连接内的心跳递增序号；响应原样回显。"
+        }
+      },
+      "required": [
+        "sequence"
+      ],
+      "additionalProperties": false,
+      "description": "PingRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "PingResponse": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前连接内的心跳递增序号；响应原样回显。"
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "../provider/messages.schema.json#/$defs/ProviderSummary",
+            "description": "引用 ProviderSummary 的结构与约束。"
+          },
+          "description": "Host 当前可见的 Provider 摘要列表。"
+        }
+      },
+      "required": [
+        "sequence",
+        "providers"
+      ],
+      "additionalProperties": false,
+      "description": "PingResponse 的成功返回结果。"
+    },
+    "HandshakeRequest": {
+      "type": "object",
+      "properties": {
+        "clientId": {
+          "$ref": "../../common/types.schema.json#/$defs/ClientId",
+          "description": "引用 ClientId 的结构与约束。"
+        },
+        "device": {
+          "$ref": "../../common/types.schema.json#/$defs/DeviceDescriptor",
+          "description": "引用 DeviceDescriptor 的结构与约束。"
+        },
+        "clientVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "调用客户端的软件版本。"
+        },
+        "supportedVersions": {
+          "$ref": "../../common/types.schema.json#/$defs/VersionRange",
+          "description": "引用 VersionRange 的结构与约束。"
+        },
+        "lastEventCursor": {
+          "$ref": "../../common/types.schema.json#/$defs/EventCursor",
+          "description": "引用 EventCursor 的结构与约束。"
+        }
+      },
+      "required": [
+        "clientId",
+        "device",
+        "clientVersion",
+        "supportedVersions"
+      ],
+      "additionalProperties": false,
+      "description": "HandshakeRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "HandshakeResponse": {
+      "type": "object",
+      "properties": {
+        "protocol": {
+          "$ref": "#/$defs/GatewayProtocol",
+          "description": "引用 GatewayProtocol 的结构与约束。"
+        },
+        "device": {
+          "$ref": "#/$defs/GatewayDevice",
+          "description": "引用 GatewayDevice 的结构与约束。"
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "../provider/messages.schema.json#/$defs/ProviderSummary",
+            "description": "引用 ProviderSummary 的结构与约束。"
+          },
+          "description": "Host 当前可见的 Provider 摘要列表。"
+        },
+        "eventCursor": {
+          "$ref": "../../common/types.schema.json#/$defs/EventCursor",
+          "description": "引用 EventCursor 的结构与约束。"
+        }
+      },
+      "required": [
+        "protocol",
+        "device",
+        "providers",
+        "eventCursor"
+      ],
+      "additionalProperties": false,
+      "description": "HandshakeResponse 的成功返回结果。"
+    },
+    "ProtocolFeature": {
+      "type": "string",
+      "enum": [
+        "trace-context-v1"
+      ],
+      "description": "ProtocolFeature 的允许取值；调用方必须按枚举处理。"
+    },
+    "ProtocolDescribeRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "description": "ProtocolDescribeRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProtocolDescribeResponse": {
+      "type": "object",
+      "properties": {
+        "features": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProtocolFeature",
+            "description": "引用 ProtocolFeature 的结构与约束。"
+          },
+          "uniqueItems": true,
+          "description": "双方可识别的协议扩展能力。"
+        }
+      },
+      "required": [
+        "features"
+      ],
+      "additionalProperties": false,
+      "description": "ProtocolDescribeResponse 的成功返回结果。"
+    },
+    "GatewayDevice": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "对象的可展示名称。"
+        },
+        "operatingSystem": {
+          "type": "string",
+          "minLength": 1,
+          "description": "设备运行的操作系统名称。"
+        },
+        "systemVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "设备运行的操作系统版本。"
+        }
+      },
+      "required": [
+        "name",
+        "operatingSystem",
+        "systemVersion"
+      ],
+      "additionalProperties": false,
+      "description": "GatewayDevice 的结构与约束。"
+    },
+    "GatewayProtocol": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "$ref": "../../common/types.schema.json#/$defs/ProtocolVersion",
+          "description": "引用 ProtocolVersion 的结构与约束。"
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "additionalProperties": false,
+      "description": "GatewayProtocol 的结构与约束。"
+    }
+  },
+  "x-codepet-lifecycle": {
+    "heartbeatIntervalMs": 20000,
+    "heartbeatTimeoutMs": 60000,
+    "heartbeatRequestTimeoutMs": 10000
+  }
+}

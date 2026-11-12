@@ -31,7 +31,7 @@ pub use providers::manager::{
     ProviderInstanceRuntimeSnapshot,
 };
 pub use providers::process::{
-    PluginProcess, PluginProcessExit, PluginProcessOptions, ProviderRpcClient, StderrDiagnostic,
+    PluginProcess, PluginProcessExit, PluginProcessOptions, ProviderInboundMessage, ProviderRpcClient, StderrDiagnostic,
 };
 pub use remote::access::{
     IssuedRemoteCredential, LanTlsIdentity, PairingSession, PairingStatus,

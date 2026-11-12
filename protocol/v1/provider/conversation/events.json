@@ -1,0 +1,55 @@
+{
+  "description": "provider conversation 模块的events注册表。",
+  "events": [
+    {
+      "name": "event.conversationActiveChanged",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationActiveChangedEvent"
+      },
+      "description": "Ordered active-set invalidation and current fact, including active=false on exit. revision identifies this invalidation, not any active enumeration snapshot. Events must cover externally observed execution too. Host tracks a local event fence during snapshot construction."
+    },
+    {
+      "name": "event.conversationUnreadChanged",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationUnreadChangedEvent"
+      },
+      "description": "Ordered reader-scoped unread fact/invalidation, including unread=false after markRead. revision identifies this invalidation, not any unread enumeration snapshot. Host must not forward scope or read state to other readers; every activity or markRead event invalidates the affected reader view."
+    },
+    {
+      "name": "event.conversationDeleted",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationDeletedEvent"
+      },
+      "description": "Ordered authoritative deletion invalidation. Missing requested IDs are not evidence of deletion unless the Provider established absence. Invalidate affected list/active/unread snapshots."
+    },
+    {
+      "name": "event.conversationUpserted",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationUpsertedEvent"
+      },
+      "description": "会话新增或更新事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    {
+      "name": "event.conversationItemUpserted",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationItemUpsertedEvent"
+      },
+      "description": "Canonical item update, or a content invalidation with conversation and no item. Receivers fetch the latest page only when they do not hold interaction control. At least one of item or conversation is required; when both exist their conversation routes must agree."
+    }
+  ]
+}

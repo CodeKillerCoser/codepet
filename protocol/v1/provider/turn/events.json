@@ -1,0 +1,25 @@
+{
+  "description": "provider turn 模块的events注册表。",
+  "events": [
+    {
+      "name": "event.turnUpserted",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "turn",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/TurnUpsertedEvent"
+      },
+      "description": "任务新增或更新事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    {
+      "name": "event.turnOutputDelta",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "turn",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/TurnOutputDeltaEvent"
+      },
+      "description": "任务输出增量事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    }
+  ]
+}

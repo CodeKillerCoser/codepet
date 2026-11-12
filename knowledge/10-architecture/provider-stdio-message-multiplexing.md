@@ -1,5 +1,7 @@
 # Provider stdio 消息复用与启动握手
 
+> 本文记录 mux profile 的 wire 与历史实现；2026-11-11 Host 新增 JSONL/zstd 两档并提取独立传输 crate，见 [当前架构](provider-transport-profiles-and-contract-sdk.md)。mux wire 继续兼容。
+
 ## 背景
 
 2026-09-06 用户确认需要完整的稳定性保障，并要求 Host↔Provider 启动握手携带协商信息。实现已接入 SDK、Host 与三个内置 Provider 的 manifest，业务 JSON-RPC 版本仍为 1。

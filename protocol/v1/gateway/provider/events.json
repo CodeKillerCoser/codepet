@@ -1,0 +1,15 @@
+{
+  "description": "gateway provider 模块的events注册表。",
+  "events": [
+    {
+      "name": "provider.changed",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "provider",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ProviderChangedEvent"
+      },
+      "description": "provider.changed 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    }
+  ]
+}

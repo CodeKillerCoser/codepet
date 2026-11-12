@@ -1,11 +1,9 @@
 //! Application heartbeats report liveness; they never own Harness lifecycle.
 use crate::generated::{ProtocolError, ProviderPingRequest, ProviderPingResponse};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 use tokio::sync::watch;
 
-pub const PROVIDER_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
-pub const PROVIDER_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(60);
+pub use super::protocol::{PROVIDER_HEARTBEAT_INTERVAL, PROVIDER_HEARTBEAT_TIMEOUT};
 
 /// Runs one bounded exchange at a time. A presence change wakes the next exchange immediately.
 /// Returning false ends the driver (for example when the owning process generation exits).

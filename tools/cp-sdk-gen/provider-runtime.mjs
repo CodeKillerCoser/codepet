@@ -21,18 +21,13 @@ import providerRuntimeMod from "../../sdk/rust/codepet-provider-sdk/src/runtime/
 import providerRuntimeMux from "../../sdk/rust/codepet-provider-sdk/src/runtime/mux.rs" with { type: "text" };
 import providerRuntimeOptions from "../../sdk/rust/codepet-provider-sdk/src/runtime/options.rs" with { type: "text" };
 import providerRuntimeStdio from "../../sdk/rust/codepet-provider-sdk/src/runtime/stdio.rs" with { type: "text" };
-import providerTransportError from "../../sdk/rust/codepet-provider-sdk/src/transport/error.rs" with { type: "text" };
-import providerTransportFrame from "../../sdk/rust/codepet-provider-sdk/src/transport/frame.rs" with { type: "text" };
-import providerTransportHandshake from "../../sdk/rust/codepet-provider-sdk/src/transport/handshake.rs" with { type: "text" };
 import providerTransportMod from "../../sdk/rust/codepet-provider-sdk/src/transport/mod.rs" with { type: "text" };
-import providerTransportMuxBudget from "../../sdk/rust/codepet-provider-sdk/src/transport/mux/budget.rs" with { type: "text" };
-import providerTransportMuxIo from "../../sdk/rust/codepet-provider-sdk/src/transport/mux/io.rs" with { type: "text" };
-import providerTransportMuxMod from "../../sdk/rust/codepet-provider-sdk/src/transport/mux/mod.rs" with { type: "text" };
-import providerTransportMuxTests from "../../sdk/rust/codepet-provider-sdk/src/transport/mux/tests.rs" with { type: "text" };
 
 import providerRuntimeActivity from "../../sdk/rust/codepet-provider-sdk/src/runtime/activity.rs" with { type: "text" };
 
+import runtimeProtocolSource from "../../sdk/rust/codepet-provider-sdk/src/runtime/protocol.rs" with { type: "text" };
 export const providerRuntimeFiles = new Map([
+  ["runtime/protocol.rs", runtimeProtocolSource],
   ["background_probe.rs", providerBackgroundProbe],
   ["conversation_query.rs", providerConversationQuery],
   ["local_runtime.rs", providerLocalRuntime],
@@ -55,12 +50,5 @@ export const providerRuntimeFiles = new Map([
   ["runtime/mux.rs", providerRuntimeMux],
   ["runtime/options.rs", providerRuntimeOptions],
   ["runtime/stdio.rs", providerRuntimeStdio],
-  ["transport/error.rs", providerTransportError],
-  ["transport/frame.rs", providerTransportFrame],
-  ["transport/handshake.rs", providerTransportHandshake],
   ["transport/mod.rs", providerTransportMod],
-  ["transport/mux/budget.rs", providerTransportMuxBudget],
-  ["transport/mux/io.rs", providerTransportMuxIo],
-  ["transport/mux/mod.rs", providerTransportMuxMod],
-  ["transport/mux/tests.rs", providerTransportMuxTests],
 ]);

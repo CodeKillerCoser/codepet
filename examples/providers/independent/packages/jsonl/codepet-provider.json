@@ -1,0 +1,23 @@
+{
+  "manifestVersion": 2,
+  "pluginId": "independent.echo.jsonl",
+  "displayName": "Independent Echo (jsonl)",
+  "command": "node",
+  "args": [
+    "provider.mjs"
+  ],
+  "env": {
+    "ECHO_PLUGIN_ID": "independent.echo.jsonl"
+  },
+  "transport": "stdio-jsonrpc-v1",
+  "enabled": true,
+  "instances": [
+    {
+      "instanceId": "independent-echo-jsonl",
+      "instanceKind": "independent-echo",
+      "displayName": "Independent Echo",
+      "settings": {},
+      "enabled": true
+    }
+  ]
+}

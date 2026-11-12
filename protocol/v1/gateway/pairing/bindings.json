@@ -1,0 +1,47 @@
+{
+  "description": "当前实现已有的配对 HTTP 绑定，保留路径与字段；不将配对注册为已认证 Gateway JSON-RPC 方法。",
+  "operations": [
+    {
+      "name": "pairing.exchange",
+      "httpMethod": "POST",
+      "path": "/remote/v1/pairings/:pairing_id/exchange",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/PairingExchangeRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/PairingExchangeResponse"
+      },
+      "description": "以邀请密钥交换设备凭据。"
+    },
+    {
+      "name": "pairing.request.create",
+      "httpMethod": "POST",
+      "path": "/remote/v1/pairing-requests",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/PairingRequestCreateRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/PairingRequestStatusResponse"
+      },
+      "description": "提交待 Host 人工确认的配对申请。"
+    },
+    {
+      "name": "pairing.request.status",
+      "httpMethod": "GET",
+      "path": "/remote/v1/pairing-requests/:request_id",
+      "response": {
+        "$ref": "messages.schema.json#/$defs/PairingRequestStatusResponse"
+      },
+      "description": "查询配对确认状态；通过后返回设备凭据。"
+    },
+    {
+      "name": "credential.current.revoke",
+      "httpMethod": "DELETE",
+      "path": "/remote/v1/credentials/current",
+      "response": {
+        "$ref": "messages.schema.json#/$defs/CurrentCredentialDeleteResponse"
+      },
+      "description": "撤销当前连接使用的设备凭据。"
+    }
+  ]
+}

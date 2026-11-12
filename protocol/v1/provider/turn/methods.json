@@ -1,0 +1,44 @@
+{
+  "description": "provider turn 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "turn.start",
+      "direction": "hostToPlugin",
+      "idempotency": "nonIdempotent",
+      "capability": "turn.start",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/TurnStartRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/TurnStartResponse"
+      },
+      "description": "任务启动方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    },
+    {
+      "name": "turn.steer",
+      "direction": "hostToPlugin",
+      "idempotency": "nonIdempotent",
+      "capability": "turn.steer",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/TurnSteerRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/TurnSteerResponse"
+      },
+      "description": "任务追加引导方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    },
+    {
+      "name": "turn.interrupt",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "capability": "turn.interrupt",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/TurnInterruptRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/TurnInterruptResponse"
+      },
+      "description": "任务中断方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "description": "gateway conversation 模块的events注册表。",
+  "events": [
+    {
+      "name": "conversation.recentChanged",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "provider",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationRecentChangedEvent"
+      },
+      "description": "conversation.recentChanged 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "conversation.upserted",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationUpsertedEvent"
+      },
+      "description": "conversation.upserted 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "conversation.itemUpserted",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationItemUpsertedEvent"
+      },
+      "description": "conversation.itemUpserted 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "conversation.activityChanged",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ConversationActivityChangedEvent"
+      },
+      "description": "conversation.activityChanged 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    }
+  ]
+}

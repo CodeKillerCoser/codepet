@@ -1,0 +1,214 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/provider/turn/messages.schema.json",
+  "description": "provider 的 turn 功能模块交互对象。",
+  "$defs": {
+    "TurnInterruptRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        },
+        "turn": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属任务的资源引用或任务快照。"
+        }
+      },
+      "required": [
+        "conversation",
+        "turn"
+      ],
+      "additionalProperties": false,
+      "description": "任务中断的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "TurnInterruptResponse": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnTask",
+          "description": "所属任务的资源引用或任务快照。"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "additionalProperties": false,
+      "description": "任务中断响应，作为对应方法成功响应的 result。"
+    },
+    "TurnOutputDeltaEvent": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属任务的资源引用或任务快照。"
+        },
+        "conversation": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        },
+        "itemId": {
+          "$ref": "../../common/types.schema.json#/$defs/NativeResourceId",
+          "description": "会话条目稳定身份，增量与完整条目必须保持一致。"
+        },
+        "contentId": {
+          "$ref": "../../common/types.schema.json#/$defs/NativeResourceId",
+          "description": "条目内内容片段身份，用于关联 delta 与最终内容。"
+        },
+        "kind": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationContentKind",
+          "description": "用于区分联合类型分支的种类标记。"
+        },
+        "delta": {
+          "type": "string",
+          "description": "本次追加的文本增量；通过 itemId/contentId 关联最终完整条目。"
+        },
+        "extension": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderExtension",
+          "description": "扩展命名空间及扩展载荷。"
+        }
+      },
+      "required": [
+        "turn",
+        "conversation",
+        "itemId",
+        "contentId",
+        "kind",
+        "delta"
+      ],
+      "additionalProperties": false,
+      "description": "任务输出增量事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    "TurnStartRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        },
+        "clientRequestId": {
+          "$ref": "../../common/types.schema.json#/$defs/RequestId",
+          "description": "调用者分配的幂等请求身份；已受理工作不得重复执行。"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "调用依据的能力修订标识，避免使用陈旧选择。"
+        },
+        "input": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnInput",
+          "description": "用户输入或工具输入，具体形态见引用类型。"
+        },
+        "selection": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnSelection",
+          "description": "请求或当前使用的模型、权限等选择。"
+        }
+      },
+      "required": [
+        "conversation",
+        "clientRequestId",
+        "capabilityRevision",
+        "input",
+        "selection"
+      ],
+      "additionalProperties": false,
+      "description": "任务启动的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "TurnStartResponse": {
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "type": "boolean",
+          "description": "请求是否已被受理，不代表异步工作已完成。"
+        },
+        "turn": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnTask",
+          "description": "所属任务的资源引用或任务快照。"
+        },
+        "userItem": {
+          "oneOf": [
+            {
+              "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationItem",
+              "description": "引用 ConversationItem 的分支定义。"
+            },
+            {
+              "type": "null",
+              "description": "本次输入形成的用户消息条目。 此为第 2 个允许的结构分支。"
+            }
+          ],
+          "description": "本次输入形成的用户消息条目。"
+        },
+        "effectiveSelection": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnSelection",
+          "description": "Provider 实际生效的选择。"
+        }
+      },
+      "required": [
+        "accepted",
+        "turn",
+        "userItem",
+        "effectiveSelection"
+      ],
+      "additionalProperties": false,
+      "description": "任务启动响应，作为对应方法成功响应的 result。"
+    },
+    "TurnSteerRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        },
+        "turn": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属任务的资源引用或任务快照。"
+        },
+        "clientMessageId": {
+          "$ref": "../../common/types.schema.json#/$defs/RequestId",
+          "description": "调用者提供的消息身份，用于关联输入与回显。"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "供调用者理解的错误或提示文字。"
+        }
+      },
+      "required": [
+        "conversation",
+        "turn",
+        "clientMessageId",
+        "message"
+      ],
+      "additionalProperties": false,
+      "description": "任务追加引导的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "TurnSteerResponse": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnTask",
+          "description": "所属任务的资源引用或任务快照。"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "additionalProperties": false,
+      "description": "任务追加引导响应，作为对应方法成功响应的 result。"
+    },
+    "TurnUpsertedEvent": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnTask",
+          "description": "所属任务的资源引用或任务快照。"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "additionalProperties": false,
+      "description": "任务新增或更新事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    }
+  }
+}

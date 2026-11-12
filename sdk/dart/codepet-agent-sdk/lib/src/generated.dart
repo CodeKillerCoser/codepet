@@ -4839,7 +4839,7 @@ final class UsageRow {
     required bool provisional,
   }) {
     final validatedBucket = bucket == null ? null : bucket;
-    final validatedModelId = modelId == null ? null : modelId == null ? null : _string(modelId, 'UsageRow.modelId');
+    final validatedModelId = modelId == null ? null : _string(modelId, 'UsageRow.modelId');
     final validatedValues = values;
     final validatedCompleteness = completeness;
     final validatedProvisional = provisional;
@@ -4898,7 +4898,7 @@ final class UsageSummaries {
     List<UsageGroupPeak>? peakDailyByGroup,
   }) {
     final validatedTotals = totals == null ? null : totals;
-    final validatedPeakDaily = peakDaily == null ? null : peakDaily == null ? null : peakDaily;
+    final validatedPeakDaily = peakDaily == null ? null : peakDaily;
     final validatedTotalsByGroup = totalsByGroup == null ? null : _freezeList<UsageGroupTotal>(totalsByGroup, 'UsageSummaries.totalsByGroup', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     final validatedPeakDailyByGroup = peakDailyByGroup == null ? null : _freezeList<UsageGroupPeak>(peakDailyByGroup, 'UsageSummaries.peakDailyByGroup', (item, itemPath) => item, encodeItem: (item) => item.toJson());
     return UsageSummaries._(

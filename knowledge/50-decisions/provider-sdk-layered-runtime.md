@@ -1,5 +1,7 @@
 # Provider SDK 按传输、消息适配与服务运行时分层
 
+> 2026-11-11 更新：用户已确认三种 profile 与独立传输模块，下面 mux-only 选择保留为历史。当前实现和验证见 [三 profile 与合同 SDK](../10-architecture/provider-transport-profiles-and-contract-sdk.md)。
+
 ## 背景
 
 2026-09-06 引入 STDIO mux 后，原 `mux.rs` 同时承担 bootstrap、Yamux driver、物理帧保护、容量管理、JSON/zstd 编解码、控制方法分类和 RPC 超限响应。原 `stdio.rs` 定义两个运行时共享的配置、错误和事件接口；它选择 mux，而 mux 又依赖其中的配置校验。继续增加语言 SDK 或维护取消、退出逻辑时，这种职责交叉会扩大修改范围。

@@ -8,9 +8,9 @@ final class GatewayHeartbeatClient {
     required this.onProviders,
     required this.onFailure,
     this.beforePing,
-    this.interval = const Duration(seconds: 20),
-    this.requestTimeout = const Duration(seconds: 10),
-    this.failureTimeout = const Duration(seconds: 60),
+    this.interval = const Duration(milliseconds: gatewayHeartbeatIntervalMs),
+    this.requestTimeout = const Duration(milliseconds: gatewayHeartbeatRequestTimeoutMs),
+    this.failureTimeout = const Duration(milliseconds: gatewayHeartbeatTimeoutMs),
   });
 
   final ProtocolClient client;

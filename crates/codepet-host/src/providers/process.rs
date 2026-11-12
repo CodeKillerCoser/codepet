@@ -1,20 +1,20 @@
+mod transport;
 use crate::providers::catalog::PluginDescriptor;
 use crate::{HostError, HostResult};
 use codepet_provider_sdk::{
-    JsonRpcInboundError, JsonRpcInboundRequest, JsonRpcResponsePayload,
-    ProtocolClient, ProtocolError, ProtocolInboundFuture, ProtocolMethod, ProtocolRequest,
-    ProtocolTransport, ProtocolTransportFuture, ProviderShutdownRequest,
-    ProviderShutdownResponse, ProviderWireMessage, RpcError,
-    MAX_PROVIDER_FRAME_BYTES,
+    JsonRpcInboundError, JsonRpcInboundRequest, JsonRpcResponsePayload, ProtocolClient,
+    ProtocolError, ProtocolInboundFuture, ProtocolMethod, ProtocolRequest, ProtocolTransport,
+    ProtocolTransportFuture, ProviderShutdownRequest, ProviderShutdownResponse,
+    ProviderWireMessage, RpcError, MAX_PROVIDER_FRAME_BYTES,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::path::Path;
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 #[cfg(test)]
 use std::sync::atomic::AtomicUsize;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
@@ -69,9 +69,16 @@ enum ProcessCommand {
     Kill { reason: String },
 }
 
+/// A decoded inbound event retains its per-connection byte/slot charge until processing ends.
+#[derive(Debug)]
+pub struct ProviderInboundMessage {
+    pub message: ProviderWireMessage,
+    pub(crate) permit: codepet_transport::transport::mux::MessagePermit,
+}
+
 struct RpcShared {
-    mux: watch::Receiver<Option<Result<codepet_provider_sdk::ProviderMux, ProtocolError>>>,
-    inbound: StdMutex<Option<mpsc::Sender<ProviderWireMessage>>>,
+    mux: watch::Receiver<Option<Result<transport::Connection, ProtocolError>>>,
+    inbound: StdMutex<Option<mpsc::Sender<ProviderInboundMessage>>>,
     next_request_id: AtomicU64,
     request_timeout: Duration,
     interaction_timeout: Duration,
@@ -124,20 +131,26 @@ impl RpcShared {
             })
     }
 
-    fn send_inbound(&self, message: ProviderWireMessage) -> Result<(), ProtocolError> {
+    fn send_inbound(
+        &self,
+        message: ProviderWireMessage,
+        permit: codepet_transport::transport::mux::MessagePermit,
+    ) -> Result<(), ProtocolError> {
         let sender = self
             .inbound
             .lock()
             .ok()
             .and_then(|sender| sender.clone())
             .ok_or_else(|| self.closed_error())?;
-        sender.try_send(message).map_err(|error| {
-            protocol_error(
-                "provider_inbound_backpressure",
-                format!("Provider inbound event queue is unavailable: {error}"),
-                true,
-            )
-        })
+        sender
+            .try_send(ProviderInboundMessage { message, permit })
+            .map_err(|error| {
+                protocol_error(
+                    "provider_inbound_backpressure",
+                    format!("Provider inbound event queue is unavailable: {error}"),
+                    true,
+                )
+            })
     }
 
     async fn wait_inbound_consumed(&self) -> Result<(), ProtocolError> {
@@ -157,20 +170,18 @@ impl RpcShared {
 
 pub struct ProviderRpcClient {
     shared: Arc<RpcShared>,
-    inbound: Mutex<Option<mpsc::Receiver<ProviderWireMessage>>>,
+    inbound: Mutex<Option<mpsc::Receiver<ProviderInboundMessage>>>,
 }
 
 impl ProviderRpcClient {
-    fn new(shared: Arc<RpcShared>, inbound: mpsc::Receiver<ProviderWireMessage>) -> Self {
+    fn new(shared: Arc<RpcShared>, inbound: mpsc::Receiver<ProviderInboundMessage>) -> Self {
         Self {
             shared,
             inbound: Mutex::new(Some(inbound)),
         }
     }
 
-    async fn take_inbound(
-        &self,
-    ) -> Result<mpsc::Receiver<ProviderWireMessage>, ProtocolError> {
+    async fn take_inbound(&self) -> Result<mpsc::Receiver<ProviderInboundMessage>, ProtocolError> {
         self.inbound.lock().await.take().ok_or_else(|| {
             protocol_error(
                 "provider_inbound_already_taken",
@@ -276,10 +287,13 @@ impl ProtocolTransport for ProviderRpcClient {
             receiver
                 .as_mut()
                 .ok_or_else(|| {
-                    inbound_transport_error("Provider inbound message stream already has a consumer")
+                    inbound_transport_error(
+                        "Provider inbound message stream already has a consumer",
+                    )
                 })?
                 .recv()
                 .await
+                .map(|inbound| inbound.message)
                 .ok_or_else(|| inbound_transport_error(self.shared.closed_error().message))
         })
     }
@@ -296,20 +310,30 @@ pub struct PluginProcess {
 }
 
 impl PluginProcess {
-    pub fn spawn(
-        descriptor: &PluginDescriptor,
-        options: PluginProcessOptions,
-    ) -> HostResult<Self> {
-        validate_executable(&descriptor.executable)?;
+    pub fn spawn(descriptor: &PluginDescriptor, options: PluginProcessOptions) -> HostResult<Self> {
+        if descriptor.executable.is_absolute() || descriptor.executable.components().count() > 1 {
+            validate_executable(&descriptor.executable)?;
+        }
         if !(1024..=MAX_PROVIDER_FRAME_BYTES).contains(&options.max_frame_bytes) {
-            return Err(HostError::new("invalid_frame_limit", "mux encoded message limit must be between 1024 bytes and 16 MiB"));
+            return Err(HostError::new(
+                "invalid_frame_limit",
+                "mux encoded message limit must be between 1024 bytes and 16 MiB",
+            ));
         }
-        let profile = descriptor.env.get(codepet_provider_sdk::TRANSPORT_ENV).map(String::as_str)
+        let profile = descriptor
+            .env
+            .get(codepet_provider_sdk::TRANSPORT_ENV)
+            .map(String::as_str)
             .unwrap_or(codepet_provider_sdk::MUX_PROFILE);
-        if profile != codepet_provider_sdk::MUX_PROFILE {
-            return Err(HostError::new("unsupported_provider_transport", format!("unsupported Provider transport: {profile}")));
+        if codepet_transport::Profile::parse(profile).is_err() {
+            return Err(HostError::new(
+                "unsupported_provider_transport",
+                format!("unsupported Provider transport: {profile}"),
+            ));
         }
-        let mut command = Command::from(codepet_provider_sdk::local_runtime::command(&descriptor.executable).into_std());
+        let mut command = Command::from(
+            codepet_provider_sdk::local_runtime::command(&descriptor.executable).into_std(),
+        );
         command
             .args(&descriptor.args)
             .envs(&descriptor.env)
@@ -319,6 +343,9 @@ impl PluginProcess {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
+        if let Some(directory) = descriptor.env.get("CODEPET_PROVIDER_PACKAGE_DIRECTORY") {
+            command.current_dir(directory);
+        }
         let mut child = codepet_provider_sdk::process::spawn_async(command).map_err(|error| {
             HostError::new(
                 "provider_spawn_failed",
@@ -374,14 +401,25 @@ impl PluginProcess {
             close_error: StdMutex::new(None),
         });
 
-        let transport = spawn_tracked(mux_loop(stdout, stdin, shared.clone(), control_sender.clone(), mux_ready, options.max_frame_bytes));
+        let transport = spawn_tracked(transport::run(
+            stdout,
+            stdin,
+            shared.clone(),
+            control_sender.clone(),
+            mux_ready,
+            options.max_frame_bytes,
+            profile.to_owned(),
+        ));
         let stderr = spawn_tracked(stderr_loop(
             stderr,
             diagnostics.clone(),
             options.stderr_line_bytes.max(1),
             options.stderr_history_lines.max(1),
             options.stderr_observer,
-            descriptor.env.get("CODEPET_PROVIDER_LOG_DIRECTORY").map(|p| std::path::PathBuf::from(p).join("provider.log")),
+            descriptor
+                .env
+                .get("CODEPET_PROVIDER_LOG_DIRECTORY")
+                .map(|p| std::path::PathBuf::from(p).join("provider.log")),
         ));
         spawn_tracked(process_monitor(
             child,
@@ -395,10 +433,7 @@ impl PluginProcess {
         ));
 
         Ok(Self {
-            client: ProtocolClient::new(ProviderRpcClient::new(
-                shared.clone(),
-                inbound_receiver,
-            )),
+            client: ProtocolClient::new(ProviderRpcClient::new(shared.clone(), inbound_receiver)),
             shared,
             control: control_sender,
             exit: exit_receiver,
@@ -416,9 +451,7 @@ impl PluginProcess {
         self.exit.clone()
     }
 
-    pub async fn take_inbound(
-        &self,
-    ) -> HostResult<mpsc::Receiver<ProviderWireMessage>> {
+    pub async fn take_inbound(&self) -> HostResult<mpsc::Receiver<ProviderInboundMessage>> {
         self.client
             .transport()
             .take_inbound()
@@ -515,53 +548,6 @@ impl Drop for PluginProcess {
         let _ = self.control.try_send(ProcessCommand::Kill {
             reason: "Provider process handle dropped".to_string(),
         });
-    }
-}
-
-async fn mux_loop(
-    stdout: ChildStdout, stdin: ChildStdin, shared: Arc<RpcShared>, control: mpsc::Sender<ProcessCommand>,
-    ready: watch::Sender<Option<Result<codepet_provider_sdk::ProviderMux, ProtocolError>>>, max_frame_bytes: usize,
-) {
-    let mut limits = codepet_provider_sdk::default_transport_limits();
-    limits.max_encoded_message_bytes = max_frame_bytes as u64;
-    let connected = codepet_provider_sdk::ProviderMux::connect(stdout, stdin, true, limits).await;
-    let (peer, mut incoming, mut driver) = match connected {
-        Ok(value) => value,
-        Err(e) => { ready.send_replace(Some(Err(e.clone()))); fail_transport(&shared, &control, e).await; return; }
-    };
-    ready.send_replace(Some(Ok(peer.clone())));
-    let result = loop {
-        tokio::select! {
-            result = &mut driver => break result.unwrap_or_else(|e| Err(protocol_error("provider_mux_driver_failed", e.to_string(), true))),
-            next = incoming.recv() => {
-                let Some(mut stream) = next else {
-                    break (&mut driver).await.unwrap_or_else(|e| Err(protocol_error("provider_mux_driver_failed", e.to_string(), true)));
-                };
-                let received = tokio::time::timeout(peer.stream_timeout(), stream.receive()).await;
-                match received {
-                    Ok(Ok(received)) => match received.message {
-                        ProviderWireMessage::Event(event) => {
-                            if !shared.is_shutting_down() {
-                                if let Err(e) = shared.send_inbound(ProviderWireMessage::Event(event)) { break Err(e); }
-                                let consumed = tokio::select! {
-                                    consumed = shared.wait_inbound_consumed() => consumed,
-                                    result = &mut driver => break result.unwrap_or_else(|e| Err(protocol_error("provider_mux_driver_failed", e.to_string(), true))),
-                                };
-                                if let Err(e) = consumed { if !shared.is_shutting_down() { break Err(e); } }
-                            }
-                            if let Err(e) = stream.acknowledge().await { if !shared.is_shutting_down() { break Err(e); } }
-                        }
-                        _ => break Err(protocol_error("unexpected_provider_request", "Provider may only open event streams", false)),
-                    },
-                    Ok(Err(e)) => break Err(e),
-                    Err(_) => break Err(protocol_error("provider_event_timeout", "Provider event stream expired", true)),
-                }
-            }
-        }
-    };
-    peer.close(); driver.abort();
-    if !shared.is_shutting_down() {
-        fail_transport(&shared, &control, result.err().unwrap_or_else(|| protocol_error("provider_process_closed", "Provider mux closed", true))).await;
     }
 }
 
@@ -897,8 +883,7 @@ impl Drop for ActiveProcessTask {
 #[cfg(all(test, unix))]
 mod tests {
     use super::{
-        wait_for_exit_completion, PluginProcess, PluginProcessOptions,
-        ACTIVE_PROCESS_TASKS,
+        wait_for_exit_completion, PluginProcess, PluginProcessOptions, ACTIVE_PROCESS_TASKS,
     };
     use crate::PluginDescriptor;
     use codepet_provider_sdk::ProviderDescribeRequest;

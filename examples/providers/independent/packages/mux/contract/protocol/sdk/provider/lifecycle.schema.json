@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/provider-sdk/v1/protocol/sdk/provider/lifecycle.schema.json",
+  "description": "由权威功能模块组装的协议类型。",
+  "$defs": {
+    "ProviderPingRequest": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前心跳序号；同一进程内严格递增。"
+        },
+        "hostSessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前 Provider 进程的 Host 心跳会话身份。"
+        },
+        "clients": {
+          "$ref": "../common/types.schema.json#/$defs/ClientConnectionsSnapshot",
+          "description": "Host 提供的客户端连接存在性快照，不代表任务活跃。"
+        },
+        "instances": {
+          "type": "array",
+          "items": {
+            "$ref": "messages.schema.json#/$defs/ProviderInstanceRoute",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "实例配置或路由清单；具体元素结构由 items 定义。"
+        }
+      },
+      "required": [
+        "sequence",
+        "hostSessionId",
+        "clients",
+        "instances"
+      ],
+      "additionalProperties": false,
+      "description": "Provider心跳的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProviderPingResponse": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前心跳序号；同一进程内严格递增。"
+        },
+        "clientsRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "本次心跳请求 clients.revision 的回显值。"
+        }
+      },
+      "required": [
+        "sequence",
+        "clientsRevision"
+      ],
+      "additionalProperties": false,
+      "description": "Provider心跳响应，作为对应方法成功响应的 result。"
+    },
+    "ProviderDescribeRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "description": "Provider描述查询的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProviderDescribeResponse": {
+      "type": "object",
+      "properties": {
+        "plugin": {
+          "$ref": "#/$defs/ProviderPluginDescriptor",
+          "description": "插件运行时描述，供 Host 校验身份与版本。"
+        }
+      },
+      "required": [
+        "plugin"
+      ],
+      "additionalProperties": false,
+      "description": "Provider描述查询响应，作为对应方法成功响应的 result。"
+    },
+    "ProviderInitializeRequest": {
+      "type": "object",
+      "properties": {
+        "hostClientId": {
+          "$ref": "../common/types.schema.json#/$defs/ClientId",
+          "description": "Host 协议客户端的安装身份。"
+        },
+        "hostDeviceId": {
+          "$ref": "../common/types.schema.json#/$defs/DeviceId",
+          "description": "Host 设备稳定身份。"
+        },
+        "hostVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host 软件版本，不是协议版本。"
+        },
+        "supportedVersions": {
+          "$ref": "../common/types.schema.json#/$defs/VersionRange",
+          "description": "本端支持的版本；对象表示业务版本区间，数组表示握手版本清单。"
+        },
+        "directories": {
+          "$ref": "#/$defs/ProviderDirectories",
+          "description": "Host 在 Initialize 时注入的 Provider 数据、日志与数据库路径。"
+        }
+      },
+      "required": [
+        "hostClientId",
+        "hostDeviceId",
+        "hostVersion",
+        "supportedVersions"
+      ],
+      "additionalProperties": false,
+      "description": "Provider初始化的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProviderInitializeResponse": {
+      "type": "object",
+      "properties": {
+        "selectedVersion": {
+          "$ref": "../common/types.schema.json#/$defs/ProtocolVersion",
+          "description": "协商选中的版本，须在双方支持范围内。"
+        },
+        "plugin": {
+          "$ref": "#/$defs/ProviderPluginDescriptor",
+          "description": "插件运行时描述，供 Host 校验身份与版本。"
+        }
+      },
+      "required": [
+        "selectedVersion",
+        "plugin"
+      ],
+      "additionalProperties": false,
+      "description": "Provider初始化响应，作为对应方法成功响应的 result。"
+    },
+    "ProviderPluginDescriptor": {
+      "type": "object",
+      "properties": {
+        "pluginId": {
+          "$ref": "../common/types.schema.json#/$defs/ProviderPluginId",
+          "description": "插件包稳定身份。"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "面向用户的名称。"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "组件自身版本字符串。"
+        },
+        "defaultWorkspaceRoot": {
+          "type": "string",
+          "minLength": 1,
+          "description": "插件报告的默认会话工作目录。"
+        },
+        "supportedVersions": {
+          "$ref": "../common/types.schema.json#/$defs/VersionRange",
+          "description": "本端支持的版本；对象表示业务版本区间，数组表示握手版本清单。"
+        },
+        "instanceKinds": {
+          "type": "array",
+          "items": {
+            "$ref": "messages.schema.json#/$defs/ProviderInstanceKind",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "插件支持的实例种类清单。"
+        }
+      },
+      "required": [
+        "pluginId",
+        "displayName",
+        "version",
+        "supportedVersions",
+        "instanceKinds"
+      ],
+      "additionalProperties": false,
+      "description": "Provider插件描述的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderShutdownRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "description": "Provider关闭的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProviderShutdownResponse": {
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "type": "boolean",
+          "description": "请求是否已被受理，不代表异步工作已完成。"
+        }
+      },
+      "required": [
+        "accepted"
+      ],
+      "additionalProperties": false,
+      "description": "Provider关闭响应，作为对应方法成功响应的 result。"
+    },
+    "ProviderDirectories": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host 分配的 Provider 自有数据目录绝对路径；不等同于会话工作区。"
+        },
+        "logs": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host 分配的绝对日志目录。"
+        },
+        "databasePath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host 分配的 Provider 自有数据库文件绝对路径，直接位于 data 下。"
+        }
+      },
+      "required": [
+        "data",
+        "logs",
+        "databasePath"
+      ],
+      "additionalProperties": false,
+      "description": "Host-assigned absolute Provider-owned paths, independent of harness storage. Database file must reside directly in data. Provider owns schema and transactions. Never exposed remotely."
+    }
+  },
+  "x-codepet-lifecycle": {
+    "description": "Host 心跳调度策略；不改变 Ping 的业务载荷。",
+    "heartbeatIntervalMs": 20000,
+    "heartbeatTimeoutMs": 60000
+  }
+}

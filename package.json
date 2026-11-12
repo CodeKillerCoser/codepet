@@ -16,7 +16,7 @@
     "tauri": "tauri",
     "providers:stage": "node scripts/stage_provider_plugins.mjs",
     "providers:stage:dev": "node scripts/stage_provider_plugins.mjs --profile debug",
-    "providers:test": "node --test scripts/stage_provider_plugins.test.mjs",
+    "providers:test": "node --test scripts/stage_provider_plugins.test.mjs scripts/export_provider_sdk.test.mjs",
     "package:signed": "python3 scripts/package_signed.py",
     "version:check": "node scripts/release_version.mjs",
     "version:sync": "node scripts/release_version.mjs --sync-version",
@@ -24,13 +24,15 @@
     "release:github": "node scripts/publish_github_release.mjs",
     "protocol:generate": "node tools/protocol-codegen/generate.mjs",
     "cp-sdk-gen": "bun tools/cp-sdk-gen/cp-sdk-gen.mjs",
-    "protocol:test": "node --test tools/protocol-codegen/test.mjs",
-    "protocol:check": "node tools/protocol-codegen/generate.mjs --check && node --test tools/protocol-codegen/test.mjs",
+    "protocol:test": "node --test tools/protocol-codegen/test.mjs tools/protocol-codegen/provider-contract.test.mjs tools/protocol-codegen/modular-contract.test.mjs",
+    "protocol:check": "node tools/protocol-codegen/generate.mjs --check && node --test tools/protocol-codegen/test.mjs tools/protocol-codegen/provider-contract.test.mjs tools/protocol-codegen/modular-contract.test.mjs",
     "sdkgen:build": "bun build tools/cp-sdk-gen/cp-sdk-gen.mjs --compile --outfile tools/cp-sdk-gen/dist/cp-sdk-gen",
+    "sdk:sync:remote": "bun scripts/sync_remote_sdk.mjs",
     "sdkgen:test": "bun test tools/cp-sdk-gen/cp-sdk-gen.test.mjs",
     "test:pet": "vitest run frontend/lib/pet",
     "test:pet:ui": "node scripts/pet_notch_ui_qa.mjs",
-    "test:pet:motion": "node scripts/pet_motion_ui_qa.mjs"
+    "test:pet:motion": "node scripts/pet_motion_ui_qa.mjs",
+    "sdk:export": "node scripts/export_provider_sdk.mjs"
   },
   "dependencies": {
     "@lucide/svelte": "^1.16.0",

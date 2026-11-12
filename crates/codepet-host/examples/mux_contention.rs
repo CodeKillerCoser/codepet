@@ -106,7 +106,11 @@ async fn trial(profile: &str, direction: &str, size: usize, rate: usize) -> Valu
     let large_pending_when_small_done = !large.is_finished();
     let mut event_ids = vec![];
     for _ in 0..4 {
-        if let Ok(Some(ProviderWireMessage::Event(ProtocolEvent::EventProjectChanged { params, .. }))) = tokio::time::timeout(Duration::from_secs(5), events.recv()).await { event_ids.push(params.project.native_resource_id); }
+        if let Ok(Some(inbound)) = tokio::time::timeout(Duration::from_secs(5), events.recv()).await {
+            if let ProviderWireMessage::Event(ProtocolEvent::EventProjectChanged { params, .. }) = inbound.message {
+                event_ids.push(params.project.native_resource_id);
+            }
+        }
     }
     let ping = ping.await.unwrap(); let large = large.await.unwrap();
     let exit = process.shutdown().await;

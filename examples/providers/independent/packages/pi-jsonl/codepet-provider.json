@@ -1,0 +1,24 @@
+{
+  "manifestVersion": 2,
+  "pluginId": "independent.pi.jsonl",
+  "displayName": "Independent Pi RPC",
+  "command": "node",
+  "args": [
+    "provider.mjs"
+  ],
+  "env": {
+    "ECHO_PLUGIN_ID": "independent.pi.jsonl",
+    "ECHO_BACKEND": "pi"
+  },
+  "transport": "stdio-jsonrpc-v1",
+  "enabled": true,
+  "instances": [
+    {
+      "instanceId": "independent-pi-jsonl",
+      "instanceKind": "independent-pi",
+      "displayName": "Pi coding agent",
+      "settings": {},
+      "enabled": true
+    }
+  ]
+}

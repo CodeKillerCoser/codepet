@@ -1,0 +1,23 @@
+{
+  "manifestVersion": 2,
+  "pluginId": "independent.echo.zstd",
+  "displayName": "Independent Echo (zstd)",
+  "command": "node",
+  "args": [
+    "provider.mjs"
+  ],
+  "env": {
+    "ECHO_PLUGIN_ID": "independent.echo.zstd"
+  },
+  "transport": "stdio-codepet-zstd-v1",
+  "enabled": true,
+  "instances": [
+    {
+      "instanceId": "independent-echo-zstd",
+      "instanceKind": "independent-echo",
+      "displayName": "Independent Echo",
+      "settings": {},
+      "enabled": true
+    }
+  ]
+}

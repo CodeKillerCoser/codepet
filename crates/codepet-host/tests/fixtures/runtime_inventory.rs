@@ -26,6 +26,11 @@ impl FakeProvider {
                 return Err(protocol_error("fixture_scan_failed", "Fixture scan failed"));
             }
         }
+        if control["selectionRequired"] == false {
+            return Ok(serde_json::from_value(serde_json::json!({
+                "selectionRequired":false,"harnessList":[],"selected":null,"scanning":false
+            })).unwrap());
+        }
         let version = control["version"].as_str().unwrap_or("1.0.0");
         let installed = installation(version);
         Ok(serde_json::from_value(serde_json::json!({

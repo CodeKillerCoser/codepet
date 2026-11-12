@@ -1,0 +1,625 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/gateway/conversation/messages.schema.json",
+  "description": "gateway 的 conversation 功能模块交互对象。",
+  "$defs": {
+    "ConversationReleaseInteractionRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationReleaseInteractionRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ConversationReleaseInteractionResponse": {
+      "type": "object",
+      "properties": {
+        "released": {
+          "type": "boolean",
+          "description": "是否已经释放该客户端持有的交互控制。"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "providerInstance"
+          ],
+          "description": "本次释放对应的交互控制范围。"
+        }
+      },
+      "required": [
+        "released",
+        "scope"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationReleaseInteractionResponse 的成功返回结果。"
+    },
+    "ConversationAcquireInteractionRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationAcquireInteractionRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ConversationAcquireInteractionResponse": {
+      "type": "object",
+      "properties": {
+        "selection": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnSelection",
+          "description": "引用 TurnSelection 的结构与约束。"
+        },
+        "leaseExpiresAt": {
+          "$ref": "../../common/types.schema.json#/$defs/TimestampMs",
+          "description": "引用 TimestampMs 的结构与约束。"
+        }
+      },
+      "required": [
+        "selection"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationAcquireInteractionResponse 的成功返回结果。"
+    },
+    "ConversationResumeRequest": {
+      "type": "object",
+      "properties": {
+        "force": {
+          "type": "boolean",
+          "description": "Explicitly close the local Codex desktop application to acquire an inactive conversation. Omitted means false."
+        },
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本页最多读取的记录数，受字段范围约束。"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationResumeRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ConversationResumeResponse": {
+      "type": "object",
+      "properties": {
+        "interactionAcquired": {
+          "type": "boolean",
+          "description": "是否成功取得交互控制。"
+        },
+        "interaction": {
+          "$ref": "#/$defs/ConversationAcquireInteractionResponse",
+          "description": "引用 ConversationAcquireInteractionResponse 的结构与约束。"
+        },
+        "interactionError": {
+          "$ref": "../../common/types.schema.json#/$defs/ProtocolError",
+          "description": "引用 ProtocolError 的结构与约束。"
+        },
+        "history": {
+          "$ref": "#/$defs/ConversationGetResponse",
+          "description": "引用 ConversationGetResponse 的结构与约束。"
+        },
+        "historyError": {
+          "$ref": "../../common/types.schema.json#/$defs/ProtocolError",
+          "description": "引用 ProtocolError 的结构与约束。"
+        }
+      },
+      "required": [
+        "interactionAcquired"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationResumeResponse 的成功返回结果。"
+    },
+    "ConversationCreateRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProviderId",
+          "description": "引用 ProviderId 的结构与约束。"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "新会话的标题。"
+        },
+        "permissionLevel": {
+          "type": "string",
+          "minLength": 1,
+          "description": "创建会话时请求的权限级别。"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "创建会话时请求使用的模型。"
+        },
+        "reasoningEffort": {
+          "type": "string",
+          "minLength": 1,
+          "description": "请求的模型推理强度。"
+        },
+        "workspaceRoot": {
+          "type": "string",
+          "minLength": 1,
+          "description": "会话使用的工作区根目录。"
+        },
+        "workspaceMode": {
+          "type": "string",
+          "minLength": 1,
+          "description": "工作区的创建或复用模式。"
+        },
+        "project": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        }
+      },
+      "required": [
+        "providerId",
+        "permissionLevel"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationCreateRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ConversationCreateResponse": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Conversation",
+          "description": "引用 Conversation 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationCreateResponse 的成功返回结果。"
+    },
+    "ConversationGetRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "cursor": {
+          "$ref": "../../common/types.schema.json#/$defs/Cursor",
+          "description": "引用 Cursor 的结构与约束。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum number of native conversation turns to include in this history page."
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationGetRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ConversationGetResponse": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Conversation",
+          "description": "引用 Conversation 的结构与约束。"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationItem",
+            "description": "引用 ConversationItem 的结构与约束。"
+          },
+          "description": "本次快照包含的条目，顺序由所属快照语义决定。"
+        },
+        "pageInfo": {
+          "$ref": "../../common/types.schema.json#/$defs/PageInfo",
+          "description": "引用 PageInfo 的结构与约束。"
+        },
+        "snapshotCursor": {
+          "$ref": "../../common/types.schema.json#/$defs/EventCursor",
+          "description": "引用 EventCursor 的结构与约束。"
+        },
+        "turns": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnTask",
+            "description": "引用 TurnTask 的结构与约束。"
+          },
+          "description": "Recent terminal failures observed by this Host, up to 100, oldest first. Included on the initial history page so accepted-turn failures survive reconnects, even when the native history has no message. Merge by routed turn identity."
+        }
+      },
+      "required": [
+        "conversation",
+        "items",
+        "snapshotCursor"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationGetResponse 的成功返回结果。"
+    },
+    "ConversationListRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProviderId",
+          "description": "引用 ProviderId 的结构与约束。"
+        },
+        "projectFilter": {
+          "$ref": "#/$defs/ConversationProjectFilter",
+          "description": "引用 ConversationProjectFilter 的结构与约束。"
+        },
+        "cursor": {
+          "$ref": "../../common/types.schema.json#/$defs/Cursor",
+          "description": "引用 Cursor 的结构与约束。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本页最多读取的记录数，受字段范围约束。"
+        }
+      },
+      "required": [
+        "providerId",
+        "projectFilter"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationListRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ConversationListResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/Conversation",
+            "description": "引用 Conversation 的结构与约束。"
+          },
+          "description": "本页返回的会话列表。"
+        },
+        "pageInfo": {
+          "$ref": "../../common/types.schema.json#/$defs/PageInfo",
+          "description": "引用 PageInfo 的结构与约束。"
+        },
+        "snapshotCursor": {
+          "$ref": "../../common/types.schema.json#/$defs/EventCursor",
+          "description": "引用 EventCursor 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo",
+        "snapshotCursor"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationListResponse 的成功返回结果。"
+    },
+    "ConversationProjectFilter": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ConversationProjectFilterAll",
+          "description": "引用 ConversationProjectFilterAll 的结构与约束。"
+        },
+        {
+          "$ref": "#/$defs/ConversationProjectFilterStandalone",
+          "description": "引用 ConversationProjectFilterStandalone 的结构与约束。"
+        },
+        {
+          "$ref": "#/$defs/ConversationProjectFilterProject",
+          "description": "引用 ConversationProjectFilterProject 的结构与约束。"
+        }
+      ],
+      "description": "ConversationProjectFilter 的结构与约束。"
+    },
+    "ConversationProjectFilterAll": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationProjectFilterAllKind",
+          "description": "引用 ConversationProjectFilterAllKind 的结构与约束。"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationProjectFilterAll 的结构与约束。"
+    },
+    "ConversationProjectFilterAllKind": {
+      "type": "string",
+      "enum": [
+        "all"
+      ],
+      "description": "ConversationProjectFilterAllKind 的允许取值；调用方必须按枚举处理。"
+    },
+    "ConversationProjectFilterStandalone": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationProjectFilterStandaloneKind",
+          "description": "引用 ConversationProjectFilterStandaloneKind 的结构与约束。"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationProjectFilterStandalone 的结构与约束。"
+    },
+    "ConversationProjectFilterStandaloneKind": {
+      "type": "string",
+      "enum": [
+        "standalone"
+      ],
+      "description": "ConversationProjectFilterStandaloneKind 的允许取值；调用方必须按枚举处理。"
+    },
+    "ConversationProjectFilterProject": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationProjectFilterProjectKind",
+          "description": "引用 ConversationProjectFilterProjectKind 的结构与约束。"
+        },
+        "project": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        }
+      },
+      "required": [
+        "kind",
+        "project"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationProjectFilterProject 的结构与约束。"
+    },
+    "ConversationProjectFilterProjectKind": {
+      "type": "string",
+      "enum": [
+        "project"
+      ],
+      "description": "ConversationProjectFilterProjectKind 的允许取值；调用方必须按枚举处理。"
+    },
+    "ConversationMarkReadRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "observedActivityVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "客户端已经展示的活动版本；仅将已观察到的内容标记为已读。"
+        }
+      },
+      "required": [
+        "conversation",
+        "observedActivityVersion"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationMarkReadRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ConversationMarkReadResponse": {
+      "type": "object",
+      "properties": {
+        "readState": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationReadState",
+          "description": "引用 ConversationReadState 的结构与约束。"
+        }
+      },
+      "required": [
+        "readState"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationMarkReadResponse 的成功返回结果。"
+    },
+    "ConversationSearchRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProviderId",
+          "description": "引用 ProviderId 的结构与约束。"
+        },
+        "searchTerm": {
+          "type": "string",
+          "minLength": 1,
+          "description": "用于搜索会话的非空文本。"
+        },
+        "cursor": {
+          "$ref": "../../common/types.schema.json#/$defs/Cursor",
+          "description": "引用 Cursor 的结构与约束。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本页最多读取的记录数，受字段范围约束。"
+        }
+      },
+      "required": [
+        "providerId",
+        "searchTerm"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationSearchRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ConversationSearchResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/Conversation",
+            "description": "引用 Conversation 的结构与约束。"
+          },
+          "description": "本页返回的会话列表。"
+        },
+        "pageInfo": {
+          "$ref": "../../common/types.schema.json#/$defs/PageInfo",
+          "description": "引用 PageInfo 的结构与约束。"
+        },
+        "snapshotCursor": {
+          "$ref": "../../common/types.schema.json#/$defs/EventCursor",
+          "description": "引用 EventCursor 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo",
+        "snapshotCursor"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationSearchResponse 的成功返回结果。"
+    },
+    "ConversationUpsertedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Conversation",
+          "description": "引用 Conversation 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationUpsertedEvent 的事件载荷。"
+    },
+    "ConversationItemUpsertedEvent": {
+      "type": "object",
+      "properties": {
+        "updateId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable source event identity for deduplicating content invalidations."
+        },
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "item": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationItem",
+          "description": "引用 ConversationItem 的结构与约束。"
+        }
+      },
+      "description": "Canonical item update, or a content invalidation with conversation and no item. Fetch the latest page only without interaction control. When both exist their conversation routes must agree.",
+      "additionalProperties": false
+    },
+    "ConversationActivityChangedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "activityVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "会话当前的活动版本。"
+        }
+      },
+      "required": [
+        "conversation",
+        "activityVersion"
+      ],
+      "additionalProperties": false,
+      "description": "ConversationActivityChangedEvent 的事件载荷。"
+    },
+    "ConversationRecentRevision": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque equality-only version of the Host recent view. Scoped to provider, authenticated reader and instance generation. Not the replay eventCursor or a Provider enumeration/activity version; clients must never parse or increment it."
+    },
+    "ConversationRecentRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProviderId",
+          "description": "引用 ProviderId 的结构与约束。"
+        },
+        "cursor": {
+          "$ref": "../../common/types.schema.json#/$defs/Cursor",
+          "description": "引用 Cursor 的结构与约束。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本页最多读取的记录数，受字段范围约束。"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "additionalProperties": false,
+      "description": "Final Host-sorted recent view; default limit 20, maximum 100. Reader scope comes only from authenticated context. Cursor binds scope, provider, generation, snapshot revision, time cutoff and position. Expiration returns recent_cursor_expired; tampering or binding mismatch returns invalid_cursor. Membership and pagination are independent from conversation.list."
+    },
+    "ConversationRecentResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/Conversation",
+            "description": "引用 Conversation 的结构与约束。"
+          },
+          "description": "本页返回的会话列表。"
+        },
+        "pageInfo": {
+          "$ref": "../../common/types.schema.json#/$defs/PageInfo",
+          "description": "引用 PageInfo 的结构与约束。"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConversationRecentRevision",
+          "description": "引用 ConversationRecentRevision 的结构与约束。"
+        },
+        "snapshotCursor": {
+          "$ref": "../../common/types.schema.json#/$defs/EventCursor",
+          "description": "引用 EventCursor 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo",
+        "revision",
+        "snapshotCursor"
+      ],
+      "additionalProperties": false,
+      "description": "Page of one complete globally sorted snapshot. Every summary carries authoritative reader-scoped readState. revision remains constant across pages. snapshotCursor is captured before Provider queries and is the exact replay fence to pass as event.subscribe.afterCursor."
+    },
+    "ConversationRecentChangedEvent": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProviderId",
+          "description": "引用 ProviderId 的结构与约束。"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConversationRecentRevision",
+          "description": "引用 ConversationRecentRevision 的结构与约束。"
+        }
+      },
+      "required": [
+        "providerId",
+        "revision"
+      ],
+      "additionalProperties": false,
+      "description": "Invalidate and refetch this reader's recent view, cancelling old tail pages. Contains no member IDs or readerScope. If published provider-wide for shared replay, revision is a provider-wide invalidation revision used consistently by snapshots; it must not expose another reader's private revision. Never use revision as eventCursor."
+    }
+  }
+}

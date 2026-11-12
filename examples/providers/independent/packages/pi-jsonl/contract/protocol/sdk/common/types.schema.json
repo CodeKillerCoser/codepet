@@ -1,0 +1,292 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/provider-sdk/v1/protocol/sdk/common/types.schema.json",
+  "title": "types.schema.json",
+  "description": "公共身份、路由、版本、错误和分页类型。",
+  "$defs": {
+    "ConnectionStatus": {
+      "type": "string",
+      "enum": [
+        "connecting",
+        "online",
+        "offline"
+      ],
+      "description": "连接状态的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ClientConnectionInfo": {
+      "type": "object",
+      "properties": {
+        "connectionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "一次客户端连接的身份。"
+        },
+        "clientId": {
+          "$ref": "#/$defs/ClientId",
+          "description": "协议客户端安装身份。"
+        }
+      },
+      "required": [
+        "connectionId",
+        "clientId"
+      ],
+      "additionalProperties": false,
+      "description": "客户端连接信息的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ClientConnectionsSnapshot": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前快照或能力的修订标识，用于拒绝陈旧状态。"
+        },
+        "connections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ClientConnectionInfo",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "当前完整客户端连接清单。"
+        }
+      },
+      "required": [
+        "revision",
+        "connections"
+      ],
+      "additionalProperties": false,
+      "description": "客户端连接清单快照的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ClientId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identity of a protocol client installation."
+    },
+    "Cursor": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque pagination cursor."
+    },
+    "DeviceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identity of a CodePet host device."
+    },
+    "DeviceDescriptor": {
+      "type": "object",
+      "properties": {
+        "deviceName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host 设备显示名称。"
+        },
+        "operatingSystem": {
+          "type": "string",
+          "minLength": 1,
+          "description": "操作系统名称。"
+        },
+        "systemVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "操作系统版本。"
+        }
+      },
+      "required": [
+        "deviceName",
+        "operatingSystem",
+        "systemVersion"
+      ],
+      "additionalProperties": false,
+      "description": "设备描述的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "EventCursor": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque cursor for a replayable event stream."
+    },
+    "EventSequence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Legacy numeric event cursor retained by the v0 compatibility profile."
+    },
+    "TraceContext": {
+      "type": "object",
+      "description": "W3C Trace Context propagated as protocol-envelope metadata. It carries correlation only, never application payload or baggage.",
+      "properties": {
+        "traceparent": {
+          "type": "string",
+          "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+          "description": "W3C Trace Context 的父追踪标识。"
+        },
+        "tracestate": {
+          "type": "string",
+          "minLength": 1,
+          "description": "W3C Trace Context 的可选厂商追踪状态。"
+        }
+      },
+      "required": [
+        "traceparent"
+      ],
+      "additionalProperties": false
+    },
+    "JsonObject": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "JSON对象的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "NativeResourceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Provider-native resource identity, meaningful only with its route."
+    },
+    "PageInfo": {
+      "type": "object",
+      "properties": {
+        "nextCursor": {
+          "$ref": "#/$defs/Cursor",
+          "description": "下一页游标；缺省表示没有可继续获取的页。"
+        }
+      },
+      "additionalProperties": false,
+      "description": "分页信息的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "PageRequest": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "$ref": "#/$defs/Cursor",
+          "description": "上一页返回的分页游标；需保持查询条件不变。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
+        }
+      },
+      "additionalProperties": false,
+      "description": "分页的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProtocolError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "description": "可由程序判断的业务字符串错误码。"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "供调用者理解的错误或提示文字。"
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "同一操作是否适合在条件恢复后重试。"
+        },
+        "details": {
+          "$ref": "#/$defs/JsonObject",
+          "description": "可供调用者处理的结构化诊断详情。"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "additionalProperties": false,
+      "description": "协议错误的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProtocolVersion": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295,
+      "description": "协议版本的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderInstanceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identity of one configured provider instance."
+    },
+    "ProviderPluginId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identity declared by a provider plugin implementation."
+    },
+    "RequestId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "请求标识的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "RoutedResourceId": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共享领域对象所属的 Provider 实例路由身份。"
+        },
+        "nativeResourceId": {
+          "$ref": "#/$defs/NativeResourceId",
+          "description": "Provider 或原生运行时内部的资源身份。"
+        }
+      },
+      "required": [
+        "providerId",
+        "nativeResourceId"
+      ],
+      "additionalProperties": false,
+      "description": "Opaque gateway provider route for a provider-native resource."
+    },
+    "RpcError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "description": "JSON-RPC 外层数字错误码；业务字符串错误码放在 data.code。"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "供调用者理解的错误或提示文字。"
+        },
+        "data": {
+          "$ref": "#/$defs/JsonObject",
+          "description": "结构化内容或附加错误数据，具体形态按所在对象定义。"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": false,
+      "description": "RPC错误的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "TimestampMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "时间戳毫秒的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "VersionRange": {
+      "type": "object",
+      "properties": {
+        "minVersion": {
+          "$ref": "#/$defs/ProtocolVersion",
+          "description": "支持区间下界，包含该版本。"
+        },
+        "maxVersion": {
+          "$ref": "#/$defs/ProtocolVersion",
+          "description": "支持区间上界，包含该版本。"
+        }
+      },
+      "required": [
+        "minVersion",
+        "maxVersion"
+      ],
+      "additionalProperties": false,
+      "description": "版本区间的完整数据定义；字段、可选性与允许值见本对象约束。"
+    }
+  }
+}

@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "codepet-transport",
     "codepet-channel-control-sdk",
     "codepet-core-sdk",
     "codepet-agent-sdk",

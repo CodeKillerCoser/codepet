@@ -50,7 +50,10 @@
         "RpcError",
         "TimestampMs",
         "TraceContext",
-        "VersionRange"
+        "VersionRange",
+        "ProviderTransportLimits",
+        "ProviderTransportHello",
+        "ProviderTransportSelection"
       ],
       "outputs": {
         "rust": "sdk/rust/codepet-core-sdk/src/generated.rs",

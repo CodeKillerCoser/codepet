@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/provider/usage/messages.schema.json",
+  "description": "provider 的 usage 功能模块交互对象。",
+  "$defs": {
+    "UsageQueryRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        },
+        "query": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/UsageQuery",
+          "description": "本次查询的结构化条件。"
+        }
+      },
+      "required": [
+        "route",
+        "query"
+      ],
+      "additionalProperties": false,
+      "description": "用量查询的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "UsageQueryResponse": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/UsageQueryResult",
+          "description": "查询或操作结果。"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false,
+      "description": "用量查询响应，作为对应方法成功响应的 result。"
+    }
+  }
+}

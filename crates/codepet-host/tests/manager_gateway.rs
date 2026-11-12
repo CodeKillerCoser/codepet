@@ -2,17 +2,14 @@ use codepet_gateway_sdk::{
     ConversationAcquireInteractionRequest as GatewayConversationAcquireInteractionRequest,
     ConversationCreateRequest as GatewayConversationCreateRequest,
     ConversationGetRequest as GatewayConversationGetRequest,
-    ConversationListRequest as GatewayConversationListRequest,
-    ConversationProjectFilter, ConversationProjectFilterAll, ConversationProjectFilterAllKind,
-    ConversationProjectFilterProject,
-    ConversationProjectFilterProjectKind,
+    ConversationListRequest as GatewayConversationListRequest, ConversationProjectFilter,
+    ConversationProjectFilterAll, ConversationProjectFilterAllKind,
+    ConversationProjectFilterProject, ConversationProjectFilterProjectKind,
     ConversationSearchRequest as GatewayConversationSearchRequest, DeviceDescriptor,
-    EventSubscribeRequest, HandshakeRequest,
-    FlatModelCatalogKind, FlatModelSelection,
-    GroupedModelCatalogKind, GroupedModelSelection, ModelCatalog, ModelSelection,
-    JsonRpcResponsePayload, ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
+    EventSubscribeRequest, FlatModelCatalogKind, FlatModelSelection, GroupedModelCatalogKind,
+    GroupedModelSelection, HandshakeRequest, JsonRpcResponsePayload, ModelCatalog, ModelSelection,
     ProjectCreateRequest, ProjectDeleteRequest, ProjectGetRequest, ProjectListRequest, ProjectRoot,
-    ProjectUpdateRequest,
+    ProjectUpdateRequest, ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
     ProtocolServer as GatewayProtocolServer, ProviderDescribeRequest, ProviderListRequest,
     TurnInput as GatewayTurnInput, TurnInputKind as GatewayTurnInputKind,
     TurnSelection as GatewayTurnSelection, TurnSendRequest as GatewayTurnSendRequest, VersionRange,
@@ -30,12 +27,12 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[path = "manager_gateway/import.rs"]
+mod import;
 #[path = "manager_gateway/input_queue.rs"]
 mod input_queue;
 #[path = "manager_gateway/recent.rs"]
 mod recent;
-#[path = "manager_gateway/import.rs"]
-mod import;
 #[path = "manager_gateway/runtime_inventory.rs"]
 mod runtime_inventory;
 
@@ -1185,7 +1182,7 @@ async fn gateway_reports_replay_and_live_subscription_gaps() {
 }
 
 #[tokio::test]
-async fn shutdown_during_delayed_initialize_prevents_late_plugin_spawn() {
+async fn shutdown_during_parallel_initialize_stops_processes_and_blocks_restart() {
     let directory = tempfile::tempdir().unwrap();
     let initialize_marker = directory.path().join("initialize-a");
     let first_pid = directory.path().join("pid-a");
@@ -1222,15 +1219,19 @@ async fn shutdown_during_delayed_initialize_prevents_late_plugin_spawn() {
     let shutdown = manager.shutdown().await;
     assert!(shutdown.iter().all(|(_, outcome)| outcome.is_ok()));
     let startup = startup.await.unwrap();
-    assert!(startup.iter().all(|(_, outcome)| outcome.is_err()));
-    assert!(!second_pid.exists(), "shutdown gate must prevent the later spawn");
+    assert!(startup.iter().find(|(id, _)| id == "dev.codepet.a-delayed").unwrap().1.is_err());
+    // B may finish before shutdown: batch startup no longer waits for A's Initialize.
+    assert!(manager.snapshots().await.iter().all(|snapshot| snapshot.state == PluginRuntimeState::Stopped));
     let restart = manager
         .start_plugin("dev.codepet.b-late")
         .await
         .unwrap_err();
     assert_eq!(restart.code, "provider_manager_shutting_down");
     #[cfg(unix)]
-    assert!(!pid_is_alive(&first_pid));
+    {
+        assert!(!pid_is_alive(&first_pid));
+        if second_pid.exists() { assert!(!pid_is_alive(&second_pid)); }
+    }
 }
 
 #[cfg(unix)]
@@ -2140,7 +2141,6 @@ async fn handshake_list_and_ping_hide_undetected_builtins_but_keep_custom_provid
     manager.shutdown().await;
 }
 
-
 #[tokio::test]
 async fn failed_turn_error_survives_provider_event_and_gateway_history_without_items() {
     let manager = build_manager("device-failure", vec![plugin("dev.codepet.failure", &["failure-instance"])]);
@@ -2167,5 +2167,45 @@ async fn failed_turn_error_survives_provider_event_and_gateway_history_without_i
     let history = gateway.conversation_get(GatewayConversationGetRequest { conversation, cursor:None,limit:Some(10) }).await.unwrap();
     assert!(history.items.is_empty());
     assert_eq!(history.turns.unwrap(),vec![terminal]);
+    manager.shutdown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn slow_provider_initialize_does_not_delay_starting_another_provider() {
+    let directory = tempfile::tempdir().unwrap();
+    let marker = directory.path().join("slow-initialize");
+    let mut slow = plugin("a-slow-start", &["a-slow-instance"]);
+    slow.env
+        .insert("CODEPET_FAKE_INITIALIZE_DELAY_MS".into(), "1500".into());
+    slow.env.insert(
+        "CODEPET_FAKE_INITIALIZE_MARKER".into(),
+        marker.to_string_lossy().into_owned(),
+    );
+    let fast = plugin("b-fast-start", &["b-fast-instance"]);
+    let manager = build_manager("parallel-start", vec![slow, fast]);
+    let running = manager.clone();
+    let startup = tokio::spawn(async move { running.start_enabled().await });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !marker.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        loop {
+            if manager.snapshot("b-fast-start").await.unwrap().state == PluginRuntimeState::Ready {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("fast provider must initialize while another provider is delayed");
+    assert_eq!(
+        manager.snapshot("a-slow-start").await.unwrap().state,
+        PluginRuntimeState::Starting
+    );
+    assert!(startup
+        .await
+        .unwrap()
+        .into_iter()
+        .all(|(_, result)| result.is_ok()));
     manager.shutdown().await;
 }

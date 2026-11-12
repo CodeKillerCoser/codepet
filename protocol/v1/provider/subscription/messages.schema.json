@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/provider/subscription/messages.schema.json",
+  "description": "provider 的 subscription 功能模块交互对象。",
+  "$defs": {
+    "EventSubscribeRequest": {
+      "type": "object",
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "订阅身份，用于匹配事件和取消订阅。"
+        }
+      },
+      "required": [
+        "subscriptionId"
+      ],
+      "additionalProperties": false,
+      "description": "事件订阅的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "EventSubscribeResponse": {
+      "type": "object",
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "订阅身份，用于匹配事件和取消订阅。"
+        },
+        "message": {
+          "type": "string",
+          "description": "供调用者理解的错误或提示文字。"
+        }
+      },
+      "required": [
+        "subscriptionId",
+        "message"
+      ],
+      "additionalProperties": false,
+      "description": "事件订阅响应，作为对应方法成功响应的 result。"
+    },
+    "EventUnsubscribeRequest": {
+      "type": "object",
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "订阅身份，用于匹配事件和取消订阅。"
+        }
+      },
+      "required": [
+        "subscriptionId"
+      ],
+      "additionalProperties": false,
+      "description": "事件取消订阅的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "EventUnsubscribeResponse": {
+      "type": "object",
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "订阅身份，用于匹配事件和取消订阅。"
+        }
+      },
+      "required": [
+        "subscriptionId"
+      ],
+      "additionalProperties": false,
+      "description": "事件取消订阅响应，作为对应方法成功响应的 result。"
+    },
+    "ProviderNotificationEvent": {
+      "type": "object",
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "订阅身份，用于匹配事件和取消订阅。"
+        },
+        "eventId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "通知事件的稳定身份。"
+        },
+        "receivedAt": {
+          "$ref": "../../common/types.schema.json#/$defs/TimestampMs",
+          "description": "收到该事件的时间戳，毫秒。"
+        },
+        "payload": {
+          "$ref": "../../common/types.schema.json#/$defs/JsonObject",
+          "description": "事件或扩展携带的结构化数据。"
+        }
+      },
+      "required": [
+        "subscriptionId",
+        "eventId",
+        "receivedAt",
+        "payload"
+      ],
+      "additionalProperties": false,
+      "description": "Provider通知事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    }
+  }
+}

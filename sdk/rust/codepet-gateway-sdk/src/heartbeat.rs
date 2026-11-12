@@ -1,8 +1,8 @@
 //! Application heartbeat admission for a single authenticated Gateway connection.
 use std::time::{Duration, Instant};
 
-pub const GATEWAY_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(20);
-pub const GATEWAY_HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(60);
+pub const GATEWAY_HEARTBEAT_INTERVAL: Duration = Duration::from_millis(crate::GATEWAY_HEARTBEAT_INTERVAL_MS);
+pub const GATEWAY_HEARTBEAT_TIMEOUT: Duration = Duration::from_millis(crate::GATEWAY_HEARTBEAT_TIMEOUT_MS);
 
 pub struct GatewayHeartbeat {
     last_sequence: Option<u64>,

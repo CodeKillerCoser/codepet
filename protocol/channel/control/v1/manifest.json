@@ -5,5 +5,6 @@
   "kind": "types",
   "methods": [],
   "events": [],
-  "fixtures": "fixtures/index.json"
+  "fixtures": "fixtures/index.json",
+  "description": "Generated compatibility view of protocol/v1/channel-control."
 }

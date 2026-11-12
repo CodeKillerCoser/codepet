@@ -1,4 +1,5 @@
 //! Process serving: transport selection, Provider dispatch, events and lifecycle.
+mod protocol;
 mod options;
 mod events;
 mod stdio;

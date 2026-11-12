@@ -1,60 +1,20 @@
 use crate::{HostError, HostResult};
-use codepet_provider_sdk::{JsonObject, ProviderInstanceId, ProviderPluginId};
-use serde::{Deserialize, Serialize};
+use codepet_provider_sdk::{JsonObject, ProviderPluginId};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use url::Url;
 
-pub const PLUGIN_MANIFEST_FILE_NAME: &str = "codepet-provider.json";
+#[path="manifest_generated.rs"]
+mod manifest_contract;
+pub use manifest_contract::PLUGIN_MANIFEST_FILE_NAME;
 
 fn default_true() -> bool {
     true
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct PluginInstanceConfig {
-    #[serde(default)]
-    pub instance_id: Option<ProviderInstanceId>,
-    pub instance_kind: String,
-    pub display_name: String,
-    #[serde(default)]
-    pub settings: JsonObject,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-pub struct PluginDescriptor {
-    pub plugin_id: ProviderPluginId,
-    pub display_name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub icon: Option<String>,
-    pub executable: PathBuf,
-    #[serde(default)]
-    pub args: Vec<String>,
-    #[serde(default)]
-    pub env: BTreeMap<String, String>,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default)]
-    pub instances: Vec<PluginInstanceConfig>,
-}
-
-#[derive(Clone, Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
-struct PluginManifest {
-    manifest_version: u32,
-    #[serde(default)]
-    transport: Option<String>,
-    #[serde(flatten)]
-    descriptor: PluginDescriptor,
-}
+pub use manifest_contract::{PluginDescriptor, PluginInstanceConfig};
+use manifest_contract::PluginManifest;
 
 #[derive(Clone, Debug, Default)]
 pub struct PluginCatalogConfig {
@@ -153,14 +113,18 @@ impl PluginCatalog {
         Ok(catalog)
     }
 
-    pub(crate) fn read_one(path: &Path) -> HostResult<PluginDescriptor> {
+    /// Parse and validate a package through the same path used by custom import.
+    pub fn read_one(path: &Path) -> HostResult<PluginDescriptor> {
         let mut candidates = Vec::new();
         let mut diagnostics = Vec::new();
         read_manifest(path, &mut candidates, &mut diagnostics);
         if let Some(error) = diagnostics.into_iter().next() {
             return Err(HostError::new(error.code, error.message));
         }
-        let descriptor = candidates.pop().ok_or_else(|| HostError::new("invalid_plugin_manifest", "Missing Provider manifest"))?.1;
+        let descriptor = candidates
+            .pop()
+            .ok_or_else(|| HostError::new("invalid_plugin_manifest", "Missing Provider manifest"))?
+            .1;
         validate_descriptor(&descriptor)?;
         Ok(descriptor)
     }
@@ -278,26 +242,67 @@ fn read_manifest(
     let result = fs::read(path)
         .map_err(|error| error.to_string())
         .and_then(|payload| {
-            serde_json::from_slice::<PluginManifest>(&payload).map_err(|error| error.to_string())
+            let value: serde_json::Value =
+                serde_json::from_slice(&payload).map_err(|error| error.to_string())?;
+            if value["manifestVersion"] == manifest_contract::PLUGIN_MANIFEST_VERSION { manifest_contract::validate_v2_manifest(&value)?; }
+            for key in [
+                "CODEPET_PROVIDER_PACKAGE_DIRECTORY",
+                "CODEPET_PROVIDER_EXTERNAL_COMMAND",
+            ] {
+                if value.get("env").and_then(|v| v.get(key)).is_some() {
+                    return Err(format!("reserved Host environment key: {key}"));
+                }
+            }
+            serde_json::from_value::<PluginManifest>(value).map_err(|error| error.to_string())
         });
     match result {
-        Ok(mut manifest) if manifest.manifest_version == 1 => {
+        Ok(mut manifest) if manifest.manifest_version == 1 || manifest.manifest_version == manifest_contract::PLUGIN_MANIFEST_VERSION => {
             {
-                let profile = manifest.transport.unwrap_or_else(|| codepet_provider_sdk::MUX_PROFILE.into());
+                let profile = manifest
+                    .transport
+                    .unwrap_or_else(|| codepet_provider_sdk::MUX_PROFILE.into());
                 let key = codepet_provider_sdk::TRANSPORT_ENV;
-                if profile != codepet_provider_sdk::MUX_PROFILE
-                    || manifest.descriptor.env.get(key).is_some_and(|value| value != &profile) {
-                    diagnostics.push(CatalogDiagnostic { code: "invalid_plugin_transport".into(),
-                        message: format!("unsupported or conflicting Provider transport in {}", path.display()),
-                        path: Some(path.to_path_buf()), plugin_id: Some(manifest.descriptor.plugin_id) });
+                if codepet_transport::Profile::parse(&profile).is_err()
+                    || manifest
+                        .descriptor
+                        .env
+                        .get(key)
+                        .is_some_and(|value| value != &profile)
+                {
+                    diagnostics.push(CatalogDiagnostic {
+                        code: "invalid_plugin_transport".into(),
+                        message: format!(
+                            "unsupported or conflicting Provider transport in {}",
+                            path.display()
+                        ),
+                        path: Some(path.to_path_buf()),
+                        plugin_id: Some(manifest.descriptor.plugin_id),
+                    });
                     return;
                 }
                 manifest.descriptor.env.insert(key.into(), profile);
             }
-            if manifest.descriptor.executable.is_relative() {
-                if let Some(parent) = path.parent() {
-                    manifest.descriptor.executable = parent.join(&manifest.descriptor.executable);
+            if let Some(parent) = path.parent() {
+                let parent = parent.canonicalize().unwrap_or_else(|_| parent.to_owned());
+                let command = &manifest.descriptor.executable;
+                let packaged = parent.join(command);
+                let external = manifest.manifest_version == manifest_contract::PLUGIN_MANIFEST_VERSION
+                    && ((command.is_absolute() && !command.starts_with(&parent))
+                        || (command.is_relative()
+                            && command.components().count() == 1
+                            && !packaged.is_file()));
+                if external {
+                    manifest
+                        .descriptor
+                        .env
+                        .insert("CODEPET_PROVIDER_EXTERNAL_COMMAND".into(), "1".into());
+                } else if command.is_relative() {
+                    manifest.descriptor.executable = packaged;
                 }
+                manifest.descriptor.env.insert(
+                    "CODEPET_PROVIDER_PACKAGE_DIRECTORY".into(),
+                    parent.to_string_lossy().into_owned(),
+                );
             }
             candidates.push((Some(path.to_path_buf()), manifest.descriptor));
         }
@@ -313,7 +318,10 @@ fn read_manifest(
         }),
         Err(error) => diagnostics.push(CatalogDiagnostic {
             code: "invalid_plugin_manifest".to_string(),
-            message: format!("decode Provider plugin manifest {}: {error}", path.display()),
+            message: format!(
+                "decode Provider plugin manifest {}: {error}",
+                path.display()
+            ),
             path: Some(path.to_path_buf()),
             plugin_id: None,
         }),
@@ -403,5 +411,58 @@ mod transport_tests {
         candidates.clear();
         read_manifest(&path, &mut candidates, &mut diagnostics);
         assert!(candidates.is_empty()); assert_eq!(diagnostics[0].code, "invalid_plugin_transport");
+    }
+}
+
+#[cfg(test)]
+mod manifest_v2_tests {
+    use super::*;
+    #[test]
+    fn v2_launch_contract_keeps_argv_and_env_literal_and_requires_explicit_profile() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(PLUGIN_MANIFEST_FILE_NAME);
+        for profile in [
+            "stdio-jsonrpc-v1",
+            "stdio-codepet-zstd-v1",
+            "stdio-codepet-mux-v1",
+        ] {
+            let mut value = serde_json::json!({"$schema":"plugin-manifest.schema.json","manifestVersion":2,"pluginId":"test.contract","displayName":"Contract",
+                "command":"node","args":["entry with space.mjs","$literal","--value=a b"],"env":{"CUSTOM":"$NO_EXPANSION"},"transport":profile});
+            fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+            let descriptor = PluginCatalog::read_one(&path).unwrap();
+            assert_eq!(descriptor.executable, PathBuf::from("node"));
+            assert_eq!(
+                descriptor.args,
+                ["entry with space.mjs", "$literal", "--value=a b"]
+            );
+            assert_eq!(descriptor.env["CUSTOM"], "$NO_EXPANSION");
+            assert_eq!(descriptor.env[codepet_provider_sdk::TRANSPORT_ENV], profile);
+            assert_eq!(
+                PathBuf::from(&descriptor.env["CODEPET_PROVIDER_PACKAGE_DIRECTORY"]),
+                root.path().canonicalize().unwrap()
+            );
+            value.as_object_mut().unwrap().remove("transport");
+            fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+            assert!(PluginCatalog::read_one(&path).is_err());
+        }
+    }
+    #[test]
+    fn packaged_command_is_resolved_against_manifest_and_reserved_context_is_rejected() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join(PLUGIN_MANIFEST_FILE_NAME);
+        let mut value = serde_json::json!({"manifestVersion":2,"pluginId":"test.pkg","displayName":"Package","command":"./bin/provider","transport":"stdio-jsonrpc-v1"});
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        let descriptor = PluginCatalog::read_one(&path).unwrap();
+        assert_eq!(
+            descriptor.executable,
+            root.path().canonicalize().unwrap().join("./bin/provider")
+        );
+        value["transport"] = serde_json::json!("unknown");
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(PluginCatalog::read_one(&path).is_err());
+        value["transport"] = serde_json::json!("stdio-jsonrpc-v1");
+        value["env"] = serde_json::json!({"CODEPET_PROVIDER_PACKAGE_DIRECTORY":"/elsewhere"});
+        fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(PluginCatalog::read_one(&path).is_err());
     }
 }

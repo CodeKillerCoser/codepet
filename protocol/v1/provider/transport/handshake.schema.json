@@ -1,0 +1,247 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/provider/transport/handshake.schema.json",
+  "title": "handshake.schema.json",
+  "description": "CPMX 传输握手载荷及接收资源上限；不包含业务 Initialize 或 JSON-RPC 消息头。",
+  "$defs": {
+    "ProviderTransportLimits": {
+      "type": "object",
+      "properties": {
+        "maxFramePayloadBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65536,
+          "description": "单个 Yamux DATA 帧 payload 的最大字节数。",
+          "default": 16384
+        },
+        "maxEncodedMessageBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 16777216,
+          "description": "编码后 CPRF 整帧最大字节数，包含 10 字节头。",
+          "default": 16777216
+        },
+        "maxDecodedMessageBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 134217728,
+          "description": "解压后 UTF-8 JSON 的最大字节数。",
+          "default": 134217728
+        },
+        "receiveBudgetBytes": {
+          "type": "integer",
+          "minimum": 2048,
+          "maximum": 1073741824,
+          "description": "normal 通道接收对象及编码/解码缓冲区的字节预算。",
+          "default": 268435456
+        },
+        "normalStreams": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "description": "normal 通道并发消息槽位上限。",
+          "default": 24
+        },
+        "smallStreams": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16,
+          "description": "small 通道并发消息槽位上限。",
+          "default": 16
+        },
+        "controlStreams": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8,
+          "description": "control 通道并发消息槽位上限。",
+          "default": 4
+        },
+        "smallMessageBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65536,
+          "description": "small 通道单条消息的编码和解码尺寸上限。",
+          "default": 65536
+        },
+        "smallReceiveBudgetBytes": {
+          "type": "integer",
+          "minimum": 2048,
+          "maximum": 16777216,
+          "description": "small 通道独立接收字节预算。",
+          "default": 1048576
+        },
+        "controlMessageBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 16384,
+          "description": "control 通道单条消息的编码和解码尺寸上限。",
+          "default": 16384
+        },
+        "controlReceiveBudgetBytes": {
+          "type": "integer",
+          "minimum": 2048,
+          "maximum": 1048576,
+          "description": "control 通道独立接收字节预算。",
+          "default": 262144
+        },
+        "connectionWindowBytes": {
+          "type": "integer",
+          "minimum": 33554432,
+          "maximum": 268435456,
+          "description": "Yamux 连接接收窗口的字节预算。",
+          "default": 33554432
+        },
+        "idleTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000,
+          "description": "传输或准入过程无进展的超时时间，毫秒。",
+          "default": 10000
+        },
+        "streamTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 300000,
+          "description": "单条消息流的处理时限，毫秒；与 RPC 请求超时独立。",
+          "default": 60000
+        }
+      },
+      "required": [
+        "maxFramePayloadBytes",
+        "maxEncodedMessageBytes",
+        "maxDecodedMessageBytes",
+        "receiveBudgetBytes",
+        "normalStreams",
+        "smallStreams",
+        "controlStreams",
+        "smallMessageBytes",
+        "smallReceiveBudgetBytes",
+        "controlMessageBytes",
+        "controlReceiveBudgetBytes",
+        "connectionWindowBytes",
+        "idleTimeoutMs",
+        "streamTimeoutMs"
+      ],
+      "additionalProperties": false,
+      "description": "Provider传输上限的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderTransportHello": {
+      "type": "object",
+      "properties": {
+        "supportedVersions": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "minItems": 1,
+          "description": "本端支持的版本；对象表示业务版本区间，数组表示握手版本清单。"
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "传输能力标识清单；mux v1 必须完整声明八项必选能力。"
+        },
+        "receive": {
+          "$ref": "#/$defs/ProviderTransportLimits",
+          "description": "本端接收上限，约束对端发送。"
+        }
+      },
+      "required": [
+        "supportedVersions",
+        "features",
+        "receive"
+      ],
+      "additionalProperties": false,
+      "description": "Provider传输HELLO的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderTransportSelection": {
+      "type": "object",
+      "properties": {
+        "selectedVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "协商选中的版本，须在双方支持范围内。"
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "传输能力标识清单；mux v1 必须完整声明八项必选能力。"
+        },
+        "receive": {
+          "$ref": "#/$defs/ProviderTransportLimits",
+          "description": "本端接收上限，约束对端发送。"
+        }
+      },
+      "required": [
+        "selectedVersion",
+        "features",
+        "receive"
+      ],
+      "additionalProperties": false,
+      "description": "Provider传输选择的完整数据定义；字段、可选性与允许值见本对象约束。"
+    }
+  },
+  "x-codepet-constraints": [
+    {
+      "description": "normal 预算必须容纳最大编码和解码缓冲区。",
+      "left": "receiveBudgetBytes",
+      "operator": ">=",
+      "right": {
+        "sum": [
+          "maxEncodedMessageBytes",
+          "maxDecodedMessageBytes"
+        ]
+      }
+    },
+    {
+      "description": "small 预算至少容纳两倍消息上限。",
+      "left": "smallReceiveBudgetBytes",
+      "operator": ">=",
+      "right": {
+        "multiply": [
+          2,
+          "smallMessageBytes"
+        ]
+      }
+    },
+    {
+      "description": "control 预算至少容纳两倍消息上限。",
+      "left": "controlReceiveBudgetBytes",
+      "operator": ">=",
+      "right": {
+        "multiply": [
+          2,
+          "controlMessageBytes"
+        ]
+      }
+    },
+    {
+      "description": "small 解码上限不得超过 normal 解码上限。",
+      "left": "smallMessageBytes",
+      "operator": "<=",
+      "right": "maxDecodedMessageBytes"
+    },
+    {
+      "description": "control 消息上限不得超过 small 上限。",
+      "left": "controlMessageBytes",
+      "operator": "<=",
+      "right": "smallMessageBytes"
+    },
+    {
+      "description": "失活超时不得大于流处理时限。",
+      "left": "idleTimeoutMs",
+      "operator": "<=",
+      "right": "streamTimeoutMs"
+    }
+  ]
+}

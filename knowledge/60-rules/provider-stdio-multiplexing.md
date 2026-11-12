@@ -1,9 +1,10 @@
 # Provider stdio 复用边界
 
-- STDIO 默认且仅支持 mux；Host、SDK、manifest 与测试客户端必须一致。业务 initialize 前完成独立 bootstrap，显式旧 profile 或未知 profile 拒绝，不回退。
+- Host 支持三个显式 profile：`stdio-jsonrpc-v1`、`stdio-codepet-zstd-v1`、`stdio-codepet-mux-v1`。内置 Provider 与旧 manifest 默认保持 mux；新 manifest v2 必须声明。只有 mux 在业务 initialize 前执行 CPMX bootstrap；另外两档按各自定界直接发送 initialize。未知/冲突 profile 拒绝，不猜测或回退。
+- 连接状态、请求关联、编解码额度及事件业务队列按 Provider 隔离；共享接收入口只路由，不同步执行业务。接收 guard 随事件传到处理完成，不能在转交业务队列时提前归还。共享事件游标只保留短提交临界区，并保证游标和广播顺序一致。
 - 声明容量必须验证方向、取值和一致性。分片长度在 body 分配前校验；decoded 长度在解压过程中限制，再核对实际值。
 - normal、small、control 的发送/接收额度独立；control 方法来自生成 manifest，不维护另一份手写方法表。
-- SDK 依赖方向为 runtime → message → transport。`MessageCodec` 由传输层定义、Provider 消息层实现；传输生产代码只能依赖传输 DTO，不引用 Provider 业务消息、方法表或 runtime。额度取得与持有仍属于传输层，超限 RPC 响应属于消息层。依据：[SDK 分层决策](../50-decisions/provider-sdk-layered-runtime.md)。
+- SDK 依赖方向为 runtime → message → 独立 `codepet-transport`（依赖 common）；原 transport 路径是兼容 facade。`MessageCodec` 由传输层定义、Provider 消息层实现；传输生产代码只能依赖传输 DTO，不引用 Provider 业务消息、方法表或 runtime。额度取得与持有仍属于传输层，超限 RPC 响应属于消息层。依据：[SDK 分层决策](../50-decisions/provider-sdk-layered-runtime.md)。
 - 接收整消息预算在 GRANT 前取得，生命周期结束才释放。取消后台编码/解码 waiter 时，worker 仍持有额度直到其自身结束。
 - stream reset 终止传输等待，不能用作业务回滚承诺。重试非幂等请求前须按业务合同处理未知结果。
 - 无事件的 Provider 也是合法实现。Runtime 自己持有发布器，不得因为 factory 忽略 sink 就关闭连接。回归：`mux_handshake_cancel_and_shutdown_use_the_production_sdk_runtime`。
@@ -15,3 +16,5 @@
 - JSON byte 预算不是完整 RSS 限制。压测必须同时观察小 RPC、心跳、吞吐、事件、退出及异常恢复。
 
 验证入口：[实现和测试矩阵](../10-architecture/provider-stdio-message-multiplexing.md)、[性能对照](../40-runbooks/provider-stdio-mux-validation.md)。修改生命周期或容量逻辑后，执行相关 mux 测试和 Host 子进程测试；更改 SDK 分发内容时额外执行导出包独立编译。
+
+三个 profile、v2 manifest、独立 SDK 导出与黑盒插件验收见 [当前架构](../10-architecture/provider-transport-profiles-and-contract-sdk.md)。

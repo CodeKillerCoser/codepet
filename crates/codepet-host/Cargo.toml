@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+codepet-transport = { path = "../../sdk/rust/codepet-transport" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 codepet-channel-control-sdk = { path = "../../sdk/rust/codepet-channel-control-sdk" }
 chrono = { version = "0.4", default-features = false, features = ["std"] }

@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/channel-control/messages.schema.json",
+  "title": "CodePet Transport Control v1",
+  "$defs": {
+    "ControlPrepare": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "通道所属的逻辑会话标识。"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "additionalProperties": false,
+      "description": "ControlPrepare 的结构与约束。"
+    },
+    "ControlActivate": {
+      "type": "object",
+      "properties": {
+        "expectedActive": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "切换前观察到的活动连接令牌；缺省表示尚无活动连接。"
+        },
+        "switchId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "本次通道切换的幂等标识。"
+        }
+      },
+      "required": [
+        "switchId"
+      ],
+      "additionalProperties": false,
+      "description": "ControlActivate 的结构与约束。"
+    },
+    "ControlStatus": {
+      "type": "object",
+      "properties": {
+        "connectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "Host 为此连接签发的令牌。"
+        },
+        "activeConnectionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "当前权威活动连接的令牌。"
+        },
+        "lastSwitchId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "通道控制状态中的 lastSwitchId 信息。"
+        }
+      },
+      "required": [
+        "connectionId"
+      ],
+      "additionalProperties": false,
+      "description": "ControlStatus 的结构与约束。"
+    }
+  },
+  "description": "通道准备、切换与状态查询的共享控制消息。 的结构与约束。"
+}

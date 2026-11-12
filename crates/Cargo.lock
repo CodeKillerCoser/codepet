@@ -512,6 +512,7 @@ dependencies = [
  "codepet-pet-sdk",
  "codepet-provider-data",
  "codepet-provider-sdk",
+ "codepet-transport",
  "flate2",
  "futures-util",
  "libc",
@@ -654,6 +655,7 @@ version = "0.1.0"
 dependencies = [
  "codepet-agent-sdk",
  "codepet-core-sdk",
+ "codepet-transport",
  "dirs 6.0.0",
  "fs2",
  "futures",
@@ -667,7 +669,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "windows 0.62.2",
- "yamux",
  "zstd",
 ]
 
@@ -682,6 +683,20 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "codepet-transport"
+version = "0.1.0"
+dependencies = [
+ "codepet-core-sdk",
+ "futures",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "yamux",
+ "zstd",
 ]
 
 [[package]]

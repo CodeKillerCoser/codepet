@@ -1,15 +1,17 @@
 # Gateway SDK、通道与准入边界
 
+> 2026-11-12 更新：权威 IDL 在 `protocol/v1/gateway/` 按功能组织，配对在其 pairing 模块，适用于不同承载通道；旧 gateway/channel 路径为生成的兼容视图。完整组织与验证见 [模块化协议 IDL](modular-provider-and-gateway-idl.md)。
+
 ## 结论
 
 Remote 接入被拆成四个单向依赖层：discovery 只发现候选地址；channel 只建立经过 TLS pin 的 HTTPS/WSS 字节通道；LAN admission 通过一次性 pairing secret 换取设备级 credential；Gateway v1 在已准入通道上运行 JSON-RPC 2.0 业务协议。准入成功后可以访问 Host 上全部 Provider，不存在 Provider ACL；每个 Provider 资源始终携带 `deviceId + providerPluginId + providerInstanceId`，资源再增加 `nativeResourceId`。
 
-Gateway v1 的 schema/manifest 是业务协议唯一事实来源。`cp-sdk-gen` 从同一输入生成 Dart client 或 Rust client/server：client 生成 typed method wrapper、请求信封和响应解码；server 生成 trait、dispatcher、严格 JSON-RPC 分类和错误映射，业务实现仍由 Host 手写。通道实现不得枚举 Gateway method，Gateway handler 不得读取 bearer、证书或 mDNS 状态。
+Gateway v1 各功能模块的 Schema、methods/events 是业务协议唯一事实来源。`cp-sdk-gen` 从同一输入生成 Dart client 或 Rust client/server：client 生成 typed method wrapper、请求信封和响应解码；server 生成 trait、dispatcher、严格 JSON-RPC 分类和错误映射，业务实现仍由 Host 手写。通道实现不得枚举 Gateway method，Gateway handler 不得读取 bearer、证书或 mDNS 状态。
 
 ## 证据
 
-- `protocol/gateway/v1/{schema,manifest}.json`：Gateway 业务 DTO、18 个方法、10 个 replayable event 与 WebSocket text framing；五个 Project CRUD 方法逐项绑定 capability。
-- `protocol/channel/lan/v1/{schema,manifest}.json`：QR、pairing exchange、LAN Host identity 与 current credential revoke DTO；不声明 Gateway method。
+- `protocol/v1/gateway/`：按功能定义的 Gateway 业务 DTO、31 个方法、11 个 replayable event 与 WebSocket text framing；五个 Project CRUD 方法逐项绑定 capability。
+- `protocol/v1/gateway/pairing/`：QR、pairing exchange、LAN Host identity 与 current credential revoke DTO；不声明 Gateway method。
 - `crates/codepet-host/src/remote/channels/lan/listener.rs`：pairing、credential 与 Gateway WSS 都保持 `/remote/v1/...`；首个业务请求必须是 handshake。
 - `sdk/rust/codepet-gateway-sdk`：Host 实现生成的 server trait，事件与响应使用 JSON-RPC 2.0。
 - `sdk/dart/codepet-gateway-sdk`：生成 transport-neutral `ProtocolClient`；Remote 的 pinned WebSocket 只移动请求信封、响应信封与 notification。
@@ -61,4 +63,4 @@ flutter analyze
 flutter test
 ```
 
-Remote 的后两条命令在 `codepet-remote` 仓库执行。App 构建还必须从最终 bundle 的 `provider-sdk/` 资源运行一次 `cp-sdk-gen` 并编译导出结果，防止 staging 与源码检查脱节。
+Remote 的后两条命令在 `codepet-remote` 仓库执行。App 构建必须检查最终 bundle 的 provider-sdk/v1 与统一导出结果一致；公开包只含 IDL 和说明，不包含 cp-sdk-gen、Gateway 或配对协议。内部语言 SDK 另行导出并编译，防止源码检查与实际产物脱节。

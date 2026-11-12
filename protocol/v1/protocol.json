@@ -1,0 +1,10 @@
+{
+  "description": "CodePet v1 权威协议入口，共享对象与两层交互协议分开维护。",
+  "version": 1,
+  "commonSchema": "common/types.schema.json",
+  "rpcEnvelopeSchema": "common/rpc.schema.json",
+  "agentDomainSchema": "agent-domain/domain.schema.json",
+  "provider": "provider/protocol.json",
+  "gateway": "gateway/protocol.json",
+  "channelControl": "channel-control/protocol.json"
+}

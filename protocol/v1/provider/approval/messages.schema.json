@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/provider/approval/messages.schema.json",
+  "description": "provider 的 approval 功能模块交互对象。",
+  "$defs": {
+    "ApprovalRequestedEvent": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Approval",
+          "description": "需要用户处理的审批对象。"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "additionalProperties": false,
+      "description": "审批请求事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    "ApprovalResolveRequest": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "需要用户处理的审批对象。"
+        },
+        "decision": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ApprovalDecision",
+          "description": "调用者提交或已记录的审批决策。"
+        }
+      },
+      "required": [
+        "approval",
+        "decision"
+      ],
+      "additionalProperties": false,
+      "description": "审批处理的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ApprovalResolveResponse": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Approval",
+          "description": "需要用户处理的审批对象。"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "additionalProperties": false,
+      "description": "审批处理响应，作为对应方法成功响应的 result。"
+    },
+    "ApprovalResolvedEvent": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Approval",
+          "description": "需要用户处理的审批对象。"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "additionalProperties": false,
+      "description": "审批已处理事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    }
+  }
+}

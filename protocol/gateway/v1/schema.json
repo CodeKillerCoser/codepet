@@ -1,92 +1,655 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://code-pet.dev/protocol/gateway/v1/schema.json",
-  "title": "CodePet Gateway Protocol v1",
+  "description": "Generated compatibility view of protocol/v1; edit the functional IDL modules and run protocol:generate.",
   "$defs": {
     "PingRequest": {
       "type": "object",
       "properties": {
         "sequence": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "当前连接内的心跳递增序号；响应原样回显。"
         }
       },
       "required": [
         "sequence"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "PingRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "PingResponse": {
       "type": "object",
       "properties": {
         "sequence": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "当前连接内的心跳递增序号；响应原样回显。"
         },
         "providers": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/ProviderSummary"
-          }
+          },
+          "description": "Host 当前可见的 Provider 摘要列表。"
         }
       },
       "required": [
         "sequence",
         "providers"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "PingResponse 的成功返回结果。"
     },
-    "ApprovalRequestedEvent": {
+    "HandshakeRequest": {
       "type": "object",
       "properties": {
-        "approval": {
-          "$ref": "../../agent/v1/schema.json#/$defs/Approval"
+        "clientId": {
+          "$ref": "../../core/v1/schema.json#/$defs/ClientId"
+        },
+        "device": {
+          "$ref": "../../core/v1/schema.json#/$defs/DeviceDescriptor"
+        },
+        "clientVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "调用客户端的软件版本。"
+        },
+        "supportedVersions": {
+          "$ref": "../../core/v1/schema.json#/$defs/VersionRange"
+        },
+        "lastEventCursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
         }
       },
       "required": [
-        "approval"
+        "clientId",
+        "device",
+        "clientVersion",
+        "supportedVersions"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "HandshakeRequest 的请求参数；仅包含当前方法接受的字段。"
     },
-    "ApprovalResolveRequest": {
+    "HandshakeResponse": {
       "type": "object",
       "properties": {
-        "approval": {
+        "protocol": {
+          "$ref": "#/$defs/GatewayProtocol"
+        },
+        "device": {
+          "$ref": "#/$defs/GatewayDevice"
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderSummary"
+          },
+          "description": "Host 当前可见的 Provider 摘要列表。"
+        },
+        "eventCursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
+        }
+      },
+      "required": [
+        "protocol",
+        "device",
+        "providers",
+        "eventCursor"
+      ],
+      "additionalProperties": false,
+      "description": "HandshakeResponse 的成功返回结果。"
+    },
+    "ProtocolFeature": {
+      "type": "string",
+      "enum": [
+        "trace-context-v1"
+      ],
+      "description": "ProtocolFeature 的允许取值；调用方必须按枚举处理。"
+    },
+    "ProtocolDescribeRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "description": "ProtocolDescribeRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProtocolDescribeResponse": {
+      "type": "object",
+      "properties": {
+        "features": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProtocolFeature"
+          },
+          "uniqueItems": true,
+          "description": "双方可识别的协议扩展能力。"
+        }
+      },
+      "required": [
+        "features"
+      ],
+      "additionalProperties": false,
+      "description": "ProtocolDescribeResponse 的成功返回结果。"
+    },
+    "GatewayDevice": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "对象的可展示名称。"
+        },
+        "operatingSystem": {
+          "type": "string",
+          "minLength": 1,
+          "description": "设备运行的操作系统名称。"
+        },
+        "systemVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "设备运行的操作系统版本。"
+        }
+      },
+      "required": [
+        "name",
+        "operatingSystem",
+        "systemVersion"
+      ],
+      "additionalProperties": false,
+      "description": "GatewayDevice 的结构与约束。"
+    },
+    "GatewayProtocol": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion"
+        }
+      },
+      "required": [
+        "version"
+      ],
+      "additionalProperties": false,
+      "description": "GatewayProtocol 的结构与约束。"
+    },
+    "EventSubscribeRequest": {
+      "type": "object",
+      "properties": {
+        "afterCursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
+        }
+      },
+      "required": [
+        "afterCursor"
+      ],
+      "additionalProperties": false,
+      "description": "EventSubscribeRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "EventSubscribeResponse": {
+      "type": "object",
+      "properties": {
+        "subscribedAfterCursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
+        }
+      },
+      "required": [
+        "subscribedAfterCursor"
+      ],
+      "additionalProperties": false,
+      "description": "EventSubscribeResponse 的成功返回结果。"
+    },
+    "GatewayCapability": {
+      "type": "string",
+      "enum": [
+        "project.list",
+        "project.get",
+        "project.create",
+        "project.update",
+        "project.delete",
+        "conversation.list",
+        "conversation.search",
+        "conversation.get",
+        "conversation.releaseInteraction",
+        "conversation.create",
+        "turn.send",
+        "turn.interrupt",
+        "approval.resolve",
+        "conversation.recent",
+        "codepet.usage.query",
+        "turn.steer",
+        "conversation.inputQueue.get",
+        "conversation.inputQueue.enqueue",
+        "conversation.inputQueue.withdraw",
+        "conversation.inputQueue.steer",
+        "conversation.inputQueue.resume",
+        "conversation.inputQueue.acknowledgeEdit"
+      ],
+      "description": "GatewayCapability 的允许取值；调用方必须按枚举处理。"
+    },
+    "GatewayCapabilities": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "所属对象集合或能力快照的版本，用于变化检测；不等同于事件游标。"
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GatewayCapability"
+          },
+          "uniqueItems": true,
+          "description": "当前支持的业务能力方法集合。"
+        },
+        "turnSend": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnSendCapabilities"
+        },
+        "conversationCreate": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ConversationCreateCapabilities"
+        },
+        "usageDatasets": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/UsageDataset"
+          },
+          "description": "Provider 支持查询的用量数据集。"
+        }
+      },
+      "required": [
+        "revision",
+        "methods"
+      ],
+      "additionalProperties": false,
+      "description": "GatewayCapabilities 的结构与约束。"
+    },
+    "ProviderCapabilitiesSummary": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "所属对象集合或能力快照的版本，用于变化检测；不等同于事件游标。"
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "additionalProperties": false,
+      "description": "ProviderCapabilitiesSummary 的结构与约束。"
+    },
+    "ProviderIdentity": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "供 UI 展示的名称。"
+        },
+        "icon": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "供 UI 展示的图标引用。"
+        },
+        "defaultWorkspaceRoot": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Provider 默认使用的工作区根目录。"
+        }
+      },
+      "required": [
+        "displayName"
+      ],
+      "additionalProperties": false,
+      "description": "ProviderIdentity 的结构与约束。"
+    },
+    "ProviderRuntime": {
+      "type": "object",
+      "properties": {
+        "connectionStatus": {
+          "$ref": "../../core/v1/schema.json#/$defs/ConnectionStatus"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Provider 运行代次，用于区分重启后的状态。"
+        },
+        "status": {
+          "$ref": "#/$defs/ProviderStatus"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "该对象所属协议或运行时的软件版本。"
+        },
+        "executablePath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Provider 使用的运行时可执行文件路径。"
+        },
+        "authentication": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ProviderAuthentication"
+        },
+        "usage": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ProviderUsage"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "additionalProperties": false,
+      "description": "ProviderRuntime 的结构与约束。"
+    },
+    "ProviderSummary": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "对象在所属集合内的稳定标识。"
+        },
+        "identity": {
+          "$ref": "#/$defs/ProviderIdentity"
+        },
+        "runtime": {
+          "$ref": "#/$defs/ProviderRuntime"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/ProviderCapabilitiesSummary"
+        }
+      },
+      "required": [
+        "id",
+        "identity",
+        "runtime",
+        "capabilities"
+      ],
+      "additionalProperties": false,
+      "description": "ProviderSummary 的结构与约束。"
+    },
+    "ProviderDescribeRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ProviderId"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "additionalProperties": false,
+      "description": "ProviderDescribeRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProviderDescribeResponse": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/ProviderSummary"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/GatewayCapabilities"
+        }
+      },
+      "required": [
+        "provider",
+        "capabilities"
+      ],
+      "additionalProperties": false,
+      "description": "ProviderDescribeResponse 的成功返回结果。"
+    },
+    "ProviderListRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "description": "ProviderListRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProviderListResponse": {
+      "type": "object",
+      "properties": {
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderSummary"
+          },
+          "description": "Host 当前可见的 Provider 摘要列表。"
+        }
+      },
+      "required": [
+        "providers"
+      ],
+      "additionalProperties": false,
+      "description": "ProviderListResponse 的成功返回结果。"
+    },
+    "ProviderStatus": {
+      "type": "string",
+      "enum": [
+        "connecting",
+        "ready",
+        "stopped",
+        "unavailable",
+        "error"
+      ],
+      "description": "ProviderStatus 的允许取值；调用方必须按枚举处理。"
+    },
+    "ProviderChangedEvent": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/ProviderSummary"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "additionalProperties": false,
+      "description": "ProviderChangedEvent 的事件载荷。"
+    },
+    "ProjectChangedEvent": {
+      "type": "object",
+      "properties": {
+        "project": {
           "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
         },
-        "decision": {
-          "$ref": "../../agent/v1/schema.json#/$defs/ApprovalDecision"
+        "changeType": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ProjectChangeType"
         }
       },
       "required": [
-        "approval",
-        "decision"
+        "project",
+        "changeType"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ProjectChangedEvent 的事件载荷。"
     },
-    "ApprovalResolveResponse": {
+    "ProjectCreateRequest": {
       "type": "object",
       "properties": {
-        "approval": {
-          "$ref": "../../agent/v1/schema.json#/$defs/Approval"
+        "providerId": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ProviderId"
+        },
+        "idempotencyKey": {
+          "$ref": "../../core/v1/schema.json#/$defs/RequestId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "对象的可展示名称。"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/ProjectRoot"
+          },
+          "description": "项目包含的工作区根目录集合。"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "description": "通道控制状态中的 metadata 中每个扩展键对应的值 信息。"
+          },
+          "description": "业务对象附带的结构化扩展元数据。"
         }
       },
       "required": [
-        "approval"
+        "providerId",
+        "idempotencyKey",
+        "name",
+        "roots",
+        "metadata"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ProjectCreateRequest 的请求参数；仅包含当前方法接受的字段。"
     },
-    "ApprovalResolvedEvent": {
+    "ProjectCreateResponse": {
       "type": "object",
       "properties": {
-        "approval": {
-          "$ref": "../../agent/v1/schema.json#/$defs/Approval"
+        "project": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Project"
         }
       },
       "required": [
-        "approval"
+        "project"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ProjectCreateResponse 的成功返回结果。"
+    },
+    "ProjectDeleteRequest": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectDeleteRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProjectDeleteResponse": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "description": "ProjectDeleteResponse 的成功返回结果。"
+    },
+    "ProjectGetRequest": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectGetRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProjectGetResponse": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Project"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectGetResponse 的成功返回结果。"
+    },
+    "ProjectListRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ProviderId"
+        },
+        "cursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本页最多读取的记录数，受字段范围约束。"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectListRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProjectListResponse": {
+      "type": "object",
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/Project"
+          },
+          "description": "本页返回的项目列表。"
+        },
+        "pageInfo": {
+          "$ref": "../../core/v1/schema.json#/$defs/PageInfo"
+        },
+        "snapshotCursor": {
+          "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
+        }
+      },
+      "required": [
+        "projects",
+        "pageInfo",
+        "snapshotCursor"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectListResponse 的成功返回结果。"
+    },
+    "ProjectUpdateRequest": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "对象的可展示名称。"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v1/schema.json#/$defs/ProjectRoot"
+          },
+          "description": "项目包含的工作区根目录集合。"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "description": "通道控制状态中的 metadata 中每个扩展键对应的值 信息。"
+          },
+          "description": "业务对象附带的结构化扩展元数据。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectUpdateRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProjectUpdateResponse": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Project"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectUpdateResponse 的成功返回结果。"
     },
     "ConversationReleaseInteractionRequest": {
       "type": "object",
@@ -98,26 +661,30 @@
       "required": [
         "conversation"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationReleaseInteractionRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "ConversationReleaseInteractionResponse": {
       "type": "object",
       "properties": {
         "released": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "是否已经释放该客户端持有的交互控制。"
         },
         "scope": {
           "type": "string",
           "enum": [
             "providerInstance"
-          ]
+          ],
+          "description": "本次释放对应的交互控制范围。"
         }
       },
       "required": [
         "released",
         "scope"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationReleaseInteractionResponse 的成功返回结果。"
     },
     "ConversationAcquireInteractionRequest": {
       "type": "object",
@@ -129,7 +696,8 @@
       "required": [
         "conversation"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationAcquireInteractionRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "ConversationAcquireInteractionResponse": {
       "type": "object",
@@ -144,7 +712,8 @@
       "required": [
         "selection"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationAcquireInteractionResponse 的成功返回结果。"
     },
     "ConversationResumeRequest": {
       "type": "object",
@@ -159,19 +728,22 @@
         "limit": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 100
+          "maximum": 100,
+          "description": "本页最多读取的记录数，受字段范围约束。"
         }
       },
       "required": [
         "conversation"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationResumeRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "ConversationResumeResponse": {
       "type": "object",
       "properties": {
         "interactionAcquired": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "是否成功取得交互控制。"
         },
         "interaction": {
           "$ref": "#/$defs/ConversationAcquireInteractionResponse"
@@ -189,7 +761,8 @@
       "required": [
         "interactionAcquired"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationResumeResponse 的成功返回结果。"
     },
     "ConversationCreateRequest": {
       "type": "object",
@@ -199,27 +772,33 @@
         },
         "title": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "新会话的标题。"
         },
         "permissionLevel": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "创建会话时请求的权限级别。"
         },
         "model": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "创建会话时请求使用的模型。"
         },
         "reasoningEffort": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "请求的模型推理强度。"
         },
         "workspaceRoot": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "会话使用的工作区根目录。"
         },
         "workspaceMode": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "工作区的创建或复用模式。"
         },
         "project": {
           "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
@@ -229,7 +808,8 @@
         "providerId",
         "permissionLevel"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationCreateRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "ConversationCreateResponse": {
       "type": "object",
@@ -241,7 +821,8 @@
       "required": [
         "conversation"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationCreateResponse 的成功返回结果。"
     },
     "ConversationGetRequest": {
       "type": "object",
@@ -262,7 +843,8 @@
       "required": [
         "conversation"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationGetRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "ConversationGetResponse": {
       "type": "object",
@@ -274,7 +856,8 @@
           "type": "array",
           "items": {
             "$ref": "../../agent/v1/schema.json#/$defs/ConversationItem"
-          }
+          },
+          "description": "本次快照包含的条目，顺序由所属快照语义决定。"
         },
         "pageInfo": {
           "$ref": "../../core/v1/schema.json#/$defs/PageInfo"
@@ -295,7 +878,8 @@
         "items",
         "snapshotCursor"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationGetResponse 的成功返回结果。"
     },
     "ConversationListRequest": {
       "type": "object",
@@ -312,14 +896,16 @@
         "limit": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 100
+          "maximum": 100,
+          "description": "本页最多读取的记录数，受字段范围约束。"
         }
       },
       "required": [
         "providerId",
         "projectFilter"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationListRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "ConversationListResponse": {
       "type": "object",
@@ -328,7 +914,8 @@
           "type": "array",
           "items": {
             "$ref": "../../agent/v1/schema.json#/$defs/Conversation"
-          }
+          },
+          "description": "本页返回的会话列表。"
         },
         "pageInfo": {
           "$ref": "../../core/v1/schema.json#/$defs/PageInfo"
@@ -342,7 +929,8 @@
         "pageInfo",
         "snapshotCursor"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationListResponse 的成功返回结果。"
     },
     "ConversationProjectFilter": {
       "oneOf": [
@@ -355,7 +943,8 @@
         {
           "$ref": "#/$defs/ConversationProjectFilterProject"
         }
-      ]
+      ],
+      "description": "ConversationProjectFilter 的结构与约束。"
     },
     "ConversationProjectFilterAll": {
       "type": "object",
@@ -367,13 +956,15 @@
       "required": [
         "kind"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationProjectFilterAll 的结构与约束。"
     },
     "ConversationProjectFilterAllKind": {
       "type": "string",
       "enum": [
         "all"
-      ]
+      ],
+      "description": "ConversationProjectFilterAllKind 的允许取值；调用方必须按枚举处理。"
     },
     "ConversationProjectFilterStandalone": {
       "type": "object",
@@ -385,13 +976,15 @@
       "required": [
         "kind"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationProjectFilterStandalone 的结构与约束。"
     },
     "ConversationProjectFilterStandaloneKind": {
       "type": "string",
       "enum": [
         "standalone"
-      ]
+      ],
+      "description": "ConversationProjectFilterStandaloneKind 的允许取值；调用方必须按枚举处理。"
     },
     "ConversationProjectFilterProject": {
       "type": "object",
@@ -407,13 +1000,15 @@
         "kind",
         "project"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationProjectFilterProject 的结构与约束。"
     },
     "ConversationProjectFilterProjectKind": {
       "type": "string",
       "enum": [
         "project"
-      ]
+      ],
+      "description": "ConversationProjectFilterProjectKind 的允许取值；调用方必须按枚举处理。"
     },
     "ConversationMarkReadRequest": {
       "type": "object",
@@ -423,14 +1018,16 @@
         },
         "observedActivityVersion": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "客户端已经展示的活动版本；仅将已观察到的内容标记为已读。"
         }
       },
       "required": [
         "conversation",
         "observedActivityVersion"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationMarkReadRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "ConversationMarkReadResponse": {
       "type": "object",
@@ -442,7 +1039,8 @@
       "required": [
         "readState"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationMarkReadResponse 的成功返回结果。"
     },
     "ConversationSearchRequest": {
       "type": "object",
@@ -452,7 +1050,8 @@
         },
         "searchTerm": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "用于搜索会话的非空文本。"
         },
         "cursor": {
           "$ref": "../../core/v1/schema.json#/$defs/Cursor"
@@ -460,14 +1059,16 @@
         "limit": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 100
+          "maximum": 100,
+          "description": "本页最多读取的记录数，受字段范围约束。"
         }
       },
       "required": [
         "providerId",
         "searchTerm"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationSearchRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "ConversationSearchResponse": {
       "type": "object",
@@ -476,7 +1077,8 @@
           "type": "array",
           "items": {
             "$ref": "../../agent/v1/schema.json#/$defs/Conversation"
-          }
+          },
+          "description": "本页返回的会话列表。"
         },
         "pageInfo": {
           "$ref": "../../core/v1/schema.json#/$defs/PageInfo"
@@ -490,7 +1092,8 @@
         "pageInfo",
         "snapshotCursor"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationSearchResponse 的成功返回结果。"
     },
     "ConversationUpsertedEvent": {
       "type": "object",
@@ -502,7 +1105,8 @@
       "required": [
         "conversation"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationUpsertedEvent 的事件载荷。"
     },
     "ConversationItemUpsertedEvent": {
       "type": "object",
@@ -530,696 +1134,16 @@
         },
         "activityVersion": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "会话当前的活动版本。"
         }
       },
       "required": [
         "conversation",
         "activityVersion"
       ],
-      "additionalProperties": false
-    },
-    "EventSubscribeRequest": {
-      "type": "object",
-      "properties": {
-        "afterCursor": {
-          "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
-        }
-      },
-      "required": [
-        "afterCursor"
-      ],
-      "additionalProperties": false
-    },
-    "EventSubscribeResponse": {
-      "type": "object",
-      "properties": {
-        "subscribedAfterCursor": {
-          "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
-        }
-      },
-      "required": [
-        "subscribedAfterCursor"
-      ],
-      "additionalProperties": false
-    },
-    "GatewayCapability": {
-      "type": "string",
-      "enum": [
-        "project.list",
-        "project.get",
-        "project.create",
-        "project.update",
-        "project.delete",
-        "conversation.list",
-        "conversation.search",
-        "conversation.get",
-        "conversation.releaseInteraction",
-        "conversation.create",
-        "turn.send",
-        "turn.interrupt",
-        "approval.resolve",
-        "conversation.recent",
-        "codepet.usage.query",
-        "turn.steer",
-        "conversation.inputQueue.get",
-        "conversation.inputQueue.enqueue",
-        "conversation.inputQueue.withdraw",
-        "conversation.inputQueue.steer",
-        "conversation.inputQueue.resume",
-        "conversation.inputQueue.acknowledgeEdit"
-      ]
-    },
-    "GatewayCapabilities": {
-      "type": "object",
-      "properties": {
-        "revision": {
-          "type": "string",
-          "minLength": 1
-        },
-        "methods": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/GatewayCapability"
-          },
-          "uniqueItems": true
-        },
-        "turnSend": {
-          "$ref": "../../agent/v1/schema.json#/$defs/TurnSendCapabilities"
-        },
-        "conversationCreate": {
-          "$ref": "../../agent/v1/schema.json#/$defs/ConversationCreateCapabilities"
-        },
-        "usageDatasets": {
-          "type": "array",
-          "items": {
-            "$ref": "../../agent/v1/schema.json#/$defs/UsageDataset"
-          }
-        }
-      },
-      "required": [
-        "revision",
-        "methods"
-      ],
-      "additionalProperties": false
-    },
-    "ProjectChangedEvent": {
-      "type": "object",
-      "properties": {
-        "project": {
-          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
-        },
-        "changeType": {
-          "$ref": "../../agent/v1/schema.json#/$defs/ProjectChangeType"
-        }
-      },
-      "required": [
-        "project",
-        "changeType"
-      ],
-      "additionalProperties": false
-    },
-    "ProjectCreateRequest": {
-      "type": "object",
-      "properties": {
-        "providerId": {
-          "$ref": "../../agent/v1/schema.json#/$defs/ProviderId"
-        },
-        "idempotencyKey": {
-          "$ref": "../../core/v1/schema.json#/$defs/RequestId"
-        },
-        "name": {
-          "type": "string",
-          "minLength": 1
-        },
-        "roots": {
-          "type": "array",
-          "items": {
-            "$ref": "../../agent/v1/schema.json#/$defs/ProjectRoot"
-          }
-        },
-        "metadata": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "providerId",
-        "idempotencyKey",
-        "name",
-        "roots",
-        "metadata"
-      ],
-      "additionalProperties": false
-    },
-    "ProjectCreateResponse": {
-      "type": "object",
-      "properties": {
-        "project": {
-          "$ref": "../../agent/v1/schema.json#/$defs/Project"
-        }
-      },
-      "required": [
-        "project"
-      ],
-      "additionalProperties": false
-    },
-    "ProjectDeleteRequest": {
-      "type": "object",
-      "properties": {
-        "project": {
-          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
-        }
-      },
-      "required": [
-        "project"
-      ],
-      "additionalProperties": false
-    },
-    "ProjectDeleteResponse": {
-      "type": "object",
-      "properties": {},
-      "additionalProperties": false
-    },
-    "ProjectGetRequest": {
-      "type": "object",
-      "properties": {
-        "project": {
-          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
-        }
-      },
-      "required": [
-        "project"
-      ],
-      "additionalProperties": false
-    },
-    "ProjectGetResponse": {
-      "type": "object",
-      "properties": {
-        "project": {
-          "$ref": "../../agent/v1/schema.json#/$defs/Project"
-        }
-      },
-      "required": [
-        "project"
-      ],
-      "additionalProperties": false
-    },
-    "ProjectListRequest": {
-      "type": "object",
-      "properties": {
-        "providerId": {
-          "$ref": "../../agent/v1/schema.json#/$defs/ProviderId"
-        },
-        "cursor": {
-          "$ref": "../../core/v1/schema.json#/$defs/Cursor"
-        },
-        "limit": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 100
-        }
-      },
-      "required": [
-        "providerId"
-      ],
-      "additionalProperties": false
-    },
-    "ProjectListResponse": {
-      "type": "object",
-      "properties": {
-        "projects": {
-          "type": "array",
-          "items": {
-            "$ref": "../../agent/v1/schema.json#/$defs/Project"
-          }
-        },
-        "pageInfo": {
-          "$ref": "../../core/v1/schema.json#/$defs/PageInfo"
-        },
-        "snapshotCursor": {
-          "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
-        }
-      },
-      "required": [
-        "projects",
-        "pageInfo",
-        "snapshotCursor"
-      ],
-      "additionalProperties": false
-    },
-    "ProjectUpdateRequest": {
-      "type": "object",
-      "properties": {
-        "project": {
-          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
-        },
-        "name": {
-          "type": "string",
-          "minLength": 1
-        },
-        "roots": {
-          "type": "array",
-          "items": {
-            "$ref": "../../agent/v1/schema.json#/$defs/ProjectRoot"
-          }
-        },
-        "metadata": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "project"
-      ],
-      "additionalProperties": false
-    },
-    "ProjectUpdateResponse": {
-      "type": "object",
-      "properties": {
-        "project": {
-          "$ref": "../../agent/v1/schema.json#/$defs/Project"
-        }
-      },
-      "required": [
-        "project"
-      ],
-      "additionalProperties": false
-    },
-    "HandshakeRequest": {
-      "type": "object",
-      "properties": {
-        "clientId": {
-          "$ref": "../../core/v1/schema.json#/$defs/ClientId"
-        },
-        "device": {
-          "$ref": "../../core/v1/schema.json#/$defs/DeviceDescriptor"
-        },
-        "clientVersion": {
-          "type": "string",
-          "minLength": 1
-        },
-        "supportedVersions": {
-          "$ref": "../../core/v1/schema.json#/$defs/VersionRange"
-        },
-        "lastEventCursor": {
-          "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
-        }
-      },
-      "required": [
-        "clientId",
-        "device",
-        "clientVersion",
-        "supportedVersions"
-      ],
-      "additionalProperties": false
-    },
-    "HandshakeResponse": {
-      "type": "object",
-      "properties": {
-        "protocol": {
-          "$ref": "#/$defs/GatewayProtocol"
-        },
-        "device": {
-          "$ref": "#/$defs/GatewayDevice"
-        },
-        "providers": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ProviderSummary"
-          }
-        },
-        "eventCursor": {
-          "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
-        }
-      },
-      "required": [
-        "protocol",
-        "device",
-        "providers",
-        "eventCursor"
-      ],
-      "additionalProperties": false
-    },
-    "ProtocolFeature": {
-      "type": "string",
-      "enum": [
-        "trace-context-v1"
-      ]
-    },
-    "ProtocolDescribeRequest": {
-      "type": "object",
-      "properties": {},
-      "additionalProperties": false
-    },
-    "ProtocolDescribeResponse": {
-      "type": "object",
-      "properties": {
-        "features": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ProtocolFeature"
-          },
-          "uniqueItems": true
-        }
-      },
-      "required": [
-        "features"
-      ],
-      "additionalProperties": false
-    },
-    "GatewayDevice": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string",
-          "minLength": 1
-        },
-        "operatingSystem": {
-          "type": "string",
-          "minLength": 1
-        },
-        "systemVersion": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "name",
-        "operatingSystem",
-        "systemVersion"
-      ],
-      "additionalProperties": false
-    },
-    "GatewayProtocol": {
-      "type": "object",
-      "properties": {
-        "version": {
-          "$ref": "../../core/v1/schema.json#/$defs/ProtocolVersion"
-        }
-      },
-      "required": [
-        "version"
-      ],
-      "additionalProperties": false
-    },
-    "ProviderCapabilitiesSummary": {
-      "type": "object",
-      "properties": {
-        "revision": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "revision"
-      ],
-      "additionalProperties": false
-    },
-    "ProviderIdentity": {
-      "type": "object",
-      "properties": {
-        "displayName": {
-          "type": "string",
-          "minLength": 1
-        },
-        "icon": {
-          "type": "string",
-          "pattern": "^https://"
-        },
-        "defaultWorkspaceRoot": {
-          "type": "string",
-          "minLength": 1
-        }
-      },
-      "required": [
-        "displayName"
-      ],
-      "additionalProperties": false
-    },
-    "ProviderRuntime": {
-      "type": "object",
-      "properties": {
-        "connectionStatus": {
-          "$ref": "../../core/v1/schema.json#/$defs/ConnectionStatus"
-        },
-        "generation": {
-          "type": "integer",
-          "minimum": 0
-        },
-        "status": {
-          "$ref": "#/$defs/ProviderStatus"
-        },
-        "version": {
-          "type": "string",
-          "minLength": 1
-        },
-        "executablePath": {
-          "type": "string",
-          "minLength": 1
-        },
-        "authentication": {
-          "$ref": "../../agent/v1/schema.json#/$defs/ProviderAuthentication"
-        },
-        "usage": {
-          "$ref": "../../agent/v1/schema.json#/$defs/ProviderUsage"
-        }
-      },
-      "required": [
-        "status"
-      ],
-      "additionalProperties": false
-    },
-    "ProviderSummary": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string",
-          "minLength": 1
-        },
-        "identity": {
-          "$ref": "#/$defs/ProviderIdentity"
-        },
-        "runtime": {
-          "$ref": "#/$defs/ProviderRuntime"
-        },
-        "capabilities": {
-          "$ref": "#/$defs/ProviderCapabilitiesSummary"
-        }
-      },
-      "required": [
-        "id",
-        "identity",
-        "runtime",
-        "capabilities"
-      ],
-      "additionalProperties": false
-    },
-    "ProviderDescribeRequest": {
-      "type": "object",
-      "properties": {
-        "providerId": {
-          "$ref": "../../agent/v1/schema.json#/$defs/ProviderId"
-        }
-      },
-      "required": [
-        "providerId"
-      ],
-      "additionalProperties": false
-    },
-    "ProviderDescribeResponse": {
-      "type": "object",
-      "properties": {
-        "provider": {
-          "$ref": "#/$defs/ProviderSummary"
-        },
-        "capabilities": {
-          "$ref": "#/$defs/GatewayCapabilities"
-        }
-      },
-      "required": [
-        "provider",
-        "capabilities"
-      ],
-      "additionalProperties": false
-    },
-    "ProviderListRequest": {
-      "type": "object",
-      "properties": {},
-      "additionalProperties": false
-    },
-    "ProviderListResponse": {
-      "type": "object",
-      "properties": {
-        "providers": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/ProviderSummary"
-          }
-        }
-      },
-      "required": [
-        "providers"
-      ],
-      "additionalProperties": false
-    },
-    "ProviderStatus": {
-      "type": "string",
-      "enum": [
-        "connecting",
-        "ready",
-        "stopped",
-        "unavailable",
-        "error"
-      ]
-    },
-    "ProviderChangedEvent": {
-      "type": "object",
-      "properties": {
-        "provider": {
-          "$ref": "#/$defs/ProviderSummary"
-        }
-      },
-      "required": [
-        "provider"
-      ],
-      "additionalProperties": false
-    },
-    "TurnInterruptRequest": {
-      "type": "object",
-      "properties": {
-        "conversation": {
-          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
-        },
-        "turn": {
-          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
-        }
-      },
-      "required": [
-        "conversation",
-        "turn"
-      ],
-      "additionalProperties": false
-    },
-    "TurnInterruptResponse": {
-      "type": "object",
-      "properties": {
-        "turn": {
-          "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
-        }
-      },
-      "required": [
-        "turn"
-      ],
-      "additionalProperties": false
-    },
-    "TurnOutputDeltaEvent": {
-      "type": "object",
-      "properties": {
-        "turn": {
-          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
-        },
-        "conversation": {
-          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
-        },
-        "itemId": {
-          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
-        },
-        "contentId": {
-          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
-        },
-        "kind": {
-          "$ref": "../../agent/v1/schema.json#/$defs/ConversationContentKind"
-        },
-        "delta": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "turn",
-        "conversation",
-        "itemId",
-        "contentId",
-        "kind",
-        "delta"
-      ],
-      "additionalProperties": false
-    },
-    "TurnSendRequest": {
-      "type": "object",
-      "properties": {
-        "conversation": {
-          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
-        },
-        "clientRequestId": {
-          "$ref": "../../core/v1/schema.json#/$defs/RequestId"
-        },
-        "capabilityRevision": {
-          "type": "string",
-          "minLength": 1
-        },
-        "input": {
-          "$ref": "../../agent/v1/schema.json#/$defs/TurnInput"
-        },
-        "selection": {
-          "$ref": "../../agent/v1/schema.json#/$defs/TurnSelection"
-        }
-      },
-      "required": [
-        "conversation",
-        "clientRequestId",
-        "capabilityRevision",
-        "input",
-        "selection"
-      ],
-      "additionalProperties": false
-    },
-    "TurnSendResponse": {
-      "type": "object",
-      "properties": {
-        "accepted": {
-          "type": "boolean"
-        },
-        "turn": {
-          "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
-        },
-        "userItem": {
-          "oneOf": [
-            {
-              "$ref": "../../agent/v1/schema.json#/$defs/ConversationItem"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "effectiveSelection": {
-          "$ref": "../../agent/v1/schema.json#/$defs/TurnSelection"
-        }
-      },
-      "required": [
-        "accepted",
-        "turn",
-        "userItem",
-        "effectiveSelection"
-      ],
-      "additionalProperties": false
-    },
-    "TurnUpsertedEvent": {
-      "type": "object",
-      "properties": {
-        "turn": {
-          "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
-        }
-      },
-      "required": [
-        "turn"
-      ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "ConversationActivityChangedEvent 的事件载荷。"
     },
     "ConversationRecentRevision": {
       "type": "string",
@@ -1238,7 +1162,8 @@
         "limit": {
           "type": "integer",
           "minimum": 1,
-          "maximum": 100
+          "maximum": 100,
+          "description": "本页最多读取的记录数，受字段范围约束。"
         }
       },
       "required": [
@@ -1254,7 +1179,8 @@
           "type": "array",
           "items": {
             "$ref": "../../agent/v1/schema.json#/$defs/Conversation"
-          }
+          },
+          "description": "本页返回的会话列表。"
         },
         "pageInfo": {
           "$ref": "../../core/v1/schema.json#/$defs/PageInfo"
@@ -1292,75 +1218,6 @@
       "additionalProperties": false,
       "description": "Invalidate and refetch this reader's recent view, cancelling old tail pages. Contains no member IDs or readerScope. If published provider-wide for shared replay, revision is a provider-wide invalidation revision used consistently by snapshots; it must not expose another reader's private revision. Never use revision as eventCursor."
     },
-    "UsageQueryRequest": {
-      "type": "object",
-      "properties": {
-        "providerId": {
-          "$ref": "../../core/v1/schema.json#/$defs/ProviderInstanceId"
-        },
-        "query": {
-          "$ref": "../../agent/v1/schema.json#/$defs/UsageQuery"
-        }
-      },
-      "required": [
-        "providerId",
-        "query"
-      ],
-      "additionalProperties": false
-    },
-    "UsageQueryResponse": {
-      "type": "object",
-      "properties": {
-        "result": {
-          "$ref": "../../agent/v1/schema.json#/$defs/UsageQueryResult"
-        }
-      },
-      "required": [
-        "result"
-      ],
-      "additionalProperties": false
-    },
-    "TurnSteerRequest": {
-      "type": "object",
-      "properties": {
-        "conversation": {
-          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
-        },
-        "turn": {
-          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
-        },
-        "clientRequestId": {
-          "$ref": "../../core/v1/schema.json#/$defs/RequestId"
-        },
-        "capabilityRevision": {
-          "type": "string",
-          "minLength": 1
-        },
-        "input": {
-          "$ref": "../../agent/v1/schema.json#/$defs/TurnInput"
-        }
-      },
-      "required": [
-        "conversation",
-        "turn",
-        "clientRequestId",
-        "capabilityRevision",
-        "input"
-      ],
-      "additionalProperties": false
-    },
-    "TurnSteerResponse": {
-      "type": "object",
-      "properties": {
-        "turn": {
-          "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
-        }
-      },
-      "required": [
-        "turn"
-      ],
-      "additionalProperties": false
-    },
     "InputQueueItemState": {
       "type": "string",
       "enum": [
@@ -1371,25 +1228,29 @@
         "blocked",
         "outcomeUnknown",
         "withdrawn"
-      ]
+      ],
+      "description": "InputQueueItemState 的允许取值；调用方必须按枚举处理。"
     },
     "InputQueueWithdrawKind": {
       "type": "string",
       "enum": [
         "edit",
         "delete"
-      ]
+      ],
+      "description": "InputQueueWithdrawKind 的允许取值；调用方必须按枚举处理。"
     },
     "InputQueueItem": {
       "type": "object",
       "properties": {
         "id": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "对象在所属集合内的稳定标识。"
         },
         "sequence": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "当前连接内的心跳递增序号；响应原样回显。"
         },
         "input": {
           "$ref": "../../agent/v1/schema.json#/$defs/TurnInput"
@@ -1399,7 +1260,8 @@
         },
         "capabilityRevision": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "调用方据以构造请求的能力快照版本。"
         },
         "state": {
           "$ref": "#/$defs/InputQueueItemState"
@@ -1412,10 +1274,12 @@
         },
         "errorCode": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "条目处理失败时的稳定错误码。"
         },
         "errorMessage": {
-          "type": "string"
+          "type": "string",
+          "description": "条目处理失败时的说明。"
         }
       },
       "required": [
@@ -1427,7 +1291,8 @@
         "state",
         "createdAt"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "InputQueueItem 的结构与约束。"
     },
     "InputQueueSnapshot": {
       "type": "object",
@@ -1437,22 +1302,26 @@
         },
         "revision": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "所属对象集合或能力快照的版本，用于变化检测；不等同于事件游标。"
         },
         "paused": {
-          "type": "boolean"
+          "type": "boolean",
+          "description": "当前会话的输入队列是否暂停自动处理。"
         },
         "items": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/InputQueueItem"
-          }
+          },
+          "description": "本次快照包含的条目，顺序由所属快照语义决定。"
         },
         "recoverableEdits": {
           "type": "array",
           "items": {
             "$ref": "#/$defs/InputQueueItem"
-          }
+          },
+          "description": "可恢复到编辑器的输入条目集合。"
         },
         "snapshotCursor": {
           "$ref": "../../core/v1/schema.json#/$defs/EventCursor"
@@ -1466,7 +1335,8 @@
         "recoverableEdits",
         "snapshotCursor"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "InputQueueSnapshot 的结构与约束。"
     },
     "InputQueueGetRequest": {
       "type": "object",
@@ -1478,7 +1348,8 @@
       "required": [
         "conversation"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "InputQueueGetRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "InputQueueEnqueueRequest": {
       "type": "object",
@@ -1491,7 +1362,8 @@
         },
         "capabilityRevision": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "调用方据以构造请求的能力快照版本。"
         },
         "input": {
           "$ref": "../../agent/v1/schema.json#/$defs/TurnInput"
@@ -1507,7 +1379,8 @@
         "input",
         "selection"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "InputQueueEnqueueRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "InputQueueMutationResponse": {
       "type": "object",
@@ -1517,14 +1390,16 @@
         },
         "revision": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "所属对象集合或能力快照的版本，用于变化检测；不等同于事件游标。"
         }
       },
       "required": [
         "item",
         "revision"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "InputQueueMutationResponse 的成功返回结果。"
     },
     "InputQueueWithdrawRequest": {
       "type": "object",
@@ -1534,14 +1409,16 @@
         },
         "itemId": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "目标会话条目或队列条目的标识。"
         },
         "clientRequestId": {
           "$ref": "../../core/v1/schema.json#/$defs/RequestId"
         },
         "expectedRevision": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "调用方观察到的队列版本；Host 用它检查并发修改。"
         },
         "kind": {
           "$ref": "#/$defs/InputQueueWithdrawKind"
@@ -1554,7 +1431,8 @@
         "expectedRevision",
         "kind"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "InputQueueWithdrawRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "InputQueueSteerRequest": {
       "type": "object",
@@ -1564,21 +1442,24 @@
         },
         "itemId": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "目标会话条目或队列条目的标识。"
         },
         "clientRequestId": {
           "$ref": "../../core/v1/schema.json#/$defs/RequestId"
         },
         "expectedRevision": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "调用方观察到的队列版本；Host 用它检查并发修改。"
         },
         "turn": {
           "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
         },
         "capabilityRevision": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "调用方据以构造请求的能力快照版本。"
         }
       },
       "required": [
@@ -1589,7 +1470,8 @@
         "turn",
         "capabilityRevision"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "InputQueueSteerRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "InputQueueResumeRequest": {
       "type": "object",
@@ -1599,14 +1481,16 @@
         },
         "expectedRevision": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "调用方观察到的队列版本；Host 用它检查并发修改。"
         }
       },
       "required": [
         "conversation",
         "expectedRevision"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "InputQueueResumeRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "InputQueueAcknowledgeEditRequest": {
       "type": "object",
@@ -1616,14 +1500,16 @@
         },
         "itemId": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "目标会话条目或队列条目的标识。"
         }
       },
       "required": [
         "conversation",
         "itemId"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "InputQueueAcknowledgeEditRequest 的请求参数；仅包含当前方法接受的字段。"
     },
     "InputQueueChangedEvent": {
       "type": "object",
@@ -1633,14 +1519,288 @@
         },
         "revision": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "description": "所属对象集合或能力快照的版本，用于变化检测；不等同于事件游标。"
         }
       },
       "required": [
         "conversation",
         "revision"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "description": "InputQueueChangedEvent 的事件载荷。"
+    },
+    "TurnInterruptRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        }
+      },
+      "required": [
+        "conversation",
+        "turn"
+      ],
+      "additionalProperties": false,
+      "description": "TurnInterruptRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "TurnInterruptResponse": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "additionalProperties": false,
+      "description": "TurnInterruptResponse 的成功返回结果。"
+    },
+    "TurnOutputDeltaEvent": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "itemId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "contentId": {
+          "$ref": "../../core/v1/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ConversationContentKind"
+        },
+        "delta": {
+          "type": "string",
+          "description": "追加到目标内容块的文本增量。"
+        }
+      },
+      "required": [
+        "turn",
+        "conversation",
+        "itemId",
+        "contentId",
+        "kind",
+        "delta"
+      ],
+      "additionalProperties": false,
+      "description": "TurnOutputDeltaEvent 的事件载荷。"
+    },
+    "TurnSendRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "clientRequestId": {
+          "$ref": "../../core/v1/schema.json#/$defs/RequestId"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "调用方据以构造请求的能力快照版本。"
+        },
+        "input": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnInput"
+        },
+        "selection": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnSelection"
+        }
+      },
+      "required": [
+        "conversation",
+        "clientRequestId",
+        "capabilityRevision",
+        "input",
+        "selection"
+      ],
+      "additionalProperties": false,
+      "description": "TurnSendRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "TurnSendResponse": {
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "type": "boolean",
+          "description": "Host 是否已经接受该次输入。"
+        },
+        "turn": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
+        },
+        "userItem": {
+          "oneOf": [
+            {
+              "$ref": "../../agent/v1/schema.json#/$defs/ConversationItem"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "接受输入后产生的用户消息条目。"
+        },
+        "effectiveSelection": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnSelection"
+        }
+      },
+      "required": [
+        "accepted",
+        "turn",
+        "userItem",
+        "effectiveSelection"
+      ],
+      "additionalProperties": false,
+      "description": "TurnSendResponse 的成功返回结果。"
+    },
+    "TurnUpsertedEvent": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "additionalProperties": false,
+      "description": "TurnUpsertedEvent 的事件载荷。"
+    },
+    "TurnSteerRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "clientRequestId": {
+          "$ref": "../../core/v1/schema.json#/$defs/RequestId"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "调用方据以构造请求的能力快照版本。"
+        },
+        "input": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnInput"
+        }
+      },
+      "required": [
+        "conversation",
+        "turn",
+        "clientRequestId",
+        "capabilityRevision",
+        "input"
+      ],
+      "additionalProperties": false,
+      "description": "TurnSteerRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "TurnSteerResponse": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../agent/v1/schema.json#/$defs/TurnTask"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "additionalProperties": false,
+      "description": "TurnSteerResponse 的成功返回结果。"
+    },
+    "ApprovalRequestedEvent": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Approval"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "additionalProperties": false,
+      "description": "ApprovalRequestedEvent 的事件载荷。"
+    },
+    "ApprovalResolveRequest": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../core/v1/schema.json#/$defs/RoutedResourceId"
+        },
+        "decision": {
+          "$ref": "../../agent/v1/schema.json#/$defs/ApprovalDecision"
+        }
+      },
+      "required": [
+        "approval",
+        "decision"
+      ],
+      "additionalProperties": false,
+      "description": "ApprovalResolveRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ApprovalResolveResponse": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Approval"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "additionalProperties": false,
+      "description": "ApprovalResolveResponse 的成功返回结果。"
+    },
+    "ApprovalResolvedEvent": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../agent/v1/schema.json#/$defs/Approval"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "additionalProperties": false,
+      "description": "ApprovalResolvedEvent 的事件载荷。"
+    },
+    "UsageQueryRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../core/v1/schema.json#/$defs/ProviderInstanceId"
+        },
+        "query": {
+          "$ref": "../../agent/v1/schema.json#/$defs/UsageQuery"
+        }
+      },
+      "required": [
+        "providerId",
+        "query"
+      ],
+      "additionalProperties": false,
+      "description": "UsageQueryRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "UsageQueryResponse": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "$ref": "../../agent/v1/schema.json#/$defs/UsageQueryResult"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": false,
+      "description": "UsageQueryResponse 的成功返回结果。"
     }
   }
 }

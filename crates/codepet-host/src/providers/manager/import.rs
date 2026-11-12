@@ -42,33 +42,90 @@ fn copy_package(source: &Path, destination: &Path) -> HostResult<()> {
 
 fn prepare_import(manifest: &Path, root: &Path) -> HostResult<PreparedImport> {
     let manifest = manifest.canonicalize().map_err(import_error)?;
-    let source = manifest.parent().ok_or_else(|| import_error("Missing package directory"))?;
+    let source = manifest
+        .parent()
+        .ok_or_else(|| import_error("Missing package directory"))?;
     let mut descriptor = PluginCatalog::read_one(&manifest)?;
     let id = &descriptor.plugin_id;
-    if id == "." || id == ".." || !id.bytes().all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)) {
-        return Err(import_error("Provider ID must use letters, digits, '.', '_' or '-'"));
+    if id == "."
+        || id == ".."
+        || !id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+    {
+        return Err(import_error(
+            "Provider ID must use letters, digits, '.', '_' or '-'",
+        ));
     }
-    let executable = descriptor.executable.canonicalize().map_err(import_error)?;
-    let relative = executable.strip_prefix(source).map_err(|_| import_error("Provider executable must be inside its package directory"))?;
-    if !executable.is_file() { return Err(import_error("Provider executable is not a file")); }
+    let external = descriptor
+        .env
+        .get("CODEPET_PROVIDER_EXTERNAL_COMMAND")
+        .is_some_and(|v| v == "1");
+    let relative = if external {
+        None
+    } else {
+        let executable = descriptor.executable.canonicalize().map_err(import_error)?;
+        if !executable.is_file() {
+            return Err(import_error("Provider executable is not a file"));
+        }
+        Some(
+            executable
+                .strip_prefix(source)
+                .map_err(|_| {
+                    import_error("Provider executable must be inside its package directory")
+                })?
+                .to_owned(),
+        )
+    };
     std::fs::create_dir_all(root).map_err(import_error)?;
     let root = root.canonicalize().map_err(import_error)?;
     if root.starts_with(source) {
-        return Err(import_error("Provider package cannot contain the installation directory"));
+        return Err(import_error(
+            "Provider package cannot contain the installation directory",
+        ));
     }
     let destination = root.join(id);
     if destination.exists() {
-        return Err(HostError::new("duplicate_plugin_id", format!("Provider {id} is already installed")));
+        return Err(HostError::new(
+            "duplicate_plugin_id",
+            format!("Provider {id} is already installed"),
+        ));
     }
     // Hidden staging manifests are never discoverable as a partially copied plugin.
-    let staging = tempfile::Builder::new().prefix(".provider-import-").tempdir_in(&root).map_err(import_error)?;
+    let staging = tempfile::Builder::new()
+        .prefix(".provider-import-")
+        .tempdir_in(&root)
+        .map_err(import_error)?;
     let package = staging.path().join("package");
     copy_package(source, &package)?;
-    let mut payload: Value = serde_json::from_slice(&std::fs::read(&manifest).map_err(import_error)?).map_err(import_error)?;
-    payload["executable"] = Value::String(relative.to_string_lossy().into_owned());
-    std::fs::write(package.join(PLUGIN_MANIFEST_FILE_NAME), serde_json::to_vec_pretty(&payload).map_err(import_error)?).map_err(import_error)?;
-    descriptor.executable = destination.join(relative);
-    Ok(PreparedImport { staging, destination, descriptor })
+    let mut payload: Value =
+        serde_json::from_slice(&std::fs::read(&manifest).map_err(import_error)?)
+            .map_err(import_error)?;
+    if let Some(relative) = &relative {
+        let field = if payload.get("command").is_some() {
+            "command"
+        } else {
+            "executable"
+        };
+        payload[field] = Value::String(relative.to_string_lossy().into_owned());
+    }
+    std::fs::write(
+        package.join(PLUGIN_MANIFEST_FILE_NAME),
+        serde_json::to_vec_pretty(&payload).map_err(import_error)?,
+    )
+    .map_err(import_error)?;
+    if let Some(relative) = relative {
+        descriptor.executable = destination.join(relative);
+    }
+    descriptor.env.insert(
+        "CODEPET_PROVIDER_PACKAGE_DIRECTORY".into(),
+        destination.to_string_lossy().into_owned(),
+    );
+    Ok(PreparedImport {
+        staging,
+        destination,
+        descriptor,
+    })
 }
 
 impl PluginManager {

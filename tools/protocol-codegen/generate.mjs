@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { readFile, mkdir, writeFile, access } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+import { loadProviderContract, publishProviderContract } from "./provider-contract.mjs";
+import { modularCompatibilityViews } from "./modular-contract.mjs";
+import { providerRuntimeArtifacts } from "./provider-runtime.mjs";
 import { generateDart } from "./dart.mjs";
 
 export let repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
@@ -594,6 +597,12 @@ export async function loadProtocolModel({ config: suppliedConfig } = {}) {
   }
   assert(Array.isArray(config.packages) && config.packages.length > 0, "protocol/codegen.json packages must be non-empty");
 
+  let providerContract, protocolViews = new Map();
+  if (await access(resolve(protocolRoot,"v1/protocol.json")).then(()=>true,()=>false)) {
+    providerContract = await loadProviderContract(protocolRoot);
+    protocolViews = modularCompatibilityViews(providerContract.canonical);
+  }
+  assert(suppliedConfig || providerContract,"canonical protocol/v1 IDL is required; compatibility views cannot be used as source");
   const packageIds = new Set();
   const records = [];
   const schemasByPath = new Map();
@@ -620,8 +629,8 @@ export async function loadProtocolModel({ config: suppliedConfig } = {}) {
       packageConfig,
       schemaPath,
       manifestPath,
-      schema: await readJson(schemaPath),
-      manifest: await readJson(manifestPath),
+      schema: protocolViews.has(packageConfig.schema) ? JSON.parse(protocolViews.get(packageConfig.schema)) : await readJson(schemaPath),
+      manifest: protocolViews.has(packageConfig.manifest) ? JSON.parse(protocolViews.get(packageConfig.manifest)) : await readJson(manifestPath),
     };
     for (const name of publicTypes) {
       assert(record.schema.$defs?.[name], `${packageConfig.id} publicTypes references unknown definition ${name}`);
@@ -634,7 +643,7 @@ export async function loadProtocolModel({ config: suppliedConfig } = {}) {
       assert(packageIds.has(dependency), `${record.packageConfig.id} references unknown dependency ${dependency}`);
     }
   }
-  const model = { config, records, schemasByPath, recordsById: new Map(records.map((record) => [record.packageConfig.id, record])) };
+  const model = { config, records, providerContract, protocolViews, schemasByPath, recordsById: new Map(records.map((record) => [record.packageConfig.id, record])) };
   for (const record of records) validateSchema(record, model);
   for (const record of records) validateManifest(record, model);
   for (const record of records) validatePackageReferences(record, model);
@@ -2299,11 +2308,27 @@ export async function generateProtocol({ checkMode = false, targets = defaultTar
   }
   const staleFiles = [];
   const artifacts = [];
+  if (model.providerContract && !config) {
+    for (const [file,content] of model.protocolViews) artifacts.push({output:`protocol/${file}`,content,targetId:'compatibility',packageId:'protocol-idl'});
+    for (const [output,content] of providerRuntimeArtifacts(model.providerContract,publishProviderContract(model.providerContract))) artifacts.push({output,content,targetId:'runtime',packageId:'protocol-idl'});
+  }
   for (const record of model.records) {
     for (const adapter of adapters) {
       const output = record.packageConfig.outputs[adapter.id];
       if (!output) continue;
-      const content = adapter.render({ record, model, ir: model.protocolIr, output, role });
+      let content = adapter.render({ record, model, ir: model.protocolIr, output, role });
+      if (record.packageConfig.layer === 'gateway' && model.providerContract) {
+        const policy = model.providerContract.canonical.gateway.modules.find(module => module.id === 'session').schema['x-codepet-lifecycle'];
+        const values = [
+          ['INTERVAL', 'Interval', policy.heartbeatIntervalMs],
+          ['TIMEOUT', 'Timeout', policy.heartbeatTimeoutMs],
+          ['REQUEST_TIMEOUT', 'RequestTimeout', policy.heartbeatRequestTimeoutMs],
+        ];
+        content += '\n' + values.map(([rust, camel, value]) => adapter.id === 'rust'
+          ? `pub const GATEWAY_HEARTBEAT_${rust}_MS: u64 = ${value};`
+          : adapter.id === 'dart' ? `const int gatewayHeartbeat${camel}Ms = ${value};`
+          : `export const GATEWAY_HEARTBEAT_${rust}_MS = ${value};`).join('\n') + '\n';
+      }
       artifacts.push({ packageId: record.packageConfig.id, targetId: adapter.id, output, content });
     }
   }
@@ -2313,7 +2338,7 @@ export async function generateProtocol({ checkMode = false, targets = defaultTar
   if (staleFiles.length > 0) {
     fail(`generated protocol files are stale:\n${staleFiles.map((path) => `- ${path}`).join("\n")}\nRun npm run protocol:generate.`);
   }
-  const generated = artifacts.map(({ content: _content, ...artifact }) => artifact);
+  const generated = artifacts.filter(artifact=>artifact.packageId!=='protocol-idl').map(({ content: _content, ...artifact }) => artifact);
   return { model, staleFiles, generated };
 }
 

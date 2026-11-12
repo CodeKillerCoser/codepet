@@ -1,0 +1,232 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/gateway/project/messages.schema.json",
+  "description": "gateway 的 project 功能模块交互对象。",
+  "$defs": {
+    "ProjectChangedEvent": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "changeType": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProjectChangeType",
+          "description": "引用 ProjectChangeType 的结构与约束。"
+        }
+      },
+      "required": [
+        "project",
+        "changeType"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectChangedEvent 的事件载荷。"
+    },
+    "ProjectCreateRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProviderId",
+          "description": "引用 ProviderId 的结构与约束。"
+        },
+        "idempotencyKey": {
+          "$ref": "../../common/types.schema.json#/$defs/RequestId",
+          "description": "引用 RequestId 的结构与约束。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "对象的可展示名称。"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/ProjectRoot",
+            "description": "引用 ProjectRoot 的结构与约束。"
+          },
+          "description": "项目包含的工作区根目录集合。"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "description": "通道控制状态中的 metadata 中每个扩展键对应的值 信息。"
+          },
+          "description": "业务对象附带的结构化扩展元数据。"
+        }
+      },
+      "required": [
+        "providerId",
+        "idempotencyKey",
+        "name",
+        "roots",
+        "metadata"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectCreateRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProjectCreateResponse": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Project",
+          "description": "引用 Project 的结构与约束。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectCreateResponse 的成功返回结果。"
+    },
+    "ProjectDeleteRequest": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectDeleteRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProjectDeleteResponse": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false,
+      "description": "ProjectDeleteResponse 的成功返回结果。"
+    },
+    "ProjectGetRequest": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectGetRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProjectGetResponse": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Project",
+          "description": "引用 Project 的结构与约束。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectGetResponse 的成功返回结果。"
+    },
+    "ProjectListRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProviderId",
+          "description": "引用 ProviderId 的结构与约束。"
+        },
+        "cursor": {
+          "$ref": "../../common/types.schema.json#/$defs/Cursor",
+          "description": "引用 Cursor 的结构与约束。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本页最多读取的记录数，受字段范围约束。"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectListRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProjectListResponse": {
+      "type": "object",
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/Project",
+            "description": "引用 Project 的结构与约束。"
+          },
+          "description": "本页返回的项目列表。"
+        },
+        "pageInfo": {
+          "$ref": "../../common/types.schema.json#/$defs/PageInfo",
+          "description": "引用 PageInfo 的结构与约束。"
+        },
+        "snapshotCursor": {
+          "$ref": "../../common/types.schema.json#/$defs/EventCursor",
+          "description": "引用 EventCursor 的结构与约束。"
+        }
+      },
+      "required": [
+        "projects",
+        "pageInfo",
+        "snapshotCursor"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectListResponse 的成功返回结果。"
+    },
+    "ProjectUpdateRequest": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "对象的可展示名称。"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/ProjectRoot",
+            "description": "引用 ProjectRoot 的结构与约束。"
+          },
+          "description": "项目包含的工作区根目录集合。"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "description": "通道控制状态中的 metadata 中每个扩展键对应的值 信息。"
+          },
+          "description": "业务对象附带的结构化扩展元数据。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectUpdateRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProjectUpdateResponse": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Project",
+          "description": "引用 Project 的结构与约束。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": false,
+      "description": "ProjectUpdateResponse 的成功返回结果。"
+    }
+  }
+}

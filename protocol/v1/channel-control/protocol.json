@@ -1,0 +1,13 @@
+{
+  "description": "独立于业务 RPC 的通道切换控制协议入口。",
+  "schema": "messages.schema.json",
+  "service": {
+    "name": "codepet-channel-control",
+    "layer": "channel",
+    "version": 1,
+    "kind": "types",
+    "methods": [],
+    "events": [],
+    "fixtures": "fixtures/index.json"
+  }
+}

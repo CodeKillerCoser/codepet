@@ -2,6 +2,7 @@ use crate::generated::{dispatch, JsonRpcInboundRequest, JsonRpcResponse, JsonRpc
     ProtocolDispatchLane, ProtocolError, ProtocolMethod, ProtocolServer,
     ProviderShutdownRequest, ProviderWireMessage, RpcError};
 use crate::message::{ProviderMux, error};
+use crate::message::ResponseFallback;
 use crate::transport::default_transport_limits;
 use super::{ProviderEventSink, StdioServerError, StdioServerOptions};
 use std::{io::{Read, Write}, sync::{Arc, atomic::{AtomicBool, Ordering}}};

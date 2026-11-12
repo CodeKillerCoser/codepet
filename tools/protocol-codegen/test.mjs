@@ -174,8 +174,8 @@ test("provider is JSON-RPC over stdio and owns plugin instance lifecycle", async
   assert.deepEqual(
     provider.methods
       .filter((method) => method.dispatchLane === "control")
-      .map((method) => method.name),
-    ["instance.releaseControl", "conversation.releaseInteraction", "provider.ping", "instance.stop", "instance.destroy", "provider.shutdown"],
+      .map((method) => method.name).sort(),
+    ["instance.releaseControl", "conversation.releaseInteraction", "provider.ping", "instance.stop", "instance.destroy", "provider.shutdown"].sort(),
   );
   const providerIr = model.protocolIr.packagesById.get("provider-v1");
   assert.equal(
@@ -280,6 +280,7 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
   assert.deepEqual(gateway.schema.$defs.ProviderIdentity.properties.icon, {
     type: "string",
     pattern: "^https://",
+    description: "供 UI 展示的图标引用。",
   });
   assert.equal(gateway.schema.$defs.ProviderIdentity.required.includes("icon"), false);
   assert.equal(
@@ -371,7 +372,7 @@ test("provider descriptors and turn controls are explicit discriminated protocol
   }
 });
 
-test("LAN admission DTOs remain independent from the Gateway JSON-RPC manifest", async () => {
+test("Gateway pairing preserves legacy DTO paths independently of authenticated business RPC", async () => {
   const model = await loadProtocolModel();
   const channel = record(model, "channel-lan-v1");
   const definitions = channel.schema.$defs;
@@ -527,6 +528,8 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   assert.match(agentSource, /final class FlatModelCatalog extends ModelCatalog/);
   assert.match(agentSource, /if \(peakDaily != null\) 'peakDaily': peakDaily!\.toJson\(\)/);
   assert.doesNotMatch(agentSource, /peakDaily!!/);
+  assert.doesNotMatch(agentSource, /modelId == null \? null : modelId == null/);
+  assert.doesNotMatch(agentSource, /peakDaily == null \? null : peakDaily == null/);
 
   const result = await generateProtocol({ checkMode: true, targets: ["dart"] });
   assert.deepEqual(

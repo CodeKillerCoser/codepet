@@ -265,7 +265,7 @@ function emitObject(writer, definition, parent, ir) {
         const path = dartString(`${definition.name}.${field.wireName}`);
         const expression = field.required
           ? validateExpression(field.type, name, path, ir)
-          : `${name} == null ? null : ${validateExpression(field.type, name, path, ir)}`;
+          : `${name} == null ? null : ${validateExpression(field.type.kind === "nullable" ? field.type.value : field.type, name, path, ir)}`;
         writer.line(`final validated${pascalCase(field.wireName)} = ${expression};`);
       }
       writer.line(`return ${definition.name}._(`);

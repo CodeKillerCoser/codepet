@@ -1,0 +1,25 @@
+{
+  "description": "gateway approval 模块的events注册表。",
+  "events": [
+    {
+      "name": "approval.requested",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "approval",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ApprovalRequestedEvent"
+      },
+      "description": "approval.requested 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "approval.resolved",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "approval",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ApprovalResolvedEvent"
+      },
+      "description": "approval.resolved 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    }
+  ]
+}

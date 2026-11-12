@@ -1,0 +1,29 @@
+{
+  "description": "provider runtime 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "runtime.getInstalled",
+      "direction": "hostToPlugin",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/RuntimeGetInstalledRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/RuntimeGetInstalledResponse"
+      },
+      "description": "运行时读取安装库存方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    },
+    {
+      "name": "runtime.select",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/RuntimeSelectRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/RuntimeSelectResponse"
+      },
+      "description": "运行时选择方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    }
+  ]
+}

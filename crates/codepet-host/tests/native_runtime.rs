@@ -24,7 +24,7 @@ async fn native_inventory_completes_through_host_with_duplicate_path_entries() {
         let (inventory_tx, mut inventory_rx) = tokio::sync::mpsc::unbounded_channel();
         let events = tokio::spawn(async move {
             while let Some(message) = inbound.recv().await {
-                if let ProviderWireMessage::Event(ProtocolEvent::RuntimeInventoryChanged { params, .. }) = message {
+                if let ProviderWireMessage::Event(ProtocolEvent::RuntimeInventoryChanged { params, .. }) = message.message {
                     let _ = inventory_tx.send(params);
                 }
             }

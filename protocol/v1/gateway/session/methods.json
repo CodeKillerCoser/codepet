@@ -1,0 +1,41 @@
+{
+  "description": "gateway session 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "protocol.ping",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/PingRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/PingResponse"
+      },
+      "description": "protocol.ping 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "protocol.handshake",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/HandshakeRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/HandshakeResponse"
+      },
+      "description": "protocol.handshake 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "protocol.describe",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ProtocolDescribeRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ProtocolDescribeResponse"
+      },
+      "description": "protocol.describe 的调用定义；请求、结果与幂等性以本条目为准。"
+    }
+  ]
+}

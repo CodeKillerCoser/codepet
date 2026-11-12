@@ -17,7 +17,7 @@ pub use transport::frame::{
     PROVIDER_FRAME_HEADER_BYTES, MAX_PROVIDER_FRAME_BYTES, PROVIDER_FRAME_COMPRESSION_THRESHOLD_BYTES,
 };
 pub use message::{ProviderFrameCodec, ProviderFrameEncodeMetrics, EncodedProviderFrame,
-    ProviderMux, MuxIncoming, MuxMessage, MuxDriver};
+    ProviderMessageCodec, ProviderMux, MuxIncoming, MuxMessage, MuxDriver};
 pub use runtime::{serve_stdio, serve_stdio_with_io, serve_mux_with_io, ProviderEventSink,
     StdioServerError, StdioServerOptions, run_provider_heartbeats,
     PROVIDER_HEARTBEAT_INTERVAL, PROVIDER_HEARTBEAT_TIMEOUT};
@@ -26,3 +26,5 @@ pub use codepet_core_sdk::{ClientConnectionInfo, ConnectionStatus};
 
 
 pub mod conversation_query;
+
+pub use codepet_core_sdk::ProviderTransportLimits;

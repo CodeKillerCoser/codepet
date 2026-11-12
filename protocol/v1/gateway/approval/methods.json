@@ -1,0 +1,18 @@
+{
+  "description": "gateway approval 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "approval.resolve",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "approval.resolve",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ApprovalResolveRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ApprovalResolveResponse"
+      },
+      "description": "approval.resolve 的调用定义；请求、结果与幂等性以本条目为准。"
+    }
+  ]
+}

@@ -1,0 +1,449 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/provider/instance/messages.schema.json",
+  "description": "provider 的 instance 功能模块交互对象。",
+  "$defs": {
+    "InstanceCapabilitiesRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        }
+      },
+      "required": [
+        "route"
+      ],
+      "additionalProperties": false,
+      "description": "实例能力的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "InstanceCapabilitiesResponse": {
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/ProviderCapabilities",
+          "description": "当前实例支持的业务能力快照。"
+        }
+      },
+      "required": [
+        "capabilities"
+      ],
+      "additionalProperties": false,
+      "description": "实例能力响应，作为对应方法成功响应的 result。"
+    },
+    "InstanceCreateRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        },
+        "instanceKind": {
+          "$ref": "#/$defs/ProviderInstanceKind",
+          "description": "插件支持的实例种类标识。"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "面向用户的名称。"
+        },
+        "settings": {
+          "$ref": "../../common/types.schema.json#/$defs/JsonObject",
+          "description": "由插件解释的实例配置对象。"
+        }
+      },
+      "required": [
+        "route",
+        "instanceKind",
+        "displayName",
+        "settings"
+      ],
+      "additionalProperties": false,
+      "description": "实例创建的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "InstanceCreateResponse": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "$ref": "#/$defs/ProviderInstance",
+          "description": "Provider 实例状态快照。"
+        }
+      },
+      "required": [
+        "instance"
+      ],
+      "additionalProperties": false,
+      "description": "实例创建响应，作为对应方法成功响应的 result。"
+    },
+    "InstanceDestroyRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        }
+      },
+      "required": [
+        "route"
+      ],
+      "additionalProperties": false,
+      "description": "实例销毁的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "InstanceDestroyResponse": {
+      "type": "object",
+      "properties": {
+        "destroyed": {
+          "type": "boolean",
+          "description": "实例是否已经销毁。"
+        }
+      },
+      "required": [
+        "destroyed"
+      ],
+      "additionalProperties": false,
+      "description": "实例销毁响应，作为对应方法成功响应的 result。"
+    },
+    "InstanceStartRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        }
+      },
+      "required": [
+        "route"
+      ],
+      "additionalProperties": false,
+      "description": "实例启动的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "InstanceStartResponse": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "$ref": "#/$defs/ProviderInstance",
+          "description": "Provider 实例状态快照。"
+        }
+      },
+      "required": [
+        "instance"
+      ],
+      "additionalProperties": false,
+      "description": "实例启动响应，作为对应方法成功响应的 result。"
+    },
+    "ProviderInstanceKind": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Provider实例种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "InstanceStatus": {
+      "type": "string",
+      "enum": [
+        "created",
+        "starting",
+        "ready",
+        "stopping",
+        "stopped",
+        "error"
+      ],
+      "description": "实例状态的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "InstanceStatusChangedEvent": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "$ref": "#/$defs/ProviderInstance",
+          "description": "Provider 实例状态快照。"
+        },
+        "previousStatus": {
+          "$ref": "#/$defs/InstanceStatus",
+          "description": "本次状态变化前的状态。"
+        }
+      },
+      "required": [
+        "instance"
+      ],
+      "additionalProperties": false,
+      "description": "实例状态变化事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    "InstanceStopRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        }
+      },
+      "required": [
+        "route"
+      ],
+      "additionalProperties": false,
+      "description": "实例停止的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "InstanceStopResponse": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "$ref": "#/$defs/ProviderInstance",
+          "description": "Provider 实例状态快照。"
+        }
+      },
+      "required": [
+        "instance"
+      ],
+      "additionalProperties": false,
+      "description": "实例停止响应，作为对应方法成功响应的 result。"
+    },
+    "ProviderCapability": {
+      "type": "string",
+      "enum": [
+        "project.list",
+        "project.get",
+        "project.create",
+        "project.update",
+        "project.delete",
+        "conversation.list",
+        "conversation.search",
+        "conversation.get",
+        "conversation.releaseInteraction",
+        "conversation.create",
+        "turn.start",
+        "turn.steer",
+        "turn.interrupt",
+        "approval.resolve",
+        "conversation.active.list",
+        "conversation.unread.list",
+        "conversation.markRead",
+        "usage.query",
+        "instance.releaseControl"
+      ],
+      "description": "Provider能力的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderCapabilities": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前快照或能力的修订标识，用于拒绝陈旧状态。"
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderCapability",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "uniqueItems": true,
+          "description": "当前真正实现且可用的方法能力清单。"
+        },
+        "turnSend": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnSendCapabilities",
+          "description": "发送任务时支持的输入和选择能力。"
+        },
+        "conversationCreate": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationCreateCapabilities",
+          "description": "会话创建时可选择的能力与选项。"
+        },
+        "extensions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderExtension",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "Provider 扩展能力描述清单。"
+        },
+        "conversationListQuery": {
+          "$ref": "../conversation/messages.schema.json#/$defs/ConversationListQueryCapabilities",
+          "description": "会话枚举支持的查询模式。"
+        },
+        "usageDatasets": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/UsageDataset",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "此 Provider 可查询的用量数据集描述。"
+        }
+      },
+      "required": [
+        "revision",
+        "methods",
+        "extensions"
+      ],
+      "additionalProperties": false,
+      "description": "Provider能力的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderExtension": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "description": "扩展或工具来源的命名空间。"
+        },
+        "data": {
+          "$ref": "../../common/types.schema.json#/$defs/JsonObject",
+          "description": "结构化内容或附加错误数据，具体形态按所在对象定义。"
+        }
+      },
+      "required": [
+        "namespace",
+        "data"
+      ],
+      "additionalProperties": false,
+      "description": "Provider扩展的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderInstance": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        },
+        "pluginId": {
+          "$ref": "../../common/types.schema.json#/$defs/ProviderPluginId",
+          "description": "插件包稳定身份。"
+        },
+        "instanceKind": {
+          "$ref": "#/$defs/ProviderInstanceKind",
+          "description": "插件支持的实例种类标识。"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "面向用户的名称。"
+        },
+        "harness": {
+          "$ref": "../runtime/messages.schema.json#/$defs/HarnessDescriptor",
+          "description": "当前实例使用的原生运行时描述。"
+        },
+        "status": {
+          "$ref": "#/$defs/InstanceStatus",
+          "description": "此对象当前状态；允许值见枚举。"
+        },
+        "authentication": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProviderAuthentication",
+          "description": "运行时或 Provider 的认证状态摘要。"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/ProviderCapabilities",
+          "description": "当前实例支持的业务能力快照。"
+        },
+        "usage": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProviderUsage",
+          "description": "用量状态或明细，按引用的 Schema 解释。"
+        }
+      },
+      "required": [
+        "route",
+        "pluginId",
+        "instanceKind",
+        "displayName",
+        "harness",
+        "status",
+        "capabilities"
+      ],
+      "additionalProperties": false,
+      "description": "Provider实例的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderResourceId": {
+      "type": "object",
+      "properties": {
+        "deviceId": {
+          "$ref": "../../common/types.schema.json#/$defs/DeviceId",
+          "description": "Host 设备稳定身份。"
+        },
+        "providerPluginId": {
+          "$ref": "../../common/types.schema.json#/$defs/ProviderPluginId",
+          "description": "插件包稳定身份，须与安装及 Initialize 一致。"
+        },
+        "providerInstanceId": {
+          "$ref": "../../common/types.schema.json#/$defs/ProviderInstanceId",
+          "description": "Host 分配或配置的 Provider 实例身份。"
+        },
+        "nativeResourceId": {
+          "$ref": "../../common/types.schema.json#/$defs/NativeResourceId",
+          "description": "Provider 或原生运行时内部的资源身份。"
+        }
+      },
+      "required": [
+        "deviceId",
+        "providerPluginId",
+        "providerInstanceId",
+        "nativeResourceId"
+      ],
+      "additionalProperties": false,
+      "description": "Provider-private complete route for a provider-native resource."
+    },
+    "ProviderInstanceRoute": {
+      "type": "object",
+      "properties": {
+        "deviceId": {
+          "$ref": "../../common/types.schema.json#/$defs/DeviceId",
+          "description": "Host 设备稳定身份。"
+        },
+        "providerPluginId": {
+          "$ref": "../../common/types.schema.json#/$defs/ProviderPluginId",
+          "description": "插件包稳定身份，须与安装及 Initialize 一致。"
+        },
+        "providerInstanceId": {
+          "$ref": "../../common/types.schema.json#/$defs/ProviderInstanceId",
+          "description": "Host 分配或配置的 Provider 实例身份。"
+        }
+      },
+      "required": [
+        "deviceId",
+        "providerPluginId",
+        "providerInstanceId"
+      ],
+      "additionalProperties": false,
+      "description": "Provider实例路由的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "InstanceReleaseControlRequest": {
+      "description": "Host-scheduled, conditional release of idle native control. The Provider must atomically reject active/uncertain work and requests in flight, and must never reacquire old conversations. Unsupported Providers return unsupported without side effects.",
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        },
+        "idleTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "description": "释放控制策略使用的空闲时间，秒。"
+        }
+      },
+      "required": [
+        "route",
+        "idleTimeoutSeconds"
+      ],
+      "additionalProperties": false
+    },
+    "InstanceReleaseControlOutcome": {
+      "type": "string",
+      "enum": [
+        "released",
+        "busy",
+        "notIdle",
+        "unavailable",
+        "unsupported"
+      ],
+      "description": "实例释放控制权结果的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "InstanceReleaseControlResponse": {
+      "description": "released means old control is released and a clean runtime start was accepted; readiness continues through instance status events. No snapshot is returned to avoid overwriting newer lifecycle events.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/InstanceReleaseControlOutcome",
+          "description": "操作的结果状态或工具执行结果。"
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

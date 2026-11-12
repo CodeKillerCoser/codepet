@@ -143,6 +143,7 @@ where
     let harness_list: Vec<_> = harness_list.into_iter().map(|(_, runtime)| runtime).collect();
     let selected = select_installation(&harness_list, selected.as_ref().map(|r| r.executable_path.as_str()));
     Ok(crate::RuntimeGetInstalledResponse {
+        selection_required: None,
         harness_list,
         selected,
         scanning: Some(false),
@@ -271,6 +272,7 @@ impl RuntimeScanner {
             control: std::sync::Mutex::new(RuntimeProbeControl::default()),
             snapshot: std::sync::Arc::new(std::sync::Mutex::new(
                 crate::RuntimeGetInstalledResponse {
+                    selection_required: None,
                     harness_list: vec![],
                     selected: None,
                     scanning: Some(true),

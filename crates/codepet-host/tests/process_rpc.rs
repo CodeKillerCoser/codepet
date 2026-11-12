@@ -137,13 +137,13 @@ async fn real_stdio_lifecycle_correlates_concurrent_responses_and_separates_even
     let second = inbound.recv().await.unwrap();
     let third = inbound.recv().await.unwrap();
     assert!(matches!(
-        first,
+        first.message,
         codepet_provider_sdk::ProviderWireMessage::Event(
             ProtocolEvent::EventConversationUpserted { .. }
         )
     ));
-    assert!(matches!(second, codepet_provider_sdk::ProviderWireMessage::Event(ProtocolEvent::EventConversationItemUpserted { .. })));
-    assert!(matches!(third, codepet_provider_sdk::ProviderWireMessage::Event(ProtocolEvent::EventTurnOutputDelta { .. })));
+    assert!(matches!(second.message, codepet_provider_sdk::ProviderWireMessage::Event(ProtocolEvent::EventConversationItemUpserted { .. })));
+    assert!(matches!(third.message, codepet_provider_sdk::ProviderWireMessage::Event(ProtocolEvent::EventTurnOutputDelta { .. })));
     let route = ProviderInstanceRoute {
         device_id: "device-test".to_string(),
         provider_plugin_id: "dev.codepet.concurrent".to_string(),

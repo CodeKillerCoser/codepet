@@ -1,0 +1,23 @@
+{
+  "manifestVersion": 2,
+  "pluginId": "independent.echo.mux",
+  "displayName": "Independent Echo (mux)",
+  "command": "node",
+  "args": [
+    "provider.mjs"
+  ],
+  "env": {
+    "ECHO_PLUGIN_ID": "independent.echo.mux"
+  },
+  "transport": "stdio-codepet-mux-v1",
+  "enabled": true,
+  "instances": [
+    {
+      "instanceId": "independent-echo-mux",
+      "instanceKind": "independent-echo",
+      "displayName": "Independent Echo",
+      "settings": {},
+      "enabled": true
+    }
+  ]
+}

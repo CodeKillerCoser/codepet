@@ -1,0 +1,254 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/gateway/pairing/messages.schema.json",
+  "title": "CodePet LAN Channel Contract v1",
+  "$defs": {
+    "CurrentCredentialDeleteResponse": {
+      "type": "object",
+      "properties": {
+        "revoked": {
+          "type": "boolean",
+          "description": "当前授权凭据是否已经撤销。"
+        }
+      },
+      "required": [
+        "revoked"
+      ],
+      "additionalProperties": false,
+      "description": "CurrentCredentialDeleteResponse 的成功返回结果。"
+    },
+    "LanHostIdentity": {
+      "type": "object",
+      "properties": {
+        "deviceId": {
+          "$ref": "../../common/types.schema.json#/$defs/DeviceId",
+          "description": "引用 DeviceId 的结构与约束。"
+        },
+        "descriptor": {
+          "$ref": "../../common/types.schema.json#/$defs/DeviceDescriptor",
+          "description": "引用 DeviceDescriptor 的结构与约束。"
+        },
+        "identityFingerprint": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "当前配对绑定使用的 Host 身份指纹。"
+        }
+      },
+      "required": [
+        "deviceId",
+        "descriptor",
+        "identityFingerprint"
+      ],
+      "additionalProperties": false,
+      "description": "LanHostIdentity 的结构与约束。"
+    },
+    "PairingExchangeRequest": {
+      "type": "object",
+      "properties": {
+        "pairingSecret": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "x-codepet-sensitive": true,
+          "description": "配对邀请的敏感一次性密钥。"
+        },
+        "clientId": {
+          "$ref": "../../common/types.schema.json#/$defs/ClientId",
+          "description": "引用 ClientId 的结构与约束。"
+        },
+        "device": {
+          "$ref": "../../common/types.schema.json#/$defs/DeviceDescriptor",
+          "description": "引用 DeviceDescriptor 的结构与约束。"
+        }
+      },
+      "required": [
+        "pairingSecret",
+        "clientId",
+        "device"
+      ],
+      "additionalProperties": false,
+      "description": "PairingExchangeRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "PairingExchangeResponse": {
+      "type": "object",
+      "properties": {
+        "device": {
+          "$ref": "#/$defs/LanHostIdentity",
+          "description": "引用 LanHostIdentity 的结构与约束。"
+        },
+        "gatewayUrl": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前实现返回的 Gateway 连接地址；历史 wire 保留此字段。"
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "x-codepet-sensitive": true,
+          "description": "授权后签发的敏感设备凭据，不写入日志。"
+        }
+      },
+      "required": [
+        "device",
+        "gatewayUrl",
+        "credential"
+      ],
+      "additionalProperties": false,
+      "description": "PairingExchangeResponse 的成功返回结果。"
+    },
+    "PairingRequestState": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "accepted",
+        "rejected",
+        "expired"
+      ],
+      "description": "PairingRequestState 的允许取值；调用方必须按枚举处理。"
+    },
+    "PairingRequestCreateRequest": {
+      "type": "object",
+      "properties": {
+        "hostDeviceId": {
+          "$ref": "../../common/types.schema.json#/$defs/DeviceId",
+          "description": "引用 DeviceId 的结构与约束。"
+        },
+        "clientId": {
+          "$ref": "../../common/types.schema.json#/$defs/ClientId",
+          "description": "引用 ClientId 的结构与约束。"
+        },
+        "device": {
+          "$ref": "../../common/types.schema.json#/$defs/DeviceDescriptor",
+          "description": "引用 DeviceDescriptor 的结构与约束。"
+        },
+        "clientNonce": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "客户端为配对申请生成的随机 nonce。"
+        }
+      },
+      "required": [
+        "hostDeviceId",
+        "clientId",
+        "device",
+        "clientNonce"
+      ],
+      "additionalProperties": false,
+      "description": "PairingRequestCreateRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "PairingRequestStatusResponse": {
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "配对申请的标识。"
+        },
+        "state": {
+          "$ref": "#/$defs/PairingRequestState",
+          "description": "引用 PairingRequestState 的结构与约束。"
+        },
+        "device": {
+          "$ref": "#/$defs/LanHostIdentity",
+          "description": "引用 LanHostIdentity 的结构与约束。"
+        },
+        "expiresAt": {
+          "$ref": "../../common/types.schema.json#/$defs/TimestampMs",
+          "description": "引用 TimestampMs 的结构与约束。"
+        },
+        "confirmationCode": {
+          "type": "string",
+          "pattern": "^[0-9]{6}$",
+          "description": "双方用于人工核对的六位确认码。"
+        },
+        "gatewayUrl": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前实现返回的 Gateway 连接地址；历史 wire 保留此字段。"
+        },
+        "credential": {
+          "type": "string",
+          "minLength": 1,
+          "x-codepet-sensitive": true,
+          "description": "授权后签发的敏感设备凭据，不写入日志。"
+        }
+      },
+      "required": [
+        "requestId",
+        "state",
+        "device",
+        "expiresAt",
+        "confirmationCode"
+      ],
+      "additionalProperties": false,
+      "description": "PairingRequestStatusResponse 的成功返回结果。"
+    },
+    "PairingQrPayload": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2,
+          "description": "该对象所属协议或运行时的软件版本。"
+        },
+        "hostDeviceId": {
+          "$ref": "../../common/types.schema.json#/$defs/DeviceId",
+          "description": "引用 DeviceId 的结构与约束。"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "供 UI 展示的名称。"
+        },
+        "httpsBaseUrl": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前 LAN 配对绑定使用的 HTTPS 基础地址；历史 wire 必填。"
+        },
+        "certSha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "description": "当前 TLS 配对绑定的证书 SHA-256 指纹；历史 wire 必填。"
+        },
+        "pairingId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "配对邀请的标识。"
+        },
+        "pairingSecret": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$",
+          "x-codepet-sensitive": true,
+          "description": "配对邀请的敏感一次性密钥。"
+        },
+        "expiresAt": {
+          "$ref": "../../common/types.schema.json#/$defs/TimestampMs",
+          "description": "引用 TimestampMs 的结构与约束。"
+        },
+        "serviceUrl": {
+          "type": "string",
+          "minLength": 1,
+          "description": "云端邀请使用的服务地址。"
+        },
+        "hostPublicKey": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host 在云端邀请中公开的身份公钥。"
+        }
+      },
+      "required": [
+        "version",
+        "hostDeviceId",
+        "displayName",
+        "httpsBaseUrl",
+        "certSha256",
+        "pairingId",
+        "pairingSecret",
+        "expiresAt"
+      ],
+      "additionalProperties": false,
+      "description": "PairingQrPayload 的结构与约束。"
+    }
+  },
+  "description": "Gateway 设备配对协议；当前兼容 wire 包含 LAN/TLS 接入字段。 的结构与约束。"
+}

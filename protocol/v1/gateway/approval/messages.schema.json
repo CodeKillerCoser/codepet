@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v1/gateway/approval/messages.schema.json",
+  "description": "gateway 的 approval 功能模块交互对象。",
+  "$defs": {
+    "ApprovalRequestedEvent": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Approval",
+          "description": "引用 Approval 的结构与约束。"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "additionalProperties": false,
+      "description": "ApprovalRequestedEvent 的事件载荷。"
+    },
+    "ApprovalResolveRequest": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "decision": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ApprovalDecision",
+          "description": "引用 ApprovalDecision 的结构与约束。"
+        }
+      },
+      "required": [
+        "approval",
+        "decision"
+      ],
+      "additionalProperties": false,
+      "description": "ApprovalResolveRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ApprovalResolveResponse": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Approval",
+          "description": "引用 Approval 的结构与约束。"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "additionalProperties": false,
+      "description": "ApprovalResolveResponse 的成功返回结果。"
+    },
+    "ApprovalResolvedEvent": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Approval",
+          "description": "引用 Approval 的结构与约束。"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "additionalProperties": false,
+      "description": "ApprovalResolvedEvent 的事件载荷。"
+    }
+  }
+}

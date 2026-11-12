@@ -57,6 +57,35 @@ export type ProviderInstanceId = string;
 
 export type ProviderPluginId = string;
 
+export interface ProviderTransportHello {
+  supportedVersions: Array<number>;
+  features: Array<string>;
+  receive: ProviderTransportLimits;
+}
+
+export interface ProviderTransportLimits {
+  maxFramePayloadBytes: number;
+  maxEncodedMessageBytes: number;
+  maxDecodedMessageBytes: number;
+  receiveBudgetBytes: number;
+  normalStreams: number;
+  smallStreams: number;
+  controlStreams: number;
+  smallMessageBytes: number;
+  smallReceiveBudgetBytes: number;
+  controlMessageBytes: number;
+  controlReceiveBudgetBytes: number;
+  connectionWindowBytes: number;
+  idleTimeoutMs: number;
+  streamTimeoutMs: number;
+}
+
+export interface ProviderTransportSelection {
+  selectedVersion: number;
+  features: Array<string>;
+  receive: ProviderTransportLimits;
+}
+
 export type RequestId = string;
 
 export interface RoutedResourceId {
