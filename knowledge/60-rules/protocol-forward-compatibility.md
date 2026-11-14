@@ -25,3 +25,5 @@
 ## 验证方式
 
 协议生成、公开导出/Ajv、Rust/TS/Dart codec，以及跨 Provider 并发集成。覆盖非法范围/选择、未知字段/枚举/联合/事件、合法游标推进、已知损坏拒绝、请求选择严格和无写重放；两端构建后运行隔离 QA App 与 Android 原生测试。忽略用例与真实验收边界分别记录。
+
+发现与握手必须消费同一组生成的 version/minVersion。不得用 PROTOCOL_VERSION 同时填写 mDNS 的 vmax/vmin；2/2 时掩盖的错误会在 3/2 时使旧客户端误判不兼容。通过 LAN service_info 合同测试校验精确上下界。

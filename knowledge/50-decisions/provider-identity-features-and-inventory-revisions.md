@@ -43,4 +43,4 @@ inventoryEpoch 标识 Gateway 的运行周期，重启后改变；revision 只�
 
 命令及原生联调结果记录到 desktop-android-protocol-joint-test runbook；Windows 故障证据和回归防线见 protocol-codegen-windows-paths。公开 SDK sourceDigest 为 sha256:7736569e62b5bc27137b652fb388ada04c4e3f1327dc8d94103f27394b037a9f。生成一致性只证明来源一致，不能替代运行时联调。
 
-未知项：实体手机、公网 TURN 与性能压力指标不在本轮本机模拟器验收内。路径修复提交的 Windows 完整构建已通过；补充 epoch 后的最终原生界面复验因锁屏待完成，具体状态以联调 runbook 为准。
+未知项：实体手机、公网 TURN 与性能压力指标不在本轮本机模拟器验收内。路径修复提交的 Windows 完整构建已通过；补充 epoch 后的最终原生复验已完成，覆盖真实 Host 重启后快照重建及两通道下一轮心跳；详情见联调 runbook。

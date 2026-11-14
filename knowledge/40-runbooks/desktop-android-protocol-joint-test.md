@@ -102,4 +102,11 @@ ECHO_CHUNK_SIZE=4096、ECHO_TURN_DELAY_MS=1 可控制大文本的 delta 数量�
 
 测试准备需沿用 Echo 环境参数 ECHO_CHUNK_SIZE=4096、ECHO_TURN_DELAY_MS=1：公开示例默认每 16 字符延迟 30ms，超长文本无法在 25s 断言窗口内结束。导入最早到达的是 Starting 摘要，此时 features 可以缺失；应等 Ready 后再断言已声明功能，而非将首次 changed 当初始化完成。这两处验收设置修正后首次联合运行通过。
 
-最终构建与数据位于 /Users/wangxin/Documents/CodePet-builds/protocol-scope124-20261115。最终 native QA 增加实际下一轮心跳剔除检查，以及生产连接引擎在桌面 Host 重启后重建快照的验证。当前两端已重新构建，Mac 再次锁屏，最后一轮界面验收等待解锁；不能写成已通过。原 bootstrap 配置保存在目录外层 original-settings.json，权限 600；隔离目录为 /tmp/codepet-scope124-qa-data-20261115。当前 QA 进程使用隔离数据，恢复时先退出 QA，再逐字节恢复 bootstrap 并重新打开原 App。
+最终构建与数据位于 /Users/wangxin/Documents/CodePet-builds/protocol-scope124-20261115。最终 native QA 增加实际下一轮心跳剔除检查，以及生产连接引擎在桌面 Host 重启后重建快照的验证。两端最终包已重新构建，锁屏期间先完成构建和自动化；用户解锁后继续完成如下最终验收。原 bootstrap 配置保存在目录外层 original-settings.json，权限 600；隔离目录为 /tmp/codepet-scope124-qa-data-20261115。当前 QA 进程使用隔离数据，恢复时先退出 QA，再逐字节恢复 bootstrap 并重新打开原 App。
+
+
+最终原生复验 PID 25285，02:10:06—02:13:34，使用含 inventoryEpoch 的最终 QA App 和最终集成 APK，passed=true、failures=[]。实际退出并重启桌面 Host（PID 40072 → 40767），生产连接引擎创建新的业务客户端并重建三项 Provider 快照，自动恢复 online；随后通过桌面入口导入、移除、重装测试插件。LAN 与原生 RTC 均收到移除，并在下一轮真实心跳中保持三项清单。物理检查确认安装目录不存在、Node PID 40981 已退出、历史数据目录保留；其结果保存为 uninstall-physical-check.json。最后两种通道均观察到 credential 撤销，测试身份已从模拟器 registry 移除。
+
+最终普通 macOS App 已打包为 artifacts/CodePet-macOS-arm64.zip（本地签名，未公证）；普通 main.dart debug APK 为 artifacts/CodePet-Remote-debug.apk，已在验收结束后重新安装。测试入口 APK 仅保存在 build-history，不随交付物分发。artifacts 同时保存最终公开 SDK、独立插件归档、设备结果、四张 UI 截图和本轮 PID 的 milestones。原 bootstrap 逐字节恢复，原 Code Pet App 已重新打开；个人 Provider 安装与数据未参与 QA。
+
+最终业务提交 dd24204 的协议 CI 43624669336 已在 Windows 和 Ubuntu 全部成功，包含新增完整 manager_gateway 检查。Remote 实现 d687924、测试空白整理 9667949 位于 codex/provider-inventory-revisions，Android release 构建 43624738397 已成功；本机交付和模拟器复验使用的仍是单独构建的普通 debug APK，不能将两者混称。桌面改动在 codex/protocol-sdk-consolidation，本轮没有推进主干。
