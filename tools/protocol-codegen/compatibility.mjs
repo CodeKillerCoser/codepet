@@ -1,3 +1,4 @@
+import { resolveSchemaPath } from "./schema-paths.mjs";
 // Compile the same functional IDL graph into validation data for all language targets.
 export function compatibilityGraph(record, model) {
   const records = new Map();
@@ -13,7 +14,7 @@ export function compatibilityGraph(record, model) {
       if (['description','$id','$schema','title'].includes(k) || k.startsWith('x-codepet')) continue;
       if (k === '$ref') {
         const [file,pointer]=v.split('#');
-        const target=file ? model.schemasByPath.get(new URL(file,`file://${r.schemaPath}`).pathname) : r;
+        const target=file ? model.schemasByPath.get(resolveSchemaPath(r.schemaPath,file)) : r;
         if (!target) throw new Error(`Missing compatibility graph ref ${v}`);
         out.ref=key(target,pointer.split('/').at(-1));
       } else out[k]=normalized(v,r);

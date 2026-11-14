@@ -36,3 +36,39 @@ test('TypeScript common range helpers validate highest selection and reject inva
   assert.throws(()=>sdk.validateProtocolSelection(local,{...response,selectedVersion:3}));
   for(const bad of [{version:0,minVersion:0},{version:3,minVersion:4},{version:1,minVersion:1},{version:4294967296,minVersion:2}]) assert.throws(()=>sdk.negotiateProtocolVersion(local,bad));
 });
+
+test('schema resolution uses native keys for Windows drives, Unicode and URI escapes', async () => {
+  const { win32, posix } = await import('node:path');
+  const { resolveSchemaPath, legacySchemaPath } = await import('./schema-paths.mjs');
+  for (const paths of [win32, posix]) {
+    const root = paths === win32 ? 'C:\\Users\\协议 空间' : '/Users/协议 空间';
+    const schema = paths.join(root, 'protocol', 'gateway', 'v2', 'schema.json');
+    assert.equal(resolveSchemaPath(schema, '../../../core/v2/schema.json', paths), paths.join(root, 'core', 'v2', 'schema.json'));
+    assert.equal(resolveSchemaPath(schema, '../v2/a%20b.json', paths), paths.join(paths.dirname(schema), 'a b.json'));
+    assert.equal(legacySchemaPath(schema, 2, paths), paths.join(root, 'protocol', 'gateway', 'v1', 'schema.json'));
+    assert.throws(() => legacySchemaPath(paths.join(root, 'channel', 'v1', 'schema.json'), 2, paths));
+  }
+});
+
+test('legacy DTO refs and validation graph resolve from a checkout containing spaces', async () => {
+  const { compatibilityGraph } = await import('./compatibility.mjs');
+  const { resolveSchemaPath } = await import('./schema-paths.mjs');
+  const { configureProtocolGenerator, repositoryRoot } = await import('./generate.mjs');
+  const { cp, mkdtemp, rm } = await import('node:fs/promises');
+  const path = await import('node:path');
+  const { tmpdir } = await import('node:os');
+  const root = await mkdtemp(path.join(tmpdir(), 'codepet 协议 空间-'));
+  try {
+    await cp(path.join(repositoryRoot, 'protocol'), path.join(root, 'protocol'), { recursive: true });
+    configureProtocolGenerator({ sourceRoot: root });
+    const model = await loadProtocolModel();
+    const core = model.recordsById.get('core-v1');
+    const pet = model.recordsById.get('pet-v1');
+    assert.equal(model.schemasByPath.get(resolveSchemaPath(pet.schemaPath, '../../core/v1/schema.json')), core);
+    const graph = compatibilityGraph(model.recordsById.get('gateway-v1'), model);
+    assert.ok(graph.definitions['core:ProtocolVersionOffer']);
+  } finally {
+    configureProtocolGenerator({ sourceRoot: repositoryRoot });
+    await rm(root, { recursive: true, force: true });
+  }
+});

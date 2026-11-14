@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveSchemaPath, legacySchemaPath } from "./schema-paths.mjs";
 import { compatibilityGraph, typescriptValidation, typescriptVersionNegotiation } from "./compatibility.mjs";
 
 import { readFile, mkdir, writeFile, access } from "node:fs/promises";
@@ -85,7 +86,7 @@ function parseReference(reference, sourcePath, model, location) {
   assert(typeof reference === "string", `${location} must be a string ref`);
   const match = reference.match(/^(.*)#\/\$defs\/([A-Za-z][A-Za-z0-9]*)$/);
   assert(match, `${location} has an unsupported ref: ${reference}`);
-  const targetPath = match[1] ? resolve(dirname(sourcePath), match[1]) : sourcePath;
+  const targetPath = resolveSchemaPath(sourcePath, match[1]);
   const record = model.schemasByPath.get(targetPath);
   assert(record, `${location} references an unregistered schema: ${relative(repositoryRoot, targetPath)}`);
   const target = record.schema.$defs[match[2]];
@@ -641,7 +642,7 @@ export async function loadProtocolModel({ config: suppliedConfig } = {}) {
     }
     records.push(record);
     schemasByPath.set(schemaPath, record);
-    if (packageConfig.forwardCompatible) schemasByPath.set(schemaPath.replace("/v2/", "/v1/"), record);
+    if (packageConfig.forwardCompatible) schemasByPath.set(legacySchemaPath(schemaPath, config.sourceVersion), record);
   }
   for (const record of records) {
     for (const dependency of record.packageConfig.dependencies) {
