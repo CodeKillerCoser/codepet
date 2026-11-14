@@ -25,11 +25,13 @@ jobs:
       - run: npm run test:pet
       - run: npm run test:pet:ui
       - run: npm run test:pet:motion
+      - run: npm run test:pet:stack
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: python -m pip install pillow
       - run: python scripts/pet_motion_images_qa.py
+      - run: python scripts/pet_plane_stack_preview.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -39,3 +41,8 @@ jobs:
             artifacts/pet-notch-qa/*.json
             artifacts/pet-motion-qa/*.png
             artifacts/pet-motion-qa/*.json
+            artifacts/pet-plane-stack-qa/*.png
+            artifacts/pet-plane-stack-qa/*.json
+            artifacts/pet-plane-stack-qa/*.gif
+            artifacts/pet-plane-stack-qa/*.jpg
+            artifacts/pet-plane-stack-qa/*.html

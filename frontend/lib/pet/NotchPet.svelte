@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { onMount, onDestroy } from 'svelte';
+  import { PlaneStackMotion, planeStackCards, type PlaneStackFrame } from './planeStackMotion';
   import { Bell, ExternalLink, PanelTop, Plug, X } from '@lucide/svelte';
   import PetAvatar from './PetAvatar.svelte';
   import MarkdownMessage from '../MarkdownMessage.svelte';
@@ -24,7 +26,16 @@
   export let dismissActivity: (event: MouseEvent, task: PetTask) => void;
   let failedIcons = new Set<string>();
   let expandedCompleted = new Set<string>();
-  let stackSelection = new Map<string, string>();
+  const stackMotions = new Map<string, PlaneStackMotion>();
+  let stackFrames = new Map<string, PlaneStackFrame>();
+  let reducedMotion = false;
+  onMount(() => {
+    const preference = matchMedia('(prefers-reduced-motion: reduce)');
+    const update = () => { reducedMotion = preference.matches; };
+    update(); preference.addEventListener('change', update);
+    return () => preference.removeEventListener('change', update);
+  });
+  onDestroy(() => { for (const motion of stackMotions.values()) motion.destroy(); });
   const wheelProgress = new Map<string, { delta: number; at: number; flippedAt: number }>();
 
   const attention = (task: PetTask) => ['waiting-approval', 'waiting-input'].includes(task.status);
@@ -49,17 +60,23 @@
   $: if ([...expandedCompleted].some(id => !completedGroups.some(group => group.id === id))) {
     expandedCompleted = new Set([...expandedCompleted].filter(id => completedGroups.some(group => group.id === id)));
   }
-  $: if ([...stackSelection].some(([id, taskId]) => !completedGroups.some(group => group.id === id && group.tasks.some(task => task.id === taskId)))) {
-    stackSelection = new Map([...stackSelection].filter(([id, taskId]) => completedGroups.some(group => group.id === id && group.tasks.some(task => task.id === taskId))));
+  $: syncStacks(completedGroups, expandedCompleted, reducedMotion);
+  function syncStacks(groups: ReturnType<typeof completedByProvider>, expanded: Set<string>, reduced: boolean) {
+    for (const [id, motion] of stackMotions) {
+      if (!groups.some(group => group.id === id)) {
+        motion.destroy(); stackMotions.delete(id); stackFrames.delete(id); wheelProgress.delete(id);
+      }
+    }
+    for (const group of groups) {
+      let motion = stackMotions.get(group.id);
+      if (!motion) {
+        motion = new PlaneStackMotion(frame => { stackFrames = new Map(stackFrames).set(group.id, frame); });
+        stackMotions.set(group.id, motion);
+      }
+      motion.sync(group.tasks.map(task => task.id), !expanded.has(group.id), reduced);
+    }
   }
-  $: for (const id of wheelProgress.keys()) {
-    if (!completedGroups.some(group => group.id === id)) wheelProgress.delete(id);
-  }
-  function stackTasks(tasks: PetTask[], selectedId: string | undefined) {
-    const start = Math.max(0, tasks.findIndex(task => task.id === selectedId));
-    return Array.from({ length: Math.min(tasks.length, 3) }, (_, index) => tasks[(start + index) % tasks.length]);
-  }
-  function rotateStack(event: WheelEvent, id: string, tasks: PetTask[]) {
+  function rotateStack(event: WheelEvent, id: string) {
     // Preserve pinch zoom and horizontal gestures. Expanded/single rows never call this.
     if (event.ctrlKey || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
     event.preventDefault();
@@ -75,9 +92,7 @@
       wheelProgress.set(id, { delta: accumulated, at: now, flippedAt: previous?.flippedAt ?? -Infinity });
       return;
     }
-    const current = Math.max(0, tasks.findIndex(task => task.id === stackSelection.get(id)));
-    const next = (current + Math.sign(accumulated) + tasks.length) % tasks.length;
-    stackSelection = new Map(stackSelection).set(id, tasks[next].id);
+    stackMotions.get(id)?.step(Math.sign(accumulated));
     wheelProgress.set(id, { delta: 0, at: now, flippedAt: now });
   }
   function toggleCompleted(id: string) {
@@ -114,6 +129,8 @@
         {#each taskGroups as group (group.id)}
           {@const completedExpanded = expandedCompleted.has(group.id)}
           {@const stacked = group.completed && !completedExpanded && group.tasks.length > 1}
+          {@const frame = stackFrames.get(group.id)}
+          {@const cards = stacked ? planeStackCards(group.tasks, frame?.position ?? 0) : group.tasks.map(item => ({ item, front: true, y: 0, scale: 1, opacity: 1, ink: 1, layer: 0, depth: 0 }))}
           {#if group.completed && group.id === completedGroups[0]?.id}
             <h2 class="completed-heading">已完成 <span class="completed-count">{completedGroups.reduce((count, item) => count + item.tasks.length, 0)}</span></h2>
           {/if}
@@ -122,8 +139,10 @@
           <div class="task-group" class:stacked class:completed={group.completed} role="group" aria-label={group.completed ? `${group.providerId || 'Agent'} 已完成任务` : '当前任务'}
             id={`notch-${group.id}`}
             style={`--stack-count: ${Math.min(group.tasks.length - 1, 2)}`}
+            data-plane-moving={stacked && frame?.moving ? '' : undefined}
+            data-plane-position={stacked ? frame?.position ?? 0 : undefined}
             on:click={event => { if (group.completed) expandCompleted(event, group.id); }}
-            on:wheel|nonpassive={event => { if (stacked) rotateStack(event, group.id, group.tasks); }}>
+            on:wheel|nonpassive={event => { if (stacked) rotateStack(event, group.id); }}>
             {#if group.completed}
               {@const provider = data.providers.find(item => item.providerId === group.providerId)}
               {@const providerName = provider?.displayName || data.sources.find(source => source.id === group.providerId)?.displayName || group.providerId || 'Agent'}
@@ -139,12 +158,14 @@
               </div>
             {/if}
             <div class="task-group-items" id={`notch-${group.id}-tasks`}>
-              {#each stacked ? stackTasks(group.tasks, stackSelection.get(group.id)) : group.tasks as task, index (task.id)}
+              {#each cards as card (card.item.id)}
+                {@const task = card.item}
                 {@const provider = data.providers.find(item => item.providerId === task.providerId)}
                 {@const providerName = provider?.displayName || data.sources.find(source => source.id === task.providerId)?.displayName || task.providerId || 'Agent'}
-                <article class="notch-task" class:stack-back={stacked && index > 0}
-                  inert={stacked && index > 0} aria-hidden={stacked && index > 0 ? 'true' : undefined}
-                  style={stacked ? `--stack-depth: ${index}; z-index: ${3 - index}` : undefined}
+                <article class="notch-task" class:stack-back={stacked && !card.front}
+                  inert={stacked && !card.front} aria-hidden={stacked && !card.front ? 'true' : undefined}
+                  data-task-id={task.id}
+                  style={stacked ? `--plane-y: ${card.y}px; --plane-scale: ${card.scale}; --plane-ink: ${card.ink}; --plane-depth: ${card.depth}; opacity: ${card.opacity}; z-index: ${card.layer}` : undefined}
                   aria-label={`${task.title}，${petStatusLabel(task.status)}`}>
                   {#if !group.completed}
                     <div class="provider-icon" title={providerName}>
@@ -196,20 +217,22 @@
   .completed-count { margin-left: 4px; color: var(--gray-10); font-variant-numeric: tabular-nums; }
   .completed-toggle { display: grid; place-items: center; width: 100%; height: 100%; padding: 0; border-radius: 4px; cursor: pointer; }
   .completed + .completed { margin-top: 12px; }
-  .task-group.stacked { --stack-step: 11px; cursor: pointer; }
-  .stacked .task-group-items { grid-template-columns: minmax(0, 1fr); gap: 0; isolation: isolate; padding-bottom: calc(var(--stack-count) * var(--stack-step) + 1px); }
-  .stacked .notch-task { grid-area: 1 / 1; perspective: 600px; perspective-origin: 50% 0; }
+  .task-group.stacked { cursor: pointer; }
+  .stacked .task-group-items { grid-template-columns: minmax(0, 1fr); gap: 0; isolation: isolate; padding: 0 0 calc(var(--stack-count) * 11px + 1px); }
+  .stacked .notch-task { grid-area: 1 / 1; }
   .stacked .stack-back { pointer-events: none; }
   .completed .task-content::before { content: ''; position: absolute; inset: 0; z-index: -1; background: color-mix(in srgb, var(--color-black) 20%, var(--gray-2)); border-radius: 6px; }
-  .stacked .notch-task:not(.stack-back) .task-content::before { box-shadow: inset 0 0 0 1px var(--gray-4); }
-  .stacked .stack-back .task-content::before { background: var(--gray-3); box-shadow: inset 0 -1px 0 var(--gray-6); }
-  .stacked .stack-back:last-child .task-content::before { background: color-mix(in srgb, var(--color-black) 20%, var(--gray-3)); }
+  .stacked .task-content::before { background: color-mix(in srgb, var(--gray-3) calc(var(--plane-depth) * 30%), var(--gray-2)); box-shadow: inset 0 0 0 1px var(--gray-4); }
   .completed .task-content { flex: 1; isolation: isolate; padding: 6px; }
   .completed .task-topline { padding-right: 0; }
   .completed .notch-task:hover .task-topline, .completed .notch-task:focus-within .task-topline { padding-right: 18px; }
   .completed .dismiss-task { top: 8px; right: 6px; }
-  .stacked .task-content { align-self: stretch; transform: translate3d(0, calc(var(--stack-depth) * var(--stack-step)), calc(var(--stack-depth) * -18px)); transform-origin: center top; transition: transform 140ms ease-out; }
-  .stacked .stack-back .task-content > * { visibility: hidden; }
+  .stacked .task-content { flex: none; box-sizing: border-box; height: 80px; transform: translateY(var(--plane-y)) scale(var(--plane-scale)); transform-origin: center top; }
+  .stacked .task-topline { padding-right: 18px; }
+  .stacked .task-content > * { opacity: var(--plane-ink); }
+  .stacked .task-content > .dismiss-task { opacity: 0; }
+  .stacked .notch-task:not(.stack-back):hover .dismiss-task, .stacked .notch-task:focus-within .dismiss-task { opacity: var(--plane-ink); }
+  [data-plane-moving] .dismiss-task { visibility: hidden; }
   .provider-icon { margin-top: max(0px, calc((24px - var(--task-icon-size)) / 2)); width: var(--task-icon-size); height: var(--task-icon-size); display: grid; place-items: center; color: var(--gray-11); }
   .provider-icon img { width: var(--task-icon-size); height: var(--task-icon-size); object-fit: contain; border-radius: 4px; }
   .task-content { position: relative; min-width: 0; padding: 0 4px 4px 0; }
@@ -233,6 +256,6 @@
   .connection-error, .action-notice { margin: 8px 0; font-size: 12px; }
   .action-notice { flex: none; }
   @keyframes pulse { 50% { opacity: .45; } }
-  @media (prefers-reduced-motion: reduce) { .status-dot.busy { animation: none; } .stacked .task-content { transition: none; } }
-  @container (max-width: 344px) { .provider-icon { margin-top: max(0px, calc((21px - var(--task-icon-size)) / 2)); } .task-topline { flex-wrap: wrap; gap: 4px; } h3 { flex-basis: 100%; } }
+  @media (prefers-reduced-motion: reduce) { .status-dot.busy { animation: none; } }
+  @container (max-width: 344px) { .stacked .task-content { height: 104px; } .provider-icon { margin-top: max(0px, calc((21px - var(--task-icon-size)) / 2)); } .task-topline { flex-wrap: wrap; gap: 4px; } h3 { flex-basis: 100%; } }
 </style>
