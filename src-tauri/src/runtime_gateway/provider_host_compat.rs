@@ -66,6 +66,7 @@ impl CompatProviderGateway {
             | gateway::ProtocolEvent::ProjectChanged { .. }
             | gateway::ProtocolEvent::ConversationRecentChanged { .. }
             | gateway::ProtocolEvent::ProviderChanged { .. }
+            | gateway::ProtocolEvent::ProviderRemoved { .. }
             | gateway::ProtocolEvent::ConversationActivityChanged { .. }
             | gateway::ProtocolEvent::ConversationItemUpserted { .. } => return Ok(None),
             gateway::ProtocolEvent::ConversationUpserted { params, .. } => compat::ProtocolEvent::ConversationUpserted {

@@ -8,9 +8,9 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub use codepet_agent_sdk::*;
-pub use codepet_core_sdk::{ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersionOffer, ProtocolVersionSelection, ProviderInstanceId, ProviderPluginId, ProviderTransportHello, ProviderTransportSelection, RequestId, RoutedResourceId, RpcError, TimestampMs};
+pub use codepet_core_sdk::{ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersionOffer, ProtocolVersionSelection, ProviderFeature, ProviderInstanceId, ProviderPluginId, ProviderTransportHello, ProviderTransportSelection, RequestId, RoutedResourceId, RpcError, TimestampMs};
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 pub const MIN_PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -774,6 +774,8 @@ pub struct ProviderPluginDescriptor {
     pub default_workspace_root: Option<String>,
     pub instance_kinds: Vec<ProviderInstanceKind>,
     pub protocol: ProtocolVersionOffer,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub features: Option<Vec<ProviderFeature>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1142,6 +1144,13 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
       },
       "protocol": {
         "ref": "core:ProtocolVersionOffer"
+      },
+      "features": {
+        "type": "array",
+        "items": {
+          "ref": "core:ProviderFeature"
+        },
+        "uniqueItems": true
       }
     },
     "required": [
@@ -3194,6 +3203,14 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
     "type": "integer",
     "minimum": 1,
     "maximum": 4294967295
+  },
+  "core:ProviderFeature": {
+    "type": "string",
+    "enum": [
+      "agent",
+      "observation",
+      "runtimeInventory"
+    ]
   },
   "core:ProviderTransportLimits": {
     "type": "object",

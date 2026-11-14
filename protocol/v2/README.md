@@ -1,6 +1,6 @@
 # Provider / Gateway v2 前向兼容规则
 
-本目录是当前启用的完整功能 IDL，`protocol/codegen.json.sourceVersion=2`。v1 源码与生成视图冻结；Rust、TypeScript、Dart 使用当前 v2 输出，Provider 公开 SDK 按 v2 发布，Gateway 保持内部使用。业务首发范围是 2/2，不声明兼容旧严格 v1。
+本目录是当前启用的完整功能 IDL，`protocol/codegen.json.sourceVersion=2`。v1 源码与生成视图冻结；Rust、TypeScript、Dart 使用当前 v2 输出，Provider 公开 SDK 按 v2 发布，Gateway 保持内部使用。业务首发范围是 2/2；当前两层增量演进为 3/2，继续兼容 2/2，不声明兼容旧严格 v1。
 
 ## version 与 minVersion
 

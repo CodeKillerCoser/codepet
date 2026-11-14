@@ -132,5 +132,5 @@
       "description": "Provider通知事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
     }
   ],
-  "version": 2
+  "version": 3
 }

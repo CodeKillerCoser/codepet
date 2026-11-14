@@ -336,6 +336,15 @@
       "minimum": 1,
       "maximum": 4294967295,
       "description": "单调递增的业务协议修订号；不是软件、SDK、安装清单或传输格式版本。"
+    },
+    "ProviderFeature": {
+      "type": "string",
+      "enum": [
+        "agent",
+        "observation",
+        "runtimeInventory"
+      ],
+      "description": "插件功能集合中的一个功能：agent 提供会话与任务执行；observation 提供通知观测订阅；runtimeInventory 提供可由 Host 检测和选择的外部执行环境。可组合，未知名称忽略，不能代替实例 methods 的具体方法授权。"
     }
   }
 }

@@ -16,7 +16,7 @@
   },
   "forwardCompatible": true,
   "description": "Generated compatibility view of protocol/v2; do not edit.",
-  "version": 2,
+  "version": 3,
   "minVersion": 2,
   "transport": {
     "kind": "json-rpc-2.0",

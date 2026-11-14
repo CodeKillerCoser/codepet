@@ -1,9 +1,6 @@
 <script lang="ts">
-  import { onDestroy } from "svelte";
   import PathLabel from "./PathLabel.svelte";
-  import { codepetGateway } from "./codepetGateway";
-  import { isBuiltinProvider } from "./agentRuntime";
-  import { providerKindFromMethods, providerKindLabel, type ProviderKind } from "./providerPresentation";
+  import { providerKindsFromFeatures, providerKindLabel, type ProviderKind } from "./providerPresentation";
   import { Plug, ChevronDown, ShieldAlert, Trash2 } from "@lucide/svelte";
   import type { AgentRuntime } from "./types";
   import type { ProviderConnectionState } from "./providerRuntimes";
@@ -16,24 +13,10 @@
   export let onSelect: (runtime: AgentRuntime, path: string) => void;
   export let onRemove: ((runtime: AgentRuntime) => void) | undefined = undefined;
   export let kind: ProviderKind | undefined = undefined;
-  let discoveredKind: ProviderKind = 'extension';
-  let capabilityKey = '';
-  let revision = 0;
-  onDestroy(() => { revision++; });
-  $: displayKind = kind ?? (isBuiltinProvider(runtime.providerId) ? 'agent' : discoveredKind);
-  $: if (!kind && !isBuiltinProvider(runtime.providerId)) discoverKind(connection);
-  async function discoverKind(state: ProviderConnectionState | undefined) {
-    const key = JSON.stringify([runtime.providerId, state?.generation, state?.connectionStatus, state?.instances]);
-    if (key === capabilityKey) return;
-    capabilityKey = key;
-    const current = ++revision;
-    const instances = state?.connectionStatus === 'online' ? state.instances.filter(i => i.status === 'ready') : [];
-    if (!instances.length) return;
-    const descriptions = await Promise.allSettled(instances.map(i => codepetGateway('provider.describe', { providerId: i.id })));
-    if (current !== revision) return;
-    const methods = descriptions.flatMap(result => result.status === 'fulfilled' ? result.value.capabilities.methods : []);
-    discoveredKind = providerKindFromMethods(methods);
-  }
+  $: displayKinds = kind ? [kind] : providerKindsFromFeatures(connection?.features);
+  $: displayKind = displayKinds.includes('agent') ? 'agent' : displayKinds.includes('observation') ? 'observation' : 'extension';
+  // Legacy plugins can still expose a validated installed-runtime inventory without features.
+  $: showRuntime = connection?.features == null ? !!runtime.installed?.length : connection.features.includes('runtimeInventory');
   let failedIcon: string | null = null;
   $: name = connection?.displayName || runtime.displayName;
 </script>
@@ -46,14 +29,14 @@
       {:else}<Plug size={24} />{/if}
     </div>
     <div class="provider-identity">
-      <div class="name-line"><h3>{name}</h3><span class="kind">{providerKindLabel(displayKind)}</span></div>
+      <div class="name-line"><h3>{name}</h3>{#each displayKinds as feature}<span class="kind">{providerKindLabel(feature)}</span>{/each}</div>
       <ProviderConnectionStatus current={connection} available={connectionsLoaded} kind={displayKind} />
     </div>
     {#if onRemove}<button class="remove-provider" disabled={busy} aria-label={`移除 ${name}`} on:click={() => onRemove?.(runtime)}><Trash2 size={16} />移除</button>{/if}
   </header>
   <dl>
     {#if connection?.version}<div><dt>插件版本</dt><dd>{connection.version}</dd></div>{/if}
-    {#if displayKind === "agent" && runtime.status !== "not-required"}
+    {#if showRuntime && runtime.status !== "not-required"}
     <div>
       <dt><label for={`runtime-path-${runtime.providerId}`}>运行时路径</label></dt>
       <dd>

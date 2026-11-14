@@ -12,7 +12,8 @@ struct InitializeServer;
 
 fn descriptor() -> ProviderPluginDescriptor {
     ProviderPluginDescriptor {
-        plugin_id: "dev.codepet.codex".to_string(),
+        features: None,
+            plugin_id: "dev.codepet.codex".to_string(),
         display_name: "Codex".to_string(),
         version: "1.0.0".to_string(),
         default_workspace_root: Some("/Users/example/.codex".to_string()),

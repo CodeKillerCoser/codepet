@@ -1,6 +1,6 @@
 {
   "description": "provider 协议模块入口；只登记模块文件，方法与事件在所属模块定义。",
-  "version": 2,
+  "version": 3,
   "service": {
     "name": "codepet-provider",
     "layer": "provider",

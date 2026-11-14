@@ -42,7 +42,7 @@
   },
   "forwardCompatible": true,
   "description": "Generated compatibility view of protocol/v2; do not edit.",
-  "version": 2,
+  "version": 3,
   "minVersion": 2,
   "methods": [
     {
@@ -450,6 +450,16 @@
         "$ref": "schema.json#/$defs/ProviderChangedEvent"
       },
       "description": "provider.changed 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "provider.removed",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "provider",
+      "payload": {
+        "$ref": "schema.json#/$defs/ProviderRemovedEvent"
+      },
+      "description": "清单移除通知；inventoryRevision 与 changed 及全量快照共享同一序列。旧客户端忽略此事件，并通过下次心跳全量校正。"
     },
     {
       "name": "project.changed",

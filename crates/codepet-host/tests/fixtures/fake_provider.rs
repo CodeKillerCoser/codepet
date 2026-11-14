@@ -49,6 +49,7 @@ struct FakeProvider {
 impl FakeProvider {
     fn descriptor(&self) -> ProviderPluginDescriptor {
         ProviderPluginDescriptor {
+            features: std::env::var("CODEPET_FAKE_FEATURES").ok().map(|json| serde_json::from_str(&json).expect("valid fake feature list")),
             plugin_id: self.plugin_id.clone(),
             display_name: "CodePet Fake Provider".to_string(),
             version: "1.0.0-test".to_string(),

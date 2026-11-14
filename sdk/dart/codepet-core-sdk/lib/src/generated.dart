@@ -522,6 +522,30 @@ final class ProtocolVersionSelection {
   String toString() => 'ProtocolVersionSelection(version: $version, minVersion: $minVersion, selectedVersion: $selectedVersion)';
 }
 
+final class ProviderFeature {
+  static const agent = ProviderFeature._('agent');
+  static const observation = ProviderFeature._('observation');
+  static const runtimeInventory = ProviderFeature._('runtimeInventory');
+
+  const ProviderFeature._(this.wireValue);
+  static const values = [agent, observation, runtimeInventory];
+  bool get isKnown => values.any((v) => v.wireValue == wireValue);
+  @override bool operator ==(Object other) => other is ProviderFeature && other.wireValue == wireValue;
+  @override int get hashCode => wireValue.hashCode;
+
+  final String wireValue;
+
+  static ProviderFeature fromJson(Object? value, {String path = 'ProviderFeature'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    return ProviderFeature._(wireValue);
+  }
+
+  String toJson() => wireValue;
+}
+
 typedef ProviderInstanceId = String;
 
 ProviderInstanceId decodeProviderInstanceId(Object? value, {String path = 'ProviderInstanceId'}) => _string(value, path, minLength: 1);

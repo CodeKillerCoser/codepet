@@ -60,8 +60,8 @@ test("recent v1 preserves list and read boundaries with capability-gated atomic 
   const model = await loadProtocolModel();
   const provider = record(model, "provider-v1");
   const gateway = record(model, "gateway-v1");
-  assert.equal(provider.manifest.version, 2);
-  assert.equal(gateway.manifest.version, 2);
+  assert.equal(provider.manifest.version, 3);
+  assert.equal(gateway.manifest.version, 3);
   for (const name of ["conversation.active.list", "conversation.unread.list", "conversation.markRead"]) {
     assert.equal(provider.manifest.methods.find((method) => method.name === name)?.capability, name);
   }
@@ -276,7 +276,7 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
     "#/$defs/GatewayDevice",
   );
   assert.equal(gateway.schema.$defs.ProviderSummary.properties.route, undefined);
-  assert.equal(gateway.schema.$defs.ProviderSummary.properties.pluginId, undefined);
+  assert.match(gateway.schema.$defs.ProviderSummary.properties.pluginId.$ref, /ProviderPluginId$/);
   assert.deepEqual(gateway.schema.$defs.ProviderIdentity.properties.icon, {
     type: "string",
     pattern: "^https://",

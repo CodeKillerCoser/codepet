@@ -159,7 +159,7 @@
         "id": {
           "type": "string",
           "minLength": 1,
-          "description": "对象在所属集合内的稳定标识。"
+          "description": "Provider 实例的稳定身份（instanceId）；Gateway 路由中的 providerId 使用此值，不能与 pluginId 混用。"
         },
         "identity": {
           "$ref": "#/$defs/ProviderIdentity",
@@ -172,6 +172,19 @@
         "capabilities": {
           "$ref": "#/$defs/ProviderCapabilitiesSummary",
           "description": "引用 ProviderCapabilitiesSummary 的结构与约束。"
+        },
+        "pluginId": {
+          "$ref": "../../common/types.schema.json#/$defs/ProviderPluginId",
+          "description": "所属插件包稳定身份；多个实例可共享此值。缺失表示旧 Host 未提供，不能由实例 id 推断。"
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "$ref": "../../common/types.schema.json#/$defs/ProviderFeature",
+            "description": "单项插件功能。"
+          },
+          "uniqueItems": true,
+          "description": "插件显式声明的可组合功能。缺失表示旧插件未声明，不通过方法前缀、名称、实例数量或运行时推断类型；空数组表示未提供这些已知功能。"
         }
       },
       "required": [
@@ -232,6 +245,16 @@
             "description": "引用 ProviderSummary 的结构与约束。"
           },
           "description": "Host 当前可见的 Provider 摘要列表。"
+        },
+        "inventoryRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前 Host Gateway 生命期内单调递增的 Provider 实例清单修订号；成员或摘要发生变化均推进，区别于进程 generation 和事件游标。缺失表示旧端未支持；重连后以 handshake 全量清单重新建立基线。"
+        },
+        "inventoryEpoch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前 Host Gateway 运行周期的不透明身份；同一周期内 inventoryRevision 才可比较。Host 重启后改变，客户端必须重新握手与获取全量快照，不能由新周期的单个事件重置旧清单。与设备/插件身份及授权无关。与 inventoryRevision 同时提供；同时缺失表示旧 Host。"
         }
       },
       "required": [
@@ -257,6 +280,16 @@
         "provider": {
           "$ref": "#/$defs/ProviderSummary",
           "description": "引用 ProviderSummary 的结构与约束。"
+        },
+        "inventoryRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前 Host Gateway 生命期内单调递增的 Provider 实例清单修订号；成员或摘要发生变化均推进，区别于进程 generation 和事件游标。缺失表示旧端未支持；重连后以 handshake 全量清单重新建立基线。"
+        },
+        "inventoryEpoch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前 Host Gateway 运行周期的不透明身份；同一周期内 inventoryRevision 才可比较。Host 重启后改变，客户端必须重新握手与获取全量快照，不能由新周期的单个事件重置旧清单。与设备/插件身份及授权无关。与 inventoryRevision 同时提供；同时缺失表示旧 Host。"
         }
       },
       "required": [
@@ -264,6 +297,32 @@
       ],
       "additionalProperties": true,
       "description": "ProviderChangedEvent 的事件载荷。"
+    },
+    "ProviderRemovedEvent": {
+      "type": "object",
+      "description": "Provider 实例从 Gateway 当前可见清单中移除。停止或禁用仍可见的实例只发送 changed。清理本地实例及能力缓存，历史消息可保留。",
+      "properties": {
+        "providerId": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProviderId",
+          "description": "被移除的实例身份，不能视为插件包身份。"
+        },
+        "inventoryRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前 Host Gateway 生命期内单调递增的 Provider 实例清单修订号；成员或摘要发生变化均推进，区别于进程 generation 和事件游标。缺失表示旧端未支持；重连后以 handshake 全量清单重新建立基线。"
+        },
+        "inventoryEpoch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前 Host Gateway 运行周期的不透明身份；同一周期内 inventoryRevision 才可比较。Host 重启后改变，客户端必须重新握手与获取全量快照，不能由新周期的单个事件重置旧清单。与设备/插件身份及授权无关。与 inventoryRevision 同时提供；同时缺失表示旧 Host。"
+        }
+      },
+      "required": [
+        "providerId",
+        "inventoryRevision",
+        "inventoryEpoch"
+      ],
+      "additionalProperties": true
     }
   }
 }

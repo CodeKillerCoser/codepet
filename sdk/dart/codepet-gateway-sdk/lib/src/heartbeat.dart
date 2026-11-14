@@ -14,7 +14,7 @@ final class GatewayHeartbeatClient {
   });
 
   final ProtocolClient client;
-  final void Function(List<ProviderSummary>) onProviders;
+  final void Function(List<ProviderSummary>, int? inventoryRevision, String? inventoryEpoch) onProviders;
   final void Function(Object, StackTrace) onFailure;
   final void Function()? beforePing;
   final Duration interval;
@@ -40,7 +40,7 @@ final class GatewayHeartbeatClient {
       if (_closed) return;
       if (pong.sequence != sequence) throw const FormatException('Heartbeat sequence mismatch');
       _sincePong.reset();
-      onProviders(pong.providers);
+      onProviders(pong.providers, pong.inventoryRevision, pong.inventoryEpoch);
     } catch (error, stack) {
       if (_closed) return;
       if (_sincePong.elapsed >= failureTimeout || error is FormatException) {

@@ -40,7 +40,8 @@ impl Write for Output {
     fn flush(&mut self) -> std::io::Result<()> { std::io::stdout().flush() }
 }
 fn descriptor(text: String) -> ProviderPluginDescriptor {
-    ProviderPluginDescriptor { plugin_id: "dev.codepet.mux-bench".into(), display_name: text, version: "test".into(), default_workspace_root: None,
+    ProviderPluginDescriptor { features: None,
+            plugin_id: "dev.codepet.mux-bench".into(), display_name: text, version: "test".into(), default_workspace_root: None,
         protocol: ProtocolVersionOffer { min_version: 2, version: 2 }, instance_kinds: vec![] }
 }
 struct Fixture { text: String, events: Arc<dyn ProviderEventSink> }

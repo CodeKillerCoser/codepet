@@ -15,7 +15,7 @@ import {
 
 test("canonical SDK manifest resolves every registry reference across schema modules", () => {
   assert.equal(sdkManifest.formatVersion, 3);
-  assert.equal(sdkManifest.protocolVersion, 2);
+  assert.equal(sdkManifest.protocolVersion, 3);
   assert.equal(sdkManifest.sdkVersion, 2);
   assert.equal(requestValidators.size, methods.length);
   assert.equal(responseValidators.size, methods.length);
@@ -77,4 +77,35 @@ test("plugin installation manifests validate independently from communication sc
     );
   }
   assert.equal(validatePluginManifest({}), false);
+});
+
+test("descriptor feature collection remains optional, combinable and unique", () => {
+  const plugin = {
+    pluginId: "fixture.agent",
+    displayName: "Fixture",
+    version: "3.0.0",
+    protocol: { version: 3, minVersion: 2 },
+    instanceKinds: ["fixture"],
+  };
+  const validate = responseValidators.get("provider.describe");
+  for (const features of [
+    undefined,
+    [],
+    ["agent"],
+    ["agent", "observation"],
+    ["agent", "observation", "runtimeInventory"],
+  ]) {
+    assert.equal(
+      validate({
+        plugin: { ...plugin, ...(features === undefined ? {} : { features }) },
+      }),
+      true,
+      JSON.stringify(validate.errors),
+    );
+  }
+  assert.equal(
+    validate({ plugin: { ...plugin, features: ["agent", "agent"] } }),
+    false,
+  );
+  assert.equal(validate({ plugin: { ...plugin, features: null } }), false);
 });

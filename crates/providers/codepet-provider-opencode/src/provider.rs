@@ -1120,6 +1120,7 @@ impl OpenCodeProvider {
 
     fn descriptor() -> ProviderPluginDescriptor {
         ProviderPluginDescriptor {
+            features: Some(vec![codepet_provider_sdk::ProviderFeature::Agent, codepet_provider_sdk::ProviderFeature::Observation, codepet_provider_sdk::ProviderFeature::RuntimeInventory]),
             plugin_id: OPENCODE_PLUGIN_ID.to_string(),
             display_name: "OpenCode".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),

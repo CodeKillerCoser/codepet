@@ -1091,6 +1091,10 @@ impl PluginManager {
         plugin_id: &str,
         request: RuntimeSelectRequest,
     ) -> HostResult<RuntimeSelectResponse> {
+        if self.snapshot(plugin_id).await?.reported.as_ref().and_then(|p| p.features.as_ref()).is_some_and(|features|
+            !features.contains(&codepet_provider_sdk::ProviderFeature::RuntimeInventory)) {
+            return Err(HostError::new("capability_not_supported", "Plugin does not declare runtimeInventory"));
+        }
         self.process_for_plugin(plugin_id)
             .await?
             .client()

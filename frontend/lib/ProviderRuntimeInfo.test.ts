@@ -29,3 +29,27 @@ it('hides runtime controls for notification observers and self-managed agents', 
   expect(document.querySelector('select')).toBeNull();
   expect(document.body.textContent).not.toContain('由 Provider 管理');
 });
+
+it('shows composed features for a zero-instance plugin without querying Gateway methods', async () => {
+  component = mount(ProviderRuntimeInfo, { target: document.body, props: { runtime,
+    connection: { pluginId: 'custom', providerId: 'custom', features: ['agent', 'observation'], connectionStatus: 'online', generation: 1, instances: [] },
+    onSelect: vi.fn() } });
+  await tick();
+  expect(document.body.textContent).toContain('智能体');
+  expect(document.body.textContent).toContain('通知观测');
+  expect(document.querySelector('select')).toBeNull();
+});
+it('offers runtime selection only for an explicit runtime inventory feature', async () => {
+  component = mount(ProviderRuntimeInfo, { target: document.body, props: { runtime: { ...runtime, status: 'ready' },
+    connection: { providerId: 'custom', features: ['agent', 'runtimeInventory'], connectionStatus: 'online', generation: 1, instances: [] },
+    onSelect: vi.fn() } });
+  await tick(); expect(document.querySelector('select')).not.toBeNull();
+});
+
+it('keeps validated legacy runtime choices usable without guessing the plugin type', async () => {
+  component = mount(ProviderRuntimeInfo, { target: document.body, props: {
+    runtime: { ...runtime, status: 'ready', installed: [{ executablePath: '/legacy/runtime', version: '1', source: 'current-path' }] },
+    connection: { providerId: 'legacy', connectionStatus: 'online', generation: 1, instances: [] }, onSelect: vi.fn() } });
+  await tick(); expect(document.body.textContent).toContain('扩展服务');
+  expect(document.querySelector('select')).not.toBeNull();
+});

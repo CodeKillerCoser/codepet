@@ -1979,7 +1979,7 @@
     "ProviderId": {
       "type": "string",
       "minLength": 1,
-      "description": "Opaque identity of one Gateway provider."
+      "description": "Gateway 中 Provider 实例身份，等同 ProviderInstanceId；不是插件包 ProviderPluginId。既有 wire 名称 providerId 保持。"
     },
     "TurnStatus": {
       "type": "string",

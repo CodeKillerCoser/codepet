@@ -38,6 +38,11 @@ impl PluginManager {
             if !entry.process.as_ref().is_some_and(|current| Arc::ptr_eq(current, &process)) {
                 return Err(stale_inventory_request());
             }
+            if entry.reported.as_ref().and_then(|p| p.features.as_ref()).is_some_and(|features|
+                !features.contains(&codepet_provider_sdk::ProviderFeature::RuntimeInventory)) {
+                return Ok(RuntimeGetInstalledResponse { harness_list: vec![], selected: None,
+                    selection_required: Some(false), scanning: None, scan_error: None });
+            }
             if request.refresh != Some(true) {
                 if let Some(inventory) = &entry.runtime_inventory { return Ok(inventory.clone()); }
             }

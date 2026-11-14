@@ -2,7 +2,7 @@
   "description": "Provider SDK v2 发布清单，描述此版本的 SDK 入口、业务协议版本和包内相对文件位置。",
   "formatVersion": 3,
   "package": "provider",
-  "protocolVersion": 2,
+  "protocolVersion": 3,
   "guide": "README.md",
   "manifestSchema": "protocol/manifest.schema.json",
   "profiles": "protocol/sdk/transport/profiles.json",

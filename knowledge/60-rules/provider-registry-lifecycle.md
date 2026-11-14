@@ -23,3 +23,7 @@ Registry 验证包归属，在该插件生命周期锁内等待进程退出和 R
 ## 验证方式
 
 `cargo test --manifest-path crates/Cargo.toml -p codepet-host --test manager_gateway`。覆盖包目录不存在、PID 退出、订阅 receiver 关闭、下一轮心跳不含目标项、其他 Provider generation 和客户端连接保持、重新安装、优雅退出超时的强制清理。
+
+Gateway 的清单是 Registry 的版本化投影，不能反过来作为安装状态来源。provider.changed、provider.removed 与 handshake/list/ping 全量快照使用同一 inventoryEpoch/inventoryRevision；客户端按修订号拒绝旧事件和旧响应，完整快照替换集合。移除时停止实例观察并失效能力，迟到 describe 不得插回；重连以新 handshake 建立修订基线。进程 generation、清单 revision、事件 cursor 不得混用。参见 [身份、功能与清单修订号](../50-decisions/provider-identity-features-and-inventory-revisions.md)。
+
+自动重连的底层会话适配器也必须检查握手 epoch，不能只在首次 ProtocolGatewayClient.connect 时建基线。Host 重启后数字游标可能恰好落在新事件窗口内；不同 epoch 一律重建快照，不能靠 cursor 数值合法推断它仍属于同一生命期。

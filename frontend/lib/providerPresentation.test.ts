@@ -1,9 +1,7 @@
 import { expect, it } from 'vitest';
-import { providerKindFromMethods } from './providerPresentation';
-it('uses capabilities instead of runtime requirements to distinguish provider roles', () => {
-  expect(providerKindFromMethods(['turn.send'])).toBe('agent');
-  expect(providerKindFromMethods(['observation.subscribe'])).toBe('observation');
-  expect(providerKindFromMethods(['notification.read'])).toBe('observation');
-  expect(providerKindFromMethods([])).toBe('extension');
-  expect(providerKindFromMethods(['codepet.usage.query'])).toBe('extension');
+import { providerKindsFromFeatures } from './providerPresentation';
+it('shows combined explicit functions and treats missing or future declarations conservatively', () => {
+  expect(providerKindsFromFeatures(['agent', 'observation', 'runtimeInventory'])).toEqual(['agent', 'observation']);
+  expect(providerKindsFromFeatures(['observation'])).toEqual(['observation']);
+  for (const features of [undefined, null, [], ['future'], ['turn.send']]) expect(providerKindsFromFeatures(features)).toEqual(['extension']);
 });

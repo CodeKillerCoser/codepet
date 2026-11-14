@@ -33,6 +33,9 @@ await writeFile(
       env: {
         ECHO_PLUGIN_ID: pluginId,
         ...(backend === "pi" ? { ECHO_BACKEND: "pi" } : {}),
+        ...(get("protocol-version", undefined)
+          ? { ECHO_PROTOCOL_VERSION: get("protocol-version") }
+          : {}),
       },
       transport,
       enabled: true,

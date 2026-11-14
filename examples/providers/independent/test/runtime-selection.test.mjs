@@ -66,14 +66,15 @@ for (const backend of ["echo", "pi"]) {
     });
     assert.equal(initialized.error, undefined);
     assert.deepEqual(initialized.result.protocol, {
-      version: 2,
+      version: 3,
       minVersion: 2,
-      selectedVersion: 2,
+      selectedVersion: 3,
     });
     assert.deepEqual(initialized.result.plugin.protocol, {
-      version: 2,
+      version: 3,
       minVersion: 2,
     });
+    assert.deepEqual(initialized.result.plugin.features, ["agent"]);
     const unknown = await rpc("future.method", {});
     assert.equal(unknown.error?.code, -32601);
 

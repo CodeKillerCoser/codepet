@@ -175,7 +175,8 @@ async fn registry_uninstall_closes_live_process_and_subscriptions_and_updates_ne
     payload["env"]["CODEPET_FAKE_PID_MARKER"] = serde_json::json!(marker);
     std::fs::write(&manifest, serde_json::to_vec(&payload).unwrap()).unwrap();
     manager.unsubscribe_events("not-installed", "local-observer").await.unwrap();
-    manager.import_plugin(manifest.clone(), root.clone()).await.unwrap();
+    let imported = manager.import_plugin(manifest.clone(), root.clone()).await.unwrap();
+    assert!(imported.loaded, "{:?}", imported.diagnostic);
     let mut subscription = manager.subscribe_events("custom", "local-observer").await.unwrap();
     let first = gateway.protocol_ping(codepet_gateway_sdk::PingRequest { sequence: 41 }).await.unwrap();
     assert!(first.providers.iter().any(|p| p.id == "custom-instance"));
@@ -225,4 +226,102 @@ async fn registry_uninstall_waits_for_forced_exit_when_graceful_shutdown_times_o
     assert!(!pid_is_alive(&marker));
     assert!(manager.snapshots().await.is_empty());
     manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn inventory_removes_every_instance_replays_removal_and_reimport_uses_newer_revision() {
+    let directory = tempfile::tempdir().unwrap();
+    let manager = build_manager("device-inventory", vec![plugin("existing", &["existing-instance"])]);
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    gateway.start_event_forwarding();
+    assert!(manager.start_enabled().await[0].1.is_ok());
+    let manifest = package(&directory.path().join("source"), "custom");
+    let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    let mut second = value["instances"][0].clone();
+    second["instanceId"] = serde_json::json!("custom-second");
+    second["displayName"] = serde_json::json!("Second custom instance");
+    value["instances"].as_array_mut().unwrap().push(second);
+    std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
+    let root = directory.path().join("installed");
+    assert!(manager.import_plugin(manifest.clone(), root.clone()).await.unwrap().loaded);
+    let before = gateway.provider_list(ProviderListRequest {}).await.unwrap();
+    assert_eq!(before.providers.len(), 3);
+    assert_eq!(before.providers.iter().filter(|p| p.plugin_id.as_deref() == Some("custom")).count(), 2);
+    let cursor = gateway.current_event_cursor();
+    let mut events = gateway.subscribe_events(Some(&cursor)).unwrap();
+    manager.remove_plugin("custom", root.clone()).await.unwrap();
+    // No list/ping call triggers this: Registry changes must actively reach the stream.
+    let mut removed = std::collections::BTreeSet::new();
+    let mut revision = before.inventory_revision.unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while removed.len() < 2 {
+            match events.next_event().await.unwrap() {
+                GatewayEvent::ProviderRemoved { params, .. } => {
+                    assert!(params.payload.inventory_revision > revision);
+                    revision = params.payload.inventory_revision;
+                    removed.insert(params.payload.provider_id);
+                }
+                GatewayEvent::ProviderChanged { params, .. } => {
+                    assert!(params.payload.inventory_revision.unwrap() > revision);
+                    revision = params.payload.inventory_revision.unwrap();
+                }
+                _ => {}
+            }
+        }
+    }).await.expect("both removals must arrive without a heartbeat");
+    assert_eq!(removed, ["custom-instance".to_string(), "custom-second".to_string()].into());
+    let pong = gateway.protocol_ping(codepet_gateway_sdk::PingRequest { sequence: 1 }).await.unwrap();
+    assert!(pong.inventory_revision.unwrap() >= revision);
+    assert_eq!(pong.inventory_epoch, before.inventory_epoch);
+    assert_eq!(pong.providers.len(), 1);
+    assert_eq!(gateway.replay_events(Some(&cursor)).unwrap().iter().filter(|e| matches!(e, GatewayEvent::ProviderRemoved { .. })).count(), 2);
+    assert!(manager.import_plugin(manifest, root).await.unwrap().loaded);
+    let reimported = gateway.provider_list(ProviderListRequest {}).await.unwrap();
+    assert!(reimported.inventory_revision > pong.inventory_revision);
+    assert_eq!(reimported.providers.len(), 3);
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn explicit_features_support_observation_without_instances_and_do_not_probe_runtime() {
+    let mut observer = plugin("observer", &[]);
+    observer.env.insert("CODEPET_FAKE_FEATURES".into(), "[\"observation\",\"future-feature\"]".into());
+    let mut combined = plugin("combined", &["combined-instance"]);
+    combined.env.insert("CODEPET_FAKE_FEATURES".into(), "[\"agent\",\"observation\"]".into());
+    let manager = build_manager("device-features", vec![observer, combined]);
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    gateway.start_event_forwarding();
+    for (_, outcome) in manager.start_enabled().await { outcome.unwrap(); }
+    let snapshot = manager.snapshot("observer").await.unwrap();
+    assert!(snapshot.instances.is_empty());
+    assert!(snapshot.reported.unwrap().features.unwrap().contains(&codepet_provider_sdk::ProviderFeature::Observation));
+    let inventory = manager.runtime_get_installed("observer", codepet_provider_sdk::RuntimeGetInstalledRequest { refresh: Some(true) }).await.unwrap();
+    assert_eq!(inventory.selection_required, Some(false));
+    // The fixture runtime handler fails without its control file, so success proves it was not called.
+    let providers = gateway.provider_list(ProviderListRequest {}).await.unwrap().providers;
+    assert_eq!(providers.len(), 1);
+    assert_eq!(providers[0].id, "combined-instance");
+    assert_eq!(providers[0].plugin_id.as_deref(), Some("combined"));
+    assert_eq!(providers[0].features, Some(vec![codepet_provider_sdk::ProviderFeature::Agent, codepet_provider_sdk::ProviderFeature::Observation]));
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn inventory_epoch_is_shared_by_snapshots_and_changes_across_gateway_lifetimes() {
+    let manager = build_manager("epoch-one", vec![]);
+    let gateway = ProviderGatewayService::with_remote_identity(manager.clone(), RemoteHostIdentity {
+        device_id: "epoch-one".into(), descriptor: device_descriptor("Epoch one"),
+    }).unwrap();
+    let handshake = gateway.protocol_handshake(handshake_request()).await.unwrap();
+    let list = gateway.provider_list(ProviderListRequest {}).await.unwrap();
+    let ping = gateway.protocol_ping(codepet_gateway_sdk::PingRequest { sequence: 1 }).await.unwrap();
+    assert!(list.inventory_epoch.as_ref().is_some_and(|epoch| !epoch.is_empty()));
+    assert_eq!(handshake.inventory_epoch, list.inventory_epoch);
+    assert_eq!(ping.inventory_epoch, list.inventory_epoch);
+    let next_manager = build_manager("epoch-two", vec![]);
+    let next = ProviderGatewayService::new(next_manager.clone()).unwrap().provider_list(ProviderListRequest {}).await.unwrap();
+    assert_eq!(list.inventory_revision, next.inventory_revision);
+    assert_ne!(list.inventory_epoch, next.inventory_epoch);
+    manager.shutdown().await;
+    next_manager.shutdown().await;
 }

@@ -87,3 +87,19 @@ ECHO_CHUNK_SIZE=4096、ECHO_TURN_DELAY_MS=1 可控制大文本的 delta 数量�
 最终复验 PID 21210，17:35:59—17:37:53，同样完整通过上述六组通道/profile、两次应用心跳、UI 更早历史/发送/会话隔离和双连接撤销；最终设备文件 `protocol-qa-result.json` 为 passed=true、failures=[]，四张截图及本轮日志已保存到 artifacts。原用户 settings.json 已逐字节恢复，原先运行的桌面 App 已重新启动；本次新桌面正常包单独交付，没有覆盖用户原安装或迁移其自定义插件。Android 已重新构建普通 main.dart debug APK 并安装启动，测试入口未作为交付安装包。
 
 交付桌面包为本地签名、未公证；Android 为 debug 签名。本轮覆盖本机模拟器局域网和本地 RTC，不覆盖实体手机、蜂窝、公网 TURN 或发布签名流水线。独立真实模型验证只对指定 Pi 合成任务，不泛化为所有模型或所有 Provider 均通过真实生产账号验收。
+
+## 3/2 身份与清单同步验收（2026-11-15）
+
+本轮仅推进已确认的第 1、2、4 项：Windows 原生路径生成、pluginId/instanceId 与显式组合 features、Gateway 清单实时移除与修订号。Observation 业务载荷类型化未扩展。两层业务范围增量为 3/2，三 profile 与 SDK/安装目录格式各自维持版本。
+
+当前自动检查：protocol:check 40、providers:test 5、cp-sdk-gen 6、桌面相关 Vitest 22 项通过；Rust 主 workspace 476 项通过、14 项既有外部环境用例忽略，Rust SDK 92 项通过、5 项忽略；Remote analyze 无 issue、Flutter 514 项通过。修改的 Dart 心跳运行时另直接验证 2 项，包含 epoch/revision 交付、同一时间仅一个请求、关闭后迟到 pong 和序号错误。三个内置 Provider 按实际实现同时声明 agent、observation、runtimeInventory；旧插件缺失 features 时保留已校验运行时清单的可选路径，不靠名称或方法前缀猜测插件类型。
+
+独立作者只读公开 SDK 与自身代码，源码和四包各 27 项通过；标准 Ajv 验证 33 个请求、33 个响应、13 个事件及全部 schema $id。默认 3/2、features:[agent]，独立旧 2/2 模式省略 features；Host 黑盒三 profile 的当前/旧插件、慢请求与分帧隔离共 3 项通过。公开 sourceDigest 仍为 sha256:7736569e62b5bc27137b652fb388ada04c4e3f1327dc8d94103f27394b037a9f；Gateway 专属 epoch 字段未改变公开 Provider SDK 的摘要。显式真实 Pi/DeepSeek Flash 验收 1 项通过，包含 read 工具、delta 与完整历史，未输出密钥。
+
+9404c43 的 Windows conformance 43621537821 与完整 Windows App 构建 43621541675 均成功；修复前的 43617419083 只在 Windows 协议检查失败。完整构建对应路径修复提交，不冒充后续业务源码的构建结果。
+
+首次 3/2 原生联调 PID 24917，01:42:04—01:44:39（本地时间），设备结果 passed=true、failures=[]。包含 LAN/WSS 与原生 RTC × 三 profile、真实应用心跳、生产 UI 更早历史/中文 emoji/会话隔离，以及桌面“添加自定义 Provider”导入、移除和重装。两种通道均实际收到更新和移除；桌面列表即时刷新，卸载进程 PID 22517 退出。最后两种连接均观察到 credential 撤销。此运行在补充 inventoryEpoch 和自动重连守卫之前，不能替代最终包复验。
+
+测试准备需沿用 Echo 环境参数 ECHO_CHUNK_SIZE=4096、ECHO_TURN_DELAY_MS=1：公开示例默认每 16 字符延迟 30ms，超长文本无法在 25s 断言窗口内结束。导入最早到达的是 Starting 摘要，此时 features 可以缺失；应等 Ready 后再断言已声明功能，而非将首次 changed 当初始化完成。这两处验收设置修正后首次联合运行通过。
+
+最终构建与数据位于 /Users/wangxin/Documents/CodePet-builds/protocol-scope124-20261115。最终 native QA 增加实际下一轮心跳剔除检查，以及生产连接引擎在桌面 Host 重启后重建快照的验证。当前两端已重新构建，Mac 再次锁屏，最后一轮界面验收等待解锁；不能写成已通过。原 bootstrap 配置保存在目录外层 original-settings.json，权限 600；隔离目录为 /tmp/codepet-scope124-qa-data-20261115。当前 QA 进程使用隔离数据，恢复时先退出 QA，再逐字节恢复 bootstrap 并重新打开原 App。

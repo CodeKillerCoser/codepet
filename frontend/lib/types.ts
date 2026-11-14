@@ -50,6 +50,7 @@ export interface AgentRuntimeInstallation {
 }
 
 export interface AgentRuntime {
+  /** Legacy desktop management name: plugin package identity, not Gateway providerId (instance). */
   providerId: AgentRuntimeProviderId;
   displayName: string;
   status: AgentRuntimeStatus;

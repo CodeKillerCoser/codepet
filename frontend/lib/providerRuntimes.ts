@@ -4,14 +4,18 @@ import { listAgentRuntimes } from "./api";
 import type { AgentRuntime } from "./types";
 
 export type ProviderConnectionState = {
+  /** Canonical plugin package identity. */
+  pluginId?: string;
+  /** Legacy local management alias for pluginId; never a Gateway instance id. */
   providerId: string;
+  features?: readonly string[] | null;
   displayName?: string;
   icon?: string | null;
   version?: string | null;
   defaultWorkspaceRoot?: string | null;
   connectionStatus: "connecting" | "online" | "offline";
   generation: number;
-  instances: { id: string; status: string }[];
+  instances: { instanceId?: string; id: string; status: string }[];
 };
 
 export function observeProviderRuntimes(callbacks: {
@@ -60,8 +64,8 @@ export function observeProviderRuntimes(callbacks: {
     if (disposed) return;
     callbacks.connections(states);
     // Harness/turn activity must not repeatedly probe installed executables.
-    const key = JSON.stringify(states.map(({ providerId, connectionStatus, generation }) =>
-      [providerId, connectionStatus, generation]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
+    const key = JSON.stringify(states.map(({ pluginId, providerId, connectionStatus, generation }) =>
+      [pluginId ?? providerId, connectionStatus, generation]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))));
     if (key === connectionKey) return;
     connectionKey = key;
     void refresh().catch(callbacks.error);

@@ -44,3 +44,4 @@ jobs:
       - run: cargo test --manifest-path sdk/rust/Cargo.toml --workspace
       - run: cargo test --manifest-path crates/Cargo.toml -p codepet-host --test provider_profiles
       - run: cargo test --manifest-path crates/Cargo.toml -p codepet-host --lib gateway::provider_updates -- --test-threads=1
+      - run: cargo test --manifest-path crates/Cargo.toml -p codepet-host --test manager_gateway -- --test-threads=1

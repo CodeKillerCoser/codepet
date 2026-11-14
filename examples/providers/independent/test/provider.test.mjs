@@ -2,13 +2,17 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import zlib from "node:zlib";
-for (const profile of ["stdio-jsonrpc-v1", "stdio-codepet-zstd-v1"])
-  test(profile, async (t) => {
+for (const [profile, businessVersion] of [
+  "stdio-jsonrpc-v1",
+  "stdio-codepet-zstd-v1",
+].flatMap((profile) => [2, 3].map((version) => [profile, version])))
+  test(`${profile} business ${businessVersion}/2`, async (t) => {
     const child = spawn(process.execPath, ["provider.mjs"], {
       cwd: process.env.PROVIDER_TEST_DIRECTORY || process.cwd(),
       env: {
         ...process.env,
         CODEPET_PROVIDER_TRANSPORT: profile,
+        ECHO_PROTOCOL_VERSION: String(businessVersion),
         ECHO_TURN_DELAY_MS: "2",
         ECHO_DESCRIBE_DELAY_MS: "80",
       },
@@ -78,7 +82,7 @@ for (const profile of ["stdio-jsonrpc-v1", "stdio-codepet-zstd-v1"])
     };
     for (const protocol of [
       { version: 1, minVersion: 1 },
-      { version: 3, minVersion: 3 },
+      { version: 4, minVersion: 4 },
     ])
       await assert.rejects(
         rpc("provider.initialize", { ...baseInit, protocol }),
@@ -101,13 +105,19 @@ for (const profile of ["stdio-jsonrpc-v1", "stdio-codepet-zstd-v1"])
       protocol: { version: 4, minVersion: 2, futureOffer: { value: true } },
       futureInitialize: { ignored: true },
     });
-    assert.equal(init.protocol.selectedVersion, 2);
+    assert.equal(init.protocol.selectedVersion, businessVersion);
     assert.deepEqual(init.protocol, {
-      version: 2,
+      version: businessVersion,
       minVersion: 2,
-      selectedVersion: 2,
+      selectedVersion: businessVersion,
     });
-    assert.deepEqual(init.plugin.protocol, { version: 2, minVersion: 2 });
+    assert.deepEqual(init.plugin.protocol, {
+      version: businessVersion,
+      minVersion: 2,
+    });
+    if (businessVersion === 3)
+      assert.deepEqual(init.plugin.features, ["agent"]);
+    else assert.equal(Object.hasOwn(init.plugin, "features"), false);
     assert.equal(init.selectedVersion, undefined);
     assert.equal(init.plugin.supportedVersions, undefined);
     await assert.rejects(rpc("future.unknown", {}), /-32601/);

@@ -398,3 +398,28 @@ async fn schema_only_pi_plugin_runs_deepseek_flash_through_jsonrpc_profile() {
     manager.shutdown().await;
     println!("INDEPENDENT_PI_FLASH_OK: manifest v2, JSONL, real pi RPC/read tool, DeepSeek Flash, delta and complete history; no Rust bridge or Host source used by plugin author");
 }
+
+#[tokio::test]
+async fn older_schema_only_v2_plugins_remain_usable_without_feature_declarations() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    let manager = manager(root).await;
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    gateway.start_event_forwarding();
+    for profile in ["jsonl", "zstd", "mux"] {
+        let manifest = package(&root.join(format!("legacy-{profile}")), profile, json!({"ECHO_PROTOCOL_VERSION":"2"}));
+        let imported = manager.import_plugin(manifest, root.join("installed")).await.unwrap();
+        assert!(imported.loaded, "{:?}", imported.diagnostic);
+        let id = format!("independent.echo.{profile}");
+        let descriptor = manager.snapshot(&id).await.unwrap().reported.unwrap();
+        assert_eq!(descriptor.protocol.version, 2);
+        assert_eq!(descriptor.features, None);
+        let described = request(&gateway, "provider.describe", json!({"providerId":format!("independent-echo-{profile}")})).await;
+        assert_eq!(described["provider"]["pluginId"], id);
+        assert!(described["provider"].get("features").is_none());
+        let inventory = manager.runtime_get_installed(&id, codepet_provider_sdk::RuntimeGetInstalledRequest { refresh: None }).await.unwrap();
+        assert_eq!(inventory.selection_required, Some(false));
+        manager.remove_plugin(&id, root.join("installed")).await.unwrap();
+    }
+    manager.shutdown().await;
+}

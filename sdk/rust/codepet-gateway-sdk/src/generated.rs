@@ -8,9 +8,9 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub use codepet_agent_sdk::*;
-pub use codepet_core_sdk::{ClientId, ConnectionStatus, Cursor, DeviceDescriptor, EventCursor, NativeResourceId, PageInfo, ProtocolError, ProtocolVersionOffer, ProtocolVersionSelection, ProviderInstanceId, RequestId, RoutedResourceId, RpcError, TimestampMs, TraceContext};
+pub use codepet_core_sdk::{ClientId, ConnectionStatus, Cursor, DeviceDescriptor, EventCursor, NativeResourceId, PageInfo, ProtocolError, ProtocolVersionOffer, ProtocolVersionSelection, ProviderFeature, ProviderInstanceId, ProviderPluginId, RequestId, RoutedResourceId, RpcError, TimestampMs, TraceContext};
 
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 pub const MIN_PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -385,6 +385,10 @@ pub struct HandshakeResponse {
     pub providers: Vec<ProviderSummary>,
     pub event_cursor: EventCursor,
     pub protocol: ProtocolVersionSelection,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inventory_revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inventory_epoch: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -533,6 +537,10 @@ pub struct PingRequest {
 pub struct PingResponse {
     pub sequence: u64,
     pub providers: Vec<ProviderSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inventory_revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inventory_epoch: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -646,6 +654,10 @@ pub struct ProviderCapabilitiesSummary {
 #[serde(rename_all = "camelCase")]
 pub struct ProviderChangedEvent {
     pub provider: ProviderSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inventory_revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inventory_epoch: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -681,6 +693,18 @@ pub struct ProviderListRequest {
 #[serde(rename_all = "camelCase")]
 pub struct ProviderListResponse {
     pub providers: Vec<ProviderSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inventory_revision: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inventory_epoch: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderRemovedEvent {
+    pub provider_id: ProviderId,
+    pub inventory_revision: u64,
+    pub inventory_epoch: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -729,6 +753,10 @@ pub struct ProviderSummary {
     pub identity: ProviderIdentity,
     pub runtime: ProviderRuntime,
     pub capabilities: ProviderCapabilitiesSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_id: Option<ProviderPluginId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub features: Option<Vec<ProviderFeature>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -838,6 +866,14 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
         "items": {
           "ref": "gateway:ProviderSummary"
         }
+      },
+      "inventoryRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "inventoryEpoch": {
+        "type": "string",
+        "minLength": 1
       }
     },
     "required": [
@@ -891,6 +927,14 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
       },
       "protocol": {
         "ref": "core:ProtocolVersionSelection"
+      },
+      "inventoryRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "inventoryEpoch": {
+        "type": "string",
+        "minLength": 1
       }
     },
     "required": [
@@ -1117,6 +1161,16 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
       },
       "capabilities": {
         "ref": "gateway:ProviderCapabilitiesSummary"
+      },
+      "pluginId": {
+        "ref": "core:ProviderPluginId"
+      },
+      "features": {
+        "type": "array",
+        "items": {
+          "ref": "core:ProviderFeature"
+        },
+        "uniqueItems": true
       }
     },
     "required": [
@@ -1168,6 +1222,14 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
         "items": {
           "ref": "gateway:ProviderSummary"
         }
+      },
+      "inventoryRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "inventoryEpoch": {
+        "type": "string",
+        "minLength": 1
       }
     },
     "required": [
@@ -1190,10 +1252,40 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
     "properties": {
       "provider": {
         "ref": "gateway:ProviderSummary"
+      },
+      "inventoryRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "inventoryEpoch": {
+        "type": "string",
+        "minLength": 1
       }
     },
     "required": [
       "provider"
+    ],
+    "additionalProperties": true
+  },
+  "gateway:ProviderRemovedEvent": {
+    "type": "object",
+    "properties": {
+      "providerId": {
+        "ref": "agent:ProviderId"
+      },
+      "inventoryRevision": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "inventoryEpoch": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required": [
+      "providerId",
+      "inventoryRevision",
+      "inventoryEpoch"
     ],
     "additionalProperties": true
   },
@@ -2712,6 +2804,14 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
     "type": "integer",
     "minimum": 1,
     "maximum": 4294967295
+  },
+  "core:ProviderFeature": {
+    "type": "string",
+    "enum": [
+      "agent",
+      "observation",
+      "runtimeInventory"
+    ]
   },
   "core:ProviderTransportLimits": {
     "type": "object",
@@ -5331,7 +5431,7 @@ fn validate_request_params(method: &str, value: &serde_json::Value) -> Result<()
     match method { "protocol.ping" => validate_payload("gateway:PingRequest",value,false), "protocol.handshake" => validate_payload("gateway:HandshakeRequest",value,false), "protocol.describe" => validate_payload("gateway:ProtocolDescribeRequest",value,false), "event.subscribe" => validate_payload("gateway:EventSubscribeRequest",value,false), "provider.list" => validate_payload("gateway:ProviderListRequest",value,false), "provider.describe" => validate_payload("gateway:ProviderDescribeRequest",value,false), "project.list" => validate_payload("gateway:ProjectListRequest",value,false), "project.get" => validate_payload("gateway:ProjectGetRequest",value,false), "project.create" => validate_payload("gateway:ProjectCreateRequest",value,false), "project.update" => validate_payload("gateway:ProjectUpdateRequest",value,false), "project.delete" => validate_payload("gateway:ProjectDeleteRequest",value,false), "conversation.releaseInteraction" => validate_payload("gateway:ConversationReleaseInteractionRequest",value,false), "conversation.recent" => validate_payload("gateway:ConversationRecentRequest",value,false), "conversation.list" => validate_payload("gateway:ConversationListRequest",value,false), "conversation.search" => validate_payload("gateway:ConversationSearchRequest",value,false), "conversation.get" => validate_payload("gateway:ConversationGetRequest",value,false), "conversation.markRead" => validate_payload("gateway:ConversationMarkReadRequest",value,false), "conversation.acquireInteraction" => validate_payload("gateway:ConversationAcquireInteractionRequest",value,false), "conversation.resume" => validate_payload("gateway:ConversationResumeRequest",value,false), "conversation.create" => validate_payload("gateway:ConversationCreateRequest",value,false), "conversation.inputQueue.get" => validate_payload("gateway:InputQueueGetRequest",value,false), "conversation.inputQueue.enqueue" => validate_payload("gateway:InputQueueEnqueueRequest",value,false), "conversation.inputQueue.withdraw" => validate_payload("gateway:InputQueueWithdrawRequest",value,false), "conversation.inputQueue.steer" => validate_payload("gateway:InputQueueSteerRequest",value,false), "conversation.inputQueue.resume" => validate_payload("gateway:InputQueueResumeRequest",value,false), "conversation.inputQueue.acknowledgeEdit" => validate_payload("gateway:InputQueueAcknowledgeEditRequest",value,false), "turn.steer" => validate_payload("gateway:TurnSteerRequest",value,false), "turn.send" => validate_payload("gateway:TurnSendRequest",value,false), "turn.interrupt" => validate_payload("gateway:TurnInterruptRequest",value,false), "approval.resolve" => validate_payload("gateway:ApprovalResolveRequest",value,false), "codepet.usage.query" => validate_payload("gateway:UsageQueryRequest",value,false), _ => Ok(()) }
 }
 fn validate_event_params(method: &str, value: &serde_json::Value) -> Result<(), ProtocolError> {
-    match method { "provider.changed" => validate_payload("gateway:ProviderChangedEvent",&value["payload"],true), "project.changed" => validate_payload("gateway:ProjectChangedEvent",&value["payload"],true), "conversation.recentChanged" => validate_payload("gateway:ConversationRecentChangedEvent",&value["payload"],true), "conversation.upserted" => validate_payload("gateway:ConversationUpsertedEvent",&value["payload"],true), "conversation.itemUpserted" => validate_payload("gateway:ConversationItemUpsertedEvent",&value["payload"],true), "conversation.activityChanged" => validate_payload("gateway:ConversationActivityChangedEvent",&value["payload"],true), "conversation.inputQueueChanged" => validate_payload("gateway:InputQueueChangedEvent",&value["payload"],true), "turn.upserted" => validate_payload("gateway:TurnUpsertedEvent",&value["payload"],true), "turn.outputDelta" => validate_payload("gateway:TurnOutputDeltaEvent",&value["payload"],true), "approval.requested" => validate_payload("gateway:ApprovalRequestedEvent",&value["payload"],true), "approval.resolved" => validate_payload("gateway:ApprovalResolvedEvent",&value["payload"],true), _ => Ok(()) }
+    match method { "provider.changed" => validate_payload("gateway:ProviderChangedEvent",&value["payload"],true), "provider.removed" => validate_payload("gateway:ProviderRemovedEvent",&value["payload"],true), "project.changed" => validate_payload("gateway:ProjectChangedEvent",&value["payload"],true), "conversation.recentChanged" => validate_payload("gateway:ConversationRecentChangedEvent",&value["payload"],true), "conversation.upserted" => validate_payload("gateway:ConversationUpsertedEvent",&value["payload"],true), "conversation.itemUpserted" => validate_payload("gateway:ConversationItemUpsertedEvent",&value["payload"],true), "conversation.activityChanged" => validate_payload("gateway:ConversationActivityChangedEvent",&value["payload"],true), "conversation.inputQueueChanged" => validate_payload("gateway:InputQueueChangedEvent",&value["payload"],true), "turn.upserted" => validate_payload("gateway:TurnUpsertedEvent",&value["payload"],true), "turn.outputDelta" => validate_payload("gateway:TurnOutputDeltaEvent",&value["payload"],true), "approval.requested" => validate_payload("gateway:ApprovalRequestedEvent",&value["payload"],true), "approval.resolved" => validate_payload("gateway:ApprovalResolvedEvent",&value["payload"],true), _ => Ok(()) }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -5561,6 +5661,8 @@ impl std::str::FromStr for ProtocolMethod {
 pub enum ProtocolEventName {
     #[serde(rename = "provider.changed")]
     ProviderChanged,
+    #[serde(rename = "provider.removed")]
+    ProviderRemoved,
     #[serde(rename = "project.changed")]
     ProjectChanged,
     #[serde(rename = "conversation.recentChanged")]
@@ -5587,6 +5689,7 @@ impl ProtocolEventName {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::ProviderChanged => "provider.changed",
+            Self::ProviderRemoved => "provider.removed",
             Self::ProjectChanged => "project.changed",
             Self::ConversationRecentChanged => "conversation.recentChanged",
             Self::ConversationUpserted => "conversation.upserted",
@@ -5607,6 +5710,7 @@ impl std::str::FromStr for ProtocolEventName {
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         match value {
             "provider.changed" => Ok(Self::ProviderChanged),
+            "provider.removed" => Ok(Self::ProviderRemoved),
             "project.changed" => Ok(Self::ProjectChanged),
             "conversation.recentChanged" => Ok(Self::ConversationRecentChanged),
             "conversation.upserted" => Ok(Self::ConversationUpserted),
@@ -6113,6 +6217,11 @@ pub enum ProtocolEvent {
         jsonrpc: String,
         params: ProtocolEventParams<ProviderChangedEvent>,
     },
+    #[serde(rename = "provider.removed")]
+    ProviderRemoved {
+        jsonrpc: String,
+        params: ProtocolEventParams<ProviderRemovedEvent>,
+    },
     #[serde(rename = "project.changed")]
     ProjectChanged {
         jsonrpc: String,
@@ -6169,6 +6278,7 @@ impl ProtocolEvent {
     pub fn jsonrpc_version(&self) -> &str {
         match self {
             Self::ProviderChanged { jsonrpc, .. } => jsonrpc,
+            Self::ProviderRemoved { jsonrpc, .. } => jsonrpc,
             Self::ProjectChanged { jsonrpc, .. } => jsonrpc,
             Self::ConversationRecentChanged { jsonrpc, .. } => jsonrpc,
             Self::ConversationUpserted { jsonrpc, .. } => jsonrpc,
@@ -6185,6 +6295,7 @@ impl ProtocolEvent {
     pub fn event_cursor(&self) -> &EventCursor {
         match self {
             Self::ProviderChanged { params, .. } => &params.event_cursor,
+            Self::ProviderRemoved { params, .. } => &params.event_cursor,
             Self::ProjectChanged { params, .. } => &params.event_cursor,
             Self::ConversationRecentChanged { params, .. } => &params.event_cursor,
             Self::ConversationUpserted { params, .. } => &params.event_cursor,
@@ -6201,6 +6312,10 @@ impl ProtocolEvent {
     pub fn set_event_cursor(&mut self, cursor: EventCursor) {
         match self {
             Self::ProviderChanged { jsonrpc, params } => {
+                *jsonrpc = "2.0".to_string();
+                params.event_cursor = cursor;
+            },
+            Self::ProviderRemoved { jsonrpc, params } => {
                 *jsonrpc = "2.0".to_string();
                 params.event_cursor = cursor;
             },

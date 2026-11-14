@@ -8723,6 +8723,9 @@ var numeric = (name, fallback) => Number(
     process.env[`ECHO_${name.replaceAll("-", "_").toUpperCase()}`] || fallback
   )
 );
+var protocolVersion = numeric("protocol-version", 3);
+if (![2, 3].includes(protocolVersion))
+  throw Error("unsupported business protocol fixture version");
 var controls = {
   describeDelayMs: numeric("describe-delay-ms", 0),
   turnDelayMs: numeric("turn-delay-ms", 30),
@@ -8829,8 +8832,9 @@ capabilities.conversationCreate.selection = capabilities.turnSend;
 var plugin = {
   pluginId,
   displayName: backend === "pi" ? "Independent Pi RPC" : "Independent JavaScript Echo",
-  version: "2.0.0",
-  protocol: { version: 2, minVersion: 2 },
+  version: "3.0.0",
+  protocol: { version: protocolVersion, minVersion: 2 },
+  ...protocolVersion >= 3 ? { features: ["agent"] } : {},
   instanceKinds: [kind]
 };
 var initialized = false;

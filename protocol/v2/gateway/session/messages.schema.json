@@ -33,6 +33,16 @@
             "description": "引用 ProviderSummary 的结构与约束。"
           },
           "description": "Host 当前可见的 Provider 摘要列表。"
+        },
+        "inventoryRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前 Host Gateway 生命期内单调递增的 Provider 实例清单修订号；成员或摘要发生变化均推进，区别于进程 generation 和事件游标。缺失表示旧端未支持；重连后以 handshake 全量清单重新建立基线。"
+        },
+        "inventoryEpoch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前 Host Gateway 运行周期的不透明身份；同一周期内 inventoryRevision 才可比较。Host 重启后改变，客户端必须重新握手与获取全量快照，不能由新周期的单个事件重置旧清单。与设备/插件身份及授权无关。与 inventoryRevision 同时提供；同时缺失表示旧 Host。"
         }
       },
       "required": [
@@ -98,6 +108,16 @@
         "protocol": {
           "$ref": "../../common/types.schema.json#/$defs/ProtocolVersionSelection",
           "description": "本端 Gateway 业务协议范围及选择。"
+        },
+        "inventoryRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前 Host Gateway 生命期内单调递增的 Provider 实例清单修订号；成员或摘要发生变化均推进，区别于进程 generation 和事件游标。缺失表示旧端未支持；重连后以 handshake 全量清单重新建立基线。"
+        },
+        "inventoryEpoch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前 Host Gateway 运行周期的不透明身份；同一周期内 inventoryRevision 才可比较。Host 重启后改变，客户端必须重新握手与获取全量快照，不能由新周期的单个事件重置旧清单。与设备/插件身份及授权无关。与 inventoryRevision 同时提供；同时缺失表示旧 Host。"
         }
       },
       "required": [

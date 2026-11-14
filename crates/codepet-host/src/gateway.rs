@@ -23,6 +23,7 @@ const MAX_USAGE_DETAILS_BYTES: usize = 32 * 1024;
 
 mod input_queue;
 mod provider_updates;
+mod provider_inventory;
 mod recent;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -257,6 +258,7 @@ impl GatewayEventSubscription {
 pub struct ProviderGatewayService {
     manager: Arc<PluginManager>,
     events: Arc<GatewayEventBus>,
+    provider_inventory: AsyncMutex<provider_inventory::Inventory>,
     updates: Mutex<Option<mpsc::Receiver<HostUpdate>>>,
     forwarding_started: AtomicBool,
     server_name: String,
@@ -329,6 +331,7 @@ impl ProviderGatewayService {
         Ok(Self {
             manager,
             events: Arc::new(GatewayEventBus::new(event_capacity)),
+            provider_inventory: AsyncMutex::new(provider_inventory::Inventory::default()),
             updates: Mutex::new(Some(updates)),
             forwarding_started: AtomicBool::new(false),
             server_name: "codepet-provider-gateway".to_string(),
@@ -587,6 +590,7 @@ impl ProviderGatewayService {
             Err(_) => return false,
         };
         self.start_input_queue_worker();
+        self.start_provider_inventory();
         let service = Arc::downgrade(self);
         let worker_service = service.clone();
         tokio::spawn(async move {
@@ -717,14 +721,7 @@ impl ProviderGatewayService {
                 for instance in &snapshot.instances {
                     let provider = gateway_provider(&snapshot, instance).summary;
                     self.invalidate_recent(&provider.id)?;
-                    self.events
-                        .publish(gateway::ProtocolEvent::ProviderChanged {
-                            jsonrpc: "2.0".to_string(),
-                            params: gateway::ProtocolEventParams {
-                                event_cursor: event_cursor(0),
-                                payload: gateway::ProviderChangedEvent { provider },
-                            },
-                        })?;
+
                 }
             }
             HostUpdate::InstanceChanged {
@@ -750,27 +747,7 @@ impl ProviderGatewayService {
                     .configure(self.manager.provider_state_paths().map_err(gateway_error)?)
                     .map_err(gateway_error)?;
                 self.invalidate_recent(&instance_id)?;
-                let runtime = snapshot
-                    .instances
-                    .iter()
-                    .find(|runtime| runtime.record.instance_id == instance_id)
-                    .ok_or_else(|| gateway::ProtocolError {
-                        code: "unknown_provider_instance".to_string(),
-                        message: "Provider instance update targets an unknown manifest instance"
-                            .to_string(),
-                        retryable: false,
-                        details: None,
-                    })?;
-                self.events
-                    .publish(gateway::ProtocolEvent::ProviderChanged {
-                        jsonrpc: "2.0".to_string(),
-                        params: gateway::ProtocolEventParams {
-                            event_cursor: event_cursor(0),
-                            payload: gateway::ProviderChangedEvent {
-                                provider: gateway_provider(&snapshot, runtime).summary,
-                            },
-                        },
-                    })?;
+
             }
         }
         Ok(())
@@ -873,7 +850,11 @@ impl ProviderGatewayService {
         }
     }
 
-    async fn gateway_providers(
+    async fn gateway_providers(&self, device_id: Option<&str>) -> Result<Vec<GatewayProviderRuntime>, gateway::ProtocolError> {
+        Ok(self.provider_inventory_snapshot(device_id).await?.2)
+    }
+
+    async fn collect_gateway_providers(
         &self,
         device_id: Option<&str>,
     ) -> Result<Vec<GatewayProviderRuntime>, gateway::ProtocolError> {
@@ -1065,8 +1046,9 @@ impl ProtocolServer for ProviderGatewayService {
 
     fn protocol_ping<'a>(&'a self, request: gateway::PingRequest) -> gateway::ProtocolFuture<'a, gateway::PingResponse> {
         Box::pin(async move {
-            Ok(gateway::PingResponse { sequence: request.sequence,
-                providers: self.gateway_providers(None).await?.into_iter().map(|p| p.summary).collect() })
+            let (epoch, revision, providers) = self.provider_inventory_snapshot(None).await?;
+            Ok(gateway::PingResponse { sequence: request.sequence, inventory_epoch: Some(epoch), inventory_revision: Some(revision),
+                providers: providers.into_iter().map(|p| p.summary).collect() })
         })
     }
 
@@ -1103,19 +1085,16 @@ impl ProtocolServer for ProviderGatewayService {
             // Capture the replay boundary before reading Provider snapshots. Any concurrent
             // update is therefore either reflected in the snapshot or replayable after it.
             let event_cursor = self.current_event_cursor();
+            let (epoch, revision, providers) = self.provider_inventory_snapshot(None).await?;
             Ok(gateway::HandshakeResponse {
+                inventory_epoch: Some(epoch), inventory_revision: Some(revision),
                 protocol,
                 device: gateway::GatewayDevice {
                     name: remote_host_identity.descriptor.device_name,
                     operating_system: remote_host_identity.descriptor.operating_system,
                     system_version: remote_host_identity.descriptor.system_version,
                 },
-                providers: self
-                    .gateway_providers(None)
-                    .await?
-                    .into_iter()
-                    .map(|provider| provider.summary)
-                    .collect(),
+                providers: providers.into_iter().map(|p| p.summary).collect(),
                 event_cursor,
             })
         })
@@ -1138,13 +1117,10 @@ impl ProtocolServer for ProviderGatewayService {
         _request: gateway::ProviderListRequest,
     ) -> gateway::ProtocolFuture<'a, gateway::ProviderListResponse> {
         Box::pin(async move {
+            let (epoch, revision, providers) = self.provider_inventory_snapshot(None).await?;
             Ok(gateway::ProviderListResponse {
-                providers: self
-                    .gateway_providers(None)
-                    .await?
-                    .into_iter()
-                    .map(|provider| provider.summary)
-                    .collect(),
+                inventory_epoch: Some(epoch), inventory_revision: Some(revision),
+                providers: providers.into_iter().map(|p| p.summary).collect(),
             })
         })
     }
@@ -1667,6 +1643,8 @@ fn gateway_provider(
             provider_instance_id: runtime.record.instance_id.clone(),
         },
         summary: gateway::ProviderSummary {
+            plugin_id: Some(plugin.catalog.plugin_id.clone()),
+            features: plugin.reported.as_ref().and_then(|p| p.features.clone()),
             id: runtime.record.instance_id.clone(),
             identity: gateway::ProviderIdentity {
                 display_name: runtime.record.display_name.clone(),

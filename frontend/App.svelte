@@ -1839,7 +1839,7 @@
             <h3 class="runtime-group-title">内置 Provider</h3>
             <div class="runtime-list">
               {#each agentRuntimes.filter((runtime) => isBuiltinProvider(runtime.providerId) && shouldShowRuntime(runtime)) as runtime (runtime.providerId)}
-                <ProviderRuntimeInfo {runtime} connection={providerConnections.find((state) => state.providerId === runtime.providerId)} connectionsLoaded={providerConnectionsLoaded} busy={busyRuntime === "all" || busyRuntime === runtime.providerId} onSelect={selectInstalledRuntime} />
+                <ProviderRuntimeInfo {runtime} connection={providerConnections.find((state) => (state.pluginId ?? state.providerId) === runtime.providerId)} connectionsLoaded={providerConnectionsLoaded} busy={busyRuntime === "all" || busyRuntime === runtime.providerId} onSelect={selectInstalledRuntime} />
               {:else}
                 <p class="runtime-empty">{agentRuntimes.length ? "未检测到已安装的运行时" : "运行时状态尚未加载"}</p>
               {/each}
@@ -1853,7 +1853,7 @@
               <h3 class="runtime-group-title">自定义 Provider</h3>
               <div class="runtime-list">
                 {#each agentRuntimes.filter((runtime) => !isBuiltinProvider(runtime.providerId)) as runtime (runtime.providerId)}
-                  <ProviderRuntimeInfo {runtime} connection={providerConnections.find((state) => state.providerId === runtime.providerId)} connectionsLoaded={providerConnectionsLoaded} busy={providerImportBusy || busyRuntime === "all" || busyRuntime === runtime.providerId} onSelect={selectInstalledRuntime} onRemove={removeCustomProvider} />
+                  <ProviderRuntimeInfo {runtime} connection={providerConnections.find((state) => (state.pluginId ?? state.providerId) === runtime.providerId)} connectionsLoaded={providerConnectionsLoaded} busy={providerImportBusy || busyRuntime === "all" || busyRuntime === runtime.providerId} onSelect={selectInstalledRuntime} onRemove={removeCustomProvider} />
                 {/each}
               </div>
             </div>

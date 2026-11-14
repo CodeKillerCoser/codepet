@@ -60,6 +60,14 @@ provider-sdk/
 
 实际开发时，先选择 profile，生成所需类型/校验器，实现相应读写和生命周期方法，再实现需要提供的业务能力。插件自己的 `codepet-provider.json` 由作者按安装清单规范填写，command、依赖和资源位置由最终构建产物决定，不能从业务 DTO 自动推导。
 
+## 插件身份与功能声明
+
+`pluginId` 是安装包的稳定身份，一个插件进程可管理多个实例；`instanceId` 是 Host 配置并分配的独立实例身份。消息、会话和任务使用实例路由，不能把插件 ID 当实例 ID。纯通知观测插件可以不配置任何实例；`instanceKinds` 声明可支持的实例种类，不要求实际创建对应实例。
+
+Initialize 返回的插件描述通过 `features` 显式声明可组合的功能：`agent` 提供会话与任务执行，`observation` 提供通知观测订阅，`runtimeInventory` 提供由 Host 检测和选择的外部执行环境。一个插件可以同时提供前两种功能；使用自有运行时的智能体无需声明 runtimeInventory。未声明 runtimeInventory 的新插件，Host 不探测或展示外部运行时选择。缺失 features 表示旧插件未声明，不能靠名称、方法前缀或实例数量猜测功能；旧插件的运行时查询保持已有兼容入口。未知功能名不启用。此处声明只描述插件职责，具体实例操作仍须检查该实例的 methods 与业务选项能力。
+
+features 属于运行时通信描述，Initialize 与 Describe 必须一致；不在安装 Manifest 重复维护第二份功能声明。字段完整约束见生命周期与 common Schema。
+
 ## 最终交付、导入与启动
 
 最终交付物是一个**可安装的 Provider 运行包**。推荐独立设置交付目录，不把整个开发项目、构建缓存或 Provider SDK 包放进去：
@@ -236,7 +244,7 @@ Provider 通过实例能力声明可用业务方法；对象、输入、选择�
 
 ## 业务协议版本与前向兼容
 
-Initialize 请求携带 `protocol: {version, minVersion}`，表示本端连续支持区间 `[minVersion, version]`，两者均为正整数。响应携带 Provider 自己的区间和 `selectedVersion`；选择 `min(host.version, provider.version)`，并要求不低于两端 minVersion 的较大值。Host 复核选择结果及插件描述中的区间；无交集即拒绝业务连接，不自动重试写入或降级传输。本版初始区间为 2/2，旧版 v1 严格 codec 不在此兼容承诺内。
+Initialize 请求携带 `protocol: {version, minVersion}`，表示本端连续支持区间 `[minVersion, version]`，两者均为正整数。响应携带 Provider 自己的区间和 `selectedVersion`；选择 `min(host.version, provider.version)`，并要求不低于两端 minVersion 的较大值。Host 复核选择结果及插件描述中的区间；无交集即拒绝业务连接，不自动重试写入或降级传输。当前实现区间为 3/2，兼容既有 2/2 插件；SDK 目录仍为 v2，旧版 v1 严格 codec 不在此兼容承诺内。
 
 新增可忽略字段、枚举、联合分支或方法时提高 version，保持 minVersion 的前提是保留既有语义并通过兼容测试。接收方忽略未知对象字段，保存未知枚举/联合原值；未知能力不调用，未知事件在验证信封后跳过。已知分支字段损坏仍拒绝。未知状态不能视为空闲、完成或授权，未知请求方法返回 -32601，未知请求选项应明确报错。新功能需通过相应能力声明门控，不能仅以版本号推断能力。
 

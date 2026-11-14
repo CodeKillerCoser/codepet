@@ -107,6 +107,25 @@ pub struct ProtocolVersionSelection {
     pub selected_version: BusinessProtocolVersion,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProviderFeature {
+    Agent,
+    Observation,
+    RuntimeInventory,
+    Unrecognized(String),
+}
+impl Serialize for ProviderFeature {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self { Self::Agent => "agent", Self::Observation => "observation", Self::RuntimeInventory => "runtimeInventory", Self::Unrecognized(raw) => raw })
+    }
+}
+impl<'de> Deserialize<'de> for ProviderFeature {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Ok(match raw.as_str() { "agent" => Self::Agent, "observation" => Self::Observation, "runtimeInventory" => Self::RuntimeInventory, _ => Self::Unrecognized(raw) })
+    }
+}
+
 pub type ProviderInstanceId = String;
 
 pub type ProviderPluginId = String;

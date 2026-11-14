@@ -335,12 +335,13 @@ impl MdnsServiceSpec {
 
     fn service_info(&self, pairing_available: bool) -> HostResult<ServiceInfo> {
         let version = PROTOCOL_VERSION.to_string();
+        let min_version = codepet_gateway_sdk::MIN_PROTOCOL_VERSION.to_string();
         let pairing = if pairing_available { "1" } else { "0" };
         let properties = [
             ("id", self.device_id.as_str()),
             ("name", self.display_name.as_str()),
             ("fp", self.identity_fingerprint.as_str()),
-            ("vmin", version.as_str()),
+            ("vmin", min_version.as_str()),
             ("vmax", version.as_str()),
             ("pair", pairing),
         ];

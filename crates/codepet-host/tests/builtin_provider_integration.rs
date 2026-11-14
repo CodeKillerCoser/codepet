@@ -235,6 +235,11 @@ async fn exercise_builtins(recycle_only: bool) {
         }
         let snapshot = manager.snapshot(&plugin_id).await.unwrap();
         assert_eq!(snapshot.state, PluginRuntimeState::Ready);
+        assert_eq!(snapshot.reported.as_ref().unwrap().features, Some(vec![
+            codepet_provider_sdk::ProviderFeature::Agent,
+            codepet_provider_sdk::ProviderFeature::Observation,
+            codepet_provider_sdk::ProviderFeature::RuntimeInventory,
+        ]));
         assert_eq!(snapshot.instances.len(), 1);
     }
 

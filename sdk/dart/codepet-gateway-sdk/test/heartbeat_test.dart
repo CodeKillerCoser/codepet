@@ -15,7 +15,7 @@ final class Transport implements ProtocolTransport {
   void pong(int index, {int? sequence}) {
     final request = requests[index];
     replies[index].complete({'jsonrpc': '2.0', 'id': request['id'], 'result': {
-      'sequence': sequence ?? (request['params'] as Map)['sequence'], 'providers': [],
+      'sequence': sequence ?? (request['params'] as Map)['sequence'], 'providers': [], 'inventoryRevision': 4, 'inventoryEpoch': 'test-epoch',
     }});
   }
 }
@@ -28,7 +28,7 @@ void main() {
     final heartbeat = GatewayHeartbeatClient(
       client: ProtocolClient(transport, requestIdFactory: () => '${id++}'),
       interval: const Duration(milliseconds: 5),
-      onProviders: (_) => snapshots++, onFailure: (e, s) => fail('$e'),
+      onProviders: (_, revision, epoch) { expect(revision, 4); expect(epoch, 'test-epoch'); snapshots++; }, onFailure: (e, s) => fail('$e'),
     )..start();
     await Future<void>.delayed(const Duration(milliseconds: 25));
     expect(transport.requests.length, 1);
@@ -45,7 +45,7 @@ void main() {
     final heartbeat = GatewayHeartbeatClient(
       client: ProtocolClient(transport, requestIdFactory: () => 'ping'),
       interval: const Duration(milliseconds: 5),
-      onProviders: (_) => fail('invalid pong was accepted'),
+      onProviders: (_, revision, epoch) => fail('invalid pong was accepted'),
       onFailure: (e, s) => failed.complete(e),
     )..start();
     await Future<void>.delayed(const Duration(milliseconds: 15));

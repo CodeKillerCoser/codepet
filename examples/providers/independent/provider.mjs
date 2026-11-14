@@ -24,6 +24,11 @@ const numeric = (name, fallback) =>
         fallback,
     ),
   );
+// Business revision is independent of software, SDK and transport versions.
+// Keep a declared 2/2 mode for standalone legacy-peer acceptance.
+const protocolVersion = numeric("protocol-version", 3);
+if (![2, 3].includes(protocolVersion))
+  throw Error("unsupported business protocol fixture version");
 const controls = {
   describeDelayMs: numeric("describe-delay-ms", 0),
   turnDelayMs: numeric("turn-delay-ms", 30),
@@ -141,8 +146,9 @@ const plugin = {
   pluginId,
   displayName:
     backend === "pi" ? "Independent Pi RPC" : "Independent JavaScript Echo",
-  version: "2.0.0",
-  protocol: { version: 2, minVersion: 2 },
+  version: "3.0.0",
+  protocol: { version: protocolVersion, minVersion: 2 },
+  ...(protocolVersion >= 3 ? { features: ["agent"] } : {}),
   instanceKinds: [kind],
 };
 let initialized = false,

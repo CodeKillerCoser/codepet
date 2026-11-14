@@ -167,6 +167,15 @@
         "protocol": {
           "$ref": "../../common/types.schema.json#/$defs/ProtocolVersionOffer",
           "description": "本端 Provider 业务协议范围及选择。"
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "$ref": "../../common/types.schema.json#/$defs/ProviderFeature",
+            "description": "单项插件功能。"
+          },
+          "uniqueItems": true,
+          "description": "插件显式声明的可组合功能。缺失表示旧插件未声明，不通过方法前缀、名称、实例数量或运行时推断类型；空数组表示未提供这些已知功能。"
         }
       },
       "required": [

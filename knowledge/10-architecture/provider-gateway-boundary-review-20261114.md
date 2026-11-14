@@ -77,3 +77,5 @@
 ## 本次 review 后的推进
 
 严格解码与版本演进一项已按后续确认方案落地到 v2：独立 version/minVersion、2/2 首发、已知数据校验、未知接收值保留和安全消费、无静默回退/重放。源目录与服务版本解耦，公开 SDK 与内部 Gateway 分发边界保留。上述 v1 现状是 review 时证据，不代表当前仍以 v1 生成；其余身份命名、Observation 类型化、配对云邀请 IDL 及 transport 聚合视图建议没有借本轮扩展。
+
+2026-11-15：用户确认的第 1、2、4 项已进入实施：跨平台生成路径、插件显式组合功能与身份说明、Gateway 清单移除/修订号；两层增量业务范围为 3/2。第 3 项 Observation 业务载荷类型化未包含在本轮。当前设计与验证入口见 [身份、功能与清单修订号](../50-decisions/provider-identity-features-and-inventory-revisions.md)，不再以上文历史现状代替当前实现。

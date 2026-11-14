@@ -83,7 +83,10 @@ pub(crate) struct ProviderHostState {
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ProviderConnectionView {
+    /// Canonical package identity. provider_id remains a legacy desktop alias.
+    plugin_id: String,
     provider_id: String,
+    features: Option<Vec<codepet_provider_sdk::ProviderFeature>>,
     display_name: String,
     icon: Option<String>,
     version: Option<String>,
@@ -95,7 +98,7 @@ pub(crate) struct ProviderConnectionView {
 
 #[derive(Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-struct ProviderInstanceConnectionView { id: String, status: codepet_provider_sdk::InstanceStatus }
+struct ProviderInstanceConnectionView { instance_id: String, id: String, status: codepet_provider_sdk::InstanceStatus }
 
 #[tauri::command]
 pub(crate) async fn provider_connection_status(state: tauri::State<'_, ProviderHostState>) -> Result<Vec<ProviderConnectionView>, String> {
@@ -160,10 +163,13 @@ impl ProviderHostState {
             icon: snapshot.catalog.icon,
             version: snapshot.reported.as_ref().map(|p| p.version.clone()),
             default_workspace_root: snapshot.reported.as_ref().and_then(|p| p.default_workspace_root.clone()),
+            plugin_id: snapshot.catalog.plugin_id.clone(),
+            features: snapshot.reported.as_ref().and_then(|p| p.features.clone()),
             provider_id: snapshot.catalog.plugin_id,
             connection_status: snapshot.connection_status,
             generation: snapshot.generation,
             instances: snapshot.instances.into_iter().map(|instance| ProviderInstanceConnectionView {
+                instance_id: instance.record.instance_id.clone(),
                 id: instance.record.instance_id,
                 status: instance.instance.map(|i| i.status).unwrap_or(codepet_provider_sdk::InstanceStatus::Created),
             }).collect(),
