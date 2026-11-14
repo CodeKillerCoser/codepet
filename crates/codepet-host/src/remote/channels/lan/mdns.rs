@@ -831,7 +831,7 @@ mod tests {
                 ("fp".to_string(), "ab".repeat(32)),
                 ("pair".to_string(), "0".to_string()),
                 ("vmax".to_string(), PROTOCOL_VERSION.to_string()),
-                ("vmin".to_string(), PROTOCOL_VERSION.to_string()),
+                ("vmin".to_string(), codepet_gateway_sdk::MIN_PROTOCOL_VERSION.to_string()),
             ])
         );
         let published = format!("{snapshot:?}");

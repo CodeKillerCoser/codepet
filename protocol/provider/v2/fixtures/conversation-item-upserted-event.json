@@ -1,0 +1,51 @@
+{
+  "jsonrpc": "2.0",
+  "method": "event.conversationItemUpserted",
+  "params": {
+    "item": {
+      "resource": {
+        "providerId": "codex-work",
+        "nativeResourceId": "command-one"
+      },
+      "turn": {
+        "providerId": "codex-work",
+        "nativeResourceId": "turn-one"
+      },
+      "conversation": {
+        "providerId": "codex-work",
+        "nativeResourceId": "thread-01"
+      },
+      "kind": "command",
+      "status": "completed",
+      "title": "cargo test",
+      "tool": {
+        "callId": "command-one",
+        "name": "shell",
+        "category": "command",
+        "origin": {
+          "kind": "builtin"
+        },
+        "input": {
+          "kind": "command",
+          "command": "cargo test",
+          "truncation": {
+            "originalBytes": 4096,
+            "retainedBytes": 10,
+            "strategy": "head-tail"
+          }
+        },
+        "outcome": {
+          "kind": "success",
+          "content": [
+            {
+              "contentId": "command-one:result:0",
+              "kind": "output",
+              "text": "tests passed"
+            }
+          ],
+          "exitCode": 0
+        }
+      }
+    }
+  }
+}

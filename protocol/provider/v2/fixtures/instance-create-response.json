@@ -1,0 +1,64 @@
+{
+  "jsonrpc": "2.0",
+  "id": "instance-create-1",
+  "result": {
+    "instance": {
+      "route": {
+        "deviceId": "device-macbook-1",
+        "providerPluginId": "dev.codepet.codex",
+        "providerInstanceId": "codex-work"
+      },
+      "pluginId": "dev.codepet.codex",
+      "instanceKind": "codex",
+      "displayName": "Codex Work",
+      "harness": {
+        "id": "codex",
+        "displayName": "Codex",
+        "version": "0.151.0"
+      },
+      "status": "created",
+      "capabilities": {
+        "revision": "codex-catalog-1",
+        "methods": [
+          "conversation.list",
+          "conversation.get",
+          "turn.start"
+        ],
+        "turnSend": {
+          "accessMode": {
+            "options": [
+              {
+                "id": "workspace-write",
+                "displayName": "Workspace write"
+              }
+            ],
+            "defaultId": "workspace-write"
+          },
+          "reasoningEffort": {
+            "options": [
+              {
+                "id": "high",
+                "displayName": "High"
+              }
+            ],
+            "defaultId": "high"
+          },
+          "modelCatalog": {
+            "kind": "flat",
+            "models": [
+              {
+                "id": "gpt-5",
+                "displayName": "GPT-5"
+              }
+            ],
+            "defaultSelection": {
+              "kind": "flat",
+              "modelId": "gpt-5"
+            }
+          }
+        },
+        "extensions": []
+      }
+    }
+  }
+}

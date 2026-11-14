@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": "project-list-1",
+  "method": "project.list",
+  "params": {
+    "providerId": "codex-work",
+    "cursor": "project-cursor-1",
+    "limit": 20
+  }
+}

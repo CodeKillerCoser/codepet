@@ -1,0 +1,14 @@
+{
+  "revision": "capability-7",
+  "methods": [
+    "conversation.list",
+    "conversation.active.list",
+    "conversation.unread.list",
+    "conversation.markRead"
+  ],
+  "extensions": [],
+  "conversationListQuery": {
+    "updatedAfter": true,
+    "ids": true
+  }
+}

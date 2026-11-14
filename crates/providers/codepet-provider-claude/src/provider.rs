@@ -36,7 +36,7 @@ use codepet_provider_sdk::{
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent,
     TurnSelection, TurnSendCapabilities, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
     TurnSteerResponse,
-    TurnUpsertedEvent, VersionRange, PROTOCOL_VERSION,
+    TurnUpsertedEvent, ProtocolVersionOffer, PROTOCOL_VERSION,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -233,7 +233,7 @@ impl ClaudeInstanceRuntime {
                         .into_owned(),
                 ),
             },
-            status: mutable.status,
+            status: mutable.status.clone(),
             authentication: mutable.authentication.clone(),
             usage: mutable.usage.clone(),
             capabilities: conversation_atoms::observed_capabilities(self.capabilities.clone(), mutable.atomic_facts_ready, mutable.atomic_facts_epoch),
@@ -241,19 +241,19 @@ impl ClaudeInstanceRuntime {
     }
 
     fn status(&self) -> InstanceStatus {
-        lock(&self.mutable).status
+        lock(&self.mutable).status.clone()
     }
 
     fn set_status(&self, status: InstanceStatus) -> Result<ProviderInstance, ProtocolError> {
         let mut mutable = lock(&self.mutable);
-        let previous = mutable.status;
+        let previous = mutable.status.clone();
         if status != InstanceStatus::Ready {
             mutable.metadata_epoch = mutable.metadata_epoch.wrapping_add(1);
             if let Some(task) = mutable.metadata_task.take() {
                 task.abort();
             }
         }
-        mutable.status = status;
+        mutable.status = status.clone();
         let instance = self.snapshot_locked(&mutable);
         if previous != status {
             self.events
@@ -270,7 +270,7 @@ impl ClaudeInstanceRuntime {
 
     fn start(&self) -> Result<ProviderInstance, ProtocolError> {
         let mut mutable = lock(&self.mutable);
-        if matches!(mutable.status, InstanceStatus::Starting | InstanceStatus::Ready) {
+        if matches!(mutable.status.clone(), InstanceStatus::Starting | InstanceStatus::Ready) {
             return Ok(self.snapshot_locked(&mutable));
         }
         if mutable.status == InstanceStatus::Stopping {
@@ -286,7 +286,7 @@ impl ClaudeInstanceRuntime {
         }
         // There is no persistent Claude daemon. Publish this local transition
         // atomically with respect to stop; no CLI query belongs in this section.
-        let previous = mutable.status;
+        let previous = mutable.status.clone();
         mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
         mutable.status = InstanceStatus::Starting;
         self.events.publish(ProtocolEvent::EventInstanceStatusChanged {
@@ -301,7 +301,7 @@ impl ClaudeInstanceRuntime {
 
     fn refresh_metadata(self: &Arc<Self>) {
         let mut mutable = lock(&self.mutable);
-        if !matches!(mutable.status, InstanceStatus::Starting | InstanceStatus::Ready)
+        if !matches!(mutable.status.clone(), InstanceStatus::Starting | InstanceStatus::Ready)
             || (mutable.status == InstanceStatus::Starting && mutable.metadata_task.is_some()) {
             return;
         }
@@ -369,7 +369,7 @@ impl ClaudeInstanceRuntime {
         authentication: Option<ProviderAuthentication>,
     ) {
         let mut mutable = lock(&self.mutable);
-        if !matches!(mutable.status, InstanceStatus::Starting | InstanceStatus::Ready) || mutable.metadata_epoch != epoch {
+        if !matches!(mutable.status.clone(), InstanceStatus::Starting | InstanceStatus::Ready) || mutable.metadata_epoch != epoch {
             return;
         }
         if let Some(version) = version {
@@ -378,7 +378,7 @@ impl ClaudeInstanceRuntime {
         if let Some(authentication) = authentication {
             mutable.authentication = Some(authentication);
         }
-        let previous = mutable.status;
+        let previous = mutable.status.clone();
         mutable.status = InstanceStatus::Ready;
         let published = self
             .events
@@ -698,7 +698,7 @@ impl ClaudeInstanceRuntime {
         let user_message_id = request.client_request_id.clone();
         let (spawned, turn, conversation, effective_selection) = {
             let mut mutable = lock(&self.mutable);
-            if mutable.status != InstanceStatus::Ready {
+            if mutable.status.clone() != InstanceStatus::Ready {
                 return Err(provider_unavailable(&self.route));
             }
             let managed = mutable.conversations.get_mut(&conversation_id).ok_or_else(|| {
@@ -1216,7 +1216,7 @@ impl ClaudeInstanceRuntime {
                     ),
                     item_id: item_id.to_string(),
                     content_id: content_id.to_string(),
-                    kind,
+                    kind: kind.clone(),
                     delta: chunk.to_string(),
                     extension: Some(extension([("nativeEvent", json!(native_event))])),
                 },
@@ -1323,6 +1323,7 @@ impl ClaudeInstanceRuntime {
             approval.status = match request.decision {
                 ApprovalDecision::Approve => ApprovalStatus::Approved,
                 ApprovalDecision::Deny => ApprovalStatus::Denied,
+                ApprovalDecision::Unrecognized(_) => return Err(protocol_error("unsupported_approval_decision", "Unknown approval decision".into(), false)),
             };
             approval.decision = Some(request.decision);
             approval.resolved_at = Some(now);
@@ -1512,9 +1513,9 @@ impl ClaudeProvider {
             display_name: "Claude".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             default_workspace_root: codepet_paths::remote_workspace_for_user("claude"),
-            supported_versions: VersionRange {
-                min_version: PROTOCOL_VERSION,
-                max_version: PROTOCOL_VERSION,
+            protocol: ProtocolVersionOffer {
+                min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION,
+                version: PROTOCOL_VERSION,
             },
             instance_kinds: vec![CLAUDE_INSTANCE_KIND.to_string()],
         }
@@ -1577,22 +1578,8 @@ impl Provider for ClaudeProvider {
         request: ProviderInitializeRequest,
     ) -> ProtocolFuture<'a, ProviderInitializeResponse> {
         Box::pin(async move {
-            if request.supported_versions.min_version > request.supported_versions.max_version {
-                return Err(protocol_error(
-                    "invalid_protocol_range",
-                    "Host protocol range is invalid".to_string(),
-                    false,
-                ));
-            }
-            if PROTOCOL_VERSION < request.supported_versions.min_version
-                || PROTOCOL_VERSION > request.supported_versions.max_version
-            {
-                return Err(protocol_error(
-                    "unsupported_protocol_version",
-                    "Provider protocol v1 is outside the Host-supported range".to_string(),
-                    false,
-                ));
-            }
+            let protocol = ProtocolVersionOffer { version: PROTOCOL_VERSION, min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION }
+                .negotiate(&request.protocol)?;
             if request.host_client_id.trim().is_empty()
                 || request.host_device_id.trim().is_empty()
                 || request.host_version.trim().is_empty()
@@ -1625,7 +1612,7 @@ impl Provider for ClaudeProvider {
             eprintln!("provider.initialize completed; business storage configured={}", self.data.configured());
             self.scanner.start_cancellable("claude", "@anthropic-ai/claude-code", || discover_path_candidates("claude"), |candidate, timeout, control| inspect_runtime_candidate(candidate, "claude", timeout, control));
             Ok(ProviderInitializeResponse {
-                selected_version: PROTOCOL_VERSION,
+                protocol,
                 plugin: Self::descriptor(),
             })
         })
@@ -1670,7 +1657,10 @@ impl Provider for ClaudeProvider {
             candidate.executable_path = local_runtime::resolve_executable(std::path::Path::new(&candidate.executable_path), "claude", "@anthropic-ai/claude-code")
                 .map_err(|error| protocol_error("invalid_runtime_selection", error, false))?.to_string_lossy().into_owned();
             let selected=self.scanner.select(&candidate)?;
-            Ok(RuntimeSelectResponse {selected})
+            Ok(RuntimeSelectResponse {
+                pending: selected.version.is_empty().then(|| RuntimeCandidate { executable_path: selected.executable_path.clone(), source: selected.source.clone() }),
+                selected: (!selected.version.is_empty()).then_some(selected),
+            })
         })
     }
 
@@ -2141,10 +2131,12 @@ fn resolve_claude_selection(
         "reasoningEffortId",
     )?;
     let catalog = match controls.model_catalog.expect("Claude model catalog") {
+        ModelCatalog::Unrecognized(_) => return Err(protocol_error("unsupported_model_catalog", "Unknown model catalog".into(), false)),
         ModelCatalog::FlatModelCatalog(catalog) => catalog,
         ModelCatalog::GroupedModelCatalog(_) => unreachable!("Claude uses a flat model catalog"),
     };
     let requested_model = match requested.model.as_ref() {
+        Some(ModelSelection::Unrecognized(_)) => return Err(protocol_error("unsupported_model_selection", "Unknown model selection".into(), false)),
         Some(ModelSelection::FlatModelSelection(selection)) => Some(selection.model_id.as_str()),
         Some(ModelSelection::GroupedModelSelection(_)) => {
             return Err(protocol_error(
@@ -2443,7 +2435,7 @@ fn terminal_snapshot(
     completion: &TurnCompletion,
 ) -> (TurnTask, Conversation) {
     let now = now_ms();
-    turn.status = completion.status;
+    turn.status = completion.status.clone();
     turn.error = (completion.status == TurnStatus::Failed).then(|| {
         let reason = completion.terminal_reason.as_deref().unwrap_or("unknown");
         let code = match reason {
@@ -2902,7 +2894,7 @@ fn paginate_claude_history(
     let mut turn_starts = Vec::new();
     let mut previous_turn = None;
     for (index, item) in items.iter().enumerate() {
-        let turn = conversation_item_turn(item);
+        let Some(turn) = conversation_item_turn(item) else { continue; };
         if previous_turn != Some(turn) {
             turn_starts.push(index);
             previous_turn = Some(turn);
@@ -2924,7 +2916,7 @@ fn paginate_claude_history(
         Some(cursor) => turn_starts
             .iter()
             .position(|start| {
-                conversation_item_turn(&items[*start]).native_resource_id == cursor
+                conversation_item_turn(&items[*start]).is_some_and(|turn| turn.native_resource_id == cursor)
             })
             .map(|index| index + 1)
             .ok_or_else(|| {
@@ -2938,23 +2930,20 @@ fn paginate_claude_history(
     let start_turn = end_turn.saturating_sub(limit as usize);
     let start_item = turn_starts[start_turn];
     let end_item = turn_starts.get(end_turn).copied().unwrap_or(items.len());
-    let next_cursor = (start_turn > 0).then(|| {
-        conversation_item_turn(&items[turn_starts[start_turn - 1]])
-            .native_resource_id
-            .clone()
-    });
+    let next_cursor = (start_turn > 0).then(|| conversation_item_turn(&items[turn_starts[start_turn - 1]]).map(|turn| turn.native_resource_id.clone())).flatten();
     Ok((items[start_item..end_item].to_vec(), next_cursor))
 }
 
-fn conversation_item_turn(item: &ConversationItem) -> &RoutedResourceId {
+fn conversation_item_turn(item: &ConversationItem) -> Option<&RoutedResourceId> {
     match item {
-        ConversationItem::MessageConversationItem(item) => &item.turn,
-        ConversationItem::ReasoningConversationItem(item) => &item.turn,
-        ConversationItem::CommandConversationItem(item) => &item.turn,
-        ConversationItem::FileChangeConversationItem(item) => &item.turn,
-        ConversationItem::ToolConversationItem(item) => &item.turn,
-        ConversationItem::ApprovalConversationItem(item) => &item.turn,
-        ConversationItem::UnknownConversationItem(item) => &item.turn,
+        ConversationItem::MessageConversationItem(item) => Some(&item.turn),
+        ConversationItem::ReasoningConversationItem(item) => Some(&item.turn),
+        ConversationItem::CommandConversationItem(item) => Some(&item.turn),
+        ConversationItem::FileChangeConversationItem(item) => Some(&item.turn),
+        ConversationItem::ToolConversationItem(item) => Some(&item.turn),
+        ConversationItem::ApprovalConversationItem(item) => Some(&item.turn),
+        ConversationItem::UnknownConversationItem(item) => Some(&item.turn),
+        ConversationItem::Unrecognized(_) => None,
     }
 }
 

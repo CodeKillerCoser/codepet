@@ -1,0 +1,25 @@
+{
+  "description": "gateway turn 模块的events注册表。",
+  "events": [
+    {
+      "name": "turn.upserted",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "turn",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/TurnUpsertedEvent"
+      },
+      "description": "turn.upserted 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "turn.outputDelta",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "turn",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/TurnOutputDeltaEvent"
+      },
+      "description": "turn.outputDelta 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    }
+  ]
+}

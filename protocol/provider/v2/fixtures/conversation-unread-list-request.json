@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-unread-list-request",
+  "method": "conversation.unread.list",
+  "params": {
+    "route": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work"
+    },
+    "limit": 20,
+    "readerScope": "remote:client-01"
+  }
+}

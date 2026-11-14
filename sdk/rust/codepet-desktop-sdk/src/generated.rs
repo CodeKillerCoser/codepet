@@ -7,7 +7,8 @@ use std::pin::Pin;
 
 pub use codepet_core_sdk::{Cursor, EventSequence, JsonObject, ProtocolError, ProtocolVersion, RequestId, TimestampMs};
 
-pub const PROTOCOL_VERSION: ProtocolVersion = 0;
+pub const PROTOCOL_VERSION: u32 = 0;
+pub const MIN_PROTOCOL_VERSION: u32 = 0;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -398,6 +399,7 @@ pub enum TurnTaskStatus {
 pub struct TurnUpsertedEvent {
     pub turn: TurnTask,
 }
+
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolMethod {
@@ -829,7 +831,9 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     pub fn protocol_handshake<'a>(&'a self, request: HandshakeRequest) -> ProtocolFuture<'a, HandshakeResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+
             let result = self.transport.request(ProtocolMethod::ProtocolHandshake, params).await?;
+
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
@@ -837,7 +841,9 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     pub fn provider_list<'a>(&'a self, request: ProviderListRequest) -> ProtocolFuture<'a, ProviderListResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+
             let result = self.transport.request(ProtocolMethod::ProviderList, params).await?;
+
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
@@ -845,7 +851,9 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     pub fn conversation_list<'a>(&'a self, request: ConversationListRequest) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+
             let result = self.transport.request(ProtocolMethod::ConversationList, params).await?;
+
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
@@ -853,7 +861,9 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     pub fn conversation_get<'a>(&'a self, request: ConversationGetRequest) -> ProtocolFuture<'a, ConversationGetResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+
             let result = self.transport.request(ProtocolMethod::ConversationGet, params).await?;
+
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
@@ -861,7 +871,9 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     pub fn conversation_create<'a>(&'a self, request: ConversationCreateRequest) -> ProtocolFuture<'a, ConversationCreateResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+
             let result = self.transport.request(ProtocolMethod::ConversationCreate, params).await?;
+
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
@@ -869,7 +881,9 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     pub fn turn_send<'a>(&'a self, request: TurnSendRequest) -> ProtocolFuture<'a, TurnSendResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+
             let result = self.transport.request(ProtocolMethod::TurnSend, params).await?;
+
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
@@ -877,7 +891,9 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     pub fn turn_interrupt<'a>(&'a self, request: TurnInterruptRequest) -> ProtocolFuture<'a, TurnInterruptResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+
             let result = self.transport.request(ProtocolMethod::TurnInterrupt, params).await?;
+
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
@@ -885,7 +901,9 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     pub fn approval_resolve<'a>(&'a self, request: ApprovalResolveRequest) -> ProtocolFuture<'a, ApprovalResolveResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+
             let result = self.transport.request(ProtocolMethod::ApprovalResolve, params).await?;
+
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

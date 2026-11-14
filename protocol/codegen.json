@@ -26,9 +26,9 @@
     {
       "id": "core-v1",
       "layer": "core",
-      "version": 1,
-      "schema": "core/v1/schema.json",
-      "manifest": "core/v1/manifest.json",
+      "version": 2,
+      "schema": "core/v2/schema.json",
+      "manifest": "core/v2/manifest.json",
       "dependencies": [],
       "publicTypes": [
         "ClientId",
@@ -53,13 +53,16 @@
         "VersionRange",
         "ProviderTransportLimits",
         "ProviderTransportHello",
-        "ProviderTransportSelection"
+        "ProviderTransportSelection",
+        "ProtocolVersionOffer",
+        "ProtocolVersionSelection"
       ],
       "outputs": {
         "rust": "sdk/rust/codepet-core-sdk/src/generated.rs",
         "typescript": "sdk/typescript/codepet-core-sdk/src/generated.ts",
         "dart": "sdk/dart/codepet-core-sdk/lib/src/generated.dart"
-      }
+      },
+      "forwardCompatible": true
     },
     {
       "id": "pet-v1",
@@ -78,9 +81,9 @@
     {
       "id": "agent-v1",
       "layer": "agent",
-      "version": 1,
-      "schema": "agent/v1/schema.json",
-      "manifest": "agent/v1/manifest.json",
+      "version": 2,
+      "schema": "agent/v2/schema.json",
+      "manifest": "agent/v2/manifest.json",
       "dependencies": [
         "core-v1"
       ],
@@ -107,14 +110,15 @@
         "rust": "sdk/rust/codepet-agent-sdk/src/generated.rs",
         "typescript": "sdk/typescript/codepet-agent-sdk/src/generated.ts",
         "dart": "sdk/dart/codepet-agent-sdk/lib/src/generated.dart"
-      }
+      },
+      "forwardCompatible": true
     },
     {
       "id": "provider-v1",
       "layer": "provider",
-      "version": 1,
-      "schema": "provider/v1/schema.json",
-      "manifest": "provider/v1/manifest.json",
+      "version": 2,
+      "schema": "provider/v2/schema.json",
+      "manifest": "provider/v2/manifest.json",
       "dependencies": [
         "core-v1",
         "agent-v1"
@@ -122,14 +126,15 @@
       "outputs": {
         "rust": "sdk/rust/codepet-provider-sdk/src/generated.rs",
         "typescript": "sdk/typescript/codepet-provider-sdk/src/generated.ts"
-      }
+      },
+      "forwardCompatible": true
     },
     {
       "id": "gateway-v1",
       "layer": "gateway",
-      "version": 1,
-      "schema": "gateway/v1/schema.json",
-      "manifest": "gateway/v1/manifest.json",
+      "version": 2,
+      "schema": "gateway/v2/schema.json",
+      "manifest": "gateway/v2/manifest.json",
       "dependencies": [
         "core-v1",
         "agent-v1"
@@ -138,7 +143,8 @@
         "rust": "sdk/rust/codepet-gateway-sdk/src/generated.rs",
         "typescript": "sdk/typescript/codepet-gateway-sdk/src/generated.ts",
         "dart": "sdk/dart/codepet-gateway-sdk/lib/src/generated.dart"
-      }
+      },
+      "forwardCompatible": true
     },
     {
       "id": "channel-lan-v1",
@@ -195,5 +201,6 @@
         "dart": "sdk/dart/codepet-channel-control-sdk/lib/src/generated.dart"
       }
     }
-  ]
+  ],
+  "sourceVersion": 2
 }

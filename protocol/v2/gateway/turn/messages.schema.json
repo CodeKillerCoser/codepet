@@ -1,0 +1,215 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v2/gateway/turn/messages.schema.json",
+  "description": "gateway 的 turn 功能模块交互对象。",
+  "$defs": {
+    "TurnInterruptRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "turn": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversation",
+        "turn"
+      ],
+      "additionalProperties": true,
+      "description": "TurnInterruptRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "TurnInterruptResponse": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnTask",
+          "description": "引用 TurnTask 的结构与约束。"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "additionalProperties": true,
+      "description": "TurnInterruptResponse 的成功返回结果。"
+    },
+    "TurnOutputDeltaEvent": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "itemId": {
+          "$ref": "../../common/types.schema.json#/$defs/NativeResourceId",
+          "description": "引用 NativeResourceId 的结构与约束。"
+        },
+        "contentId": {
+          "$ref": "../../common/types.schema.json#/$defs/NativeResourceId",
+          "description": "引用 NativeResourceId 的结构与约束。"
+        },
+        "kind": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationContentKind",
+          "description": "引用 ConversationContentKind 的结构与约束。"
+        },
+        "delta": {
+          "type": "string",
+          "description": "追加到目标内容块的文本增量。"
+        }
+      },
+      "required": [
+        "turn",
+        "conversation",
+        "itemId",
+        "contentId",
+        "kind",
+        "delta"
+      ],
+      "additionalProperties": true,
+      "description": "TurnOutputDeltaEvent 的事件载荷。"
+    },
+    "TurnSendRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "clientRequestId": {
+          "$ref": "../../common/types.schema.json#/$defs/RequestId",
+          "description": "引用 RequestId 的结构与约束。"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "调用方据以构造请求的能力快照版本。"
+        },
+        "input": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnInput",
+          "description": "引用 TurnInput 的结构与约束。"
+        },
+        "selection": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnSelection",
+          "description": "引用 TurnSelection 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversation",
+        "clientRequestId",
+        "capabilityRevision",
+        "input",
+        "selection"
+      ],
+      "additionalProperties": true,
+      "description": "TurnSendRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "TurnSendResponse": {
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "type": "boolean",
+          "description": "Host 是否已经接受该次输入。"
+        },
+        "turn": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnTask",
+          "description": "引用 TurnTask 的结构与约束。"
+        },
+        "userItem": {
+          "oneOf": [
+            {
+              "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationItem",
+              "description": "引用 ConversationItem 的结构与约束。"
+            },
+            {
+              "type": "null",
+              "description": "通道控制状态中的 userItem 的结构分支 2 信息。"
+            }
+          ],
+          "description": "接受输入后产生的用户消息条目。"
+        },
+        "effectiveSelection": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnSelection",
+          "description": "引用 TurnSelection 的结构与约束。"
+        }
+      },
+      "required": [
+        "accepted",
+        "turn",
+        "userItem",
+        "effectiveSelection"
+      ],
+      "additionalProperties": true,
+      "description": "TurnSendResponse 的成功返回结果。"
+    },
+    "TurnUpsertedEvent": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnTask",
+          "description": "引用 TurnTask 的结构与约束。"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "additionalProperties": true,
+      "description": "TurnUpsertedEvent 的事件载荷。"
+    },
+    "TurnSteerRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "turn": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "引用 RoutedResourceId 的结构与约束。"
+        },
+        "clientRequestId": {
+          "$ref": "../../common/types.schema.json#/$defs/RequestId",
+          "description": "引用 RequestId 的结构与约束。"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "调用方据以构造请求的能力快照版本。"
+        },
+        "input": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnInput",
+          "description": "引用 TurnInput 的结构与约束。"
+        }
+      },
+      "required": [
+        "conversation",
+        "turn",
+        "clientRequestId",
+        "capabilityRevision",
+        "input"
+      ],
+      "additionalProperties": true,
+      "description": "TurnSteerRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "TurnSteerResponse": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnTask",
+          "description": "引用 TurnTask 的结构与约束。"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "additionalProperties": true,
+      "description": "TurnSteerResponse 的成功返回结果。"
+    }
+  }
+}

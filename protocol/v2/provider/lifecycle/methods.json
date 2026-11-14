@@ -1,0 +1,55 @@
+{
+  "description": "provider lifecycle 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "provider.ping",
+      "direction": "hostToPlugin",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ProviderPingRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ProviderPingResponse"
+      },
+      "dispatchLane": "control",
+      "description": "Provider心跳方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    },
+    {
+      "name": "provider.initialize",
+      "direction": "hostToPlugin",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ProviderInitializeRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ProviderInitializeResponse"
+      },
+      "description": "Provider初始化方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    },
+    {
+      "name": "provider.describe",
+      "direction": "hostToPlugin",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ProviderDescribeRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ProviderDescribeResponse"
+      },
+      "description": "Provider描述查询方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    },
+    {
+      "name": "provider.shutdown",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "dispatchLane": "control",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ProviderShutdownRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ProviderShutdownResponse"
+      },
+      "description": "Provider关闭方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    }
+  ]
+}

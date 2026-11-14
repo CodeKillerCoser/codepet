@@ -1,4 +1,4 @@
-# Provider SDK v1
+# Provider SDK v2
 
 本 SDK 定义 Code Pet Host 与独立 Provider 进程之间的接入合同。Provider 可以用 TS、Python、Rust 等语言实现，也可以打包为自包含二进制。接入只需要本 SDK，无需 Host 源码或特定语言的桥接程序。
 
@@ -10,7 +10,7 @@ README 说明如何使用 SDK、各模块的职责、通信生命周期和字节
 
 ```text
 provider-sdk/
-└── v1/
+└── v2/
     ├── sdk-manifest.json
     ├── README.md
     └── protocol/
@@ -232,3 +232,14 @@ methods.json 中 dispatchLane=control 的请求及响应使用 control 预留资
 Provider 通过实例能力声明可用业务方法；对象、输入、选择与事件的具体含义见对应 Schema 和注册表。 能力目录与实际 selection 必须一致：create/acquire/turn 返回同一实例已生效的选择，声明了目录的维度使用其中存在且未禁用的选项，有默认值时返回实际默认选择；未声明的维度不携带值。目录变化应更新能力 revision，错误选择应明确拒绝。仅按 JSON Schema 校验一个对象，不能替代这类跨对象一致性校验。宿主、插件包、实例与原生 Harness 分别具有自己的生命周期，不能把“插件在线”直接解释为“所有实例可用”。
 
 如果需要 Host 帮助选择外部 Harness，`runtime.getInstalled` 返回库存和当前选择，selectionRequired 缺省为 true。自行管理依赖的插件可显式返回 selectionRequired=false，此时清单应为空、selected 为 null、扫描不在进行且没有 scanError。App 显示“由 Provider 管理，无需选择”。这只表明选择职责，不保证依赖已安装；真实启动失败仍由实例诊断报告。
+
+
+## 业务协议版本与前向兼容
+
+Initialize 请求携带 `protocol: {version, minVersion}`，表示本端连续支持区间 `[minVersion, version]`，两者均为正整数。响应携带 Provider 自己的区间和 `selectedVersion`；选择 `min(host.version, provider.version)`，并要求不低于两端 minVersion 的较大值。Host 复核选择结果及插件描述中的区间；无交集即拒绝业务连接，不自动重试写入或降级传输。本版初始区间为 2/2，旧版 v1 严格 codec 不在此兼容承诺内。
+
+新增可忽略字段、枚举、联合分支或方法时提高 version，保持 minVersion 的前提是保留既有语义并通过兼容测试。接收方忽略未知对象字段，保存未知枚举/联合原值；未知能力不调用，未知事件在验证信封后跳过。已知分支字段损坏仍拒绝。未知状态不能视为空闲、完成或授权，未知请求方法返回 -32601，未知请求选项应明确报错。新功能需通过相应能力声明门控，不能仅以版本号推断能力。
+
+破坏结构或语义且无法维持旧行为时提高 minVersion。仅实现已有方法更新能力声明；模型/选项目录变化使用 capabilityRevision。业务区间独立于 SDK 发行号、Manifest 格式以及三个仍为 v1 的传输 profile。
+
+Schema 的 enum/oneOf 列举本版认识的值和分支。普通 Schema 校验器默认是已知结构校验器；接收 codec 需要先识别判别字段，对未知值按上述兼容规则保留，对已知值继续按对应 Schema 校验。不能将整个 schema 校验失败统一视为未知内容。插件接收命令时，应明确拒绝不支持的选择。

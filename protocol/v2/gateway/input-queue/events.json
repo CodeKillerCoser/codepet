@@ -1,0 +1,15 @@
+{
+  "description": "gateway input-queue 模块的events注册表。",
+  "events": [
+    {
+      "name": "conversation.inputQueueChanged",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/InputQueueChangedEvent"
+      },
+      "description": "conversation.inputQueueChanged 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    }
+  ]
+}

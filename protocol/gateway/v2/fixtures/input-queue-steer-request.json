@@ -1,0 +1,19 @@
+{
+  "jsonrpc": "2.0",
+  "id": "steer-1",
+  "method": "conversation.inputQueue.steer",
+  "params": {
+    "conversation": {
+      "providerId": "codex-work",
+      "nativeResourceId": "thread-01"
+    },
+    "turn": {
+      "providerId": "codex-work",
+      "nativeResourceId": "turn-01"
+    },
+    "itemId": "queue-01",
+    "clientRequestId": "steer-1",
+    "capabilityRevision": "codex-session-42",
+    "expectedRevision": 3
+  }
+}

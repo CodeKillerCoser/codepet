@@ -25,7 +25,7 @@ use codepet_provider_sdk::{
     MessageConversationItem, MessageConversationItemKind, TextContentBlock, TextContentBlockKind,
     TurnInterruptRequest, TurnInterruptResponse, TurnOutputDeltaEvent, TurnSendCapabilities,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest,
-    TurnSteerResponse, VersionRange, TurnUpsertedEvent,
+    TurnSteerResponse, ProtocolVersionOffer, TurnUpsertedEvent,
 };
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -53,9 +53,9 @@ impl FakeProvider {
             display_name: "CodePet Fake Provider".to_string(),
             version: "1.0.0-test".to_string(),
             default_workspace_root: Some("/workspace/fake".to_string()),
-            supported_versions: VersionRange {
-                min_version: env_u32("CODEPET_FAKE_SUPPORTED_MIN_VERSION", 1),
-                max_version: env_u32("CODEPET_FAKE_SUPPORTED_MAX_VERSION", 1),
+            protocol: ProtocolVersionOffer {
+                min_version: env_u32("CODEPET_FAKE_SUPPORTED_MIN_VERSION", 2),
+                version: env_u32("CODEPET_FAKE_SUPPORTED_MAX_VERSION", 2),
             },
             instance_kinds: vec!["fake".to_string()],
         }
@@ -115,7 +115,7 @@ impl ProtocolServer for FakeProvider {
                 tokio::time::sleep(Duration::from_millis(delay)).await;
             }
             Ok(ProviderInitializeResponse {
-                selected_version: env_u32("CODEPET_FAKE_SELECTED_VERSION", 1),
+                protocol: codepet_provider_sdk::ProtocolVersionSelection { version: descriptor.protocol.version, min_version: descriptor.protocol.min_version, selected_version: env_u32("CODEPET_FAKE_SELECTED_VERSION", 2) },
                 plugin: descriptor,
             })
         })
@@ -464,6 +464,7 @@ impl ProtocolServer for FakeProvider {
                 .and_then(|value| value.as_str())
                 .map(str::to_string);
             let mut configured = conversation(&response_route, native_id);
+            if native_id == "future-state" { configured.status = ConversationStatus::Unrecognized("future-state".into()); }
             if std::env::var_os("CODEPET_FAKE_QUEUE").is_some() {
                 let current=self.queue_turns.lock().unwrap().get(native_id).cloned().or_else(||(native_id=="queue-active").then(||turn(&response_route,"active-turn",configured.resource.clone())));
                 if let Some(current)=current { if matches!(current.status,TurnStatus::Running|TurnStatus::WaitingApproval) { configured.status=ConversationStatus::Running; configured.active_turn=Some(current); } }
@@ -670,6 +671,7 @@ impl ProtocolServer for FakeProvider {
                     status: match request.decision {
                         ApprovalDecision::Approve => ApprovalStatus::Approved,
                         ApprovalDecision::Deny => ApprovalStatus::Denied,
+                        ApprovalDecision::Unrecognized(_) => return Err(protocol_error("unsupported_decision", "Unknown decision")),
                     },
                     decisions: vec![ApprovalDecision::Approve, ApprovalDecision::Deny],
                     requested_at: Some(1),

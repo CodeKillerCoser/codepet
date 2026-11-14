@@ -438,7 +438,8 @@
         "$ref": "messages.schema.json#/$defs/ProviderCapabilities"
       },
       "field": "methods"
-    }
+    },
+    "forwardCompatible": true
   },
-  "version": 1
+  "version": 2
 }

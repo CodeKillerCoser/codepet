@@ -328,7 +328,7 @@ impl ProviderGatewayService {
         }
         for (id, (status, _)) in &active {
             if let Some(summary) = summaries.get_mut(id) {
-                summary.status = *status;
+                summary.status = status.clone();
             }
         }
         let active_ids = active.keys().cloned().collect();
@@ -501,6 +501,7 @@ impl ProviderGatewayService {
                 .map_err(gateway_error)?;
             for summary in page.conversations {
                 let allowed = match &query {
+                    provider::ConversationListQuery::Unrecognized(_) => false,
                     provider::ConversationListQuery::ConversationUpdatedAfterQuery(query) => {
                         summary
                             .updated_at

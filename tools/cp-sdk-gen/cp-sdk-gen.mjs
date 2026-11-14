@@ -29,9 +29,9 @@ import lanDartPubspec from "../../sdk/dart/codepet-lan-channel-sdk/pubspec.yaml"
 import lanDartLib from "../../sdk/dart/codepet-lan-channel-sdk/lib/codepet_lan_channel_sdk.dart" with { type: "text" };
 import controlDartPubspec from "../../sdk/dart/codepet-channel-control-sdk/pubspec.yaml" with { type: "text" };
 import controlDartLib from "../../sdk/dart/codepet-channel-control-sdk/lib/codepet_channel_control_sdk.dart" with { type: "text" };
-import gatewayGuide from "../../protocol/v1/gateway/README.md" with { type: "text" };
-import pairingGuide from "../../protocol/v1/gateway/pairing/README.md" with { type: "text" };
-import controlGuide from "../../protocol/v1/channel-control/README.md" with { type: "text" };
+import gatewayGuide from "../../protocol/v2/gateway/README.md" with { type: "text" };
+import pairingGuide from "../../protocol/v2/gateway/pairing/README.md" with { type: "text" };
+import controlGuide from "../../protocol/v2/channel-control/README.md" with { type: "text" };
 import guide from "./README.md" with { type: "text" };
 import {
   GENERATOR_TARGET_INTERFACE,
@@ -109,10 +109,10 @@ async function defaultProtocolDirectory() {
 }
 
 async function protocolLayout(protocolDirectory) {
-  if (!(await exists(resolve(protocolDirectory, 'v1/protocol.json')))) {
-    fail(`${protocolDirectory} does not contain canonical protocol/v1; generated compatibility views are not source inputs`);
+  if (!(await exists(resolve(protocolDirectory, 'v2/protocol.json')))) {
+    fail(`${protocolDirectory} does not contain canonical protocol/v2; generated compatibility views are not source inputs`);
   }
-  return { core: 'core/v1', agent: 'agent/v1', provider: 'provider/v1', gateway: 'gateway/v1', 'lan-channel': 'channel/lan/v1', 'channel-control': 'channel/control/v1' };
+  return { core: 'core/v2', agent: 'agent/v2', provider: 'provider/v2', gateway: 'gateway/v2', 'lan-channel': 'channel/lan/v1', 'channel-control': 'channel/control/v1' };
 }
 
 async function buildConfig(protocolDirectory, layout, options, views) {
@@ -125,13 +125,14 @@ async function buildConfig(protocolDirectory, layout, options, views) {
   const selectedPath = layout[options.package];
   if (!selectedPath) fail(`protocol resources do not contain package: ${options.package}`);
   const selectedSchema = await readSchema(`${selectedPath}/schema.json`);
+  const selectedManifest = await readSchema(`${selectedPath}/manifest.json`);
   const language = options.language;
   const packageMetadata = {
-    provider: { id: "provider-v1", layer: "provider", version: 1, output: "codepet-provider-sdk/src/generated.rs" },
+    provider: { id: "provider-v1", layer: "provider", version: 2, output: "codepet-provider-sdk/src/generated.rs" },
     gateway: {
       id: "gateway-v1",
       layer: "gateway",
-      version: 1,
+      version: 2,
       output: language === "rust" ? "codepet-gateway-sdk/src/generated.rs" : "codepet-gateway-sdk/lib/src/generated.dart",
     },
     "channel-control": { id: "channel-control-v1", layer: "channel", version: 1, output: "codepet-channel-control-sdk/lib/src/generated.dart" },
@@ -160,7 +161,8 @@ async function buildConfig(protocolDirectory, layout, options, views) {
       ...(options.package === "channel-control" ? [] : [{
         id: "core-v1",
         layer: "core",
-        version: 1,
+        version: 2,
+        forwardCompatible: true,
         schema: `${layout.core}/schema.json`,
         manifest: `${layout.core}/manifest.json`,
         dependencies: [],
@@ -170,7 +172,8 @@ async function buildConfig(protocolDirectory, layout, options, views) {
       ...(includeAgent ? [{
         id: "agent-v1",
         layer: "agent",
-        version: 1,
+        version: 2,
+        forwardCompatible: true,
         schema: `${layout.agent}/schema.json`,
         manifest: `${layout.agent}/manifest.json`,
         dependencies: ["core-v1"],
@@ -180,7 +183,8 @@ async function buildConfig(protocolDirectory, layout, options, views) {
       {
         id: packageMetadata.id,
         layer: packageMetadata.layer,
-        version: packageMetadata.version,
+        version: selectedManifest.version,
+        forwardCompatible: ["provider", "gateway"].includes(options.package),
         schema: `${selectedPath}/schema.json`,
         manifest: `${selectedPath}/manifest.json`,
         dependencies: includeAgent ? ["core-v1", "agent-v1"] : options.package === "channel-control" ? [] : ["core-v1"],

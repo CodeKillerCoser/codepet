@@ -8,7 +8,7 @@ import {exportProviderSdk} from './export_provider_sdk.mjs';
 test('contract-only export closes every local schema reference and derives RPC envelopes from methods/events',async()=>{
   let output=await mkdtemp(path.join(os.tmpdir(),'provider-contract-'));
   await exportProviderSdk(output);
-  const packageRoot=output; output=path.join(output,'v1');
+  const packageRoot=output; output=path.join(output,'v2');
   const files=await readdir(output,{recursive:true});
   assert.ok(files.every(name=>!/(fixtures|gateway|channel|Cargo|\.rs$|\.ts$|cp-sdk-gen)/.test(name)));
   const documents=new Map();
@@ -24,7 +24,13 @@ test('contract-only export closes every local schema reference and derives RPC e
     }
     for(const child of Object.values(value))if(Array.isArray(child))child.forEach(v=>walk(v,source));else walk(child,source);
   }
-  for(const [source,value]of documents)walk(value,source);
+  for(const [source,value]of documents) {
+    walk(value,source);
+    if (value.$id) {
+      const expected = new URL(path.relative(output,source).split(path.sep).join('/'), 'https://code-pet.dev/provider-sdk/v2/').href;
+      assert.equal(value.$id,expected,'Schema $id must resolve relative refs into the same exported version');
+    }
+  }
   const wire=documents.get(path.join(output,'protocol/sdk/rpc/envelope.schema.json'));
   const methods=documents.get(path.join(output,'protocol/sdk/provider/methods.json')).methods;
   const events=documents.get(path.join(output,'protocol/sdk/provider/events.json')).events;

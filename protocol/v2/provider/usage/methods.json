@@ -1,0 +1,18 @@
+{
+  "description": "provider usage 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "usage.query",
+      "direction": "hostToProvider",
+      "idempotency": "safe",
+      "capability": "usage.query",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/UsageQueryRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/UsageQueryResponse"
+      },
+      "description": "用量查询方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    }
+  ]
+}

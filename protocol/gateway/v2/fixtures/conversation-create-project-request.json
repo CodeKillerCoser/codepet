@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-create-project-1",
+  "method": "conversation.create",
+  "params": {
+    "providerId": "codex-work",
+    "project": {
+      "providerId": "codex-work",
+      "nativeResourceId": "project-01"
+    },
+    "permissionLevel": "workspace-write",
+    "workspaceRoot": "/Users/example/codepet"
+  }
+}

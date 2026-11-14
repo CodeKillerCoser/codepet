@@ -342,9 +342,9 @@ fn handshake_request_with_descriptor(
             client_id: client_id.to_string(),
             device,
             client_version: "1.0.0".to_string(),
-            supported_versions: gateway::VersionRange {
+            protocol: gateway::ProtocolVersionOffer {
                 min_version: gateway::PROTOCOL_VERSION,
-                max_version: gateway::PROTOCOL_VERSION,
+                version: gateway::PROTOCOL_VERSION,
             },
             last_event_cursor: None,
         },

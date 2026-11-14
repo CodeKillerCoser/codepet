@@ -50,13 +50,33 @@ for (const backend of ["echo", "pi"]) {
           JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n",
         );
       });
+    const rejected = await rpc("provider.initialize", {
+      hostClientId: "test",
+      hostDeviceId: "test",
+      hostVersion: "test",
+      protocol: { version: 1, minVersion: 1 },
+    });
+    assert.equal(rejected.error?.data.code, "protocol_version_mismatch");
     const initialized = await rpc("provider.initialize", {
       hostClientId: "test",
       hostDeviceId: "test",
       hostVersion: "test",
-      supportedVersions: { minVersion: 1, maxVersion: 1 },
+      protocol: { version: 4, minVersion: 2, futureOffer: true },
+      futureField: true,
     });
     assert.equal(initialized.error, undefined);
+    assert.deepEqual(initialized.result.protocol, {
+      version: 2,
+      minVersion: 2,
+      selectedVersion: 2,
+    });
+    assert.deepEqual(initialized.result.plugin.protocol, {
+      version: 2,
+      minVersion: 2,
+    });
+    const unknown = await rpc("future.method", {});
+    assert.equal(unknown.error?.code, -32601);
+
     for (const params of [{}, { refresh: true }]) {
       const response = await rpc("runtime.getInstalled", params);
       assert.equal(response.error, undefined);

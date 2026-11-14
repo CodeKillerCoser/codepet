@@ -41,12 +41,12 @@ impl Write for Output {
 }
 fn descriptor(text: String) -> ProviderPluginDescriptor {
     ProviderPluginDescriptor { plugin_id: "dev.codepet.mux-bench".into(), display_name: text, version: "test".into(), default_workspace_root: None,
-        supported_versions: VersionRange { min_version: 1, max_version: 1 }, instance_kinds: vec![] }
+        protocol: ProtocolVersionOffer { min_version: 2, version: 2 }, instance_kinds: vec![] }
 }
 struct Fixture { text: String, events: Arc<dyn ProviderEventSink> }
 impl ProtocolServer for Fixture {
     fn provider_initialize<'a>(&'a self, _: ProviderInitializeRequest) -> ProtocolFuture<'a, ProviderInitializeResponse> {
-        Box::pin(async { Ok(ProviderInitializeResponse { selected_version: 1, plugin: descriptor("ready".into()) }) })
+        Box::pin(async { Ok(ProviderInitializeResponse { protocol: ProtocolVersionSelection {version: 2, min_version: 2, selected_version: 2}, plugin: descriptor("ready".into()) }) })
     }
     fn provider_describe<'a>(&'a self, _: ProviderDescribeRequest) -> ProtocolFuture<'a, ProviderDescribeResponse> {
         Box::pin(async { Ok(ProviderDescribeResponse { plugin: descriptor(self.text.clone()) }) })
@@ -67,7 +67,7 @@ impl ProtocolServer for Fixture {
 }
 fn init(text: String) -> ProviderInitializeRequest {
     ProviderInitializeRequest { directories: None, host_client_id: "bench".into(), host_device_id: "bench".into(), host_version: text,
-        supported_versions: VersionRange { min_version: 1, max_version: 1 } }
+        protocol: ProtocolVersionOffer { min_version: 2, version: 2 } }
 }
 async fn provider() {
     let direction = std::env::var("BENCH_DIRECTION").unwrap();

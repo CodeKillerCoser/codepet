@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "method": "project.changed",
+  "params": {
+    "eventCursor": "event-43",
+    "payload": {
+      "project": {
+        "providerId": "codex-work",
+        "nativeResourceId": "project-01"
+      },
+      "changeType": "updated"
+    }
+  }
+}

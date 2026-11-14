@@ -32,7 +32,7 @@ async fn native_inventory_completes_through_host_with_duplicate_path_entries() {
         let result = async {
             process.client().provider_initialize(ProviderInitializeRequest { directories: None,
                 host_client_id: "native-smoke".into(), host_device_id: "native-smoke-device".into(),
-                host_version: "test".into(), supported_versions: VersionRange { min_version: PROTOCOL_VERSION, max_version: PROTOCOL_VERSION },
+                host_version: "test".into(), protocol: ProtocolVersionOffer { min_version: PROTOCOL_VERSION, version: PROTOCOL_VERSION },
             }).await?;
             process.client().provider_describe(ProviderDescribeRequest {}).await?;
             let started = Instant::now();

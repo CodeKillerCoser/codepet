@@ -22,9 +22,10 @@ jobs:
           workspaces: |
             sdk/rust
             crates
+      - run: npm ci
       - run: node tools/protocol-codegen/generate.mjs --check
-      - run: node --test scripts/export_provider_sdk.test.mjs scripts/stage_provider_plugins.test.mjs tools/protocol-codegen/test.mjs tools/protocol-codegen/provider-contract.test.mjs tools/protocol-codegen/modular-contract.test.mjs
+      - run: node --test scripts/export_provider_sdk.test.mjs scripts/stage_provider_plugins.test.mjs tools/protocol-codegen/test.mjs tools/protocol-codegen/provider-contract.test.mjs tools/protocol-codegen/modular-contract.test.mjs tools/protocol-codegen/compatibility.test.mjs
       - run: npm exec --yes --package=bun -- bun test tools/cp-sdk-gen/cp-sdk-gen.test.mjs
-      - run: cargo test --manifest-path sdk/rust/Cargo.toml -p codepet-transport -p codepet-provider-sdk --lib
+      - run: cargo test --manifest-path sdk/rust/Cargo.toml --workspace
       - run: cargo test --manifest-path crates/Cargo.toml -p codepet-host --test provider_profiles
       - run: cargo test --manifest-path crates/Cargo.toml -p codepet-host --lib gateway::provider_updates -- --test-threads=1

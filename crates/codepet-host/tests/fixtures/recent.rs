@@ -134,6 +134,7 @@ impl RecentFixture {
                 }).collect();
             }
             rows.retain(|row| match request.query.as_ref().unwrap() {
+                codepet_provider_sdk::ConversationListQuery::Unrecognized(_) => false,
                 sdk::ConversationListQuery::ConversationUpdatedAfterQuery(query) => {
                     row.updated_at.is_some_and(|t| t >= query.updated_after)
                 }

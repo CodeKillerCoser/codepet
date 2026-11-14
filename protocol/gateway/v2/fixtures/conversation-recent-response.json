@@ -1,0 +1,27 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-recent-response",
+  "result": {
+    "conversations": [
+      {
+        "resource": {
+          "providerId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "project": null,
+        "title": "Old active conversation",
+        "status": "running",
+        "updatedAt": 1787700001000,
+        "readState": {
+          "unread": true,
+          "activityVersion": "activity-42"
+        }
+      }
+    ],
+    "pageInfo": {
+      "nextCursor": "recent-page-2"
+    },
+    "revision": "recent-view-7",
+    "snapshotCursor": "event-42"
+  }
+}

@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { ProviderConnectionState } from "./providerRuntimes";
 
+  import type { ProviderKind } from "./providerPresentation";
+  export let kind: ProviderKind = "extension";
   export let current: ProviderConnectionState | undefined;
   export let available = false;
   const labels: Record<string, string> = {
@@ -12,11 +14,11 @@
 
 <div class="provider-connection" aria-live="polite">
   <span class:online={connection === "online"}>
-    Provider · {connection === "online" ? "在线" : connection === "connecting" ? "连接中" : connection === "offline" ? "离线" : available ? "未启动" : "状态未知"}
+    {connection === "online" ? "在线" : connection === "connecting" ? "连接中" : connection === "offline" ? "离线" : available ? "未启动" : "状态未知"}
   </span>
   {#if current}
     {#each current.instances as instance}
-      <span>Harness · {labels[instance.status] ?? instance.status}</span>
+      <span>{kind === "agent" ? "执行环境" : kind === "observation" ? "通知接入" : "服务"} · {labels[instance.status] ?? instance.status}</span>
     {/each}
   {/if}
 </div>

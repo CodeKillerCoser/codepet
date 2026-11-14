@@ -118,7 +118,7 @@ test("SDK export reads functional IDL and hashes its policy instead of trusting 
   const args = ["--package", "gateway", "--lang", "rust", "--protocol", protocol, "--output", output];
   await runCpSdkGen(args, root);
   const before = JSON.parse(await readFile(path.join(output, "cp-sdk-gen.lock.json")));
-  const policyFile = path.join(protocol, "v1/gateway/session/messages.schema.json");
+  const policyFile = path.join(protocol, "v2/gateway/session/messages.schema.json");
   const schema = JSON.parse(await readFile(policyFile));
   schema["x-codepet-lifecycle"].heartbeatIntervalMs = 15000;
   await writeFile(policyFile, JSON.stringify(schema));

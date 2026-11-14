@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { compatibilityGraph, typescriptValidation, typescriptVersionNegotiation } from "./compatibility.mjs";
 
 import { readFile, mkdir, writeFile, access } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
@@ -259,7 +260,10 @@ export function validateManifest(record, model) {
   const { manifest, manifestPath, packageConfig } = record;
   assert(isObject(manifest), `${packageConfig.id} manifest must be an object`);
   assert(manifest.layer === packageConfig.layer, `${packageConfig.id} manifest layer mismatch`);
-  assert(manifest.version === packageConfig.version, `${packageConfig.id} manifest version mismatch`);
+  if (packageConfig.forwardCompatible && manifest.kind === "service") {
+    assert(Number.isInteger(manifest.version) && manifest.version >= 1 && manifest.version <= 4294967295, `${packageConfig.id} invalid service version`);
+    assert(Number.isInteger(manifest.minVersion) && manifest.minVersion >= 1 && manifest.minVersion <= manifest.version, `${packageConfig.id} invalid service minVersion`);
+  } else assert(manifest.version === packageConfig.version, `${packageConfig.id} manifest version mismatch`);
   assert(["types", "service"].includes(manifest.kind), `${packageConfig.id} manifest kind is invalid`);
   assert(Array.isArray(manifest.methods), `${packageConfig.id} methods must be an array`);
   assert(Array.isArray(manifest.events), `${packageConfig.id} events must be an array`);
@@ -637,6 +641,7 @@ export async function loadProtocolModel({ config: suppliedConfig } = {}) {
     }
     records.push(record);
     schemasByPath.set(schemaPath, record);
+    if (packageConfig.forwardCompatible) schemasByPath.set(schemaPath.replace("/v2/", "/v1/"), record);
   }
   for (const record of records) {
     for (const dependency of record.packageConfig.dependencies) {
@@ -680,7 +685,7 @@ function rustType(node, record, model, definition) {
   if (node.type === "string") return "String";
   if (node.type === "boolean") return "bool";
   if (node.type === "integer") {
-    if (definition === "ProtocolVersion") return "u32";
+    if (["ProtocolVersion", "BusinessProtocolVersion"].includes(definition)) return "u32";
     return node.minimum !== undefined && node.minimum >= 0 ? "u64" : "i64";
   }
   if (node.type === "array") return `Vec<${rustType(node.items, record, model)}>`;
@@ -853,6 +858,7 @@ function buildDefinitionIr(name, node, record, model) {
   const base = {
     name,
     packageId: record.packageConfig.id,
+    forwardCompatible: Boolean(record.packageConfig.forwardCompatible),
     description: node.description,
   };
   if (nullableReferenceVariant(node)) {
@@ -876,7 +882,7 @@ function buildDefinitionIr(name, node, record, model) {
     for (const variant of variants) {
       const definition = model.recordsById.get(variant.packageId)?.schema.$defs[variant.name];
       assert(
-        definition?.type === "object" && definition.additionalProperties === false,
+        definition?.type === "object" && (definition.additionalProperties === false || record.packageConfig.forwardCompatible),
         `${record.packageConfig.id}.${name} variant ${variant.name} must be a closed object`,
       );
     }
@@ -914,6 +920,7 @@ export function buildProtocolIr(model) {
     const service = record.manifest.kind === "service" ? {
       kind: record.manifest.transport.kind,
       version: record.manifest.version,
+      minVersion: record.manifest.minVersion ?? record.manifest.version,
       versionField: record.manifest.transport.versionField,
       requestDiscriminator: record.manifest.transport.requestDiscriminator,
       responseDiscriminator: record.manifest.transport.responseDiscriminator,
@@ -955,6 +962,7 @@ export function buildProtocolIr(model) {
     return {
       id: record.packageConfig.id,
       layer: record.packageConfig.layer,
+      forwardCompatible: Boolean(record.packageConfig.forwardCompatible),
       version: record.packageConfig.version,
       dependencies: [...record.packageConfig.dependencies],
       definitions,
@@ -1017,10 +1025,46 @@ function rustDefinitions(record, model) {
         const target = parseReference(variant.$ref, record.schemaPath, model, `Rust oneOf ${name}`);
         return `    ${target.name}(${target.name}),`;
       }).join("\n");
-      blocks.push(`#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]\n#[serde(untagged)]\npub enum ${name} {\n${variants}\n}`);
+      if (record.packageConfig.forwardCompatible) {
+        const def = buildDefinitionIr(name, node, record, model), tag = def.discriminator.field;
+        blocks.push(`#[derive(Clone, Debug, PartialEq)]
+pub enum ${name} {
+${variants}
+    Unrecognized(serde_json::Value),
+}
+impl Serialize for ${name} {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self { ${def.discriminator.variants.map(v => `Self::${v.name}(value) => value.serialize(serializer),`).join(' ')} Self::Unrecognized(raw) => raw.serialize(serializer) }
+    }
+}
+impl<'de> Deserialize<'de> for ${name} {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let tag = raw.get(${JSON.stringify(tag)}).and_then(serde_json::Value::as_str).ok_or_else(|| serde::de::Error::custom("required string discriminator"))?;
+        match tag { ${def.discriminator.variants.map(v => `${JSON.stringify(v.value)} => serde_json::from_value(raw).map(Self::${v.name}).map_err(serde::de::Error::custom),`).join(' ')} _ => Ok(Self::Unrecognized(raw)) }
+    }
+}`);
+      } else blocks.push(`#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]\n#[serde(untagged)]\npub enum ${name} {\n${variants}\n}`);
     } else if (node.enum) {
       const variants = node.enum.map((value) => `    #[serde(rename = "${value}")]\n    ${pascalCase(value)},`).join("\n");
-      blocks.push(`#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]\npub enum ${name} {\n${variants}\n}`);
+      if (record.packageConfig.forwardCompatible && node.enum.length > 1) {
+        blocks.push(`#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ${name} {
+${node.enum.map(v => `    ${pascalCase(v)},`).join('\n')}
+    Unrecognized(String),
+}
+impl Serialize for ${name} {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self { ${node.enum.map(v => `Self::${pascalCase(v)} => ${JSON.stringify(v)},`).join(' ')} Self::Unrecognized(raw) => raw })
+    }
+}
+impl<'de> Deserialize<'de> for ${name} {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Ok(match raw.as_str() { ${node.enum.map(v => `${JSON.stringify(v)} => Self::${pascalCase(v)},`).join(' ')} _ => Self::Unrecognized(raw) })
+    }
+}`);
+      } else blocks.push(`#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]\npub enum ${name} {\n${variants}\n}`);
     } else if (node.type === "object" && node.properties !== undefined) {
       const required = new Set(node.required ?? []);
       const hasSensitiveFields = Object.values(node.properties).some(
@@ -1164,7 +1208,9 @@ function clientSupport(record, model) {
     return `    pub fn ${snakeCase(method.name)}<'a>(&'a self, request: ${request}) -> ProtocolFuture<'a, ${response}> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            ${record.packageConfig.forwardCompatible ? `validate_request_params(${JSON.stringify(method.name)}, &params)?;` : ""}
             let result = self.transport.request(ProtocolMethod::${pascalCase(method.name)}, params).await?;
+            ${record.packageConfig.forwardCompatible ? `validate_payload(${JSON.stringify(compatibilityGraph(record,model).key(definitionName(method.response,record.manifestPath,model)))}, &result, true)?;` : ""}
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }`;
@@ -1398,7 +1444,7 @@ ${manifest.events.map((event) => `            Self::${pascalCase(event.name)} { 
   }).join(",\n");
   const eventParams = cursorField ? `#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
+${record.packageConfig.forwardCompatible ? '' : '#[serde(deny_unknown_fields)]'}
 pub struct ProtocolEventParams<T> {
     #[serde(rename = "${cursorField}")]
     pub ${snakeCase(cursorField)}: ${cursorType},
@@ -1456,6 +1502,7 @@ impl ProtocolRequest {
         params: serde_json::Value,
     ) -> Result<Self, ProtocolError> {
         let jsonrpc = "${manifest.transport.jsonRpcVersion}".to_string();
+        ${record.packageConfig.forwardCompatible ? 'validate_request_params(method.as_str(), &params)?;' : ''}
         match method {
 ${requestConstructors}
         }
@@ -1635,11 +1682,11 @@ fn inbound_protocol_error(error: JsonRpcInboundError) -> ProtocolError {
 }
 
 fn object_has_only(object: &serde_json::Map<String, serde_json::Value>, allowed: &[&str]) -> bool {
-    object.keys().all(|key| allowed.contains(&key.as_str()))
+    ${record.packageConfig.forwardCompatible ? 'let _ = (object, allowed); true' : 'object.keys().all(|key| allowed.contains(&key.as_str()))'}
 }
 
 fn object_request_id(object: &serde_json::Map<String, serde_json::Value>) -> Option<RequestId> {
-    object.get("id").and_then(serde_json::Value::as_str).map(str::to_string)
+    object.get("id").and_then(serde_json::Value::as_str).filter(|id| !id.is_empty()).map(str::to_string)
 }
 
 fn validate_jsonrpc(version: &str) -> Result<(), ProtocolError> {
@@ -1695,7 +1742,10 @@ pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcI
     validate_inbound_jsonrpc(object, id.clone())?;
 
     if let Some(method_value) = object.get("method") {
-        let method = method_value.as_str().ok_or_else(|| inbound_error(id.clone(), JSON_RPC_INVALID_REQUEST, "JSON-RPC method must be a string"))?.to_string();
+        if object.contains_key("result") || object.contains_key("error") {
+            return Err(inbound_error(id, JSON_RPC_INVALID_REQUEST, "method envelope cannot contain response fields"));
+        }
+        let method = method_value.as_str().filter(|method|!method.is_empty()).ok_or_else(|| inbound_error(id.clone(), JSON_RPC_INVALID_REQUEST, "JSON-RPC method must be a string"))?.to_string();
         if object.contains_key("id") {
             let id = id.ok_or_else(|| inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC request id must be a string"))?;
             if !object_has_only(object, &["jsonrpc", "id", "method", "params"${traceAllowed}]) {
@@ -1708,6 +1758,9 @@ pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcI
                     error: RpcError { code: JSON_RPC_METHOD_NOT_FOUND, message: format!("method not found: {method}"), data: None },
                 })));
             }
+            ${record.packageConfig.forwardCompatible ? `if let Err(error) = validate_request_params(&method, object.get("params").unwrap_or(&serde_json::Value::Null)) {
+                return Ok(ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(JsonRpcRequestRejection { id, method, error: RpcError {code: JSON_RPC_INVALID_PARAMS,message:error.message,data:None} })));
+            }` : ""}
             return match serde_json::from_value(${traceField ? `{ let mut typed = value; if let Some(object) = typed.as_object_mut() { object.remove("${traceField}"); } typed }` : "value"}) {
                 Ok(request) => Ok(ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request))),
                 Err(error) => Ok(ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(JsonRpcRequestRejection {
@@ -1722,6 +1775,7 @@ pub fn decode_wire_message(value: &[u8]) -> Result<ProviderWireMessage, JsonRpcI
             return Err(inbound_error(None, JSON_RPC_INVALID_REQUEST, "JSON-RPC notification contains unknown fields"));
         }
         if method.parse::<ProtocolEventName>().is_ok() {
+            ${record.packageConfig.forwardCompatible ? `validate_event_params(&method, object.get("params").unwrap_or(&serde_json::Value::Null)).map_err(|e|inbound_error(None, JSON_RPC_INVALID_PARAMS,e.message))?;` : ""}
             let event = serde_json::from_value(${traceField ? `{ let mut typed = value; if let Some(object) = typed.as_object_mut() { object.remove("${traceField}"); } typed }` : "value"})
                 .map_err(|error| inbound_error(None, JSON_RPC_INVALID_PARAMS, format!("invalid event params for {method}: {error}")))?;
             return Ok(ProviderWireMessage::Event(event));
@@ -1777,6 +1831,8 @@ fn encode_with_trace<T: Serialize>(
 
 pub fn encode_request(value: &ProtocolRequest) -> Result<Vec<u8>, ProtocolError> {
     validate_jsonrpc(value.jsonrpc_version())?;
+    ${record.packageConfig.forwardCompatible ? `let raw = serde_json::to_value(value).map_err(|error| codec_error("encode request", error))?;
+    validate_request_params(value.method().as_str(), &raw["params"])?;` : ""}
     serde_json::to_vec(value).map_err(|error| codec_error("encode request", error))
 }
 
@@ -2057,6 +2113,20 @@ ${imports ? `${imports}\n\n` : ""}pub const ${schemaVersionConstant}: u64 = ${re
 ${definitions}
 `;
   }
+  const graph = record.packageConfig.forwardCompatible ? compatibilityGraph(record, model) : null;
+  const validation = graph ? `
+fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) -> Result<(), ProtocolError> {
+    static SCHEMAS: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+    let schemas = SCHEMAS.get_or_init(|| serde_json::from_str(r###"${JSON.stringify(graph.definitions,null,2)}"###).expect("generated schema graph"));
+    codepet_core_sdk::validate_protocol_value(schemas, name, value, allow_unknown)
+}
+fn validate_request_params(method: &str, value: &serde_json::Value) -> Result<(), ProtocolError> {
+    match method { ${record.manifest.methods.map(m=>`${JSON.stringify(m.name)} => validate_payload(${JSON.stringify(graph.key(definitionName(m.request,record.manifestPath,model)))},value,false),`).join(' ')} _ => Ok(()) }
+}
+fn validate_event_params(method: &str, value: &serde_json::Value) -> Result<(), ProtocolError> {
+    match method { ${record.manifest.events.map(e=>`${JSON.stringify(e.name)} => validate_payload(${JSON.stringify(graph.key(definitionName(e.payload,record.manifestPath,model)))},${record.manifest.transport.eventCursorField ? '&value["payload"]' : 'value'},true),`).join(' ')} _ => Ok(()) }
+}
+` : "";
   const service = record.manifest.transport.kind === "json-rpc-2.0"
     ? generateJsonRpc(record, model, role)
     : generateCodepetEnvelope(record, model, role);
@@ -2069,11 +2139,13 @@ use serde::{Deserialize, Serialize};
 ${collectionsImport}${ioImport}use std::future::Future;
 use std::pin::Pin;
 
-${imports ? `${imports}\n\n` : ""}pub const PROTOCOL_VERSION: ProtocolVersion = ${record.manifest.version};
+${imports ? `${imports}\n\n` : ""}pub const PROTOCOL_VERSION: u32 = ${record.manifest.version};
+pub const MIN_PROTOCOL_VERSION: u32 = ${record.manifest.minVersion ?? record.manifest.version};
 
 ${definitions}
 
-${instanceKindBlock}${service}
+${instanceKindBlock}${validation}
+${service}
 `;
 }
 
@@ -2093,7 +2165,7 @@ function typeScriptDefinitions(record, model) {
       blocks.push(`export type ${name} = ${typeScriptType(node, record, model)};`);
     }
   }
-  return blocks.join("\n\n");
+  return blocks.join("\n\n") + (record.packageConfig.forwardCompatible ? typescriptValidation(compatibilityGraph(record,model)) : "");
 }
 
 function typescriptImports(record, model) {
@@ -2121,7 +2193,7 @@ function generateTypeScript(record, model) {
   const imports = typescriptImports(record, model);
   const header = `// @generated by tools/protocol-codegen/generate.mjs from ${sourceFiles}.\n// DO NOT EDIT MANUALLY.\n`;
   if (record.manifest.kind === "types") {
-    return `${header}\n${imports ? `${imports}\n\n` : ""}${typeScriptDefinitions(record, model)}\n`;
+    return `${header}\n${imports ? `${imports}\n\n` : ""}${typeScriptDefinitions(record, model)}${record.packageConfig.layer === "core" && record.packageConfig.forwardCompatible ? typescriptVersionNegotiation() : ""}\n`;
   }
   if (record.manifest.transport.kind === "json-rpc-2.0") {
     const requestMap = record.manifest.methods.map((method) => `  ${JSON.stringify(method.name)}: ${definitionName(method.request, record.manifestPath, model)};`).join("\n");
@@ -2141,6 +2213,7 @@ function generateTypeScript(record, model) {
       : "ProtocolEventMap[E]";
     return `${header}
 ${imports ? `${imports}\n\n` : ""}export const PROTOCOL_VERSION = ${record.manifest.version} as const;
+export const MIN_PROTOCOL_VERSION = ${record.manifest.minVersion ?? record.manifest.version} as const;
 export const PROTOCOL_METHODS = [${methodNames}] as const;
 export const PROTOCOL_EVENTS = [${eventNames}] as const;
 
@@ -2192,6 +2265,7 @@ export interface ProtocolTransport {
   const eventNames = record.manifest.events.map((event) => JSON.stringify(event.name)).join(", ");
   return `${header}
 ${imports ? `${imports}\n\n` : ""}export const PROTOCOL_VERSION = ${record.manifest.version} as const;
+export const MIN_PROTOCOL_VERSION = ${record.manifest.minVersion ?? record.manifest.version} as const;
 export const PROTOCOL_METHODS = [${methodNames}] as const;
 export const PROTOCOL_EVENTS = [${eventNames}] as const;
 
@@ -2329,6 +2403,7 @@ export async function generateProtocol({ checkMode = false, targets = defaultTar
           : adapter.id === 'dart' ? `const int gatewayHeartbeat${camel}Ms = ${value};`
           : `export const GATEWAY_HEARTBEAT_${rust}_MS = ${value};`).join('\n') + '\n';
       }
+      content = content.replace(/[ \t]+$/gm, "").trimEnd() + "\n";
       artifacts.push({ packageId: record.packageConfig.id, targetId: adapter.id, output, content });
     }
   }

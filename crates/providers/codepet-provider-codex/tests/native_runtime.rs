@@ -47,7 +47,7 @@ async fn codex_windows_install_layout_without_path() {
     let provider = codepet_provider_codex::CodexProvider::new(std::sync::Arc::new(|_| Ok(())));
     provider.provider_initialize(ProviderInitializeRequest { directories: None,
         host_client_id: "layout-smoke".into(), host_device_id: "layout-device".into(), host_version: "test".into(),
-        supported_versions: VersionRange { min_version: PROTOCOL_VERSION, max_version: PROTOCOL_VERSION },
+        protocol: ProtocolVersionOffer { min_version: PROTOCOL_VERSION, version: PROTOCOL_VERSION },
     }).await.unwrap();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(180);
     let installed = loop {

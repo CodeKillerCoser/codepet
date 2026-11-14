@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://code-pet.dev/provider-sdk/v1/protocol/sdk/common/types.schema.json",
+  "$id": "https://code-pet.dev/provider-sdk/v2/protocol/sdk/common/types.schema.json",
   "title": "types.schema.json",
   "description": "公共身份、路由、版本、错误和分页类型。",
   "$defs": {
@@ -30,7 +30,7 @@
         "connectionId",
         "clientId"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "客户端连接信息的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ClientConnectionsSnapshot": {
@@ -54,7 +54,7 @@
         "revision",
         "connections"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "客户端连接清单快照的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ClientId": {
@@ -96,7 +96,7 @@
         "operatingSystem",
         "systemVersion"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "设备描述的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "EventCursor": {
@@ -128,7 +128,7 @@
       "required": [
         "traceparent"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "JsonObject": {
       "type": "object",
@@ -148,7 +148,7 @@
           "description": "下一页游标；缺省表示没有可继续获取的页。"
         }
       },
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "分页信息的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "PageRequest": {
@@ -165,7 +165,7 @@
           "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
         }
       },
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "分页的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "ProtocolError": {
@@ -195,14 +195,14 @@
         "message",
         "retryable"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "协议错误的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ProtocolVersion": {
       "type": "integer",
       "minimum": 0,
       "maximum": 4294967295,
-      "description": "协议版本的完整数据定义；字段、可选性与允许值见本对象约束。"
+      "description": "单调递增的业务协议修订号；不是软件、SDK、安装清单或传输格式版本。"
     },
     "ProviderInstanceId": {
       "type": "string",
@@ -236,7 +236,7 @@
         "providerId",
         "nativeResourceId"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Opaque gateway provider route for a provider-native resource."
     },
     "RpcError": {
@@ -260,7 +260,7 @@
         "code",
         "message"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "RPC错误的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "TimestampMs": {
@@ -285,8 +285,57 @@
         "minVersion",
         "maxVersion"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "版本区间的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProtocolVersionOffer": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/BusinessProtocolVersion",
+          "description": "本端当前实现的业务协议修订号，同时作为支持上界。"
+        },
+        "minVersion": {
+          "$ref": "#/$defs/BusinessProtocolVersion",
+          "description": "本端最低兼容修订号；必须小于或等于 version，区间内每个版本都须真正支持。"
+        }
+      },
+      "required": [
+        "version",
+        "minVersion"
+      ],
+      "additionalProperties": true,
+      "description": "本端支持的连续业务版本区间 [minVersion, version]。忽略未知字段，但严格校验已知字段和跨字段大小关系。"
+    },
+    "ProtocolVersionSelection": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/BusinessProtocolVersion",
+          "description": "本端当前实现的业务协议修订号，同时作为支持上界。"
+        },
+        "minVersion": {
+          "$ref": "#/$defs/BusinessProtocolVersion",
+          "description": "本端最低兼容修订号；必须小于或等于 version，区间内每个版本都须真正支持。"
+        },
+        "selectedVersion": {
+          "$ref": "#/$defs/BusinessProtocolVersion",
+          "description": "本次连接选定的共同最高修订号 min(local.version, peer.version)，必须不低于双方 minVersion。"
+        }
+      },
+      "required": [
+        "version",
+        "minVersion",
+        "selectedVersion"
+      ],
+      "additionalProperties": true,
+      "description": "响应方自己的版本区间及本次连接的选择；version 不是 selectedVersion 的别名。请求方必须重新计算并验证选择。"
+    },
+    "BusinessProtocolVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295,
+      "description": "单调递增的业务协议修订号；不是软件、SDK、安装清单或传输格式版本。"
     }
   }
 }

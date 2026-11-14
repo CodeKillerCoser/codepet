@@ -17,7 +17,7 @@ use codepet_provider_sdk::{
     ProviderInstanceRoute, ProviderPluginDescriptor, ProviderResourceId, ProviderWireMessage,
     RoutedResourceId, RuntimeGetInstalledRequest, RuntimeGetInstalledResponse,
     RuntimeSelectRequest, RuntimeSelectResponse, TurnInterruptRequest, TurnInterruptResponse,
-    TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse, VersionRange,
+    TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse, ProtocolVersionOffer,
     PROTOCOL_VERSION,
 };
 use serde_json::Value;
@@ -82,7 +82,7 @@ pub struct PluginManagerConfig {
     pub provider_logs_root: Option<std::path::PathBuf>,
     pub host_client_id: ClientId,
     pub host_version: String,
-    pub supported_versions: VersionRange,
+    pub protocol: ProtocolVersionOffer,
     pub process: PluginProcessOptions,
     pub event_capacity: usize,
     /// Continuous business-idle requirement, enforced by capable Providers at admission.
@@ -96,9 +96,9 @@ impl Default for PluginManagerConfig {
             provider_logs_root: None,
             host_client_id: format!("client-host-{}", Uuid::new_v4()),
             host_version: env!("CARGO_PKG_VERSION").to_string(),
-            supported_versions: VersionRange {
-                min_version: PROTOCOL_VERSION,
-                max_version: PROTOCOL_VERSION,
+            protocol: ProtocolVersionOffer {
+                min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION,
+                version: PROTOCOL_VERSION,
             },
             process: PluginProcessOptions::default(),
             event_capacity: 256,
@@ -149,7 +149,7 @@ impl PluginEntry {
             connection_status: match self.state {
                 PluginRuntimeState::Stopped | PluginRuntimeState::Crashed => codepet_provider_sdk::ConnectionStatus::Offline,
                 PluginRuntimeState::Starting => codepet_provider_sdk::ConnectionStatus::Connecting,
-                PluginRuntimeState::Ready => self.connection_status,
+                PluginRuntimeState::Ready => self.connection_status.clone(),
             },
             process_exit: self.process_exit.clone(),
             stderr_diagnostics: self.stderr_diagnostics.clone(),
@@ -172,9 +172,8 @@ struct PluginManagerInner {
     instances: ProviderInstanceRegistry,
     plugins: RwLock<BTreeMap<String, PluginEntry>>,
     plugin_operations: StdMutex<BTreeMap<String, Arc<Mutex<()>>>>,
-    import_operation: Mutex<()>,
+    registry_operation: Mutex<()>,
     subscriptions: StdMutex<BTreeMap<String, subscriptions::SubscriptionHub>>,
-    subscription_operations: tokio::sync::Mutex<()>,
     updates: mpsc::Sender<HostUpdate>,
     update_receiver: StdMutex<Option<mpsc::Receiver<HostUpdate>>>,
     shutting_down: AtomicBool,
@@ -192,10 +191,10 @@ pub struct PluginManager {
 }
 
 mod heartbeat;
-mod import;
+mod registry;
 mod release_control;
 mod runtime_inventory;
-pub use import::ProviderImportResult;
+pub use registry::ProviderImportResult;
 mod subscriptions;
 pub use subscriptions::ProviderEventSubscription;
 
@@ -285,9 +284,8 @@ impl PluginManager {
                 instances,
                 plugins: RwLock::new(plugins),
                 plugin_operations: StdMutex::new(plugin_operations),
-                import_operation: Mutex::new(()),
+                registry_operation: Mutex::new(()),
                 subscriptions: StdMutex::new(BTreeMap::new()),
-                subscription_operations: tokio::sync::Mutex::new(()),
                 updates,
                 update_receiver: StdMutex::new(Some(update_receiver)),
                 shutting_down: AtomicBool::new(false),
@@ -371,26 +369,6 @@ impl PluginManager {
                     "Provider Manager updates already have a Gateway consumer",
                 )
             })
-    }
-
-    pub async fn snapshots(&self) -> Vec<PluginRuntimeSnapshot> {
-        self.inner
-            .plugins
-            .read()
-            .await
-            .values()
-            .map(PluginEntry::snapshot)
-            .collect()
-    }
-
-    pub async fn snapshot(&self, plugin_id: &str) -> HostResult<PluginRuntimeSnapshot> {
-        self.inner
-            .plugins
-            .read()
-            .await
-            .get(plugin_id)
-            .map(PluginEntry::snapshot)
-            .ok_or_else(|| unknown_plugin(plugin_id))
     }
 
     pub async fn start_enabled(&self) -> Vec<(String, HostResult<()>)> {
@@ -620,15 +598,15 @@ impl PluginManager {
                 host_client_id: self.inner.config.host_client_id.clone(),
                 host_device_id: self.inner.device.identity().device_id.clone(),
                 host_version: self.inner.config.host_version.clone(),
-                supported_versions: self.inner.config.supported_versions.clone(),
+                protocol: self.inner.config.protocol.clone(),
             })
             .await
             .map_err(HostError::from)
             .and_then(|response| {
                 validate_negotiated_descriptor(
                     &descriptor,
-                    &self.inner.config.supported_versions,
-                    response.selected_version,
+                    &self.inner.config.protocol,
+                    &response.protocol,
                     &response.plugin,
                 )?;
                 Ok(response.plugin)
@@ -1178,6 +1156,7 @@ impl PluginManager {
                 HostError::new("unsupported", "Provider does not support scoped summary queries")
             })?;
             let allowed = match &request.query {
+                Some(codepet_provider_sdk::ConversationListQuery::Unrecognized(_)) => false,
                 Some(codepet_provider_sdk::ConversationListQuery::ConversationUpdatedAfterQuery(_)) => modes.updated_after,
                 Some(codepet_provider_sdk::ConversationListQuery::ConversationIdsQuery(_)) => modes.ids,
                 None => modes.updated_after || modes.ids,
@@ -1569,6 +1548,7 @@ impl PluginManager {
         event: ProtocolEvent,
         permit: codepet_transport::transport::mux::MessagePermit,
     ) -> HostResult<()> {
+        if matches!(&event, ProtocolEvent::EventConversationItemUpserted { params, .. } if matches!(params.item, Some(codepet_provider_sdk::ConversationItem::Unrecognized(_)))) { return Ok(()); }
         if let Some(journal) = self.inner.event_journal.lock().unwrap().as_ref() {
             journal.provider(plugin_id, &event);
         }
@@ -1716,7 +1696,7 @@ impl PluginManager {
                     return Ok(current.clone());
                 }
             }
-            let previous_status = runtime.instance.as_ref().map(|instance| instance.status);
+            let previous_status = runtime.instance.as_ref().map(|instance| instance.status.clone());
             runtime.instance = Some(response.clone());
             runtime.diagnostic = None;
             (entry.snapshot(), previous_status)
@@ -1768,7 +1748,7 @@ impl PluginManager {
             if runtime.instance == instance {
                 return Ok(());
             }
-            let previous_status = runtime.instance.as_ref().map(|instance| instance.status);
+            let previous_status = runtime.instance.as_ref().map(|instance| instance.status.clone());
             runtime.instance = instance;
             if runtime.instance.is_some() {
                 runtime.diagnostic = None;
@@ -2091,33 +2071,13 @@ impl PluginManager {
 
 fn validate_negotiated_descriptor(
     catalog: &PluginDescriptor,
-    supported: &VersionRange,
-    selected_version: u32,
+    supported: &ProtocolVersionOffer,
+    selection: &codepet_provider_sdk::ProtocolVersionSelection,
     reported: &ProviderPluginDescriptor,
 ) -> HostResult<()> {
-    if selected_version < supported.min_version || selected_version > supported.max_version {
-        return Err(HostError::new(
-            "provider_protocol_version_mismatch",
-            format!("Provider selected unsupported protocol version: {selected_version}"),
-        ));
-    }
-    if reported.supported_versions.min_version > reported.supported_versions.max_version
-        || selected_version < reported.supported_versions.min_version
-        || selected_version > reported.supported_versions.max_version
-    {
-        return Err(HostError::new(
-            "provider_protocol_version_mismatch",
-            "Provider selected a version outside its reported supported range",
-        )
-        .with_detail("selectedVersion", selected_version)
-        .with_detail(
-            "providerMinVersion",
-            reported.supported_versions.min_version,
-        )
-        .with_detail(
-            "providerMaxVersion",
-            reported.supported_versions.max_version,
-        ));
+    supported.validate_selection(selection).map_err(|error| HostError::new("provider_protocol_version_mismatch", error.message))?;
+    if selection.offer() != reported.protocol {
+        return Err(HostError::new("provider_protocol_version_mismatch", "Initialize range differs from Provider descriptor"));
     }
     if reported.plugin_id != catalog.plugin_id {
         return Err(HostError::new(
@@ -2198,7 +2158,7 @@ fn event_provider_id(event: &ProtocolEvent) -> HostResult<&str> {
             params.conversation.resource.provider_id.as_str()
         }
         ProtocolEvent::EventConversationItemUpserted { params, .. } => {
-            params.item.as_ref().map(conversation_item_resource).or(params.conversation.as_ref()).ok_or_else(|| HostError::new("invalid_provider_event", "Item invalidation requires a conversation route"))?.provider_id.as_str()
+            params.item.as_ref().and_then(conversation_item_resource).or(params.conversation.as_ref()).ok_or_else(|| HostError::new("invalid_provider_event", "Item invalidation requires a conversation route"))?.provider_id.as_str()
         }
         ProtocolEvent::EventTurnUpserted { params, .. } => params.turn.resource.provider_id.as_str(),
         ProtocolEvent::EventTurnOutputDelta { params, .. } => params.turn.provider_instance_id.as_str(),
@@ -2226,10 +2186,11 @@ fn validate_item_update(params: &codepet_provider_sdk::ConversationItemUpsertedE
         validate_resource_route(conversation, route)?;
     }
     if let Some(item) = &params.item {
-        if params.conversation.as_ref().is_some_and(|conversation| conversation != conversation_item_conversation(item)) {
+        let Some(item_conversation) = conversation_item_conversation(item) else { return Ok(()); };
+        if params.conversation.as_ref().is_some_and(|conversation| conversation != item_conversation) {
             return Err(HostError::new("invalid_provider_event", "Item and invalidation conversation routes differ"));
         }
-        validate_conversation_items(std::slice::from_ref(item), conversation_item_conversation(item), route)
+        validate_conversation_items(std::slice::from_ref(item), item_conversation, route)
     } else if params.conversation.is_some() { Ok(()) }
     else { Err(HostError::new("invalid_provider_event", "Item invalidation requires a conversation route")) }
 }
@@ -2335,9 +2296,7 @@ fn validate_conversation_items(
     let mut item_ids = BTreeSet::new();
     let mut content_ids = BTreeSet::new();
     for item in items {
-        let resource = conversation_item_resource(item);
-        let turn = conversation_item_turn(item);
-        let item_conversation = conversation_item_conversation(item);
+        let (Some(resource), Some(turn), Some(item_conversation)) = (conversation_item_resource(item), conversation_item_turn(item), conversation_item_conversation(item)) else { continue; };
         validate_resource_route(resource, route)?;
         validate_resource_route(turn, route)?;
         validate_resource_route(item_conversation, route)?;
@@ -2353,7 +2312,7 @@ fn validate_conversation_items(
             ));
         }
         for content in conversation_item_contents(item) {
-            let content_id = conversation_content_id(content);
+            let Some(content_id) = conversation_content_id(content) else { continue; };
             if content_id.trim().is_empty() {
                 return Err(HostError::new(
                     "invalid_conversation_content",
@@ -2384,39 +2343,42 @@ fn validate_conversation_items(
     Ok(())
 }
 
-fn conversation_item_resource(item: &codepet_provider_sdk::ConversationItem) -> &RoutedResourceId {
+fn conversation_item_resource(item: &codepet_provider_sdk::ConversationItem) -> Option<&RoutedResourceId> {
     match item {
-        codepet_provider_sdk::ConversationItem::MessageConversationItem(item) => &item.resource,
-        codepet_provider_sdk::ConversationItem::ReasoningConversationItem(item) => &item.resource,
-        codepet_provider_sdk::ConversationItem::CommandConversationItem(item) => &item.resource,
-        codepet_provider_sdk::ConversationItem::FileChangeConversationItem(item) => &item.resource,
-        codepet_provider_sdk::ConversationItem::ToolConversationItem(item) => &item.resource,
-        codepet_provider_sdk::ConversationItem::ApprovalConversationItem(item) => &item.resource,
-        codepet_provider_sdk::ConversationItem::UnknownConversationItem(item) => &item.resource,
+        codepet_provider_sdk::ConversationItem::MessageConversationItem(item) => Some(&item.resource),
+        codepet_provider_sdk::ConversationItem::ReasoningConversationItem(item) => Some(&item.resource),
+        codepet_provider_sdk::ConversationItem::CommandConversationItem(item) => Some(&item.resource),
+        codepet_provider_sdk::ConversationItem::FileChangeConversationItem(item) => Some(&item.resource),
+        codepet_provider_sdk::ConversationItem::ToolConversationItem(item) => Some(&item.resource),
+        codepet_provider_sdk::ConversationItem::ApprovalConversationItem(item) => Some(&item.resource),
+        codepet_provider_sdk::ConversationItem::UnknownConversationItem(item) => Some(&item.resource),
+        codepet_provider_sdk::ConversationItem::Unrecognized(_) => None,
     }
 }
 
-fn conversation_item_turn(item: &codepet_provider_sdk::ConversationItem) -> &RoutedResourceId {
+fn conversation_item_turn(item: &codepet_provider_sdk::ConversationItem) -> Option<&RoutedResourceId> {
     match item {
-        codepet_provider_sdk::ConversationItem::MessageConversationItem(item) => &item.turn,
-        codepet_provider_sdk::ConversationItem::ReasoningConversationItem(item) => &item.turn,
-        codepet_provider_sdk::ConversationItem::CommandConversationItem(item) => &item.turn,
-        codepet_provider_sdk::ConversationItem::FileChangeConversationItem(item) => &item.turn,
-        codepet_provider_sdk::ConversationItem::ToolConversationItem(item) => &item.turn,
-        codepet_provider_sdk::ConversationItem::ApprovalConversationItem(item) => &item.turn,
-        codepet_provider_sdk::ConversationItem::UnknownConversationItem(item) => &item.turn,
+        codepet_provider_sdk::ConversationItem::MessageConversationItem(item) => Some(&item.turn),
+        codepet_provider_sdk::ConversationItem::ReasoningConversationItem(item) => Some(&item.turn),
+        codepet_provider_sdk::ConversationItem::CommandConversationItem(item) => Some(&item.turn),
+        codepet_provider_sdk::ConversationItem::FileChangeConversationItem(item) => Some(&item.turn),
+        codepet_provider_sdk::ConversationItem::ToolConversationItem(item) => Some(&item.turn),
+        codepet_provider_sdk::ConversationItem::ApprovalConversationItem(item) => Some(&item.turn),
+        codepet_provider_sdk::ConversationItem::UnknownConversationItem(item) => Some(&item.turn),
+        codepet_provider_sdk::ConversationItem::Unrecognized(_) => None,
     }
 }
 
-fn conversation_item_conversation(item: &codepet_provider_sdk::ConversationItem) -> &RoutedResourceId {
+fn conversation_item_conversation(item: &codepet_provider_sdk::ConversationItem) -> Option<&RoutedResourceId> {
     match item {
-        codepet_provider_sdk::ConversationItem::MessageConversationItem(item) => &item.conversation,
-        codepet_provider_sdk::ConversationItem::ReasoningConversationItem(item) => &item.conversation,
-        codepet_provider_sdk::ConversationItem::CommandConversationItem(item) => &item.conversation,
-        codepet_provider_sdk::ConversationItem::FileChangeConversationItem(item) => &item.conversation,
-        codepet_provider_sdk::ConversationItem::ToolConversationItem(item) => &item.conversation,
-        codepet_provider_sdk::ConversationItem::ApprovalConversationItem(item) => &item.conversation,
-        codepet_provider_sdk::ConversationItem::UnknownConversationItem(item) => &item.conversation,
+        codepet_provider_sdk::ConversationItem::MessageConversationItem(item) => Some(&item.conversation),
+        codepet_provider_sdk::ConversationItem::ReasoningConversationItem(item) => Some(&item.conversation),
+        codepet_provider_sdk::ConversationItem::CommandConversationItem(item) => Some(&item.conversation),
+        codepet_provider_sdk::ConversationItem::FileChangeConversationItem(item) => Some(&item.conversation),
+        codepet_provider_sdk::ConversationItem::ToolConversationItem(item) => Some(&item.conversation),
+        codepet_provider_sdk::ConversationItem::ApprovalConversationItem(item) => Some(&item.conversation),
+        codepet_provider_sdk::ConversationItem::UnknownConversationItem(item) => Some(&item.conversation),
+        codepet_provider_sdk::ConversationItem::Unrecognized(_) => None,
     }
 }
 
@@ -2428,7 +2390,8 @@ fn conversation_item_contents(item: &codepet_provider_sdk::ConversationItem) -> 
         codepet_provider_sdk::ConversationItem::CommandConversationItem(item) => tool_outcome_contents(&item.tool),
         codepet_provider_sdk::ConversationItem::ToolConversationItem(item) => tool_outcome_contents(&item.tool),
         codepet_provider_sdk::ConversationItem::ApprovalConversationItem(_)
-        | codepet_provider_sdk::ConversationItem::UnknownConversationItem(_) => &[],
+        | codepet_provider_sdk::ConversationItem::UnknownConversationItem(_)
+        | codepet_provider_sdk::ConversationItem::Unrecognized(_) => &[],
     }
 }
 
@@ -2436,21 +2399,22 @@ fn tool_outcome_contents(tool: &codepet_provider_sdk::ToolInvocation) -> &[codep
     match tool.outcome.as_ref() {
         Some(codepet_provider_sdk::ToolOutcome::ToolSuccessOutcome(outcome)) => &outcome.content,
         Some(codepet_provider_sdk::ToolOutcome::ToolFailureOutcome(outcome)) => &outcome.content,
-        None => &[],
+        Some(codepet_provider_sdk::ToolOutcome::Unrecognized(_)) | None => &[],
     }
 }
 
-fn conversation_content_id(content: &codepet_provider_sdk::ContentBlock) -> &str {
+fn conversation_content_id(content: &codepet_provider_sdk::ContentBlock) -> Option<&str> {
     match content {
-        codepet_provider_sdk::ContentBlock::TextContentBlock(content) => &content.content_id,
-        codepet_provider_sdk::ContentBlock::ReasoningSummaryContentBlock(content) => &content.content_id,
-        codepet_provider_sdk::ContentBlock::OutputContentBlock(content) => &content.content_id,
-        codepet_provider_sdk::ContentBlock::ActivitySummaryContentBlock(content) => &content.content_id,
-        codepet_provider_sdk::ContentBlock::StructuredJsonContentBlock(content) => &content.content_id,
-        codepet_provider_sdk::ContentBlock::ImageContentBlock(content) => &content.content_id,
-        codepet_provider_sdk::ContentBlock::AudioContentBlock(content) => &content.content_id,
-        codepet_provider_sdk::ContentBlock::ResourceLinkContentBlock(content) => &content.content_id,
-        codepet_provider_sdk::ContentBlock::EmbeddedResourceContentBlock(content) => &content.content_id,
+        codepet_provider_sdk::ContentBlock::TextContentBlock(content) => Some(&content.content_id),
+        codepet_provider_sdk::ContentBlock::ReasoningSummaryContentBlock(content) => Some(&content.content_id),
+        codepet_provider_sdk::ContentBlock::OutputContentBlock(content) => Some(&content.content_id),
+        codepet_provider_sdk::ContentBlock::ActivitySummaryContentBlock(content) => Some(&content.content_id),
+        codepet_provider_sdk::ContentBlock::StructuredJsonContentBlock(content) => Some(&content.content_id),
+        codepet_provider_sdk::ContentBlock::ImageContentBlock(content) => Some(&content.content_id),
+        codepet_provider_sdk::ContentBlock::AudioContentBlock(content) => Some(&content.content_id),
+        codepet_provider_sdk::ContentBlock::ResourceLinkContentBlock(content) => Some(&content.content_id),
+        codepet_provider_sdk::ContentBlock::EmbeddedResourceContentBlock(content) => Some(&content.content_id),
+        codepet_provider_sdk::ContentBlock::Unrecognized(_) => None,
     }
 }
 

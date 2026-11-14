@@ -19,7 +19,7 @@ use codepet_provider_sdk::{
     ProtocolServer as ProviderProtocolServer, ProviderInitializeRequest,
     FlatModelCatalogKind, FlatModelSelection, ModelSelection, ProviderInstanceRoute,
     ProviderResourceId, ProviderShutdownRequest, TurnInput, TurnInputKind, TurnInterruptRequest,
-    ToolOutcome, TurnSelection, TurnStartRequest, TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
+    ToolOutcome, TurnSelection, TurnStartRequest, TurnSteerRequest, ProtocolVersionOffer, PROTOCOL_VERSION,
 };
 use serde_json::json;
 use serde_json::Value;
@@ -46,18 +46,20 @@ fn item_resource_id(item: &ConversationItem) -> &str {
         ConversationItem::ToolConversationItem(value) => &value.resource.native_resource_id,
         ConversationItem::ApprovalConversationItem(value) => &value.resource.native_resource_id,
         ConversationItem::UnknownConversationItem(value) => &value.resource.native_resource_id,
+        ConversationItem::Unrecognized(_) => panic!("fixture expected known item"),
     }
 }
 
 fn item_status(item: &ConversationItem) -> codepet_provider_sdk::ConversationItemStatus {
     match item {
-        ConversationItem::MessageConversationItem(value) => value.status,
-        ConversationItem::ReasoningConversationItem(value) => value.status,
-        ConversationItem::CommandConversationItem(value) => value.status,
-        ConversationItem::FileChangeConversationItem(value) => value.status,
-        ConversationItem::ToolConversationItem(value) => value.status,
-        ConversationItem::ApprovalConversationItem(value) => value.status,
-        ConversationItem::UnknownConversationItem(value) => value.status,
+        ConversationItem::MessageConversationItem(value) => value.status.clone(),
+        ConversationItem::ReasoningConversationItem(value) => value.status.clone(),
+        ConversationItem::CommandConversationItem(value) => value.status.clone(),
+        ConversationItem::FileChangeConversationItem(value) => value.status.clone(),
+        ConversationItem::ToolConversationItem(value) => value.status.clone(),
+        ConversationItem::ApprovalConversationItem(value) => value.status.clone(),
+        ConversationItem::UnknownConversationItem(value) => value.status.clone(),
+        ConversationItem::Unrecognized(_) => panic!("fixture expected known item"),
     }
 }
 
@@ -69,12 +71,12 @@ fn item_contents(item: &ConversationItem) -> &[ContentBlock] {
         ConversationItem::CommandConversationItem(value) => match &value.tool.outcome {
             Some(ToolOutcome::ToolSuccessOutcome(outcome)) => &outcome.content,
             Some(ToolOutcome::ToolFailureOutcome(outcome)) => &outcome.content,
-            None => &[],
+            Some(ToolOutcome::Unrecognized(_)) | None => &[],
         },
         ConversationItem::ToolConversationItem(value) => match &value.tool.outcome {
             Some(ToolOutcome::ToolSuccessOutcome(outcome)) => &outcome.content,
             Some(ToolOutcome::ToolFailureOutcome(outcome)) => &outcome.content,
-            None => &[],
+            Some(ToolOutcome::Unrecognized(_)) | None => &[],
         },
         _ => &[],
     }
@@ -91,6 +93,7 @@ fn content_id(content: &ContentBlock) -> &str {
         ContentBlock::AudioContentBlock(value) => &value.content_id,
         ContentBlock::ResourceLinkContentBlock(value) => &value.content_id,
         ContentBlock::EmbeddedResourceContentBlock(value) => &value.content_id,
+        ContentBlock::Unrecognized(_) => panic!("fixture expected known content"),
     }
 }
 
@@ -168,9 +171,9 @@ async fn configured_direct_provider_with_events_and_hook(
             host_client_id: "client-provider-direct".to_string(),
             host_device_id: route.device_id.clone(),
             host_version: "test".to_string(),
-            supported_versions: VersionRange {
+            protocol: ProtocolVersionOffer {
                 min_version: PROTOCOL_VERSION,
-                max_version: PROTOCOL_VERSION,
+                version: PROTOCOL_VERSION,
             },
         },
     )
@@ -403,9 +406,9 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
             host_client_id: "client-provider-fixture".to_string(),
             host_device_id: device_id.to_string(),
             host_version: "test".to_string(),
-            supported_versions: VersionRange {
+            protocol: ProtocolVersionOffer {
                 min_version: PROTOCOL_VERSION,
-                max_version: PROTOCOL_VERSION,
+                version: PROTOCOL_VERSION,
             },
         },
     )
@@ -692,7 +695,10 @@ async fn provider_v1_round_trips_fixture_app_server_lifecycle_and_approval() {
     let fetched_json = serde_json::to_string(&fetched).unwrap();
     assert!(!fetched_json.contains("private raw reasoning"));
     assert!(!fetched_json.contains("must not escape"));
-    assert!(!fetched_json.contains("data:image/png"));
+    let ContentBlock::ImageContentBlock(image) = &item_contents(&fetched.items[0])[1] else {
+        panic!("native user image must remain an explicit image block");
+    };
+    assert_eq!(image.uri, "data:image/png;base64,private");
     assert!(!fetched_json.contains("private-a"));
 
     let unsupported_title = ProviderProtocolServer::conversation_create(
@@ -3999,7 +4005,7 @@ fn provider_real_codex_app_server_smoke() {
             "hostClientId": "provider-real-codex-smoke",
             "hostDeviceId": "device-provider-binary",
             "hostVersion": "test",
-            "supportedVersions": { "minVersion": 1, "maxVersion": 1 }
+            "protocol": {"version": 2, "minVersion": 2}
         }),
     );
     provider.request(
@@ -4397,7 +4403,7 @@ impl ProviderBinary {
                 "hostClientId": "provider-binary-test",
                 "hostDeviceId": "device-provider-binary",
                 "hostVersion": "test",
-                "supportedVersions": { "minVersion": 1, "maxVersion": 1 }
+                "protocol": {"version": 2, "minVersion": 2}
             }),
         );
         self.request(

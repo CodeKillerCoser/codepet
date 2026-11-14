@@ -117,7 +117,7 @@ async fn import_plugin_rejects_package_symlinks_and_removes_staging() {
 }
 
 #[tokio::test]
-async fn remove_imported_plugin_archives_package_and_preserves_other_providers_and_reimport() {
+async fn uninstall_removes_package_and_preserves_other_providers_and_reimport() {
     let directory = tempfile::tempdir().unwrap();
     let manager = build_manager("device-remove", vec![plugin("existing", &["existing-instance"])]);
     assert!(manager.start_enabled().await[0].1.is_ok());
@@ -130,11 +130,99 @@ async fn remove_imported_plugin_archives_package_and_preserves_other_providers_a
     manager.remove_plugin("custom", root.clone()).await.unwrap();
     assert!(manager.snapshot("custom").await.is_err());
     assert!(!root.join("custom").exists());
-    let archive = std::fs::read_dir(directory.path().join("removed-providers")).unwrap().next().unwrap().unwrap().path();
-    assert_eq!(std::fs::read_to_string(archive.join("asset.txt")).unwrap(), "retained asset");
+    assert!(!directory.path().join("removed-providers").exists());
+    assert!(directory.path().join("source/asset.txt").exists());
     let catalog = PluginCatalog::discover(PluginCatalogConfig::default().with_directory(&root));
     assert!(catalog.diagnostics().is_empty());
     assert!(manager.import_plugin(manifest, root).await.unwrap().loaded);
     assert_eq!(manager.snapshot("existing").await.unwrap().generation, before.generation);
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn removal_unregisters_imported_plugin_even_if_package_was_archived_externally() {
+    let directory = tempfile::tempdir().unwrap();
+    let manager = build_manager("device-missing-remove", vec![plugin("existing", &["existing-instance"])]);
+    assert!(manager.start_enabled().await[0].1.is_ok());
+    let before = manager.snapshot("existing").await.unwrap();
+    let root = directory.path().join("installed");
+    let manifest = package(&directory.path().join("source"), "custom");
+    manager.import_plugin(manifest.clone(), root.clone()).await.unwrap();
+    let archived = directory.path().join("external-archive");
+    std::fs::rename(root.join("custom"), &archived).unwrap();
+    manager.remove_plugin("custom", root.clone()).await.unwrap();
+    assert!(manager.snapshot("custom").await.is_err());
+    assert!(archived.join("asset.txt").exists());
+    assert_eq!(manager.snapshot("existing").await.unwrap().generation, before.generation);
+    assert!(manager.import_plugin(manifest, root).await.unwrap().loaded);
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn registry_uninstall_closes_live_process_and_subscriptions_and_updates_next_heartbeat() {
+    let directory = tempfile::tempdir().unwrap();
+    let manager = build_manager("device-registry-uninstall", vec![plugin("existing", &["existing-instance"])]);
+    manager.enable_connection_heartbeats();
+    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
+    gateway.start_event_forwarding();
+    let _phone = manager.remote_connections().register("same-phone-connection".into());
+    assert!(manager.start_enabled().await[0].1.is_ok());
+    let before = manager.snapshot("existing").await.unwrap();
+    let root = directory.path().join("installed");
+    let manifest = package(&directory.path().join("source"), "custom");
+    let marker = directory.path().join("custom.pid");
+    let mut payload: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    payload["env"]["CODEPET_FAKE_PID_MARKER"] = serde_json::json!(marker);
+    std::fs::write(&manifest, serde_json::to_vec(&payload).unwrap()).unwrap();
+    manager.unsubscribe_events("not-installed", "local-observer").await.unwrap();
+    manager.import_plugin(manifest.clone(), root.clone()).await.unwrap();
+    let mut subscription = manager.subscribe_events("custom", "local-observer").await.unwrap();
+    let first = gateway.protocol_ping(codepet_gateway_sdk::PingRequest { sequence: 41 }).await.unwrap();
+    assert!(first.providers.iter().any(|p| p.id == "custom-instance"));
+    #[cfg(unix)]
+    assert!(pid_is_alive(&marker));
+
+    manager.remove_plugin("custom", root.clone()).await.unwrap();
+
+    assert!(!root.join("custom").exists());
+    assert!(!directory.path().join("removed-providers").exists());
+    assert!(manager.snapshot("custom").await.is_err());
+    #[cfg(unix)]
+    assert!(!pid_is_alive(&marker), "uninstall must await actual child termination");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while subscription.receiver.recv().await.is_some() {}
+    }).await.expect("all local subscription senders must close on uninstall");
+    let next = gateway.protocol_ping(codepet_gateway_sdk::PingRequest { sequence: 42 }).await.unwrap();
+    assert_eq!(next.sequence, 42);
+    assert!(!next.providers.iter().any(|p| p.id == "custom-instance"));
+    assert!(next.providers.iter().any(|p| p.id == "existing-instance"));
+    assert_eq!(manager.snapshot("existing").await.unwrap().generation, before.generation);
+    assert_eq!(manager.remote_connections().snapshot().connections.len(), 1);
+    assert!(manager.subscribe_events("custom", "late-observer").await.is_err());
+    assert!(gateway.provider_describe(ProviderDescribeRequest { provider_id: "custom-instance".into() }).await.is_err());
+    // A clean reinstall must not attach to an old connection/subscription hub.
+    assert!(manager.import_plugin(manifest, root).await.unwrap().loaded);
+    let _new_subscription = manager.subscribe_events("custom", "local-observer").await.unwrap();
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn registry_uninstall_waits_for_forced_exit_when_graceful_shutdown_times_out() {
+    let directory = tempfile::tempdir().unwrap();
+    let manager = build_manager_with_options("device-forced-uninstall", vec![], 256,
+        PluginProcessOptions { shutdown_timeout: Duration::from_millis(30), ..PluginProcessOptions::default() });
+    let manifest = package(&directory.path().join("source"), "custom");
+    let marker = directory.path().join("custom.pid");
+    let mut payload: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    payload["env"]["CODEPET_FAKE_SHUTDOWN_RESPONSE_DELAY_MS"] = serde_json::json!("500");
+    payload["env"]["CODEPET_FAKE_PID_MARKER"] = serde_json::json!(marker);
+    std::fs::write(&manifest, serde_json::to_vec(&payload).unwrap()).unwrap();
+    let root = directory.path().join("installed");
+    manager.import_plugin(manifest, root.clone()).await.unwrap();
+    manager.remove_plugin("custom", root.clone()).await.unwrap();
+    assert!(!root.join("custom").exists());
+    #[cfg(unix)]
+    assert!(!pid_is_alive(&marker));
+    assert!(manager.snapshots().await.is_empty());
     manager.shutdown().await;
 }

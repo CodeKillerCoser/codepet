@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://code-pet.dev/provider-sdk/v1/protocol/sdk/transport/handshake.schema.json",
+  "$id": "https://code-pet.dev/provider-sdk/v2/protocol/sdk/transport/handshake.schema.json",
   "title": "handshake.schema.json",
   "description": "CPMX 传输握手载荷及接收资源上限；不包含业务 Initialize 或 JSON-RPC 消息头。",
   "$defs": {

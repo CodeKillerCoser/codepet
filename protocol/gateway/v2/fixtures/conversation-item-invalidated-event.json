@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "method": "conversation.itemUpserted",
+  "params": {
+    "eventCursor": "event-42",
+    "payload": {
+      "conversation": {
+        "providerId": "codex-work",
+        "nativeResourceId": "thread-01"
+      },
+      "updateId": "hook-event-01"
+    }
+  }
+}

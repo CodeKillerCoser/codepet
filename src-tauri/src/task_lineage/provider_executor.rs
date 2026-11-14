@@ -220,7 +220,7 @@ impl ProviderExecutor {
             {
                 return Err("Provider 返回的执行参数与抽取配置不一致".into());
             }
-            let mut state = turn.status;
+            let mut state = turn.status.clone();
             loop {
                 match state {
                     api::TurnStatus::Completed => {

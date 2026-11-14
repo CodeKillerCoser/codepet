@@ -7,7 +7,8 @@ use std::pin::Pin;
 
 pub use codepet_core_sdk::{ClientId, JsonObject, ProtocolError, ProtocolVersion, RequestId, TimestampMs, VersionRange};
 
-pub const PROTOCOL_VERSION: ProtocolVersion = 1;
+pub const PROTOCOL_VERSION: u32 = 1;
+pub const MIN_PROTOCOL_VERSION: u32 = 1;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PetActionDecision {
@@ -222,6 +223,7 @@ pub enum PetTaskStatus {
     #[serde(rename = "unknown")]
     Unknown,
 }
+
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProtocolMethod {
@@ -485,7 +487,9 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     pub fn protocol_initialize<'a>(&'a self, request: PetInitializeRequest) -> ProtocolFuture<'a, PetInitializeResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+
             let result = self.transport.request(ProtocolMethod::ProtocolInitialize, params).await?;
+
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
@@ -493,7 +497,9 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     pub fn pet_snapshot<'a>(&'a self, request: PetSnapshotRequest) -> ProtocolFuture<'a, PetSnapshotResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+
             let result = self.transport.request(ProtocolMethod::PetSnapshot, params).await?;
+
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
@@ -501,7 +507,9 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     pub fn pet_action<'a>(&'a self, request: PetActionRequest) -> ProtocolFuture<'a, PetActionResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+
             let result = self.transport.request(ProtocolMethod::PetAction, params).await?;
+
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }
@@ -509,7 +517,9 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
     pub fn source_set_enabled<'a>(&'a self, request: PetSourceSetEnabledRequest) -> ProtocolFuture<'a, PetSourceSetEnabledResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+
             let result = self.transport.request(ProtocolMethod::SourceSetEnabled, params).await?;
+
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

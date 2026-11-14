@@ -1,0 +1,24 @@
+{
+  "jsonrpc": "2.0",
+  "id": "provider-init-1",
+  "result": {
+    "plugin": {
+      "pluginId": "dev.codepet.codex",
+      "displayName": "Codex",
+      "version": "1.0.0",
+      "defaultWorkspaceRoot": "/Users/example/.codepet/remote_workspace/codex",
+      "instanceKinds": [
+        "codex"
+      ],
+      "protocol": {
+        "version": 2,
+        "minVersion": 2
+      }
+    },
+    "protocol": {
+      "version": 2,
+      "minVersion": 2,
+      "selectedVersion": 2
+    }
+  }
+}

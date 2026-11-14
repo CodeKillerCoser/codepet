@@ -1,0 +1,496 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/core/v2/schema.json",
+  "description": "Generated compatibility view of protocol/v2; edit the functional IDL modules and run protocol:generate.",
+  "$defs": {
+    "ConnectionStatus": {
+      "type": "string",
+      "enum": [
+        "connecting",
+        "online",
+        "offline"
+      ],
+      "description": "连接状态的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ClientConnectionInfo": {
+      "type": "object",
+      "properties": {
+        "connectionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "一次客户端连接的身份。"
+        },
+        "clientId": {
+          "$ref": "#/$defs/ClientId"
+        }
+      },
+      "required": [
+        "connectionId",
+        "clientId"
+      ],
+      "additionalProperties": true,
+      "description": "客户端连接信息的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ClientConnectionsSnapshot": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前快照或能力的修订标识，用于拒绝陈旧状态。"
+        },
+        "connections": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ClientConnectionInfo"
+          },
+          "description": "当前完整客户端连接清单。"
+        }
+      },
+      "required": [
+        "revision",
+        "connections"
+      ],
+      "additionalProperties": true,
+      "description": "客户端连接清单快照的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ClientId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identity of a protocol client installation."
+    },
+    "Cursor": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque pagination cursor."
+    },
+    "DeviceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identity of a CodePet host device."
+    },
+    "DeviceDescriptor": {
+      "type": "object",
+      "properties": {
+        "deviceName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host 设备显示名称。"
+        },
+        "operatingSystem": {
+          "type": "string",
+          "minLength": 1,
+          "description": "操作系统名称。"
+        },
+        "systemVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "操作系统版本。"
+        }
+      },
+      "required": [
+        "deviceName",
+        "operatingSystem",
+        "systemVersion"
+      ],
+      "additionalProperties": true,
+      "description": "设备描述的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "EventCursor": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque cursor for a replayable event stream."
+    },
+    "EventSequence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "Legacy numeric event cursor retained by the v0 compatibility profile."
+    },
+    "TraceContext": {
+      "type": "object",
+      "description": "W3C Trace Context propagated as protocol-envelope metadata. It carries correlation only, never application payload or baggage.",
+      "properties": {
+        "traceparent": {
+          "type": "string",
+          "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+          "description": "W3C Trace Context 的父追踪标识。"
+        },
+        "tracestate": {
+          "type": "string",
+          "minLength": 1,
+          "description": "W3C Trace Context 的可选厂商追踪状态。"
+        }
+      },
+      "required": [
+        "traceparent"
+      ],
+      "additionalProperties": true
+    },
+    "JsonObject": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "JSON对象的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "NativeResourceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Provider-native resource identity, meaningful only with its route."
+    },
+    "PageInfo": {
+      "type": "object",
+      "properties": {
+        "nextCursor": {
+          "$ref": "#/$defs/Cursor"
+        }
+      },
+      "additionalProperties": true,
+      "description": "分页信息的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "PageRequest": {
+      "type": "object",
+      "properties": {
+        "cursor": {
+          "$ref": "#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
+        }
+      },
+      "additionalProperties": true,
+      "description": "分页的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProtocolError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "description": "可由程序判断的业务字符串错误码。"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "供调用者理解的错误或提示文字。"
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "同一操作是否适合在条件恢复后重试。"
+        },
+        "details": {
+          "$ref": "#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "code",
+        "message",
+        "retryable"
+      ],
+      "additionalProperties": true,
+      "description": "协议错误的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProtocolVersion": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 4294967295,
+      "description": "单调递增的业务协议修订号；不是软件、SDK、安装清单或传输格式版本。"
+    },
+    "ProviderInstanceId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identity of one configured provider instance."
+    },
+    "ProviderPluginId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identity declared by a provider plugin implementation."
+    },
+    "RequestId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "请求标识的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "RoutedResourceId": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共享领域对象所属的 Provider 实例路由身份。"
+        },
+        "nativeResourceId": {
+          "$ref": "#/$defs/NativeResourceId"
+        }
+      },
+      "required": [
+        "providerId",
+        "nativeResourceId"
+      ],
+      "additionalProperties": true,
+      "description": "Opaque gateway provider route for a provider-native resource."
+    },
+    "RpcError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "integer",
+          "description": "JSON-RPC 外层数字错误码；业务字符串错误码放在 data.code。"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "供调用者理解的错误或提示文字。"
+        },
+        "data": {
+          "$ref": "#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "additionalProperties": true,
+      "description": "RPC错误的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "TimestampMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "时间戳毫秒的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "VersionRange": {
+      "type": "object",
+      "properties": {
+        "minVersion": {
+          "$ref": "#/$defs/ProtocolVersion"
+        },
+        "maxVersion": {
+          "$ref": "#/$defs/ProtocolVersion"
+        }
+      },
+      "required": [
+        "minVersion",
+        "maxVersion"
+      ],
+      "additionalProperties": true,
+      "description": "版本区间的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProtocolVersionOffer": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/BusinessProtocolVersion"
+        },
+        "minVersion": {
+          "$ref": "#/$defs/BusinessProtocolVersion"
+        }
+      },
+      "required": [
+        "version",
+        "minVersion"
+      ],
+      "additionalProperties": true,
+      "description": "本端支持的连续业务版本区间 [minVersion, version]。忽略未知字段，但严格校验已知字段和跨字段大小关系。"
+    },
+    "ProtocolVersionSelection": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "$ref": "#/$defs/BusinessProtocolVersion"
+        },
+        "minVersion": {
+          "$ref": "#/$defs/BusinessProtocolVersion"
+        },
+        "selectedVersion": {
+          "$ref": "#/$defs/BusinessProtocolVersion"
+        }
+      },
+      "required": [
+        "version",
+        "minVersion",
+        "selectedVersion"
+      ],
+      "additionalProperties": true,
+      "description": "响应方自己的版本区间及本次连接的选择；version 不是 selectedVersion 的别名。请求方必须重新计算并验证选择。"
+    },
+    "BusinessProtocolVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295,
+      "description": "单调递增的业务协议修订号；不是软件、SDK、安装清单或传输格式版本。"
+    },
+    "ProviderTransportLimits": {
+      "type": "object",
+      "properties": {
+        "maxFramePayloadBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65536,
+          "description": "单个 Yamux DATA 帧 payload 的最大字节数。"
+        },
+        "maxEncodedMessageBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 16777216,
+          "description": "编码后 CPRF 整帧最大字节数，包含 10 字节头。"
+        },
+        "maxDecodedMessageBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 134217728,
+          "description": "解压后 UTF-8 JSON 的最大字节数。"
+        },
+        "receiveBudgetBytes": {
+          "type": "integer",
+          "minimum": 2048,
+          "maximum": 1073741824,
+          "description": "normal 通道接收对象及编码/解码缓冲区的字节预算。"
+        },
+        "normalStreams": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32,
+          "description": "normal 通道并发消息槽位上限。"
+        },
+        "smallStreams": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16,
+          "description": "small 通道并发消息槽位上限。"
+        },
+        "controlStreams": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8,
+          "description": "control 通道并发消息槽位上限。"
+        },
+        "smallMessageBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 65536,
+          "description": "small 通道单条消息的编码和解码尺寸上限。"
+        },
+        "smallReceiveBudgetBytes": {
+          "type": "integer",
+          "minimum": 2048,
+          "maximum": 16777216,
+          "description": "small 通道独立接收字节预算。"
+        },
+        "controlMessageBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 16384,
+          "description": "control 通道单条消息的编码和解码尺寸上限。"
+        },
+        "controlReceiveBudgetBytes": {
+          "type": "integer",
+          "minimum": 2048,
+          "maximum": 1048576,
+          "description": "control 通道独立接收字节预算。"
+        },
+        "connectionWindowBytes": {
+          "type": "integer",
+          "minimum": 33554432,
+          "maximum": 268435456,
+          "description": "Yamux 连接接收窗口的字节预算。"
+        },
+        "idleTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 120000,
+          "description": "传输或准入过程无进展的超时时间，毫秒。"
+        },
+        "streamTimeoutMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 300000,
+          "description": "单条消息流的处理时限，毫秒；与 RPC 请求超时独立。"
+        }
+      },
+      "required": [
+        "maxFramePayloadBytes",
+        "maxEncodedMessageBytes",
+        "maxDecodedMessageBytes",
+        "receiveBudgetBytes",
+        "normalStreams",
+        "smallStreams",
+        "controlStreams",
+        "smallMessageBytes",
+        "smallReceiveBudgetBytes",
+        "controlMessageBytes",
+        "controlReceiveBudgetBytes",
+        "connectionWindowBytes",
+        "idleTimeoutMs",
+        "streamTimeoutMs"
+      ],
+      "additionalProperties": false,
+      "description": "Provider传输上限的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderTransportHello": {
+      "type": "object",
+      "properties": {
+        "supportedVersions": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "minItems": 1,
+          "description": "本端支持的版本；对象表示业务版本区间，数组表示握手版本清单。"
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "传输能力标识清单；mux v1 必须完整声明八项必选能力。"
+        },
+        "receive": {
+          "$ref": "#/$defs/ProviderTransportLimits"
+        }
+      },
+      "required": [
+        "supportedVersions",
+        "features",
+        "receive"
+      ],
+      "additionalProperties": false,
+      "description": "Provider传输HELLO的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderTransportSelection": {
+      "type": "object",
+      "properties": {
+        "selectedVersion": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "协商选中的版本，须在双方支持范围内。"
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "传输能力标识清单；mux v1 必须完整声明八项必选能力。"
+        },
+        "receive": {
+          "$ref": "#/$defs/ProviderTransportLimits"
+        }
+      },
+      "required": [
+        "selectedVersion",
+        "features",
+        "receive"
+      ],
+      "additionalProperties": false,
+      "description": "Provider传输选择的完整数据定义；字段、可选性与允许值见本对象约束。"
+    }
+  }
+}

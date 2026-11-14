@@ -8829,8 +8829,8 @@ capabilities.conversationCreate.selection = capabilities.turnSend;
 var plugin = {
   pluginId,
   displayName: backend === "pi" ? "Independent Pi RPC" : "Independent JavaScript Echo",
-  version: "1.0.0",
-  supportedVersions: { minVersion: 1, maxVersion: 1 },
+  version: "2.0.0",
+  protocol: { version: 2, minVersion: 2 },
   instanceKinds: [kind]
 };
 var initialized = false;
@@ -8963,11 +8963,17 @@ async function runTurn(entry, turn, input, inst) {
 }
 async function business(method, p) {
   if (method === "provider.initialize") {
-    if (!(p.supportedVersions.minVersion <= 1 && p.supportedVersions.maxVersion >= 1))
-      fail("no supported version");
+    if (p.protocol.minVersion > p.protocol.version)
+      fail("invalid protocol interval", "invalid_protocol_range");
+    const selectedVersion = Math.min(
+      p.protocol.version,
+      plugin.protocol.version
+    );
+    if (selectedVersion < Math.max(p.protocol.minVersion, plugin.protocol.minVersion))
+      fail("no common business protocol version", "protocol_version_mismatch");
     dataDirectory = p.directories?.data;
     initialized = true;
-    return { selectedVersion: 1, plugin };
+    return { protocol: { ...plugin.protocol, selectedVersion }, plugin };
   }
   if (!initialized) fail("initialize required", "not_initialized");
   switch (method) {
@@ -9178,14 +9184,25 @@ async function business(method, p) {
         fail("instance is not ready", "unavailable");
       if (p.capabilityRevision !== capabilities.revision)
         fail("capability revision mismatch", "capability_changed");
-      const key = `${p.conversation.providerInstanceId}:${p.clientRequestId}`, signature = JSON.stringify(p);
+      const selection = normalizeSelection(capabilities.turnSend, p.selection);
+      const key = `${p.conversation.providerInstanceId}:${p.clientRequestId}`, signature = JSON.stringify({
+        conversation: [
+          "deviceId",
+          "providerPluginId",
+          "providerInstanceId",
+          "nativeResourceId"
+        ].map((key2) => p.conversation[key2]),
+        clientRequestId: p.clientRequestId,
+        capabilityRevision: p.capabilityRevision,
+        input: { kind: p.input.kind, text: p.input.text },
+        selection
+      });
       if (accepted.has(key)) {
         const old = accepted.get(key);
         if (old.signature !== signature)
           fail("clientRequestId reused with changed request");
         return old.result;
       }
-      const selection = normalizeSelection(capabilities.turnSend, p.selection);
       if (entry.value.activeTurn) fail("conversation busy", "busy");
       const turn = {
         resource: routed(inst.value.route, id("turn")),

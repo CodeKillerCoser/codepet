@@ -22,3 +22,16 @@ fn version_range_is_language_neutral_and_explicit() {
 
     assert_eq!(serde_json::to_string(&range).unwrap(), r#"{"minVersion":1,"maxVersion":2}"#);
 }
+
+#[test]
+fn highest_common_version_is_checked_in_both_directions() {
+    use codepet_core_sdk::{ProtocolVersionOffer as Offer, ProtocolVersionSelection as Selection};
+    let local=Offer{version:4,min_version:2};
+    for (peer, selected) in [(Offer{version:5,min_version:3},4),(Offer{version:2,min_version:2},2),(Offer{version:4,min_version:4},4)] {
+        let reply=peer.negotiate(&local).unwrap();
+        assert_eq!(reply.selected_version,selected); assert_eq!(reply.offer(),peer);
+        local.validate_selection(&reply).unwrap();
+    }
+    for peer in [Offer{version:1,min_version:1},Offer{version:6,min_version:5},Offer{version:2,min_version:3},Offer{version:0,min_version:0}] { assert!(local.negotiate(&peer).is_err()); }
+    assert!(local.validate_selection(&Selection{version:5,min_version:2,selected_version:2}).is_err());
+}

@@ -16,7 +16,7 @@ fn generated_sdk_builds_a_typed_wire_request_from_method_and_params() {
         "hostClientId": "client-test",
         "hostDeviceId": "device-test",
         "hostVersion": "0.1.0",
-        "supportedVersions": { "minVersion": 1, "maxVersion": 1 }
+        "protocol": { "version": 2, "minVersion": 2 }
     });
     let request = ProtocolRequest::from_method_params(
         ProtocolMethod::ProviderInitialize,
@@ -54,7 +54,7 @@ fn generated_dispatch_lane_keeps_lifecycle_control_available_under_load() {
 #[test]
 fn provider_frame_v1_round_trips_small_json_without_compression() {
     let request = decode_request(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/initialize-request.json"
+        "../../../../protocol/provider/v2/fixtures/initialize-request.json"
     ))
     .unwrap();
     let message = ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request));
@@ -228,7 +228,7 @@ fn response_requires_exactly_one_of_result_or_error() {
 #[test]
 fn inbound_classifier_distinguishes_events_and_other_notifications() {
     let event = decode_wire_message(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/conversation-upserted-event.json"
+        "../../../../protocol/provider/v2/fixtures/conversation-upserted-event.json"
     ))
     .unwrap();
     assert!(matches!(event, ProviderWireMessage::Event(_)));
@@ -280,4 +280,31 @@ async fn transport_exposes_notification_and_event_inbound_messages() {
         panic!("expected inbound notification");
     };
     assert_eq!(notification.params["message"], "ready");
+}
+
+#[test]
+fn v2_receive_is_tolerant_but_known_values_and_executable_choices_remain_strict() {
+    use codepet_provider_sdk::{ConversationItem, ConversationStatus};
+    let future=serde_json::json!({"kind":"future-item","vendor":{"raw":17}});
+    let item:ConversationItem=serde_json::from_value(future.clone()).unwrap();
+    assert!(matches!(item, ConversationItem::Unrecognized(_)));
+    assert_eq!(serde_json::to_value(item).unwrap(),future);
+    let status:ConversationStatus=serde_json::from_value(serde_json::json!("future-status")).unwrap();
+    assert_eq!(serde_json::to_value(status).unwrap(),"future-status");
+    assert!(serde_json::from_value::<ConversationItem>(serde_json::json!({"kind":"message","status":"completed"})).is_err());
+    let mut request:serde_json::Value=serde_json::from_slice(include_bytes!("../../../../protocol/provider/v2/fixtures/initialize-request.json")).unwrap();
+    request["future-envelope"]=true.into(); request["params"]["future-field"]=17.into();
+    assert!(decode_request(&serde_json::to_vec(&request).unwrap()).is_ok());
+    request["params"]["protocol"]["minVersion"]=0.into();
+    assert!(decode_request(&serde_json::to_vec(&request).unwrap()).is_err());
+    let request=serde_json::json!({"jsonrpc":"2.0","id":"unsafe","method":"approval.resolve","params":{"route":{"deviceId":"d","providerPluginId":"p","providerInstanceId":"i"},"approval":{"deviceId":"d","providerPluginId":"p","providerInstanceId":"i","nativeResourceId":"a"},"decision":"future-authorization"}});
+    assert!(matches!(decode_wire_message(&serde_json::to_vec(&request).unwrap()).unwrap(),ProviderWireMessage::Request(JsonRpcInboundRequest::Rejected(_))));
+}
+
+#[test]
+fn low_level_request_encoder_also_rejects_preserved_unknown_choices() {
+    let raw=serde_json::json!({"jsonrpc":"2.0","id":"raw-unsafe","method":"approval.resolve","params":{"route":{"deviceId":"d","providerPluginId":"p","providerInstanceId":"i"},"approval":{"deviceId":"d","providerPluginId":"p","providerInstanceId":"i","nativeResourceId":"a"},"decision":"future-authorization"}});
+    // Native serde can preserve a receive value; sending requires the generated encoder gate.
+    let request: ProtocolRequest=serde_json::from_value(raw).unwrap();
+    assert!(codepet_provider_sdk::encode_request(&request).is_err());
 }

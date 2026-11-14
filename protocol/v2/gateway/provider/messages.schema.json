@@ -1,0 +1,269 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v2/gateway/provider/messages.schema.json",
+  "description": "gateway 的 provider 功能模块交互对象。",
+  "$defs": {
+    "GatewayCapability": {
+      "type": "string",
+      "enum": [
+        "project.list",
+        "project.get",
+        "project.create",
+        "project.update",
+        "project.delete",
+        "conversation.list",
+        "conversation.search",
+        "conversation.get",
+        "conversation.releaseInteraction",
+        "conversation.create",
+        "turn.send",
+        "turn.interrupt",
+        "approval.resolve",
+        "conversation.recent",
+        "codepet.usage.query",
+        "turn.steer",
+        "conversation.inputQueue.get",
+        "conversation.inputQueue.enqueue",
+        "conversation.inputQueue.withdraw",
+        "conversation.inputQueue.steer",
+        "conversation.inputQueue.resume",
+        "conversation.inputQueue.acknowledgeEdit"
+      ],
+      "description": "GatewayCapability 的允许取值；调用方必须按枚举处理。"
+    },
+    "GatewayCapabilities": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "所属对象集合或能力快照的版本，用于变化检测；不等同于事件游标。"
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GatewayCapability",
+            "description": "引用 GatewayCapability 的结构与约束。"
+          },
+          "uniqueItems": true,
+          "description": "当前支持的业务能力方法集合。"
+        },
+        "turnSend": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnSendCapabilities",
+          "description": "引用 TurnSendCapabilities 的结构与约束。"
+        },
+        "conversationCreate": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationCreateCapabilities",
+          "description": "引用 ConversationCreateCapabilities 的结构与约束。"
+        },
+        "usageDatasets": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/UsageDataset",
+            "description": "引用 UsageDataset 的结构与约束。"
+          },
+          "description": "Provider 支持查询的用量数据集。"
+        }
+      },
+      "required": [
+        "revision",
+        "methods"
+      ],
+      "additionalProperties": true,
+      "description": "GatewayCapabilities 的结构与约束。"
+    },
+    "ProviderCapabilitiesSummary": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "所属对象集合或能力快照的版本，用于变化检测；不等同于事件游标。"
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "additionalProperties": true,
+      "description": "ProviderCapabilitiesSummary 的结构与约束。"
+    },
+    "ProviderIdentity": {
+      "type": "object",
+      "properties": {
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "供 UI 展示的名称。"
+        },
+        "icon": {
+          "type": "string",
+          "pattern": "^https://",
+          "description": "供 UI 展示的图标引用。"
+        },
+        "defaultWorkspaceRoot": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Provider 默认使用的工作区根目录。"
+        }
+      },
+      "required": [
+        "displayName"
+      ],
+      "additionalProperties": true,
+      "description": "ProviderIdentity 的结构与约束。"
+    },
+    "ProviderRuntime": {
+      "type": "object",
+      "properties": {
+        "connectionStatus": {
+          "$ref": "../../common/types.schema.json#/$defs/ConnectionStatus",
+          "description": "引用 ConnectionStatus 的结构与约束。"
+        },
+        "generation": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Provider 运行代次，用于区分重启后的状态。"
+        },
+        "status": {
+          "$ref": "#/$defs/ProviderStatus",
+          "description": "引用 ProviderStatus 的结构与约束。"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "该对象所属协议或运行时的软件版本。"
+        },
+        "executablePath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Provider 使用的运行时可执行文件路径。"
+        },
+        "authentication": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProviderAuthentication",
+          "description": "引用 ProviderAuthentication 的结构与约束。"
+        },
+        "usage": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProviderUsage",
+          "description": "引用 ProviderUsage 的结构与约束。"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "additionalProperties": true,
+      "description": "ProviderRuntime 的结构与约束。"
+    },
+    "ProviderSummary": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "对象在所属集合内的稳定标识。"
+        },
+        "identity": {
+          "$ref": "#/$defs/ProviderIdentity",
+          "description": "引用 ProviderIdentity 的结构与约束。"
+        },
+        "runtime": {
+          "$ref": "#/$defs/ProviderRuntime",
+          "description": "引用 ProviderRuntime 的结构与约束。"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/ProviderCapabilitiesSummary",
+          "description": "引用 ProviderCapabilitiesSummary 的结构与约束。"
+        }
+      },
+      "required": [
+        "id",
+        "identity",
+        "runtime",
+        "capabilities"
+      ],
+      "additionalProperties": true,
+      "description": "ProviderSummary 的结构与约束。"
+    },
+    "ProviderDescribeRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProviderId",
+          "description": "引用 ProviderId 的结构与约束。"
+        }
+      },
+      "required": [
+        "providerId"
+      ],
+      "additionalProperties": true,
+      "description": "ProviderDescribeRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProviderDescribeResponse": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/ProviderSummary",
+          "description": "引用 ProviderSummary 的结构与约束。"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/GatewayCapabilities",
+          "description": "引用 GatewayCapabilities 的结构与约束。"
+        }
+      },
+      "required": [
+        "provider",
+        "capabilities"
+      ],
+      "additionalProperties": true,
+      "description": "ProviderDescribeResponse 的成功返回结果。"
+    },
+    "ProviderListRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true,
+      "description": "ProviderListRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "ProviderListResponse": {
+      "type": "object",
+      "properties": {
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderSummary",
+            "description": "引用 ProviderSummary 的结构与约束。"
+          },
+          "description": "Host 当前可见的 Provider 摘要列表。"
+        }
+      },
+      "required": [
+        "providers"
+      ],
+      "additionalProperties": true,
+      "description": "ProviderListResponse 的成功返回结果。"
+    },
+    "ProviderStatus": {
+      "type": "string",
+      "enum": [
+        "connecting",
+        "ready",
+        "stopped",
+        "unavailable",
+        "error"
+      ],
+      "description": "ProviderStatus 的允许取值；调用方必须按枚举处理。"
+    },
+    "ProviderChangedEvent": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "$ref": "#/$defs/ProviderSummary",
+          "description": "引用 ProviderSummary 的结构与约束。"
+        }
+      },
+      "required": [
+        "provider"
+      ],
+      "additionalProperties": true,
+      "description": "ProviderChangedEvent 的事件载荷。"
+    }
+  }
+}

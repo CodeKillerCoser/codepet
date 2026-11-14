@@ -1003,7 +1003,7 @@ impl CodexAppServerSession {
                     CodexApprovalKind::CommandExecution | CodexApprovalKind::FileChange => {
                         match decision {
                             ApprovalDecision::Approve => "accept",
-                            ApprovalDecision::Deny => "decline",
+                            ApprovalDecision::Deny | ApprovalDecision::Unrecognized(_) => "decline",
                         }
                     }
                 };

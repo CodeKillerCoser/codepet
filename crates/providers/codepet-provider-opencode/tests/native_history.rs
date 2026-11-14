@@ -15,9 +15,9 @@ async fn native_history_snapshot_is_readable() {
             host_client_id: "history-diagnostic".into(),
             host_device_id: "history-diagnostic".into(),
             host_version: "test".into(),
-            supported_versions: VersionRange {
+            protocol: ProtocolVersionOffer {
                 min_version: PROTOCOL_VERSION,
-                max_version: PROTOCOL_VERSION,
+                version: PROTOCOL_VERSION,
             },
         })
         .await

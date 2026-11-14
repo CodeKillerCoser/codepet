@@ -1,0 +1,15 @@
+{
+  "description": "provider subscription 模块的events注册表。",
+  "events": [
+    {
+      "name": "event.notification",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "subscription",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ProviderNotificationEvent"
+      },
+      "description": "Provider通知事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    }
+  ]
+}

@@ -121,12 +121,48 @@ test("mux public Yamux interoperability, grant, FIN, ordered event ACK", async (
     assert.equal(reply.error, undefined, JSON.stringify(reply.error));
     return reply.result;
   };
-  await rpc("provider.initialize", {
+  const baseInit = { hostClientId: "c", hostDeviceId: "d", hostVersion: "t" };
+  for (const protocol of [
+    { version: 1, minVersion: 1 },
+    { version: 3, minVersion: 3 },
+  ])
+    await rpc(
+      "provider.initialize",
+      { ...baseInit, protocol },
+      undefined,
+      "protocol_version_mismatch",
+    );
+  await rpc(
+    "provider.initialize",
+    { ...baseInit, protocol: { version: 1, minVersion: 2 } },
+    undefined,
+    "invalid_protocol_range",
+  );
+  await rpc(
+    "provider.initialize",
+    { ...baseInit, protocol: { version: 0, minVersion: 0 } },
+    undefined,
+    "invalid_request",
+  );
+  await rpc("provider.describe", {}, undefined, "not_initialized");
+  const initialized = await rpc("provider.initialize", {
     hostClientId: "c",
     hostDeviceId: "d",
     hostVersion: "t",
-    supportedVersions: { minVersion: 1, maxVersion: 1 },
+    protocol: { version: 4, minVersion: 2, futureOffer: true },
+    futureInitialize: true,
   });
+  assert.deepEqual(initialized.protocol, {
+    version: 2,
+    minVersion: 2,
+    selectedVersion: 2,
+  });
+  assert.deepEqual(initialized.plugin.protocol, { version: 2, minVersion: 2 });
+  assert.equal(
+    (await rpc("future.unknown", {}, undefined, "method_not_found")).code,
+    -32601,
+  );
+  await rpc("provider.describe", { futureDescribe: true });
   assert.deepEqual(await rpc("runtime.getInstalled", { refresh: true }), {
     selectionRequired: false,
     harnessList: [],

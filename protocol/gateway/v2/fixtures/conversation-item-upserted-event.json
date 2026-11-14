@@ -1,0 +1,68 @@
+{
+  "jsonrpc": "2.0",
+  "method": "conversation.itemUpserted",
+  "params": {
+    "eventCursor": "event-42",
+    "payload": {
+      "item": {
+        "resource": {
+          "providerId": "codex-work",
+          "nativeResourceId": "command-one"
+        },
+        "turn": {
+          "providerId": "codex-work",
+          "nativeResourceId": "turn-one"
+        },
+        "conversation": {
+          "providerId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "kind": "command",
+        "status": "completed",
+        "title": "cargo test",
+        "tool": {
+          "callId": "command-one",
+          "name": "shell",
+          "category": "command",
+          "origin": {
+            "kind": "builtin"
+          },
+          "input": {
+            "kind": "command",
+            "command": "cargo test",
+            "cwd": "/workspace/codepet",
+            "truncation": {
+              "originalBytes": 4096,
+              "retainedBytes": 10,
+              "strategy": "head-tail"
+            },
+            "actions": [
+              {
+                "kind": "execute",
+                "command": "cargo test"
+              }
+            ]
+          },
+          "outcome": {
+            "kind": "success",
+            "content": [
+              {
+                "contentId": "command-one:result:0",
+                "kind": "output",
+                "text": "tests passed"
+              },
+              {
+                "contentId": "command-one:result:1",
+                "kind": "structured-json",
+                "value": {
+                  "checks": 24
+                }
+              }
+            ],
+            "exitCode": 0
+          }
+        }
+      }
+    }
+  }
+}

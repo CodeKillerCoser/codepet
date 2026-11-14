@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://code-pet.dev/protocol/channel/lan/v1/schema.json",
-  "description": "Generated compatibility view of protocol/v1; edit the functional IDL modules and run protocol:generate.",
+  "description": "Generated compatibility view of protocol/v2; edit the functional IDL modules and run protocol:generate.",
   "$defs": {
     "CurrentCredentialDeleteResponse": {
       "type": "object",
@@ -21,10 +21,10 @@
       "type": "object",
       "properties": {
         "deviceId": {
-          "$ref": "../../../core/v1/schema.json#/$defs/DeviceId"
+          "$ref": "../../../core/v2/schema.json#/$defs/DeviceId"
         },
         "descriptor": {
-          "$ref": "../../../core/v1/schema.json#/$defs/DeviceDescriptor"
+          "$ref": "../../../core/v2/schema.json#/$defs/DeviceDescriptor"
         },
         "identityFingerprint": {
           "type": "string",
@@ -50,10 +50,10 @@
           "description": "配对邀请的敏感一次性密钥。"
         },
         "clientId": {
-          "$ref": "../../../core/v1/schema.json#/$defs/ClientId"
+          "$ref": "../../../core/v2/schema.json#/$defs/ClientId"
         },
         "device": {
-          "$ref": "../../../core/v1/schema.json#/$defs/DeviceDescriptor"
+          "$ref": "../../../core/v2/schema.json#/$defs/DeviceDescriptor"
         }
       },
       "required": [
@@ -104,13 +104,13 @@
       "type": "object",
       "properties": {
         "hostDeviceId": {
-          "$ref": "../../../core/v1/schema.json#/$defs/DeviceId"
+          "$ref": "../../../core/v2/schema.json#/$defs/DeviceId"
         },
         "clientId": {
-          "$ref": "../../../core/v1/schema.json#/$defs/ClientId"
+          "$ref": "../../../core/v2/schema.json#/$defs/ClientId"
         },
         "device": {
-          "$ref": "../../../core/v1/schema.json#/$defs/DeviceDescriptor"
+          "$ref": "../../../core/v2/schema.json#/$defs/DeviceDescriptor"
         },
         "clientNonce": {
           "type": "string",
@@ -142,7 +142,7 @@
           "$ref": "#/$defs/LanHostIdentity"
         },
         "expiresAt": {
-          "$ref": "../../../core/v1/schema.json#/$defs/TimestampMs"
+          "$ref": "../../../core/v2/schema.json#/$defs/TimestampMs"
         },
         "confirmationCode": {
           "type": "string",
@@ -181,7 +181,7 @@
           "description": "该对象所属协议或运行时的软件版本。"
         },
         "hostDeviceId": {
-          "$ref": "../../../core/v1/schema.json#/$defs/DeviceId"
+          "$ref": "../../../core/v2/schema.json#/$defs/DeviceId"
         },
         "displayName": {
           "type": "string",
@@ -210,7 +210,7 @@
           "description": "配对邀请的敏感一次性密钥。"
         },
         "expiresAt": {
-          "$ref": "../../../core/v1/schema.json#/$defs/TimestampMs"
+          "$ref": "../../../core/v2/schema.json#/$defs/TimestampMs"
         },
         "serviceUrl": {
           "type": "string",

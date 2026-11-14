@@ -1,3 +1,4 @@
+import { compatibilityGraph } from "./compatibility.mjs";
 const dartReservedWords = new Set([
   "abstract", "as", "assert", "async", "await", "base", "break", "case", "catch",
   "class", "const", "continue", "covariant", "default", "deferred", "do", "dynamic",
@@ -195,13 +196,20 @@ function unionParents(pkg) {
 }
 
 function emitEnum(writer, definition) {
-  writer.block(`enum ${definition.name}`, () => {
+  const extensible = definition.forwardCompatible && definition.values.length > 1;
+  writer.block(`${extensible ? 'final class' : 'enum'} ${definition.name}`, () => {
     definition.values.forEach((value, index) => {
       const suffix = index === definition.values.length - 1 ? ";" : ",";
-      writer.line(`${camelCase(value)}(${dartString(value)})${suffix}`);
+      writer.line(extensible ? `static const ${camelCase(value)} = ${definition.name}._(${dartString(value)});` : `${camelCase(value)}(${dartString(value)})${suffix}`);
     });
     writer.blank();
-    writer.line(`const ${definition.name}(this.wireValue);`);
+    writer.line(`const ${definition.name}${extensible ? '._' : ''}(this.wireValue);`);
+    if (extensible) {
+      writer.line(`static const values = [${definition.values.map(camelCase).join(', ')}];`);
+      writer.line(`bool get isKnown => values.any((v) => v.wireValue == wireValue);`);
+      writer.line(`@override bool operator ==(Object other) => other is ${definition.name} && other.wireValue == wireValue;`);
+      writer.line(`@override int get hashCode => wireValue.hashCode;`);
+    }
     writer.blank();
     writer.line("final String wireValue;");
     writer.blank();
@@ -210,7 +218,7 @@ function emitEnum(writer, definition) {
       writer.block("for (final candidate in values)", () => {
         writer.line("if (candidate.wireValue == wireValue) return candidate;");
       });
-      writer.line(`throw ProtocolCodecException(path, 'expected one of: ${definition.values.join(", ")}');`);
+      writer.line(extensible ? `return ${definition.name}._(wireValue);` : `throw ProtocolCodecException(path, 'expected one of: ${definition.values.join(", ")}');`);
     });
     writer.blank();
     writer.line("String toJson() => wireValue;");
@@ -237,13 +245,21 @@ function emitUnion(writer, definition) {
         }
         writer.line("default:");
         writer.indent += 1;
-        writer.line(`throw ProtocolCodecException('\$path.${definition.discriminator.field}', 'unknown ${definition.name} discriminator: \$discriminator');`);
+        writer.line(definition.forwardCompatible ? `return Unrecognized${definition.name}(Map.unmodifiable(json), _string(discriminator, '$path.${definition.discriminator.field}'));` : `throw ProtocolCodecException('\$path.${definition.discriminator.field}', 'unknown ${definition.name} discriminator: \$discriminator');`);
         writer.indent -= 1;
       });
     });
     writer.blank();
     writer.line("Map<String, Object?> toJson();");
   });
+  if (definition.forwardCompatible) {
+    writer.block(`final class Unrecognized${definition.name} extends ${definition.name}`, () => {
+      writer.line(`const Unrecognized${definition.name}(this.raw, this.kind);`);
+      writer.line('final Map<String, Object?> raw;');
+      writer.line('final String kind;');
+      writer.line('@override Map<String, Object?> toJson() => Map.of(raw);');
+    });
+  }
 }
 
 function emitObject(writer, definition, parent, ir) {
@@ -376,7 +392,7 @@ function emitCodecHelpers(writer, includeException) {
   writer.blank();
   writer.block("void _expectKeys(Map<String, Object?> value, Set<String> allowed, String path)", () => {
     writer.block("for (final key in value.keys)", () => {
-      writer.line("if (!allowed.contains(key)) throw ProtocolCodecException('$path.$key', 'unknown field');");
+      writer.line("if (!allowed.contains(key) && !_forwardCompatible) throw ProtocolCodecException('$path.$key', 'unknown field');");
     });
   });
   writer.blank();
@@ -452,6 +468,7 @@ function emitCodecHelpers(writer, includeException) {
 function emitProtocolMetadata(writer, pkg, ir) {
   const service = pkg.service;
   writer.line(`const int protocolVersion = ${service.version};`);
+  writer.line(`const int minProtocolVersion = ${service.minVersion};`);
   if (service.kind === "json-rpc-2.0") writer.line(`const String jsonRpcVersion = ${dartString(service.jsonRpcVersion)};`);
   writer.blank();
   writer.block("enum ProtocolIdempotency", () => {
@@ -487,14 +504,18 @@ function emitProtocolMetadata(writer, pkg, ir) {
     writer.line("String toJson() => wireName;");
   });
   writer.blank();
-  writer.block("enum ProtocolEventName", () => {
+  writer.block(pkg.forwardCompatible ? "final class ProtocolEventName" : "enum ProtocolEventName", () => {
     service.events.forEach((event, index) => {
       const suffix = index === service.events.length - 1 ? ";" : ",";
-      writer.line(`${camelCase(event.name)}(${dartString(event.name)}, direction: ${dartString(event.direction)}, delivery: ${dartString(event.delivery)}, scope: ${dartString(event.scope)}, payloadType: ${event.payloadType.name})${suffix}`);
+      writer.line(`${pkg.forwardCompatible ? "static const " : ""}${camelCase(event.name)}${pkg.forwardCompatible ? " = ProtocolEventName" : ""}(${dartString(event.name)}, direction: ${dartString(event.direction)}, delivery: ${dartString(event.delivery)}, scope: ${dartString(event.scope)}, payloadType: ${event.payloadType.name})${pkg.forwardCompatible ? ";" : suffix}`);
     });
     writer.blank();
     writer.line("const ProtocolEventName(this.wireName, {required this.direction, required this.delivery, required this.scope, required this.payloadType});");
     writer.blank();
+    if (pkg.forwardCompatible) {
+      writer.line(`static const values = [${service.events.map(e => camelCase(e.name)).join(', ')}];`);
+      writer.line('bool get isKnown => values.contains(this);');
+    }
     writer.line("final String wireName;");
     writer.line("final String direction;");
     writer.line("final String delivery;");
@@ -504,7 +525,7 @@ function emitProtocolMetadata(writer, pkg, ir) {
     writer.block("static ProtocolEventName fromJson(Object? value, {String path = 'ProtocolEventName'})", () => {
       writer.line("final wireValue = _string(value, path);");
       writer.block("for (final candidate in values)", () => writer.line("if (candidate.wireName == wireValue) return candidate;"));
-      writer.line("throw ProtocolCodecException(path, 'unknown protocol event: $wireValue');");
+      writer.line(pkg.forwardCompatible ? "return ProtocolEventName(wireValue, direction: 'unknown', delivery: 'unknown', scope: 'unknown', payloadType: Object);" : "throw ProtocolCodecException(path, 'unknown protocol event: $wireValue');");
     });
     writer.blank();
     writer.line("String toJson() => wireName;");
@@ -515,7 +536,7 @@ function emitProtocolMetadata(writer, pkg, ir) {
   else fail(`${pkg.id} Dart generator does not support service transport ${service.kind}`);
 }
 
-function emitTypedSwitch(writer, entries, selector, typeKey, value, path, ir, mode) {
+function emitTypedSwitch(writer, entries, selector, typeKey, value, path, ir, mode, extensible = false) {
   writer.block(`switch (${selector})`, () => {
     for (const entry of entries) {
       const enumType = typeKey === "payloadType" ? "ProtocolEventName" : "ProtocolMethod";
@@ -527,6 +548,12 @@ function emitTypedSwitch(writer, entries, selector, typeKey, value, path, ir, mo
         writer.line(`if (${value} is! ${type.name}) throw ProtocolCodecException(${path}, 'expected ${type.name}');`);
         writer.line(`return ${encodeExpression(type, value, path, ir)};`);
       }
+      writer.indent -= 1;
+    }
+    if (extensible) {
+      writer.line('default:');
+      writer.indent += 1;
+      writer.line(`return _object(${value}, ${path});`);
       writer.indent -= 1;
     }
   });
@@ -562,17 +589,17 @@ function emitJsonRpcProtocolCodec(writer, pkg, ir) {
   });
   writer.blank();
   writer.block("Object _decodeEventPayload(ProtocolEventName event, Object? value, String path)", () => {
-    emitTypedSwitch(writer, service.events, "event", "payloadType", "value", "path", ir, "decode");
+    emitTypedSwitch(writer, service.events, "event", "payloadType", "value", "path", ir, "decode", pkg.forwardCompatible);
   });
   writer.blank();
   writer.block("Map<String, Object?> _encodeEventPayload(ProtocolEventName event, Object value, String path)", () => {
-    emitTypedSwitch(writer, service.events, "event", "payloadType", "value", "path", ir, "encode");
+    emitTypedSwitch(writer, service.events, "event", "payloadType", "value", "path", ir, "encode", pkg.forwardCompatible);
   });
   writer.blank();
   writer.block("final class ProtocolRequestEnvelope", () => {
     writer.block(`factory ProtocolRequestEnvelope({required RequestId id, required ProtocolMethod method, required Object params${traceParameter}})`, () => {
       writer.line(`final checkedId = ${validateExpression(service.requestIdType, "id", dartString("id"), ir)};`);
-      writer.line("_encodeRequestParams(method, params, 'params');");
+      writer.line(pkg.forwardCompatible ? "_assertKnownRequest(method, _encodeRequestParams(method, params, 'params'));" : "_encodeRequestParams(method, params, 'params');");
       writer.line(`return ProtocolRequestEnvelope._(id: checkedId, method: method, params: params${traceArgument});`);
     });
     writer.blank();
@@ -654,6 +681,7 @@ function emitJsonRpcProtocolCodec(writer, pkg, ir) {
       writer.line("final json = _object(value, path);");
       writer.line(`_expectKeys(json, const {'jsonrpc', 'method', 'params'${traceAllowedKey}}, path);`);
       writer.line("if (_string(_required(json, 'jsonrpc', path), '$path.jsonrpc') != jsonRpcVersion) throw ProtocolCodecException('$path.jsonrpc', 'expected JSON-RPC 2.0');");
+      writer.line("if (json.containsKey('id') || json.containsKey('result') || json.containsKey('error')) throw ProtocolCodecException(path, 'event must be a notification');");
       writer.line("final event = ProtocolEventName.fromJson(_required(json, 'method', path), path: '$path.method');");
       writer.line("final params = _object(_required(json, 'params', path), '$path.params');");
       writer.line(`_expectKeys(params, const {${dartString(cursorField)}, 'payload'}, '$path.params');`);
@@ -743,11 +771,11 @@ function emitProtocolCodec(writer, pkg, ir) {
   });
   writer.blank();
   writer.block("Object _decodeEventPayload(ProtocolEventName event, Object? value, String path)", () => {
-    emitTypedSwitch(writer, service.events, "event", "payloadType", "value", "path", ir, "decode");
+    emitTypedSwitch(writer, service.events, "event", "payloadType", "value", "path", ir, "decode", pkg.forwardCompatible);
   });
   writer.blank();
   writer.block("Map<String, Object?> _encodeEventPayload(ProtocolEventName event, Object value, String path)", () => {
-    emitTypedSwitch(writer, service.events, "event", "payloadType", "value", "path", ir, "encode");
+    emitTypedSwitch(writer, service.events, "event", "payloadType", "value", "path", ir, "encode", pkg.forwardCompatible);
   });
   writer.blank();
   writer.block("final class ProtocolRequestEnvelope", () => {
@@ -755,7 +783,7 @@ function emitProtocolCodec(writer, pkg, ir) {
       writer.line(`final checkedVersion = ${validateExpression(service.protocolVersionType, "version", dartString(versionField), ir)};`);
       writer.line("if (checkedVersion != protocolVersion) throw ProtocolCodecException('protocolVersion', 'unsupported protocol version: $checkedVersion');");
       writer.line(`final checkedId = ${validateExpression(service.requestIdType, "id", dartString("id"), ir)};`);
-      writer.line("_encodeRequestParams(method, params, 'params');");
+      writer.line(pkg.forwardCompatible ? "_assertKnownRequest(method, _encodeRequestParams(method, params, 'params'));" : "_encodeRequestParams(method, params, 'params');");
       writer.line("return ProtocolRequestEnvelope._(version: checkedVersion, id: checkedId, method: method, params: params);");
     });
     writer.blank();
@@ -929,7 +957,16 @@ export function generateDart(record, _model, ir) {
     writer.line(`import 'package:${packageName}/${packageName}.dart';`);
   }
   writer.blank();
+  writer.line(`const bool _forwardCompatible = ${Boolean(record.packageConfig.forwardCompatible)};`);
   emitCodecHelpers(writer, !pkg.dependencies.includes("core-v1"));
+  if (pkg.forwardCompatible && pkg.service) {
+    const graph = compatibilityGraph(record, _model);
+    writer.line(`final Map<String, dynamic> _protocolSchemas = jsonDecode(${dartString(JSON.stringify(graph.definitions))}) as Map<String, dynamic>;`);
+    writer.line(`void _assertKnownRequest(ProtocolMethod method, Object? value) {`);
+    writer.line(`  final name = switch(method) { ${record.manifest.methods.map(m=>`ProtocolMethod.${camelCase(m.name)} => ${dartString(graph.key(m.request.$ref.split('/').at(-1)))},`).join(' ')} };`);
+    writer.line(`  validateKnownProtocolChoices(_protocolSchemas, name, value);`);
+    writer.line(`}`);
+  }
   writer.blank();
   if (!pkg.service) {
     const schemaVersionConstant = `${camelCase(pkg.id.replace(/-v\d+$/, ""))}SchemaVersion`;

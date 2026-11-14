@@ -1,0 +1,202 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v2/provider/runtime/messages.schema.json",
+  "description": "provider 的 runtime 功能模块交互对象。",
+  "$defs": {
+    "HarnessDescriptor": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的稳定标识。"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "面向用户的名称。"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "组件自身版本字符串。"
+        },
+        "executablePath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "本机运行时可执行程序的绝对路径。"
+        }
+      },
+      "required": [
+        "id",
+        "displayName"
+      ],
+      "additionalProperties": true,
+      "description": "原生运行时描述的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "RuntimeCandidateSource": {
+      "type": "string",
+      "enum": [
+        "configured",
+        "environment",
+        "current-path",
+        "login-shell",
+        "macos-application",
+        "windows-application"
+      ],
+      "description": "运行时候选来源的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "RuntimeCandidate": {
+      "type": "object",
+      "properties": {
+        "executablePath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "本机运行时可执行程序的绝对路径。"
+        },
+        "source": {
+          "$ref": "#/$defs/RuntimeCandidateSource",
+          "description": "运行时安装候选的发现来源。"
+        }
+      },
+      "required": [
+        "executablePath",
+        "source"
+      ],
+      "additionalProperties": true,
+      "description": "运行时候选的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "RuntimeInstallation": {
+      "type": "object",
+      "properties": {
+        "minimumVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "兼容所需的最低运行时版本。"
+        },
+        "incompatibilityReason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此运行时不兼容的原因；缺省表示未标注不兼容。"
+        },
+        "executablePath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "本机运行时可执行程序的绝对路径。"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "组件自身版本字符串。"
+        },
+        "source": {
+          "$ref": "#/$defs/RuntimeCandidateSource",
+          "description": "运行时安装候选的发现来源。"
+        }
+      },
+      "required": [
+        "executablePath",
+        "version",
+        "source"
+      ],
+      "additionalProperties": true,
+      "description": "运行时安装的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "RuntimeGetInstalledRequest": {
+      "type": "object",
+      "properties": {
+        "refresh": {
+          "type": "boolean",
+          "description": "是否发起重新扫描；缺省可读取已有快照。"
+        }
+      },
+      "additionalProperties": true,
+      "description": "运行时读取安装库存的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "RuntimeGetInstalledResponse": {
+      "type": "object",
+      "properties": {
+        "selectionRequired": {
+          "type": "boolean",
+          "description": "Defaults to true. False means the Provider manages its runtime dependencies and needs no Host runtime selection. Return an empty harnessList, selected:null, scanning:false (or absent), and no scanError."
+        },
+        "harnessList": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RuntimeInstallation",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "已检测到的运行时安装清单，含不兼容项及原因。"
+        },
+        "selected": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RuntimeInstallation",
+              "description": "引用 RuntimeInstallation 的分支定义。"
+            },
+            {
+              "type": "null",
+              "description": "当前选中的运行时安装；null 表示未选择。 此为第 2 个允许的结构分支。"
+            }
+          ],
+          "description": "当前选中的运行时安装；null 表示未选择。"
+        },
+        "scanning": {
+          "type": "boolean",
+          "description": "运行时扫描是否仍在进行。"
+        },
+        "scanError": {
+          "type": "string",
+          "description": "扫描失败原因；不得将失败解释为已确认不存在运行时。"
+        }
+      },
+      "required": [
+        "harnessList",
+        "selected"
+      ],
+      "additionalProperties": true,
+      "description": "运行时读取安装库存响应，作为对应方法成功响应的 result。"
+    },
+    "RuntimeSelectRequest": {
+      "type": "object",
+      "properties": {
+        "candidate": {
+          "$ref": "#/$defs/RuntimeCandidate",
+          "description": "调用者请求选择的运行时候选。"
+        }
+      },
+      "required": [
+        "candidate"
+      ],
+      "additionalProperties": true,
+      "description": "运行时选择的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "RuntimeSelectResponse": {
+      "type": "object",
+      "properties": {
+        "selected": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RuntimeInstallation",
+              "description": "已完成探测并选中的安装。"
+            },
+            {
+              "type": "null",
+              "description": "探测尚未完成，或尚未选中。"
+            }
+          ],
+          "description": "已验证的安装；异步探测期间为 null，不能把未验证路径当作可执行运行时。"
+        },
+        "pending": {
+          "$ref": "#/$defs/RuntimeCandidate",
+          "description": "可选的正在探测候选；仅用于显示进度。最终成功或失败通过 runtime.inventoryChanged 更新。"
+        }
+      },
+      "required": [
+        "selected"
+      ],
+      "additionalProperties": true,
+      "description": "运行时选择响应，作为对应方法成功响应的 result。"
+    }
+  }
+}

@@ -71,20 +71,65 @@ for (const profile of ["stdio-jsonrpc-v1", "stdio-codepet-zstd-v1"])
       providerPluginId: "independent.echo.jsonl",
       providerInstanceId: "third-party",
     };
+    const baseInit = {
+      hostClientId: "c",
+      hostDeviceId: "d",
+      hostVersion: "test",
+    };
+    for (const protocol of [
+      { version: 1, minVersion: 1 },
+      { version: 3, minVersion: 3 },
+    ])
+      await assert.rejects(
+        rpc("provider.initialize", { ...baseInit, protocol }),
+        /protocol_version_mismatch/,
+      );
+    for (const protocol of [
+      { version: 1, minVersion: 2 },
+      { version: 0, minVersion: 0 },
+      { version: "2", minVersion: 2 },
+    ])
+      await assert.rejects(
+        rpc("provider.initialize", { ...baseInit, protocol }),
+        /invalid_protocol_range|invalid_request/,
+      );
+    await assert.rejects(rpc("provider.describe", {}), /not_initialized/);
     const init = await rpc("provider.initialize", {
       hostClientId: "c",
       hostDeviceId: "d",
       hostVersion: "test",
-      supportedVersions: { minVersion: 1, maxVersion: 1 },
+      protocol: { version: 4, minVersion: 2, futureOffer: { value: true } },
+      futureInitialize: { ignored: true },
     });
-    assert.equal(init.selectedVersion, 1);
+    assert.equal(init.protocol.selectedVersion, 2);
+    assert.deepEqual(init.protocol, {
+      version: 2,
+      minVersion: 2,
+      selectedVersion: 2,
+    });
+    assert.deepEqual(init.plugin.protocol, { version: 2, minVersion: 2 });
+    assert.equal(init.selectedVersion, undefined);
+    assert.equal(init.plugin.supportedVersions, undefined);
+    await assert.rejects(rpc("future.unknown", {}), /-32601/);
+    await assert.rejects(
+      rpc("provider.ping", {
+        sequence: "bad",
+        hostSessionId: "s",
+        clients: { revision: 1, connections: [] },
+        instances: [],
+      }),
+      /invalid_request/,
+    );
+
     assert.deepEqual(await rpc("runtime.getInstalled", { refresh: true }), {
       selectionRequired: false,
       harnessList: [],
       selected: null,
       scanning: false,
     });
-    const slow = rpc("provider.describe", {});
+    const slow = rpc("provider.describe", {
+      futureDescribe: { ignored: true },
+    });
     const pong = await rpc("provider.ping", {
       sequence: 1,
       hostSessionId: "s",
@@ -113,11 +158,20 @@ for (const profile of ["stdio-jsonrpc-v1", "stdio-codepet-zstd-v1"])
       conversation: resource,
       clientRequestId: "once",
       capabilityRevision: caps.capabilities.revision,
-      input: { kind: "text", text: "hello 世界\u2028newline\nend" },
-      selection: {},
+      input: {
+        kind: "text",
+        text: "hello 世界\u2028newline\nend",
+        futureInput: true,
+      },
+      selection: { futureSelection: { ignored: true } },
     };
     const started = await rpc("turn.start", request);
-    const duplicate = await rpc("turn.start", request);
+    const duplicate = await rpc("turn.start", {
+      ...request,
+      input: { ...request.input, futureInput: { different: true } },
+      selection: { futureSelection: { different: true } },
+      futureRequest: true,
+    });
     assert.equal(
       duplicate.turn.resource.nativeResourceId,
       started.turn.resource.nativeResourceId,

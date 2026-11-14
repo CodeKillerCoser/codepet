@@ -1,0 +1,105 @@
+{
+  "description": "CodePet v2 权威协议入口，共享对象与两层交互协议分开维护。",
+  "version": 2,
+  "commonSchema": "common/types.schema.json",
+  "rpcEnvelopeSchema": "common/rpc.schema.json",
+  "agentDomainSchema": "agent-domain/domain.schema.json",
+  "provider": "provider/protocol.json",
+  "gateway": "gateway/protocol.json",
+  "channelControl": "channel-control/protocol.json",
+  "minVersion": 2,
+  "compatibility": {
+    "description": "两层独立计算业务兼容区间，传输/清单/SDK 版本不受此规则代替。",
+    "offerFields": [
+      "version",
+      "minVersion"
+    ],
+    "selectionField": "selectedVersion",
+    "selectionFormula": "min(local.version, peer.version)",
+    "acceptanceFormula": "selectedVersion >= max(local.minVersion, peer.minVersion)",
+    "rangeInvariant": "1 <= minVersion <= version <= 4294967295",
+    "unknownFields": "ignore-on-receive; validate-known-fields",
+    "unknownCapabilities": "preserve-raw-strings; ignore-unsupported; do-not-advertise-support",
+    "unknownEvents": "validate-envelope; skip-unknown-method-or-payload-kind; advance-valid-transport-cursor",
+    "unknownEnum": "preserve-raw-unknown-value; conservative-consumer-fallback",
+    "unknownUnion": "preserve-raw-object-in-unknown-variant; never-dispatch-as-known-business-type",
+    "unknownMethods": "return-jsonrpc-method-not-found; do-not-close-connection",
+    "malformedKnownValues": "reject; never-coerce-or-treat-as-unknown",
+    "limits": "existing-byte-depth-count-limits-still-apply",
+    "writeRetries": "never-replay-unknown-outcomes",
+    "senderPolicy": "emit-known-supported-fields; new-semantic-behavior-requires-positive-capability",
+    "bootstrapMigration": "new-bootstrap-is-not-v1-compatible; no-silent-fallback-or-write-retry",
+    "initialMigration": {
+      "description": "首次 v2 改名与未知值容错不兼容已发布严格 v1，不能声称直接兼容 v1；后续增量版本可以保持 minVersion=2。",
+      "version": 2,
+      "minVersion": 2
+    }
+  },
+  "negotiationExamples": [
+    {
+      "description": "双方有重叠，选共同最高版本。",
+      "local": {
+        "version": 5,
+        "minVersion": 2
+      },
+      "peer": {
+        "version": 3,
+        "minVersion": 2
+      },
+      "selectedVersion": 3,
+      "compatible": true
+    },
+    {
+      "description": "正好在兼容下界相交。",
+      "local": {
+        "version": 5,
+        "minVersion": 3
+      },
+      "peer": {
+        "version": 3,
+        "minVersion": 2
+      },
+      "selectedVersion": 3,
+      "compatible": true
+    },
+    {
+      "description": "两端有效但无交集，不建立业务连接。",
+      "local": {
+        "version": 5,
+        "minVersion": 4
+      },
+      "peer": {
+        "version": 3,
+        "minVersion": 2
+      },
+      "selectedVersion": null,
+      "compatible": false
+    },
+    {
+      "description": "下界高于本端 version，拒绝非法 offer。",
+      "local": {
+        "version": 2,
+        "minVersion": 3
+      },
+      "peer": {
+        "version": 3,
+        "minVersion": 2
+      },
+      "selectedVersion": null,
+      "compatible": false
+    },
+    {
+      "description": "首次 v2 握手不宣称兼容旧严格 v1；本示例仅比较区间，不表示旧端能解析新信封。",
+      "local": {
+        "version": 2,
+        "minVersion": 2
+      },
+      "peer": {
+        "version": 1,
+        "minVersion": 1
+      },
+      "selectedVersion": null,
+      "compatible": false
+    }
+  ]
+}

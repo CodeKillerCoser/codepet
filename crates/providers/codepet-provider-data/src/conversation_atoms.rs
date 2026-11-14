@@ -71,13 +71,13 @@ impl TrackedEvents {
                 self.epoch.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             }
             if let ProtocolEvent::EventConversationActiveChanged { params, .. } = &event {
-                next_states.insert(params.conversation.native_resource_id.clone(), params.status);
+                next_states.insert(params.conversation.native_resource_id.clone(), params.status.clone());
             }
             let changed = if let ProtocolEvent::EventConversationUpserted { params, .. } = &event {
                 if !self.mirror_summary_activity { batch.push(event); continue; }
                 let row = &params.conversation;
-                let previous = next_states.insert(row.resource.native_resource_id.clone(), row.status);
-                (previous != Some(row.status) && (active(row.status) || previous.is_some_and(active))).then(|| row.clone())
+                let previous = next_states.insert(row.resource.native_resource_id.clone(), row.status.clone());
+                (previous != Some(row.status.clone()) && (active(row.status.clone()) || previous.is_some_and(active))).then(|| row.clone())
             } else { None };
             batch.push(event);
             if let Some(row) = changed {
@@ -85,11 +85,11 @@ impl TrackedEvents {
                     version.clone()
                 } else if shared_state_configured() {
                     SharedConversationStateStore::from_env()?.activity_versions(&[row.resource.clone()])?.remove(0)
-                } else { format!("active:{:?}:{}", row.status, row.updated_at.unwrap_or_default()) };
+                } else { format!("active:{:?}:{}", row.status.clone(), row.updated_at.unwrap_or_default()) };
                 let revision = self.revision.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                 batch.push(ProtocolEvent::EventConversationActiveChanged { jsonrpc: "2.0".into(), params: ConversationActiveChangedEvent {
-                    conversation: resource(&self.route, row.resource.native_resource_id), status: row.status,
-                    activity_version: version, active: active(row.status), revision: format!("active-{revision}"),
+                    conversation: resource(&self.route, row.resource.native_resource_id), status: row.status.clone(),
+                    activity_version: version, active: active(row.status.clone()), revision: format!("active-{revision}"),
                 } });
             }
         }
@@ -160,7 +160,9 @@ impl ConversationAtoms {
 
     pub fn list(&self, generation: &str, request: &ConversationListRequest, mut rows: Vec<Conversation>) -> Result<ConversationListResponse, ProtocolError> {
         validate_list(request)?;
+        if matches!(request.project_filter, ConversationProjectFilter::Unrecognized(_)) { return Err(query_error("unsupported_filter", "unknown project filter")); }
         rows.retain(|row| match &request.project_filter {
+            ConversationProjectFilter::Unrecognized(_) => false,
             ConversationProjectFilter::ConversationProjectFilterAll(_) => true,
             ConversationProjectFilter::ConversationProjectFilterStandalone(_) => row.project.is_none(),
             ConversationProjectFilter::ConversationProjectFilterProject(filter) => row.project.as_ref().is_some_and(|project| project.native_resource_id == filter.project.native_resource_id),
@@ -171,6 +173,7 @@ impl ConversationAtoms {
                 let ids: BTreeSet<_> = query.ids.iter().collect();
                 rows.retain(|row| ids.contains(&row.resource.native_resource_id));
             }
+            Some(ConversationListQuery::Unrecognized(_)) => return Err(query_error("unsupported_query", "unknown conversation query")),
             None => {}
         }
         sort_summaries(&mut rows);
@@ -188,14 +191,14 @@ impl ConversationAtoms {
     }
 
     pub fn active(&self, generation: &str, request: &ConversationActiveListRequest, rows: Vec<Conversation>) -> Result<ConversationActiveListResponse, ProtocolError> {
-        let mut rows = rows.into_iter().filter(|row| active(row.status)).collect::<Vec<_>>();
+        let mut rows = rows.into_iter().filter(|row| active(row.status.clone())).collect::<Vec<_>>();
         sort_summaries(&mut rows);
         rows.sort_by(|a,b| a.resource.native_resource_id.cmp(&b.resource.native_resource_id));
         let versions = if shared_state_configured() {
             SharedConversationStateStore::from_env()?.activity_versions(&rows.iter().map(|row| row.resource.clone()).collect::<Vec<_>>())?
-        } else { rows.iter().map(|row| format!("active:{generation}:{:?}:{}", row.status, row.updated_at.unwrap_or_default())).collect() };
+        } else { rows.iter().map(|row| format!("active:{generation}:{:?}:{}", row.status.clone(), row.updated_at.unwrap_or_default())).collect() };
         let entries = rows.into_iter().zip(versions).map(|(row, version)| ConversationActiveEntry {
-            conversation: resource(&request.route, row.resource.native_resource_id), status: row.status, activity_version: version,
+            conversation: resource(&request.route, row.resource.native_resource_id), status: row.status.clone(), activity_version: version,
         }).collect();
         let page = self.active.start(binding("active", generation, request)?, entries, request.limit)?;
         Ok(ConversationActiveListResponse { conversations: page.rows, page_info: PageInfo { next_cursor: page.next_cursor }, revision: page.revision })

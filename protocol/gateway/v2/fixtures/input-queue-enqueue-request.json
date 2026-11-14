@@ -1,0 +1,25 @@
+{
+  "jsonrpc": "2.0",
+  "id": "enqueue-1",
+  "method": "conversation.inputQueue.enqueue",
+  "params": {
+    "conversation": {
+      "providerId": "codex-work",
+      "nativeResourceId": "thread-01"
+    },
+    "clientRequestId": "remote-turn-01",
+    "capabilityRevision": "codex-session-42",
+    "input": {
+      "kind": "text",
+      "text": "Continue with the implementation"
+    },
+    "selection": {
+      "accessModeId": "workspace-write",
+      "reasoningEffortId": "high",
+      "model": {
+        "kind": "flat",
+        "modelId": "gpt-5"
+      }
+    }
+  }
+}

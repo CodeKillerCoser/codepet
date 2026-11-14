@@ -107,14 +107,14 @@ impl CompatProviderGateway {
                 protocol_version: compat::PROTOCOL_VERSION,
                 event_sequence: event_sequence(&params.event_cursor)?,
                 payload: compat::ApprovalRequestedEvent {
-                    approval: map_approval(params.payload.approval),
+                    approval: map_approval(params.payload.approval)?,
                 },
             },
             gateway::ProtocolEvent::ApprovalResolved { params, .. } => compat::ProtocolEvent::ApprovalResolved {
                 protocol_version: compat::PROTOCOL_VERSION,
                 event_sequence: event_sequence(&params.event_cursor)?,
                 payload: compat::ApprovalResolvedEvent {
-                    approval: map_approval(params.payload.approval),
+                    approval: map_approval(params.payload.approval)?,
                 },
             },
         };
@@ -133,6 +133,7 @@ fn map_content_kind(kind: gateway::ConversationContentKind) -> &'static str {
         gateway::ConversationContentKind::Audio => "audio",
         gateway::ConversationContentKind::ResourceLink => "resource-link",
         gateway::ConversationContentKind::EmbeddedResource => "embedded-resource",
+        gateway::ConversationContentKind::Unrecognized(_) => "unknown",
     }
 }
 
@@ -459,7 +460,7 @@ impl compat::ProtocolServer for CompatProviderGateway {
             .await
             .map_err(map_error)?;
             Ok(compat::ApprovalResolveResponse {
-                approval: map_approval(response.approval),
+                approval: map_approval(response.approval)?,
             })
         })
     }
@@ -475,6 +476,7 @@ fn map_provider(
         .methods
         .iter()
         .filter_map(|method| match method {
+            gateway::GatewayCapability::Unrecognized(_) => None,
             // Queue and steer use the canonical Gateway; the legacy bridge has
             // no matching request or capability contract.
             gateway::GatewayCapability::CodepetUsageQuery
@@ -520,6 +522,7 @@ fn map_provider(
     let models = turn_send
         .and_then(|capabilities| capabilities.model_catalog.as_ref())
         .and_then(|catalog| match catalog {
+            gateway::ModelCatalog::Unrecognized(_) => None,
             gateway::ModelCatalog::FlatModelCatalog(catalog) => Some(
                 catalog
                     .models
@@ -606,6 +609,7 @@ fn map_conversation(
         .map(map_turn)
         .transpose()?;
     let status = match conversation.status {
+        gateway::ConversationStatus::Unrecognized(_) => return Err(compat_error(COMPAT_DATA_UNREPRESENTABLE, "Unknown conversation status".into(), false)),
         gateway::ConversationStatus::Idle => compat::ConversationStatus::Idle,
         gateway::ConversationStatus::Running => compat::ConversationStatus::Running,
         gateway::ConversationStatus::WaitingApproval => {
@@ -655,6 +659,7 @@ fn map_turn(turn: gateway::TurnTask) -> Result<compat::TurnTask, compat::Protoco
         provider_id: turn.resource.provider_id.clone(),
         conversation_id: turn.conversation.native_resource_id,
         status: match turn.status {
+            gateway::TurnStatus::Unrecognized(_) => return Err(compat_error(COMPAT_DATA_UNREPRESENTABLE, "Unknown turn status".into(), false)),
             gateway::TurnStatus::Queued => compat::TurnTaskStatus::Queued,
             gateway::TurnStatus::Running => compat::TurnTaskStatus::Running,
             gateway::TurnStatus::WaitingApproval => compat::TurnTaskStatus::WaitingApproval,
@@ -670,12 +675,12 @@ fn map_turn(turn: gateway::TurnTask) -> Result<compat::TurnTask, compat::Protoco
     })
 }
 
-fn map_approval(approval: gateway::Approval) -> compat::Approval {
+fn map_approval(approval: gateway::Approval) -> Result<compat::Approval, compat::ProtocolError> {
     let route = opaque_route_extension(
         &approval.resource.provider_id,
         Some(&approval.resource.native_resource_id),
     );
-    compat::Approval {
+    Ok(compat::Approval {
         id: approval.resource.native_resource_id,
         provider_id: approval.resource.provider_id.clone(),
         conversation_id: approval.conversation.native_resource_id,
@@ -688,23 +693,26 @@ fn map_approval(approval: gateway::Approval) -> compat::Approval {
             gateway::ApprovalStatus::Approved => compat::ApprovalStatus::Approved,
             gateway::ApprovalStatus::Denied => compat::ApprovalStatus::Denied,
             gateway::ApprovalStatus::Expired => compat::ApprovalStatus::Expired,
+            gateway::ApprovalStatus::Unrecognized(_) => return Err(compat_error(COMPAT_DATA_UNREPRESENTABLE, "Unknown approval status".into(), false)),
         },
         decisions: approval
             .decisions
             .into_iter()
-            .map(|decision| match decision {
-                gateway::ApprovalDecision::Approve => compat::ApprovalDecision::Approve,
-                gateway::ApprovalDecision::Deny => compat::ApprovalDecision::Deny,
+            .filter_map(|decision| match decision {
+                gateway::ApprovalDecision::Approve => Some(compat::ApprovalDecision::Approve),
+                gateway::ApprovalDecision::Deny => Some(compat::ApprovalDecision::Deny),
+                gateway::ApprovalDecision::Unrecognized(_) => None,
             })
             .collect(),
         requested_at: approval.requested_at,
         resolved_at: approval.resolved_at,
-        decision: approval.decision.map(|decision| match decision {
-            gateway::ApprovalDecision::Approve => compat::ApprovalDecision::Approve,
-            gateway::ApprovalDecision::Deny => compat::ApprovalDecision::Deny,
+        decision: approval.decision.and_then(|decision| match decision {
+            gateway::ApprovalDecision::Approve => Some(compat::ApprovalDecision::Approve),
+            gateway::ApprovalDecision::Deny => Some(compat::ApprovalDecision::Deny),
+            gateway::ApprovalDecision::Unrecognized(_) => None,
         }),
         extension: Some(route),
-    }
+    })
 }
 
 fn map_provider_status(status: gateway::ProviderStatus) -> compat::ProviderStatus {
@@ -713,7 +721,7 @@ fn map_provider_status(status: gateway::ProviderStatus) -> compat::ProviderStatu
         gateway::ProviderStatus::Connecting => compat::ProviderStatus::Connecting,
         gateway::ProviderStatus::Ready => compat::ProviderStatus::Ready,
         gateway::ProviderStatus::Unavailable => compat::ProviderStatus::Unavailable,
-        gateway::ProviderStatus::Error => compat::ProviderStatus::Error,
+        gateway::ProviderStatus::Error | gateway::ProviderStatus::Unrecognized(_) => compat::ProviderStatus::Error,
     }
 }
 

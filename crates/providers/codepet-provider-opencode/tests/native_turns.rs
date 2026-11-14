@@ -29,9 +29,9 @@ async fn native_remote_turns_keep_the_instance_ready() {
                 host_client_id: "native-smoke".into(),
                 host_device_id: "native-smoke-device".into(),
                 host_version: "0.1.0".into(),
-                supported_versions: VersionRange {
+                protocol: ProtocolVersionOffer {
                     min_version: PROTOCOL_VERSION,
-                    max_version: PROTOCOL_VERSION,
+                    version: PROTOCOL_VERSION,
                 },
             })
             .await

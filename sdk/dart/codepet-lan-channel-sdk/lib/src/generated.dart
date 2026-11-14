@@ -5,6 +5,7 @@
 import 'dart:convert';
 import 'package:codepet_core_sdk/codepet_core_sdk.dart';
 
+const bool _forwardCompatible = false;
 Map<String, Object?> _object(Object? value, String path) {
   if (value is! Map) throw ProtocolCodecException(path, 'expected an object');
   final result = <String, Object?>{};
@@ -17,7 +18,7 @@ Map<String, Object?> _object(Object? value, String path) {
 
 void _expectKeys(Map<String, Object?> value, Set<String> allowed, String path) {
   for (final key in value.keys) {
-    if (!allowed.contains(key)) throw ProtocolCodecException('$path.$key', 'unknown field');
+    if (!allowed.contains(key) && !_forwardCompatible) throw ProtocolCodecException('$path.$key', 'unknown field');
   }
 }
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://code-pet.dev/provider-sdk/v1/protocol/sdk/agent-domain/domain.schema.json",
+  "$id": "https://code-pet.dev/provider-sdk/v2/protocol/sdk/agent-domain/domain.schema.json",
   "title": "domain.schema.json",
   "description": "会话、消息、项目、任务、审批、模型与用量领域对象。",
   "$defs": {
@@ -69,7 +69,7 @@
         "status",
         "decisions"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "审批的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ApprovalDecision": {
@@ -168,7 +168,7 @@
         "title",
         "status"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ContentBlock": {
@@ -235,7 +235,7 @@
         "retainedBytes",
         "strategy"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "内容裁剪的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ContentTruncationStrategy": {
@@ -280,7 +280,7 @@
         "kind",
         "text"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "文本内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ReasoningSummaryContentBlockKind": {
@@ -315,7 +315,7 @@
         "kind",
         "text"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "推理摘要内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "OutputContentBlockKind": {
@@ -350,7 +350,7 @@
         "kind",
         "text"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "输出内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ActivitySummaryContentBlockKind": {
@@ -385,7 +385,7 @@
         "kind",
         "text"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "活动摘要内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "StructuredJsonContentBlockKind": {
@@ -420,7 +420,7 @@
         "kind",
         "value"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "结构化JSON内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ImageContentBlockKind": {
@@ -466,7 +466,7 @@
         "kind",
         "uri"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "图片内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "AudioContentBlockKind": {
@@ -512,7 +512,7 @@
         "kind",
         "uri"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "音频内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ResourceLinkContentBlockKind": {
@@ -558,7 +558,7 @@
         "kind",
         "uri"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "资源链接内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "EmbeddedResourceContentBlockKind": {
@@ -603,7 +603,7 @@
         "kind",
         "text"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "嵌入资源内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ConversationContentKind": {
@@ -641,7 +641,7 @@
           "description": "工具是否可能访问开放世界资源。"
         }
       },
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Advisory UI hints only; hosts must not use these fields as authorization decisions."
     },
     "ToolCategory": {
@@ -690,7 +690,7 @@
         "kind",
         "command"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "工具命令动作的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ToolCommandActionKind": {
@@ -750,7 +750,7 @@
         "kind",
         "command"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "命令工具输入的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "StructuredToolInputKind": {
@@ -780,7 +780,7 @@
         "kind",
         "value"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "结构化工具输入的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "OpaqueToolInputKind": {
@@ -815,7 +815,7 @@
         "kind",
         "value"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "不透明工具输入的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ToolInput": {
@@ -857,7 +857,7 @@
       "required": [
         "message"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "工具执行错误的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ToolInvocation": {
@@ -909,7 +909,7 @@
         "origin",
         "input"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Provider-neutral client-safe tool-call envelope with one canonical input and one canonical outcome. Lifecycle remains ConversationItem.status."
     },
     "ToolOrigin": {
@@ -928,7 +928,7 @@
       "required": [
         "kind"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "工具来源的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ToolOriginKind": {
@@ -981,7 +981,7 @@
         "kind",
         "content"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "工具成功结果的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ToolFailureOutcomeKind": {
@@ -1027,7 +1027,7 @@
         "content",
         "error"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "工具失败结果的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ToolOutcome": {
@@ -1060,7 +1060,7 @@
           "description": "持续时间，毫秒。"
         }
       },
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "工具时间信息的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ConversationItem": {
@@ -1152,7 +1152,7 @@
         "role",
         "contents"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "消息会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ReasoningConversationItemKind": {
@@ -1206,7 +1206,7 @@
         "status",
         "contents"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "推理会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "CommandConversationItemKind": {
@@ -1261,7 +1261,7 @@
         "status",
         "tool"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "命令会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "FileChangeConversationItemKind": {
@@ -1320,7 +1320,7 @@
         "status",
         "contents"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "文件变更会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ToolConversationItemKind": {
@@ -1375,7 +1375,7 @@
         "status",
         "tool"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "工具会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ApprovalConversationItemKind": {
@@ -1434,7 +1434,7 @@
         "status",
         "approval"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "审批会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "UnknownConversationItemKind": {
@@ -1484,7 +1484,7 @@
         "kind",
         "status"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "未知会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ConversationItemRole": {
@@ -1528,7 +1528,7 @@
         "unread",
         "activityVersion"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话阅读状态的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ConversationStatus": {
@@ -1573,7 +1573,7 @@
         "id",
         "displayName"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "选择选项的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ChoiceSet": {
@@ -1597,7 +1597,7 @@
       "required": [
         "options"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "同一能力维度可选择的选项集合；defaultId 若存在，必须指向本集合中未禁用的选项。"
     },
     "FlatModelCatalogKind": {
@@ -1624,7 +1624,7 @@
         "kind",
         "modelId"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "平面模型选择的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "FlatModelCatalog": {
@@ -1652,7 +1652,7 @@
         "kind",
         "models"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "平面模型目录的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "GroupedModelCatalogKind": {
@@ -1694,7 +1694,7 @@
         "displayName",
         "models"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "分组模型Provider的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "GroupedModelSelection": {
@@ -1720,7 +1720,7 @@
         "providerId",
         "modelId"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "分组模型选择的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "GroupedModelCatalog": {
@@ -1748,7 +1748,7 @@
         "kind",
         "providers"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "分组模型目录的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ModelCatalog": {
@@ -1793,7 +1793,7 @@
           "description": "可用模型及模型相关选择目录。"
         }
       },
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "同一实例当前支持的发送选择目录。返回的 selection 必须与此目录一致；目录更新通过能力 revision 区分，调用方不得用旧目录构造新请求。未声明维度表示不提供该选择，原生运行时自行管理模型时不应虚构可切换的模型目录。"
     },
     "ConversationCreateCapabilities": {
@@ -1815,7 +1815,7 @@
       "required": [
         "supportsTitle"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话创建能力的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "TurnInputKind": {
@@ -1842,7 +1842,7 @@
         "kind",
         "text"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "任务输入的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "TurnSelection": {
@@ -1863,7 +1863,7 @@
           "description": "模型标识或模型选择。"
         }
       },
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "当前实例实际生效的发送选择。已声明的能力维度必须使用同一实例 turnSend 目录中存在且未禁用的选项；有默认值时 Provider 应在 create/acquire/turn 返回中给出实际选择。未声明的维度不应携带值。模型相关推理选项还需满足所选模型的目录约束。此跨对象语义由实现校验，不能仅凭结构 Schema 判断一致性。"
     },
     "Project": {
@@ -1918,7 +1918,7 @@
         "createdAt",
         "updatedAt"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "项目的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ProjectChangeType": {
@@ -1942,7 +1942,7 @@
       "required": [
         "path"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "项目根目录的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ProviderAuthenticationStatus": {
@@ -1973,7 +1973,7 @@
       "required": [
         "status"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Provider认证的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ProviderId": {
@@ -2034,7 +2034,7 @@
         "conversation",
         "status"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Terminal execution failure, present only for failed turns. retryable indicates a new user-initiated attempt may succeed; never automatically resubmit accepted input. Omitted by older providers."
     },
     "UsageMetric": {
@@ -2086,7 +2086,7 @@
         "from",
         "to"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Half-open [from,to), from < to. Calendar validity and supported bucket alignment are validated by Provider."
     },
     "UsageAllTime": {
@@ -2100,7 +2100,7 @@
       "required": [
         "kind"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "用量全部时间的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "UsageBoundedTime": {
@@ -2119,7 +2119,7 @@
         "kind",
         "range"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "用量有界时间的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "UsageTimeFilter": {
@@ -2160,7 +2160,7 @@
       "required": [
         "time"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Absent modelIds selects all; empty modelIds is invalid. Unknown models are included by default only without a model filter."
     },
     "UsageAggregation": {
@@ -2190,7 +2190,7 @@
         "timeZone",
         "groupBy"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "IANA timezone; sum additive metrics. Unsupported grouping, precision or timezone must return unsupported_usage_query, never silently coarsen or prorate."
     },
     "UsageOrder": {
@@ -2209,7 +2209,7 @@
         "field",
         "direction"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "用量排序的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "UsagePage": {
@@ -2228,7 +2228,7 @@
         }
       },
       "required": [],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Default limit 100. Cursor binds exact query, source scope and immutable revision. Expired revisions return usage_cursor_expired."
     },
     "UsageQuery": {
@@ -2285,7 +2285,7 @@
         "aggregation",
         "metrics"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Filter before aggregation and pagination. Summaries cover every filtered record, never just a page. Defaults sort bucketStart then modelId ascending, unknown model first. Metric sorts require that metric. Group summaries require model grouping. PeakDaily uses totalTokens per calendar day, ties select earliest date; all-time means available dataset history, not account lifetime."
     },
     "UsageMetricValue": {
@@ -2313,7 +2313,7 @@
         "value",
         "completeness"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "用量指标值的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "UsageValues": {
@@ -2341,7 +2341,7 @@
         }
       },
       "required": [],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Return exactly requested metrics. Input includes cache read/write; total = input + output. Cache is not added twice. Missing metrics are null/unknown; incomplete sums are partial."
     },
     "UsageCoverage": {
@@ -2397,7 +2397,7 @@
         "status",
         "gaps"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Completeness is relative to dataset scope. Missing buckets are not zero unless coverage establishes completeness."
     },
     "UsageRow": {
@@ -2448,7 +2448,7 @@
         "completeness",
         "provisional"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "用量行的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "UsageDailyPeak": {
@@ -2475,7 +2475,7 @@
         "totalTokens",
         "completeness"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "用量每日峰值的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "UsageGroupTotal": {
@@ -2503,7 +2503,7 @@
         "modelId",
         "values"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "用量分组总计的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "UsageGroupPeak": {
@@ -2540,7 +2540,7 @@
         "modelId",
         "peak"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "用量分组峰值的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "UsageSummaries": {
@@ -2581,7 +2581,7 @@
         }
       },
       "required": [],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "用量汇总的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "UsageQueryResult": {
@@ -2658,7 +2658,7 @@
         "rows",
         "nextCursor"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "用量查询结果的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "UsageDataset": {
@@ -2739,7 +2739,7 @@
         "timeZones",
         "baseBucketMinutes"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "timeZones empty means any supported IANA timezone; otherwise only listed zones. Capability is about available source data, not UI preferences."
     },
     "UsageText": {
@@ -2911,7 +2911,7 @@
         "currentStreakDays",
         "longestStreakDays"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Unfiltered native account facts, independent of query filters and daily bucket retention. Never combine with local observed totals."
     },
     "ProviderUsage": {
@@ -2938,7 +2938,7 @@
       "required": [
         "displayText"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Provider用量的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ProviderUsageDetail": {
@@ -2964,7 +2964,7 @@
         "schemaVersion",
         "data"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Provider用量明细的完整数据定义；字段、可选性与允许值见本对象约束。"
     }
   }

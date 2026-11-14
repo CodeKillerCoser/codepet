@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-active-list-next-request",
+  "method": "conversation.active.list",
+  "params": {
+    "route": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work"
+    },
+    "limit": 20,
+    "cursor": "active-page-2"
+  }
+}

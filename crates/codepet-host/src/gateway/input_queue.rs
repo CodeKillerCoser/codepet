@@ -155,7 +155,7 @@ impl ProviderGatewayService {
         route: &gateway::RoutedResourceId,
     ) -> Result<gateway::Conversation, gateway::ProtocolError> {
         let conversation = self.resolve_resource(route.clone()).await?;
-        Ok(self
+        let snapshot = self
             .manager
             .conversation_get(provider::ConversationGetRequest {
                 conversation,
@@ -164,7 +164,11 @@ impl ProviderGatewayService {
             })
             .await
             .map_err(gateway_error)?
-            .conversation)
+            .conversation;
+        if matches!(snapshot.status, gateway::ConversationStatus::Unrecognized(_)) {
+            return Err(error("conversation_state_unknown", "Refresh or upgrade before acting on an unknown conversation state"));
+        }
+        Ok(snapshot)
     }
     pub(super) async fn validate_steer(
         &self,

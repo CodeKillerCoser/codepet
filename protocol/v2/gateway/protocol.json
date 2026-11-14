@@ -1,0 +1,110 @@
+{
+  "description": "gateway 协议模块入口；只登记模块文件，方法与事件在所属模块定义。",
+  "version": 2,
+  "service": {
+    "name": "codepet-gateway",
+    "layer": "gateway",
+    "kind": "service",
+    "transport": {
+      "kind": "json-rpc-2.0",
+      "requestDiscriminator": "method",
+      "eventDiscriminator": "method",
+      "jsonRpcVersion": "2.0",
+      "requestId": {
+        "$ref": "../common/types.schema.json#/$defs/RequestId"
+      },
+      "rpcError": {
+        "$ref": "../common/types.schema.json#/$defs/RpcError"
+      },
+      "traceContext": {
+        "field": "meta",
+        "type": {
+          "$ref": "../common/types.schema.json#/$defs/TraceContext"
+        }
+      },
+      "eventCursorField": "eventCursor",
+      "eventCursor": {
+        "$ref": "../common/types.schema.json#/$defs/EventCursor"
+      }
+    },
+    "error": {
+      "$ref": "../common/types.schema.json#/$defs/ProtocolError"
+    },
+    "capabilities": {
+      "type": {
+        "$ref": "provider/messages.schema.json#/$defs/GatewayCapability"
+      },
+      "container": {
+        "$ref": "provider/messages.schema.json#/$defs/GatewayCapabilities"
+      },
+      "field": "methods"
+    },
+    "forwardCompatible": true
+  },
+  "modules": [
+    {
+      "id": "session",
+      "schema": "session/messages.schema.json",
+      "methods": "session/methods.json"
+    },
+    {
+      "id": "subscription",
+      "schema": "subscription/messages.schema.json",
+      "methods": "subscription/methods.json"
+    },
+    {
+      "id": "provider",
+      "schema": "provider/messages.schema.json",
+      "methods": "provider/methods.json",
+      "events": "provider/events.json"
+    },
+    {
+      "id": "project",
+      "schema": "project/messages.schema.json",
+      "methods": "project/methods.json",
+      "events": "project/events.json"
+    },
+    {
+      "id": "conversation",
+      "schema": "conversation/messages.schema.json",
+      "methods": "conversation/methods.json",
+      "events": "conversation/events.json"
+    },
+    {
+      "id": "input-queue",
+      "schema": "input-queue/messages.schema.json",
+      "methods": "input-queue/methods.json",
+      "events": "input-queue/events.json"
+    },
+    {
+      "id": "turn",
+      "schema": "turn/messages.schema.json",
+      "methods": "turn/methods.json",
+      "events": "turn/events.json"
+    },
+    {
+      "id": "approval",
+      "schema": "approval/messages.schema.json",
+      "methods": "approval/methods.json",
+      "events": "approval/events.json"
+    },
+    {
+      "id": "usage",
+      "schema": "usage/messages.schema.json",
+      "methods": "usage/methods.json"
+    },
+    {
+      "id": "pairing",
+      "schema": "pairing/messages.schema.json",
+      "bindings": "pairing/bindings.json",
+      "service": "pairing/protocol.json"
+    }
+  ],
+  "compatibility": {
+    "framing": "websocket-text",
+    "additionalFramings": [
+      "webrtc-cpg1"
+    ]
+  },
+  "minVersion": 2
+}

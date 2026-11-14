@@ -1,0 +1,556 @@
+{
+  "name": "codepet-gateway",
+  "layer": "gateway",
+  "kind": "service",
+  "transport": {
+    "kind": "json-rpc-2.0",
+    "requestDiscriminator": "method",
+    "eventDiscriminator": "method",
+    "jsonRpcVersion": "2.0",
+    "requestId": {
+      "$ref": "../../core/v2/schema.json#/$defs/RequestId"
+    },
+    "rpcError": {
+      "$ref": "../../core/v2/schema.json#/$defs/RpcError"
+    },
+    "traceContext": {
+      "field": "meta",
+      "type": {
+        "$ref": "../../core/v2/schema.json#/$defs/TraceContext"
+      }
+    },
+    "eventCursorField": "eventCursor",
+    "eventCursor": {
+      "$ref": "../../core/v2/schema.json#/$defs/EventCursor"
+    },
+    "framing": "websocket-text",
+    "additionalFramings": [
+      "webrtc-cpg1"
+    ]
+  },
+  "error": {
+    "$ref": "../../core/v2/schema.json#/$defs/ProtocolError"
+  },
+  "capabilities": {
+    "type": {
+      "$ref": "schema.json#/$defs/GatewayCapability"
+    },
+    "container": {
+      "$ref": "schema.json#/$defs/GatewayCapabilities"
+    },
+    "field": "methods"
+  },
+  "forwardCompatible": true,
+  "description": "Generated compatibility view of protocol/v2; do not edit.",
+  "version": 2,
+  "minVersion": 2,
+  "methods": [
+    {
+      "name": "protocol.ping",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "schema.json#/$defs/PingRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/PingResponse"
+      },
+      "description": "protocol.ping 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "protocol.handshake",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "schema.json#/$defs/HandshakeRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/HandshakeResponse"
+      },
+      "description": "protocol.handshake 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "protocol.describe",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "schema.json#/$defs/ProtocolDescribeRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ProtocolDescribeResponse"
+      },
+      "description": "protocol.describe 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "event.subscribe",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "schema.json#/$defs/EventSubscribeRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/EventSubscribeResponse"
+      },
+      "description": "event.subscribe 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "provider.list",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "schema.json#/$defs/ProviderListRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ProviderListResponse"
+      },
+      "description": "provider.list 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "provider.describe",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "schema.json#/$defs/ProviderDescribeRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ProviderDescribeResponse"
+      },
+      "description": "provider.describe 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "project.list",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "project.list",
+      "request": {
+        "$ref": "schema.json#/$defs/ProjectListRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ProjectListResponse"
+      },
+      "description": "project.list 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "project.get",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "project.get",
+      "request": {
+        "$ref": "schema.json#/$defs/ProjectGetRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ProjectGetResponse"
+      },
+      "description": "project.get 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "project.create",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "project.create",
+      "request": {
+        "$ref": "schema.json#/$defs/ProjectCreateRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ProjectCreateResponse"
+      },
+      "description": "project.create 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "project.update",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "project.update",
+      "request": {
+        "$ref": "schema.json#/$defs/ProjectUpdateRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ProjectUpdateResponse"
+      },
+      "description": "project.update 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "project.delete",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "project.delete",
+      "request": {
+        "$ref": "schema.json#/$defs/ProjectDeleteRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ProjectDeleteResponse"
+      },
+      "description": "project.delete 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.releaseInteraction",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "conversation.releaseInteraction",
+      "request": {
+        "$ref": "schema.json#/$defs/ConversationReleaseInteractionRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ConversationReleaseInteractionResponse"
+      },
+      "description": "conversation.releaseInteraction 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.recent",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "conversation.recent",
+      "request": {
+        "$ref": "schema.json#/$defs/ConversationRecentRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ConversationRecentResponse"
+      },
+      "description": "conversation.recent 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.list",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "conversation.list",
+      "request": {
+        "$ref": "schema.json#/$defs/ConversationListRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ConversationListResponse"
+      },
+      "description": "conversation.list 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.search",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "conversation.search",
+      "request": {
+        "$ref": "schema.json#/$defs/ConversationSearchRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ConversationSearchResponse"
+      },
+      "description": "conversation.search 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.get",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "conversation.get",
+      "request": {
+        "$ref": "schema.json#/$defs/ConversationGetRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ConversationGetResponse"
+      },
+      "description": "conversation.get 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.markRead",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/ConversationMarkReadRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ConversationMarkReadResponse"
+      },
+      "description": "conversation.markRead 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.acquireInteraction",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/ConversationAcquireInteractionRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ConversationAcquireInteractionResponse"
+      },
+      "description": "conversation.acquireInteraction 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.resume",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/ConversationResumeRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ConversationResumeResponse"
+      },
+      "description": "conversation.resume 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.create",
+      "direction": "clientToGateway",
+      "idempotency": "nonIdempotent",
+      "capability": "conversation.create",
+      "request": {
+        "$ref": "schema.json#/$defs/ConversationCreateRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ConversationCreateResponse"
+      },
+      "description": "conversation.create 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.inputQueue.get",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "conversation.inputQueue.get",
+      "request": {
+        "$ref": "schema.json#/$defs/InputQueueGetRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/InputQueueSnapshot"
+      },
+      "description": "conversation.inputQueue.get 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.inputQueue.enqueue",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "conversation.inputQueue.enqueue",
+      "request": {
+        "$ref": "schema.json#/$defs/InputQueueEnqueueRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/InputQueueMutationResponse"
+      },
+      "description": "conversation.inputQueue.enqueue 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.inputQueue.withdraw",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "conversation.inputQueue.withdraw",
+      "request": {
+        "$ref": "schema.json#/$defs/InputQueueWithdrawRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/InputQueueMutationResponse"
+      },
+      "description": "conversation.inputQueue.withdraw 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.inputQueue.steer",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "conversation.inputQueue.steer",
+      "request": {
+        "$ref": "schema.json#/$defs/InputQueueSteerRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/InputQueueMutationResponse"
+      },
+      "description": "conversation.inputQueue.steer 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.inputQueue.resume",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "conversation.inputQueue.resume",
+      "request": {
+        "$ref": "schema.json#/$defs/InputQueueResumeRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/InputQueueSnapshot"
+      },
+      "description": "conversation.inputQueue.resume 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.inputQueue.acknowledgeEdit",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "conversation.inputQueue.acknowledgeEdit",
+      "request": {
+        "$ref": "schema.json#/$defs/InputQueueAcknowledgeEditRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/InputQueueSnapshot"
+      },
+      "description": "conversation.inputQueue.acknowledgeEdit 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "turn.steer",
+      "direction": "clientToGateway",
+      "idempotency": "nonIdempotent",
+      "capability": "turn.steer",
+      "request": {
+        "$ref": "schema.json#/$defs/TurnSteerRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/TurnSteerResponse"
+      },
+      "description": "turn.steer 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "turn.send",
+      "direction": "clientToGateway",
+      "idempotency": "nonIdempotent",
+      "capability": "turn.send",
+      "request": {
+        "$ref": "schema.json#/$defs/TurnSendRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/TurnSendResponse"
+      },
+      "description": "turn.send 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "turn.interrupt",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "turn.interrupt",
+      "request": {
+        "$ref": "schema.json#/$defs/TurnInterruptRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/TurnInterruptResponse"
+      },
+      "description": "turn.interrupt 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "approval.resolve",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "approval.resolve",
+      "request": {
+        "$ref": "schema.json#/$defs/ApprovalResolveRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/ApprovalResolveResponse"
+      },
+      "description": "approval.resolve 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "codepet.usage.query",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "codepet.usage.query",
+      "request": {
+        "$ref": "schema.json#/$defs/UsageQueryRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/UsageQueryResponse"
+      },
+      "description": "codepet.usage.query 的调用定义；请求、结果与幂等性以本条目为准。"
+    }
+  ],
+  "events": [
+    {
+      "name": "provider.changed",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "provider",
+      "payload": {
+        "$ref": "schema.json#/$defs/ProviderChangedEvent"
+      },
+      "description": "provider.changed 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "project.changed",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "project",
+      "payload": {
+        "$ref": "schema.json#/$defs/ProjectChangedEvent"
+      },
+      "description": "project.changed 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "conversation.recentChanged",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "provider",
+      "payload": {
+        "$ref": "schema.json#/$defs/ConversationRecentChangedEvent"
+      },
+      "description": "conversation.recentChanged 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "conversation.upserted",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "schema.json#/$defs/ConversationUpsertedEvent"
+      },
+      "description": "conversation.upserted 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "conversation.itemUpserted",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "schema.json#/$defs/ConversationItemUpsertedEvent"
+      },
+      "description": "conversation.itemUpserted 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "conversation.activityChanged",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "schema.json#/$defs/ConversationActivityChangedEvent"
+      },
+      "description": "conversation.activityChanged 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "conversation.inputQueueChanged",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "conversation",
+      "payload": {
+        "$ref": "schema.json#/$defs/InputQueueChangedEvent"
+      },
+      "description": "conversation.inputQueueChanged 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "turn.upserted",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "turn",
+      "payload": {
+        "$ref": "schema.json#/$defs/TurnUpsertedEvent"
+      },
+      "description": "turn.upserted 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "turn.outputDelta",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "turn",
+      "payload": {
+        "$ref": "schema.json#/$defs/TurnOutputDeltaEvent"
+      },
+      "description": "turn.outputDelta 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "approval.requested",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "approval",
+      "payload": {
+        "$ref": "schema.json#/$defs/ApprovalRequestedEvent"
+      },
+      "description": "approval.requested 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "approval.resolved",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "approval",
+      "payload": {
+        "$ref": "schema.json#/$defs/ApprovalResolvedEvent"
+      },
+      "description": "approval.resolved 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    }
+  ],
+  "fixtures": "fixtures/index.json"
+}

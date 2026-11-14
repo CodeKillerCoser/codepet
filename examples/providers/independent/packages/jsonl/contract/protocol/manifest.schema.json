@@ -113,6 +113,6 @@
       "description": "Host 自动配置的实例列表，缺省为空。"
     }
   },
-  "$id": "https://code-pet.dev/provider-sdk/v1/protocol/manifest.schema.json",
+  "$id": "https://code-pet.dev/provider-sdk/v2/protocol/manifest.schema.json",
   "description": "Provider 插件包安装清单；描述身份、资源、进程启动方式、通信 profile 和实例配置，不是二进制文件头。"
 }

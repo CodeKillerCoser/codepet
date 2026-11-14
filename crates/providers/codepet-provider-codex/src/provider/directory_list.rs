@@ -33,6 +33,7 @@ fn invalid_cursor() -> ProtocolError {
 }
 fn project_filter(request: &ConversationListRequest) -> Option<Option<String>> {
     match &request.project_filter {
+        ConversationProjectFilter::Unrecognized(_) => None,
         ConversationProjectFilter::ConversationProjectFilterAll(_) => None,
         ConversationProjectFilter::ConversationProjectFilterStandalone(_) => Some(None),
         ConversationProjectFilter::ConversationProjectFilterProject(filter) => Some(Some(filter.project.native_resource_id.clone())),
@@ -46,6 +47,7 @@ fn accepts(row: &Conversation, request: &ConversationListRequest, assignments: &
         Some(Some(id)) => membership == CodexConversationMembership::Project(id),
     };
     project && match &request.query {
+        Some(ConversationListQuery::Unrecognized(_)) => false,
         Some(ConversationListQuery::ConversationUpdatedAfterQuery(query)) => row.updated_at.is_some_and(|time| time >= query.updated_after),
         Some(ConversationListQuery::ConversationIdsQuery(query)) => query.ids.contains(&row.resource.native_resource_id),
         None => true,

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://code-pet.dev/provider-sdk/v1/protocol/sdk/rpc/envelope.schema.json",
+  "$id": "https://code-pet.dev/provider-sdk/v2/protocol/sdk/rpc/envelope.schema.json",
   "description": "两层协议共用的基础 JSON-RPC 请求、响应和通知信封；各服务按自己的方法与事件注册表组合载荷。",
   "$defs": {
     "Request": {

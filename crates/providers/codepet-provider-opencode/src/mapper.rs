@@ -358,7 +358,7 @@ impl OpenCodeProtocolMapper {
                             content,
                             &turn,
                             conversation,
-                            status,
+                            status.clone(),
                         ) {
                             items.push(item);
                         }
@@ -557,6 +557,7 @@ impl OpenCodeProtocolMapper {
         approval.status = match decision {
             ApprovalDecision::Approve => ApprovalStatus::Approved,
             ApprovalDecision::Deny => ApprovalStatus::Denied,
+            ApprovalDecision::Unrecognized(_) => ApprovalStatus::Unrecognized("unknown".into()),
         };
         approval.decision = Some(decision);
         approval.resolved_at = resolved_at;
@@ -1061,6 +1062,7 @@ mod tests {
             let contents = match item.tool.outcome.as_ref().unwrap() {
                 ToolOutcome::ToolSuccessOutcome(outcome) => &outcome.content,
                 ToolOutcome::ToolFailureOutcome(outcome) => &outcome.content,
+                ToolOutcome::Unrecognized(_) => panic!("test expected a known outcome"),
             };
             for content in contents {
                 let json = serde_json::to_value(content).unwrap();

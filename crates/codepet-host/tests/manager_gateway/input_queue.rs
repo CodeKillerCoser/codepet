@@ -335,3 +335,12 @@ async fn stopping_provider_pauses_queue_even_when_no_terminal_turn_event_arrives
     .unwrap();
     manager.shutdown().await;
 }
+
+#[tokio::test]
+async fn unknown_conversation_state_is_never_used_as_idle_or_execution_authority() {
+    let (temp, manager, gateway) = fixture().await;
+    let error = rpc(&gateway,"phone","conversation.inputQueue.enqueue",input("future-state","must-not-run")).await.unwrap_err();
+    assert_eq!(error,"conversation_state_unknown");
+    assert!(!temp.path().join("starts").exists());
+    manager.shutdown().await;
+}

@@ -5,6 +5,7 @@ import type { Cursor, EventSequence, JsonObject, ProtocolError, ProtocolVersion,
 export type { Cursor, EventSequence, JsonObject, ProtocolError, ProtocolVersion, RequestId, TimestampMs } from "../../codepet-core-sdk/src/generated";
 
 export const PROTOCOL_VERSION = 0 as const;
+export const MIN_PROTOCOL_VERSION = 0 as const;
 export const PROTOCOL_METHODS = ["protocol.handshake", "provider.list", "conversation.list", "conversation.get", "conversation.create", "turn.send", "turn.interrupt", "approval.resolve"] as const;
 export const PROTOCOL_EVENTS = ["provider.statusChanged", "conversation.upserted", "turn.upserted", "turn.outputDelta", "approval.requested", "approval.resolved"] as const;
 

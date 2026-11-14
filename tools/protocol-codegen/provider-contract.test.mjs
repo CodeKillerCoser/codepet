@@ -9,11 +9,12 @@ import { providerRuntimeArtifacts } from './provider-runtime.mjs';
 const source = path.resolve(import.meta.dirname, '../../protocol');
 async function fixture() {
   const root = await mkdtemp(path.join(os.tmpdir(), 'codepet-idl-'));
-  await cp(path.join(source, 'v1'), path.join(root, 'v1'), { recursive: true });
+  await cp(path.join(source, 'v2'), path.join(root, 'v2'), { recursive: true });
+  await cp(path.join(source, 'codegen.json'), path.join(root, 'codegen.json'));
   return root;
 }
 async function change(root, file, edit) {
-  const p = path.join(root, 'v1', file), value = JSON.parse(await readFile(p));
+  const p = path.join(root, 'v2', file), value = JSON.parse(await readFile(p));
   edit(value); await writeFile(p, JSON.stringify(value));
 }
 
@@ -27,8 +28,8 @@ test('one IDL change reaches runtime constants, compatibility DTOs, registry env
   assert.match(runtime.get('sdk/rust/codepet-provider-sdk/src/runtime/protocol.rs'), /from_millis\(15000\)/);
   assert.match(runtime.get('sdk/rust/codepet-transport/src/protocol.rs'), /normal_streams: 20/);
   assert.match(published.get('README.md'), /等待 15 秒/);
-  assert.equal(JSON.parse(views.get('provider/v1/schema.json')).$defs.ProviderPingResponse.properties.sequence.description, 'IDL-owned reply sequence');
-  assert.ok(JSON.parse(views.get('provider/v1/manifest.json')).methods.some(m => m.name === 'provider.identity'));
+  assert.equal(JSON.parse(views.get('provider/v2/schema.json')).$defs.ProviderPingResponse.properties.sequence.description, 'IDL-owned reply sequence');
+  assert.ok(JSON.parse(views.get('provider/v2/manifest.json')).methods.some(m => m.name === 'provider.identity'));
   const envelope = JSON.parse(published.get(model.index.rpcEnvelopeSchema));
   assert.ok(envelope.$defs.Request.oneOf.some(v => v.properties.method.const === 'provider.identity'));
   assert.ok(!envelope.$defs.Request.oneOf.some(v => v.properties.method.const === 'provider.describe'));

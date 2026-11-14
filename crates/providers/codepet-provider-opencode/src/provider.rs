@@ -31,7 +31,7 @@ use codepet_provider_sdk::{
     RuntimeGetInstalledResponse, RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse,
     TurnInterruptRequest, TurnInterruptResponse, TurnSelection,
     TurnStartRequest, TurnStartResponse, TurnStatus, TurnSteerRequest, TurnSteerResponse,
-    VersionRange, PROTOCOL_VERSION,
+    ProtocolVersionOffer, PROTOCOL_VERSION,
 };
 use serde::de::DeserializeOwned;
 use serde::Deserialize;
@@ -247,7 +247,7 @@ impl OpenCodeInstanceRuntime {
                         .into_owned(),
                 ),
             },
-            mutable.status,
+            mutable.status.clone(),
             conversation_atoms::observed_capabilities(lock(&self.capabilities).clone(), mutable.atomic_facts_ready, mutable.atomic_facts_epoch),
             mutable.authentication.clone(),
             mutable.usage.clone(),
@@ -264,7 +264,7 @@ impl OpenCodeInstanceRuntime {
 
     fn refresh_metadata(self: &Arc<Self>, force: bool) {
         let mut mutable = lock(&self.mutable);
-        if !matches!(mutable.status, InstanceStatus::Starting | InstanceStatus::Ready) {
+        if !matches!(mutable.status.clone(), InstanceStatus::Starting | InstanceStatus::Ready) {
             return;
         }
         if (!force || mutable.status == InstanceStatus::Starting) && mutable.metadata_task.is_some() {
@@ -352,7 +352,7 @@ impl OpenCodeInstanceRuntime {
         version: Option<String>,
     ) {
         let mut mutable = lock(&self.mutable);
-        if mutable.metadata_epoch != epoch || !matches!(mutable.status, InstanceStatus::Starting | InstanceStatus::Ready) {
+        if mutable.metadata_epoch != epoch || !matches!(mutable.status.clone(), InstanceStatus::Starting | InstanceStatus::Ready) {
             return;
         }
         if let Some(authentication) = authentication {
@@ -363,7 +363,7 @@ impl OpenCodeInstanceRuntime {
         }
         if let Some(capabilities) = capabilities { self.replace_catalog(capabilities); }
         if let Some(version) = version { mutable.version = Some(version); }
-        let previous = mutable.status;
+        let previous = mutable.status.clone();
         mutable.status = InstanceStatus::Ready;
         // Serialize publication with stop/refresh so an old scan cannot overwrite a new generation.
         let _ = self
@@ -389,7 +389,7 @@ impl OpenCodeInstanceRuntime {
 
     fn apply_catalog(&self, epoch: u64, capabilities: ProviderCapabilities) {
         let mutable = lock(&self.mutable);
-        if mutable.metadata_epoch != epoch || mutable.status != InstanceStatus::Ready {
+        if mutable.metadata_epoch != epoch || mutable.status.clone() != InstanceStatus::Ready {
             return;
         }
         if self.replace_catalog(capabilities) {
@@ -397,7 +397,7 @@ impl OpenCodeInstanceRuntime {
                 jsonrpc: "2.0".into(),
                 params: InstanceStatusChangedEvent {
                     instance: self.snapshot_locked(&mutable),
-                    previous_status: Some(mutable.status),
+                    previous_status: Some(mutable.status.clone()),
                 },
             });
         }
@@ -414,7 +414,7 @@ impl OpenCodeInstanceRuntime {
         status: InstanceStatus,
     ) -> Result<ProviderInstance, ProtocolError> {
         let mut mutable = lock(&self.mutable);
-        if mutable.status != InstanceStatus::Starting || mutable.generation_counter != attempt {
+        if mutable.status.clone() != InstanceStatus::Starting || mutable.generation_counter != attempt {
             return Err(protocol_error(
                 "provider_start_cancelled",
                 "Server startup cancelled".into(),
@@ -437,15 +437,15 @@ impl OpenCodeInstanceRuntime {
         Ok(instance)
     }
 
-    fn status(&self) -> InstanceStatus { lock(&self.mutable).status }
+    fn status(&self) -> InstanceStatus { lock(&self.mutable).status.clone() }
 
     fn set_status(&self, status: InstanceStatus) -> Result<ProviderInstance, ProtocolError> {
         let mut mutable = lock(&self.mutable);
-        let previous = mutable.status;
+        let previous = mutable.status.clone();
         if !matches!(status, InstanceStatus::Ready) {
             Self::cancel_metadata(&mut mutable);
         }
-        mutable.status = status;
+        mutable.status = status.clone();
         let instance = self.snapshot_locked(&mutable);
         if previous != status {
             self.events
@@ -462,7 +462,7 @@ impl OpenCodeInstanceRuntime {
 
     fn ready_session(&self) -> Result<OpenCodeServerSession, ProtocolError> {
         let mutable = lock(&self.mutable);
-        if mutable.status != InstanceStatus::Ready {
+        if mutable.status.clone() != InstanceStatus::Ready {
             return Err(protocol_error(
                 "provider_unavailable",
                 format!(
@@ -499,7 +499,7 @@ impl OpenCodeInstanceRuntime {
                             let mutable = lock(&runtime.mutable);
                             mutable.session_generation.as_deref() == Some(generation.as_str())
                                 && matches!(
-                                    mutable.status,
+                                    mutable.status.clone(),
                                     InstanceStatus::Ready | InstanceStatus::Starting
                                 )
                         };
@@ -523,7 +523,7 @@ impl OpenCodeInstanceRuntime {
                     let mutable = lock(&runtime.mutable);
                     mutable.session_generation.as_deref() == Some(generation.as_str())
                         && matches!(
-                            mutable.status,
+                            mutable.status.clone(),
                             InstanceStatus::Ready | InstanceStatus::Starting
                         )
                 };
@@ -1025,13 +1025,13 @@ impl OpenCodeInstanceRuntime {
             let mut mutable = lock(&self.mutable);
             if mutable.session_generation.as_deref() != Some(generation)
                 || !matches!(
-                    mutable.status,
+                    mutable.status.clone(),
                     InstanceStatus::Ready | InstanceStatus::Starting
                 )
             {
                 return;
             }
-            let previous_status = mutable.status;
+            let previous_status = mutable.status.clone();
             Self::cancel_metadata(&mut mutable);
             mutable.status = InstanceStatus::Error;
             mutable.session_generation = None;
@@ -1124,9 +1124,9 @@ impl OpenCodeProvider {
             display_name: "OpenCode".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             default_workspace_root: codepet_paths::remote_workspace_for_user("opencode"),
-            supported_versions: VersionRange {
-                min_version: PROTOCOL_VERSION,
-                max_version: PROTOCOL_VERSION,
+            protocol: ProtocolVersionOffer {
+                min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION,
+                version: PROTOCOL_VERSION,
             },
             instance_kinds: vec![OPENCODE_INSTANCE_KIND.to_string()],
         }
@@ -1205,22 +1205,8 @@ impl Provider for OpenCodeProvider {
         request: ProviderInitializeRequest,
     ) -> ProtocolFuture<'a, ProviderInitializeResponse> {
         Box::pin(async move {
-            if request.supported_versions.min_version > request.supported_versions.max_version {
-                return Err(protocol_error(
-                    "invalid_protocol_range",
-                    "Host protocol range is invalid".to_string(),
-                    false,
-                ));
-            }
-            if PROTOCOL_VERSION < request.supported_versions.min_version
-                || PROTOCOL_VERSION > request.supported_versions.max_version
-            {
-                return Err(protocol_error(
-                    "unsupported_protocol_version",
-                    "Provider protocol v1 is outside the Host-supported range".to_string(),
-                    false,
-                ));
-            }
+            let protocol = ProtocolVersionOffer { version: PROTOCOL_VERSION, min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION }
+                .negotiate(&request.protocol)?;
             if request.host_client_id.trim().is_empty()
                 || request.host_device_id.trim().is_empty()
                 || request.host_version.trim().is_empty()
@@ -1253,7 +1239,7 @@ impl Provider for OpenCodeProvider {
             eprintln!("provider.initialize completed; business storage configured={}", self.data.configured());
             self.scanner.start_cancellable("opencode", "opencode-ai", || discover_path_candidates("opencode"), inspect_runtime_candidate);
             Ok(ProviderInitializeResponse {
-                selected_version: PROTOCOL_VERSION,
+                protocol,
                 plugin: Self::descriptor(),
             })
         })
@@ -1298,7 +1284,10 @@ impl Provider for OpenCodeProvider {
             candidate.executable_path = local_runtime::resolve_executable(std::path::Path::new(&candidate.executable_path), "opencode", "opencode-ai")
                 .map_err(|error| protocol_error("invalid_runtime_selection", error, false))?.to_string_lossy().into_owned();
             let selected=self.scanner.select(&candidate)?;
-            Ok(RuntimeSelectResponse {selected})
+            Ok(RuntimeSelectResponse {
+                pending: selected.version.is_empty().then(|| RuntimeCandidate { executable_path: selected.executable_path.clone(), source: selected.source.clone() }),
+                selected: (!selected.version.is_empty()).then_some(selected),
+            })
         })
     }
 
@@ -1398,14 +1387,14 @@ impl Provider for OpenCodeProvider {
             let runtime = self.instance(&request.route)?;
             let (attempt, previous_status) = {
                 let mut mutable = lock(&runtime.mutable);
-                if matches!(mutable.status, InstanceStatus::Ready | InstanceStatus::Starting) {
+                if matches!(mutable.status.clone(), InstanceStatus::Ready | InstanceStatus::Starting) {
                     drop(mutable);
                     return Ok(InstanceStartResponse { instance: runtime.snapshot() });
                 }
                 if mutable.status == InstanceStatus::Stopping {
                     return Err(protocol_error("provider_instance_starting", "OpenCode lifecycle transition is in progress".into(), true));
                 }
-                let previous = mutable.status;
+                let previous = mutable.status.clone();
                 mutable.status = InstanceStatus::Starting;
                 mutable.generation_counter = mutable.generation_counter.saturating_add(1);
                 (mutable.generation_counter, previous)
@@ -1439,7 +1428,7 @@ impl Provider for OpenCodeProvider {
                 // Register before returning from the blocking task. Dropping the
                 // awaiting future must not orphan a successfully spawned child.
                 let mut mutable = lock(&owner.mutable);
-                if mutable.status != InstanceStatus::Starting || mutable.generation_counter != attempt {
+                if mutable.status.clone() != InstanceStatus::Starting || mutable.generation_counter != attempt {
                     drop(mutable);
                     let _ = session.shutdown();
                     return Err(OpenCodeServerError::Protocol("Server startup cancelled".into()));
@@ -1468,7 +1457,7 @@ impl Provider for OpenCodeProvider {
             let generation = session.generation().to_string();
             {
                 let mut mutable = lock(&runtime.mutable);
-                if mutable.status != InstanceStatus::Starting || mutable.generation_counter != attempt {
+                if mutable.status.clone() != InstanceStatus::Starting || mutable.generation_counter != attempt {
                     drop(mutable);
                     let _ = session.shutdown();
                     return Err(protocol_error("provider_start_cancelled", "Server startup cancelled".into(), true));
@@ -2321,6 +2310,7 @@ impl Provider for OpenCodeProvider {
             let reply = match request.decision {
                 ApprovalDecision::Approve => OpenCodePermissionReply::Once,
                 ApprovalDecision::Deny => OpenCodePermissionReply::Reject,
+                ApprovalDecision::Unrecognized(_) => return Err(protocol_error("unsupported_approval_decision", "Unknown approval decision".into(), false)),
             };
             let client = session.client();
             let session_id = pending.session_id.clone();
@@ -2919,6 +2909,7 @@ fn resolve_opencode_selection(
         "reasoningEffortId",
     )?;
     let catalog = match controls.model_catalog.as_ref() {
+        Some(ModelCatalog::Unrecognized(_)) => return Err(protocol_error("unsupported_model_catalog", "Unknown model catalog".into(), false)),
         Some(ModelCatalog::GroupedModelCatalog(catalog)) => catalog,
         Some(ModelCatalog::FlatModelCatalog(_)) => {
             return Err(protocol_error(
@@ -2936,6 +2927,7 @@ fn resolve_opencode_selection(
         }
     };
     let requested_model = match requested.model {
+                Some(ModelSelection::Unrecognized(_)) => return Err(protocol_error("unsupported_model_selection", "Unknown model selection".into(), false)),
         Some(ModelSelection::GroupedModelSelection(selection)) => Some(selection),
         Some(ModelSelection::FlatModelSelection(_)) => {
             return Err(protocol_error(
@@ -3294,7 +3286,7 @@ impl OpenCodeInstanceRuntime {
                 let Some(runtime) = owner.upgrade() else { return; };
                 let (current_generation, status) = {
                     let state = lock(&runtime.mutable);
-                    (state.session_generation.clone(), state.status)
+                    (state.session_generation.clone(), state.status.clone())
                 };
                 if current_generation.as_deref() != Some(generation.as_str()) { return; }
                 if status != InstanceStatus::Ready {
@@ -3331,7 +3323,7 @@ impl OpenCodeInstanceRuntime {
 
     fn set_atomic_readiness_for(&self, generation: &str, ready: bool) -> bool {
         let mut state = lock(&self.mutable);
-        if state.session_generation.as_deref() != Some(generation) || state.status != InstanceStatus::Ready { return false; }
+        if state.session_generation.as_deref() != Some(generation) || state.status.clone() != InstanceStatus::Ready { return false; }
         if state.atomic_facts_ready == ready && !state.atomic_readiness_pending { return true; }
         if state.atomic_facts_ready != ready {
             state.atomic_facts_ready = ready;
@@ -3339,7 +3331,7 @@ impl OpenCodeInstanceRuntime {
         }
         state.atomic_readiness_pending = true;
         let published = self.events.publish(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent {
-            instance: self.snapshot_locked(&state), previous_status: Some(state.status),
+            instance: self.snapshot_locked(&state), previous_status: Some(state.status.clone()),
         } }).is_ok();
         state.atomic_readiness_pending = !published;
         published
@@ -3368,14 +3360,14 @@ impl OpenCodeInstanceRuntime {
 impl OpenCodeInstanceRuntime {
     fn apply_atomic_snapshot(&self, generation: &str, epoch: u64, previous: &HashMap<String, Conversation>, current: &HashMap<String, Conversation>) -> Result<bool, ProtocolError> {
         let mut state = lock(&self.mutable);
-        if state.session_generation.as_deref() != Some(generation) || state.status != InstanceStatus::Ready { return Ok(false); }
+        if state.session_generation.as_deref() != Some(generation) || state.status.clone() != InstanceStatus::Ready { return Ok(false); }
         let old_ready = state.atomic_facts_ready;
         let old_epoch = state.atomic_facts_epoch;
         let mut events = Vec::new();
         if !old_ready {
             state.atomic_facts_ready = true;
             state.atomic_facts_epoch = old_epoch.saturating_add(1);
-            events.push(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent { instance: self.snapshot_locked(&state), previous_status: Some(state.status) } });
+            events.push(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent { instance: self.snapshot_locked(&state), previous_status: Some(state.status.clone()) } });
         }
         let delta = conversation_atoms::SummaryDelta {
             event_epoch: epoch,

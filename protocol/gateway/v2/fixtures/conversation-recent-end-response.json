@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-recent-end-response",
+  "result": {
+    "conversations": [],
+    "pageInfo": {},
+    "revision": "recent-view-7",
+    "snapshotCursor": "event-42"
+  }
+}

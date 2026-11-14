@@ -3,7 +3,7 @@ use codepet_provider_sdk::{
     ConversationGetResponse, ConversationItem, ConversationItemStatus, InstanceCreateRequest,
     InstanceCreateResponse, JsonRpcResponsePayload, ProtocolEvent, ProtocolFuture, ProtocolMethod,
     ModelSelection, ProtocolRequest, ProtocolServer, ProviderCapability, ProviderInitializeRequest,
-    ProviderInitializeResponse, ProviderPluginDescriptor, TurnStartResponse, VersionRange,
+    ProviderInitializeResponse, ProviderPluginDescriptor, TurnStartResponse, ProtocolVersionOffer,
     StdioServerOptions, ToolInput, ToolOutcome, serve_stdio_with_io,
 };
 use std::io::Cursor;
@@ -16,9 +16,9 @@ fn descriptor() -> ProviderPluginDescriptor {
         display_name: "Codex".to_string(),
         version: "1.0.0".to_string(),
         default_workspace_root: Some("/Users/example/.codex".to_string()),
-        supported_versions: VersionRange {
-            min_version: 1,
-            max_version: 1,
+        protocol: ProtocolVersionOffer {
+            min_version: 2,
+            version: 2,
         },
         instance_kinds: vec!["codex".to_string()],
     }
@@ -31,7 +31,7 @@ impl ProtocolServer for InitializeServer {
     ) -> ProtocolFuture<'a, ProviderInitializeResponse> {
         Box::pin(async {
             Ok(ProviderInitializeResponse {
-                selected_version: 1,
+                protocol: codepet_provider_sdk::ProtocolVersionSelection {version: 2,min_version: 2,selected_version: 2},
                 plugin: descriptor(),
             })
         })
@@ -41,7 +41,7 @@ impl ProtocolServer for InitializeServer {
 #[tokio::test]
 async fn json_rpc_dispatcher_routes_initialize_to_the_async_server_trait() {
     let request = decode_request(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/initialize-request.json"
+        "../../../../protocol/provider/v2/fixtures/initialize-request.json"
     ))
     .unwrap();
     let response = dispatch(&InitializeServer, request).await;
@@ -51,7 +51,7 @@ async fn json_rpc_dispatcher_routes_initialize_to_the_async_server_trait() {
     let JsonRpcResponsePayload::Ok { result } = response.response else {
         panic!("expected successful result");
     };
-    assert_eq!(result["selectedVersion"], 1);
+    assert_eq!(result["protocol"]["selectedVersion"], 2);
 }
 
 #[tokio::test]
@@ -76,7 +76,7 @@ async fn stdio_runtime_rejects_zero_capacity_before_starting_the_provider() {
 #[test]
 fn provider_event_uses_canonical_agent_resource_identity() {
     let event = decode_event(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/conversation-upserted-event.json"
+        "../../../../protocol/provider/v2/fixtures/conversation-upserted-event.json"
     ))
     .unwrap();
     let ProtocolEvent::EventConversationUpserted { params, .. } = event else {
@@ -89,7 +89,7 @@ fn provider_event_uses_canonical_agent_resource_identity() {
 #[test]
 fn every_item_variant_round_trips_optional_open_metadata_with_its_wire_name() {
     let response: serde_json::Value = serde_json::from_slice(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/conversation-get-response.json"
+        "../../../../protocol/provider/v2/fixtures/conversation-get-response.json"
     )).unwrap();
     let mut items = response["result"]["items"].as_array().unwrap().clone();
     let mut tool = items[2].clone();
@@ -111,7 +111,7 @@ fn every_item_variant_round_trips_optional_open_metadata_with_its_wire_name() {
 #[test]
 fn conversation_get_fixture_preserves_ordered_items_and_stable_content_ids() {
     let response = decode_response(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/conversation-get-response.json"
+        "../../../../protocol/provider/v2/fixtures/conversation-get-response.json"
     ))
     .unwrap();
     let JsonRpcResponsePayload::Ok { result } = response.response else {
@@ -172,25 +172,25 @@ fn conversation_get_fixture_preserves_ordered_items_and_stable_content_ids() {
 }
 
 #[test]
-fn generated_unions_reject_mixed_authority_fixtures() {
+fn generated_unions_ignore_unknown_fields_in_known_variants() {
     assert!(serde_json::from_slice::<ToolInput>(include_bytes!(
         "../../../../protocol/agent/v1/fixtures/invalid-tool-input-mixed.json"
     ))
-    .is_err());
+    .is_ok());
     assert!(serde_json::from_slice::<ToolOutcome>(include_bytes!(
         "../../../../protocol/agent/v1/fixtures/invalid-tool-outcome-mixed.json"
     ))
-    .is_err());
+    .is_ok());
     assert!(serde_json::from_slice::<ConversationItem>(include_bytes!(
         "../../../../protocol/agent/v1/fixtures/invalid-command-item-duplicate-content.json"
     ))
-    .is_err());
+    .is_ok());
 }
 
 #[test]
 fn turn_output_delta_fixture_addresses_both_item_and_content() {
     let event = decode_event(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/turn-output-delta-event.json"
+        "../../../../protocol/provider/v2/fixtures/turn-output-delta-event.json"
     ))
     .unwrap();
     let ProtocolEvent::EventTurnOutputDelta { params, .. } = event else {
@@ -204,7 +204,7 @@ fn turn_output_delta_fixture_addresses_both_item_and_content() {
 #[test]
 fn provider_initialize_fixture_uses_json_rpc_stdio_envelope() {
     let request = decode_request(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/initialize-request.json"
+        "../../../../protocol/provider/v2/fixtures/initialize-request.json"
     ))
     .unwrap();
     assert!(matches!(request, ProtocolRequest::ProviderInitialize { .. }));
@@ -233,7 +233,7 @@ fn instance_kind_is_required_across_descriptor_request_and_instance_response() {
     );
 
     let request = decode_request(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/instance-create-request.json"
+        "../../../../protocol/provider/v2/fixtures/instance-create-request.json"
     ))
     .unwrap();
     let ProtocolRequest::InstanceCreate { params, .. } = request else {
@@ -242,7 +242,7 @@ fn instance_kind_is_required_across_descriptor_request_and_instance_response() {
     assert_eq!(params.instance_kind, "codex");
 
     let response = decode_response(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/instance-create-response.json"
+        "../../../../protocol/provider/v2/fixtures/instance-create-response.json"
     ))
     .unwrap();
     let JsonRpcResponsePayload::Ok { result } = response.response else {
@@ -256,7 +256,7 @@ fn instance_kind_is_required_across_descriptor_request_and_instance_response() {
 #[test]
 fn turn_start_fixture_preserves_selection_and_allows_deferred_user_item() {
     let request = decode_request(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/turn-start-request.json"
+        "../../../../protocol/provider/v2/fixtures/turn-start-request.json"
     ))
     .unwrap();
     let ProtocolRequest::TurnStart { params, .. } = request else {
@@ -270,7 +270,7 @@ fn turn_start_fixture_preserves_selection_and_allows_deferred_user_item() {
     assert_eq!(model.model_id, "gpt-5");
 
     let response = decode_response(include_bytes!(
-        "../../../../protocol/provider/v1/fixtures/turn-start-response.json"
+        "../../../../protocol/provider/v2/fixtures/turn-start-response.json"
     ))
     .unwrap();
     let JsonRpcResponsePayload::Ok { result } = response.response else {

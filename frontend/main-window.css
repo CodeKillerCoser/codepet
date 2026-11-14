@@ -292,9 +292,9 @@
 
 /* Provider information groups retain content height rather than stretching grid rows. */
 .main-theme .runtime-section { padding: 0; border: 0; background: transparent; box-shadow: none; align-content: start; gap: 24px; }
-.main-theme .runtime-group { display: grid; align-content: start; min-width: 0; }
+.main-theme .runtime-group { display: grid; align-content: start; gap: 12px; min-width: 0; }
 .main-theme .runtime-group-title { margin: 0; font-size: var(--font-size-sm); font-weight: 500; color: var(--app-muted); }
-.main-theme .runtime-list { gap: 0; align-content: start; }
+.main-theme .runtime-list { grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 16px; align-content: start; align-items: start; }
 .main-theme .runtime-actions { justify-content: flex-end; margin-top: 8px; }
 .main-theme .runtime-empty { margin: 20px 0; color: var(--app-muted); font-size: var(--font-size-sm-plus); }
 .main-theme .runtime-custom-provider { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 16px; border: 1px dashed var(--app-border); border-radius: 8px; }
@@ -302,3 +302,7 @@
 .main-theme .runtime-custom-provider p { flex-basis: 100%; margin: 0; color: var(--app-muted); overflow-wrap: anywhere; }
 .main-theme .runtime-add-provider { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid var(--app-border); border-radius: 10px; background: transparent; color: var(--app-text); }
 .main-theme .runtime-add-provider:hover:not(:disabled) { background: var(--color-main-hover); }
+
+.main-theme .runtime-operation-error, .main-theme .runtime-operation-notice { margin: 0; padding: 12px 14px; border-radius: 8px; font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.main-theme .runtime-operation-error { color: var(--app-danger); background: color-mix(in srgb, var(--app-danger) 6%, var(--app-surface)); }
+.main-theme .runtime-operation-notice { color: var(--color-success); background: var(--app-surface-soft); }

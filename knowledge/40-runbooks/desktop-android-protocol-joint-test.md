@@ -2,7 +2,7 @@
 
 ## 范围与前置条件
 
-验证 `protocol/v1/` 生成的两端 SDK、独立 Provider stdio、桌面 App 内的实际 Host，以及 Android 原生 LAN/WSS、WebRTC 和生产 UI。自动化 Host 服务探针、单独 SDK 编译、Widget mock 均不能替代这条联合测试。
+验证当前 `protocol/v2/` 生成的两端 SDK、独立 Provider stdio、桌面 App 内的实际 Host，以及 Android 原生 LAN/WSS、WebRTC 和生产 UI。自动化 Host 服务探针、单独 SDK 编译、Widget mock 均不能替代这条联合测试。
 
 CodePet 与 Remote 工作区分别为本任务工作区及 `/Users/wangxin/Documents/codepet-remote`；以各自 git status 为准，保留已有改动。Remote 使用仓库固定 debug keystore，不修改签名身份。无实体手机时可使用 API 36 ARM64 模拟器，但不能声明覆盖真机、蜂窝或公网 TURN。
 
@@ -68,3 +68,22 @@ ECHO_CHUNK_SIZE=4096、ECHO_TURN_DELAY_MS=1 可控制大文本的 delta 数量�
 生成与回归：`npm run protocol:check` 32 项、`npm run providers:test` 5 项、cp-sdk-gen 6 项通过；Remote 三份 SDK `--check` 一致、`flutter analyze --no-pub` 无 issue、全量 `flutter test --no-pub` 503 项通过。两端正常 App 均重新构建。macOS 新包已安装到 `/Applications/Code Pet.app`，本地签名校验通过；原配置逐字节恢复并在正式 App 界面确认使用原数据目录。Android 已重建普通 `lib/main.dart` debug APK 并重新安装，不交付测试入口。
 
 本机验收产物位于 `/Users/wangxin/Documents/CodePet-builds/protocol-joint-20261112/artifacts/`：普通 `CodePet-Remote-debug.apk`、设备结果、四张 UI 截图及 native-test-milestones.log。上层的原配置备份与隔离数据库只用于恢复，不能随验收产物分发。桌面构建日志 `/tmp/codepet-apps-desktop-final-build.log`，Android 构建日志 `/tmp/codepet-apps-android-final-build.log`。模拟器验收不覆盖实体手机、移动数据、公网信令或 TURN；macOS 包为本地签名，未公证。
+
+## v2 前向兼容验收（2026-11-14）
+
+业务 Provider Initialize 与 Gateway handshake 均使用 version/minVersion/selectedVersion，当前范围 2/2，v1 源与视图冻结。三种 stdio profile、配对格式和 WSS `/remote/v1/gateway` 路径保留原有版本。区间改变不代表底层传输改变。
+
+本轮新构建桌面 App、普通 Android App，以及独立作者仅依据公开 SDK 实现的四个 v2 插件包。源码及各插件包 19/19 通过；公开 SDK 标准 Ajv 预检验证 33 个请求、33 个响应和 13 个事件。导出器必须保证所有 `$id` 在同一发布版本命名空间，否则相对 `$ref` 在标准校验器中会失效；仅验证磁盘相对文件存在不足以发现这一错误。
+
+自动检查：协议生成 38 项、发布/构建 5 项、cp-sdk-gen 6 项通过；Rust 主 workspace 472 项通过，14 项外部环境用例按既有条件忽略；Rust SDK 92 项通过，5 项按既有条件忽略；手机静态检查无 issue、506 项测试通过；桌面卡片相关前端 5 项通过。单独启用的 Pi 实测 1 项通过，使用已配置 DeepSeek Flash 读取合成 proof.txt，覆盖实际 RPC、read 工具、delta 和完整历史，未打印密钥。
+
+首次联合运行 PID 20932，17:27:24—17:28:58，完整通过 LAN/WSS 与原生 RTC × 三 profile、两种通道心跳、生产 UI 更早历史/中文 emoji 发送/会话隔离和凭据撤销，设备结果 passed=true、failures=[]。最终构建复验与恢复记录继续写在此节下，不能拿第一次结果冒充后续运行。
+
+产物目录为 `/Users/wangxin/Documents/CodePet-builds/protocol-v2-joint-20261114/`，artifacts 仅存普通 App、公开 SDK、截图和合成测试结果；original-settings.json、QA 数据库和临时配置不随产物分发。原用户配置必须逐字节恢复。
+
+环境：本机代理会使内置 OpenCode 的 localhost HTTP fixture 超时；对测试进程移除代理环境后内置 Provider 4 项通过，不改系统代理。QA 放 Documents 时 sample 曾显示主线程停在 rename/chmod；同一最终二进制改用 `/tmp/codepet-protocol-v2-qa-data-20261114` 后正常启动，未改 TCC、证书校验或安全策略，底层停顿原因未确认。macOS 路径断言应规范化实际存在的包目录，再拼接未必存在的 fixture executable，不能对未创建的文件做 canonicalize。
+
+
+最终复验 PID 21210，17:35:59—17:37:53，同样完整通过上述六组通道/profile、两次应用心跳、UI 更早历史/发送/会话隔离和双连接撤销；最终设备文件 `protocol-qa-result.json` 为 passed=true、failures=[]，四张截图及本轮日志已保存到 artifacts。原用户 settings.json 已逐字节恢复，原先运行的桌面 App 已重新启动；本次新桌面正常包单独交付，没有覆盖用户原安装或迁移其自定义插件。Android 已重新构建普通 main.dart debug APK 并安装启动，测试入口未作为交付安装包。
+
+交付桌面包为本地签名、未公证；Android 为 debug 签名。本轮覆盖本机模拟器局域网和本地 RTC，不覆盖实体手机、蜂窝、公网 TURN 或发布签名流水线。独立真实模型验证只对指定 Pi 合成任务，不泛化为所有模型或所有 Provider 均通过真实生产账号验收。

@@ -14,7 +14,8 @@ pub(super) struct SubscriptionHub {
 }
 impl PluginManager {
     pub async fn subscribe_events(&self, plugin_id: &str, subscriber_id: &str) -> HostResult<ProviderEventSubscription> {
-        let _operation = self.inner.subscription_operations.lock().await;
+        let operation = self.plugin_operation(plugin_id)?;
+        let _operation = operation.lock().await;
         let (process, generation) = {
             let plugins = self.inner.plugins.read().await;
             let entry = plugins.get(plugin_id).ok_or_else(|| HostError::new("unknown_plugin", plugin_id))?;
@@ -46,7 +47,12 @@ impl PluginManager {
         }
     }
     pub async fn unsubscribe_events(&self, plugin_id: &str, subscriber_id: &str) -> HostResult<()> {
-        let _operation = self.inner.subscription_operations.lock().await;
+        let operation = match self.plugin_operation(plugin_id) {
+            Ok(operation) => operation,
+            Err(error) if error.code == "unknown_provider_plugin" => return Ok(()),
+            Err(error) => return Err(error),
+        };
+        let _operation = operation.lock().await;
         let wire_id = {
             let mut hubs = self.inner.subscriptions.lock().unwrap();
             let Some(hub) = hubs.get_mut(plugin_id) else { return Ok(()); };

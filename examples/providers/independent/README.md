@@ -1,6 +1,6 @@
 # Independent JavaScript Code Pet Provider
 
-Developed as a third-party implementation from **only** the exported standalone SDK (current snapshot: `/tmp/codepet-apps-provider-sdk-semantic/v1`): README, JSON Schema, methods/events and profiles. No Host implementation, Rust bridge, repository examples or repository knowledge was read. Public npm dependencies and pi's public RPC documentation were used.
+Developed as a third-party implementation from **only** the exported standalone SDK (current snapshot: `/tmp/codepet-provider-sdk-v2-verified-20261114/v2`): README, JSON Schema, methods/events and profiles. No Host implementation, Rust bridge, repository examples or repository knowledge was read. Public npm dependencies and pi's public RPC documentation were used.
 
 ## Importable packages
 
@@ -130,3 +130,23 @@ Regression tests exercise defaults, create/acquire/turn consistency, persistent 
 For 32–64 KiB Chinese integration prompts, set manifest env `ECHO_CHUNK_SIZE="4096"` and `ECHO_TURN_DELAY_MS="1"` (or `"0"`) to produce a few deltas. Chunk size counts UTF-16 units and extends a boundary by one unit when necessary to preserve a surrogate pair. The selection/history regression also sends a large Chinese/emoji turn across such a boundary, asserting independently valid Unicode deltas, exact reassembly, complete-item equality and a small event count.
 
 Selection/pagination repair validation: source 19/19 and each of the four rebuilt bundle suites 19/19 passed. Semantic SDK sourceDigest: `sha256:421531739813b7f3252d8b894a60412722cc29c4425f40d556273f983d0a07d3`. Source and all bundled snapshot trees match the semantic export exactly. Chinese/emoji streaming, earlier-page retrieval and selection validation ran without any real model call.
+
+### Business protocol v2
+
+The active complete public snapshot is `/tmp/codepet-provider-sdk-v2-public-20261114/v2`. Initialize now accepts `protocol:{version,minVersion}`. This implementation advertises the contiguous business range `{version:2,minVersion:2}` in the descriptor and returns `protocol:{version:2,minVersion:2,selectedVersion:2}` for any peer range that contains 2. It rejects non-positive/malformed fields, inverted intervals and ranges with no intersection before committing initialization. Software version is now `2.0.0`; existing plugin IDs, capability revisions, package layout, manifest v2 and the three v1 transport profile IDs remain unchanged. Mux transport handshake still selects transport version 1 independently.
+
+Unknown request methods return JSON-RPC `-32601`. Per the public v2 README and schemas, unknown business object fields are ignored, rather than rejected; malformed known fields and unsupported known choice values still fail. Unknown additions do not change the accepted-work idempotency signature; it contains the known effective input and normalized selection. Regression requests include extra Initialize/protocol/describe/input/selection fields, unknown methods, old/high/no-overlap offers, inverted/zero/malformed versions, exact descriptor/response agreement and unchanged deduplication under changed ignored additions. Echo JSONL/zstd/mux and Pi metadata paths are covered without using a real model.
+
+SDK observations reported to the SDK owner: the provided v2 publication description and `$id` namespace still contain v1 wording while `sdkVersion`/`protocolVersion` are 2; references are internally consistent, so this does not block loading. The forward-compatibility README permits preservation of unknown enum/union values, while raw schema enum/oneOf constraints remain closed. This Provider receives command options rather than peer-produced domain states and rejects unsupported command choices; it does not claim that Ajv alone implements a lossless unknown-domain-value codec. No Host, client, installed plugin or configuration was opened or modified.
+
+V2 acceptance: `npm test` source 19/19; after `npm run build`, all four `PROVIDER_TEST_DIRECTORY=.../packages/<profile> npm test` suites passed 19/19 separately. Source and all four contract snapshots exactly match the public v2 directory by member path and SHA256. SDK sourceDigest: `sha256:1d596e6dfe5d42107f34688e2e891c4b08aeecf9a962d3805e926d06bae62b9c`. No installed plugins, configuration or Host processes were touched.
+
+### Final v2 contract refresh
+
+The complete active snapshot now comes exclusively from `/tmp/codepet-provider-sdk-v2-final-20261114/v2`. It corrects the earlier publication metadata/namespace wording, documents the difference between known schema validation and a tolerant unknown-value codec, and clarifies nullable runtime selection plus a separate pending candidate. The earlier SDK observations above are historical and resolved by this export. This fixture does not implement runtime.select and keeps its explicit provider-managed dependency metadata, so no runtime selection behavior changes. All previous version negotiation, normalized selection, earlier-page pagination and Unicode chunk repairs remain in the source and bundles. No installed plugin, Host or configuration is opened; no real model is called.
+
+Final-v2 refresh initially failed standard Ajv reference resolution: lifecycle/messages used `/provider-sdk/v2/` while common/domain/handshake/rpc retained `/provider-sdk/v1/`. For example lifecycle `../common/types.schema.json` resolved to a v2 URL with no matching registered schema. This defect was reported from the public export before packaging; no alias workaround was introduced. Publication acceptance remains pending a consistent re-export.
+
+The namespace publication defect above is resolved in the verified public re-export `/tmp/codepet-provider-sdk-v2-verified-20261114/v2`. Every manifest-listed schema `$id` now matches the v2 directory-relative URL. The active snapshot is copied exclusively from that verified directory, without local schema edits or compatibility aliases.
+
+Verified-v2 acceptance: standard Ajv preflight resolves 33 request, 33 response and 13 event validators; source 19/19 and all four rebuilt bundle suites 19/19 pass. Source and all bundled contract trees match `/tmp/codepet-provider-sdk-v2-verified-20261114/v2` exactly. SDK sourceDigest: `sha256:9be89d54344007974cb6263e24553df9b2099896c04d0e2d28cd3617a0cb2ff6`. Prior selection/pagination/Unicode/version tests remain enabled.

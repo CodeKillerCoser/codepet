@@ -232,3 +232,8 @@ methods.json 中 dispatchLane=control 的请求及响应使用 control 预留资
 Provider 通过实例能力声明可用业务方法；对象、输入、选择与事件的具体含义见对应 Schema 和注册表。 能力目录与实际 selection 必须一致：create/acquire/turn 返回同一实例已生效的选择，声明了目录的维度使用其中存在且未禁用的选项，有默认值时返回实际默认选择；未声明的维度不携带值。目录变化应更新能力 revision，错误选择应明确拒绝。仅按 JSON Schema 校验一个对象，不能替代这类跨对象一致性校验。宿主、插件包、实例与原生 Harness 分别具有自己的生命周期，不能把“插件在线”直接解释为“所有实例可用”。
 
 如果需要 Host 帮助选择外部 Harness，`runtime.getInstalled` 返回库存和当前选择，selectionRequired 缺省为 true。自行管理依赖的插件可显式返回 selectionRequired=false，此时清单应为空、selected 为 null、扫描不在进行且没有 scanError。App 显示“由 Provider 管理，无需选择”。这只表明选择职责，不保证依赖已安装；真实启动失败仍由实例诊断报告。
+
+
+## 前向兼容演进状态
+
+本文件上述字段描述的是当前可运行 v1。已确认的下一版改为 `protocol: {version, minVersion}`，响应的 protocol 另带 selectedVersion；未知字段忽略，未知能力/事件安全跳过，枚举和联合保留未知原值，已知数据和权限继续严格校验。新增功能通过能力声明控制，不能把未知状态当空闲或执行授权。首次迁移、代码生成和两端适配将单独发布；本包不携带下一版实现。该草案尚未生成/发布，当前 v1 仍使用 supportedVersions，不能据此认为旧插件或旧客户端已经兼容 v2。公开 v1 SDK 不携带该草案，作者仍按本包 v1 Schema 实现。

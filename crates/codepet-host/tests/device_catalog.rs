@@ -79,7 +79,7 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
     .unwrap();
     assert_eq!(
         discovered.catalog.executable,
-        plugin_directory.join("bin/codepet-provider-fake")
+        plugin_directory.canonicalize().unwrap().join("bin/codepet-provider-fake")
     );
     assert_eq!(
         discovered.catalog.icon.as_deref(),

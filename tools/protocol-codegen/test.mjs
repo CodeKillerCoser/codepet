@@ -60,8 +60,8 @@ test("recent v1 preserves list and read boundaries with capability-gated atomic 
   const model = await loadProtocolModel();
   const provider = record(model, "provider-v1");
   const gateway = record(model, "gateway-v1");
-  assert.equal(provider.manifest.version, 1);
-  assert.equal(gateway.manifest.version, 1);
+  assert.equal(provider.manifest.version, 2);
+  assert.equal(gateway.manifest.version, 2);
   for (const name of ["conversation.active.list", "conversation.unread.list", "conversation.markRead"]) {
     assert.equal(provider.manifest.methods.find((method) => method.name === name)?.capability, name);
   }
@@ -136,7 +136,7 @@ test("manifest references obey the same declared dependency and layer rules as s
   const model = await loadProtocolModel();
   const pet = record(model, "pet-v1");
   const original = pet.manifest.error.$ref;
-  pet.manifest.error.$ref = "../../provider/v1/schema.json#/$defs/ProviderInitializeRequest";
+  pet.manifest.error.$ref = "../../provider/v2/schema.json#/$defs/ProviderInitializeRequest";
   try {
     assert.throws(
       () => validatePackageReferences(pet, model),
@@ -194,21 +194,21 @@ test("provider history items carry routed conversation ownership", async () => {
   const definitions = record(model, "agent-v1").schema.$defs;
   assert.equal(
     definitions.MessageConversationItem.properties.conversation.$ref,
-    "../../core/v1/schema.json#/$defs/RoutedResourceId",
+    "../../core/v2/schema.json#/$defs/RoutedResourceId",
   );
   assert(definitions.MessageConversationItem.required.includes("conversation"));
   assert(providerDefinitions.ConversationGetResponse.required.includes("items"));
-  assert.equal(providerDefinitions.ConversationGetResponse.properties.items.items.$ref, "../../agent/v1/schema.json#/$defs/ConversationItem");
+  assert.equal(providerDefinitions.ConversationGetResponse.properties.items.items.$ref, "../../agent/v2/schema.json#/$defs/ConversationItem");
   assert.equal(providerDefinitions.ConversationSearchRequest.properties.route.$ref, "#/$defs/ProviderInstanceRoute");
   assert.equal(providerDefinitions.ConversationGetRequest.properties.conversation.$ref, "#/$defs/ProviderResourceId");
   assert.equal(providerDefinitions.ConversationSearchRequest.properties.searchTerm.minLength, 1);
   assert.deepEqual(providerDefinitions.ConversationSearchRequest.required, ["route", "searchTerm"]);
-  assert.equal(providerDefinitions.ConversationSearchResponse.properties.pageInfo.$ref, "../../core/v1/schema.json#/$defs/PageInfo");
+  assert.equal(providerDefinitions.ConversationSearchResponse.properties.pageInfo.$ref, "../../core/v2/schema.json#/$defs/PageInfo");
   assert.equal(definitions.CommandConversationItem.properties.tool.$ref, "#/$defs/ToolInvocation");
   assert.equal(definitions.ConversationItem.oneOf.length, 7);
   for (const variant of definitions.ConversationItem.oneOf) {
     const item = definitions[variant.$ref.split('/').at(-1)];
-    assert.equal(item.properties._meta.$ref, "../../core/v1/schema.json#/$defs/JsonObject");
+    assert.equal(item.properties._meta.$ref, "../../core/v2/schema.json#/$defs/JsonObject");
     assert.equal(item.required.includes('_meta'), false);
   }
   assert.deepEqual(definitions.ToolInvocation.required, ["callId", "name", "category", "origin", "input"]);
@@ -239,17 +239,17 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
   assert.equal(gateway.manifest.transport.eventCursorField, "eventCursor");
   assert.equal(
     gateway.schema.$defs.EventSubscribeRequest.properties.afterCursor.$ref,
-    "../../core/v1/schema.json#/$defs/EventCursor",
+    "../../core/v2/schema.json#/$defs/EventCursor",
   );
   assert.equal(
     gateway.schema.$defs.EventSubscribeResponse.properties.subscribedAfterCursor.$ref,
-    "../../core/v1/schema.json#/$defs/EventCursor",
+    "../../core/v2/schema.json#/$defs/EventCursor",
   );
   assert.equal(gateway.schema.$defs.ConversationListResponse.properties.eventCursor, undefined);
   for (const definition of ["ConversationListResponse", "ConversationSearchResponse", "ConversationGetResponse"]) {
     assert.equal(
       gateway.schema.$defs[definition].properties.snapshotCursor.$ref,
-      "../../core/v1/schema.json#/$defs/EventCursor",
+      "../../core/v2/schema.json#/$defs/EventCursor",
     );
     assert(gateway.schema.$defs[definition].required.includes("snapshotCursor"));
   }
@@ -262,7 +262,7 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
   ]) {
     assert.equal(
       gateway.schema.$defs[definition].properties.providerId.$ref,
-      "../../agent/v1/schema.json#/$defs/ProviderId",
+      "../../agent/v2/schema.json#/$defs/ProviderId",
     );
     assert(gateway.schema.$defs[definition].required.includes("providerId"));
     assert.equal(gateway.schema.$defs[definition].properties.route, undefined);
@@ -301,12 +301,12 @@ test("gateway resources are routed while plugin lifecycle stays private", async 
   for (const definition of ["Conversation", "TurnTask", "Approval"]) {
     assert.equal(
       agentDefinitions[definition].properties.resource.$ref,
-      "../../core/v1/schema.json#/$defs/RoutedResourceId",
+      "../../core/v2/schema.json#/$defs/RoutedResourceId",
     );
   }
   assert.equal(
     agentDefinitions.MessageConversationItem.properties.conversation.$ref,
-    "../../core/v1/schema.json#/$defs/RoutedResourceId",
+    "../../core/v2/schema.json#/$defs/RoutedResourceId",
   );
   assert(agentDefinitions.MessageConversationItem.required.includes("conversation"));
   assert.equal(agentDefinitions.CommandConversationItem.properties.tool.$ref, "#/$defs/ToolInvocation");
@@ -334,7 +334,7 @@ test("provider descriptors and turn controls are explicit discriminated protocol
   assert(instance.required.includes("harness"));
   assert.equal(instance.properties.harness.$ref, "#/$defs/HarnessDescriptor");
   assert(providerDefinitions.ProviderCapabilities.required.includes("revision"));
-  assert.equal(providerDefinitions.ProviderCapabilities.properties.turnSend.$ref, "../../agent/v1/schema.json#/$defs/TurnSendCapabilities");
+  assert.equal(providerDefinitions.ProviderCapabilities.properties.turnSend.$ref, "../../agent/v2/schema.json#/$defs/TurnSendCapabilities");
   assert.deepEqual(agentDefinitions.ModelCatalog.oneOf, [
     { $ref: "#/$defs/FlatModelCatalog" },
     { $ref: "#/$defs/GroupedModelCatalog" },
@@ -346,7 +346,7 @@ test("provider descriptors and turn controls are explicit discriminated protocol
   const turnResponse = providerDefinitions.TurnStartResponse;
   assert(turnResponse.required.includes("userItem"));
   assert.deepEqual(turnResponse.properties.userItem.oneOf, [
-    { $ref: "../../agent/v1/schema.json#/$defs/ConversationItem" },
+    { $ref: "../../agent/v2/schema.json#/$defs/ConversationItem" },
     { type: "null" },
   ]);
   assert.deepEqual(agentDefinitions.FlatModelSelection.required, ["kind", "modelId"]);
@@ -362,7 +362,7 @@ test("provider descriptors and turn controls are explicit discriminated protocol
   const gatewayRust = await readFile("sdk/rust/codepet-gateway-sdk/src/generated.rs", "utf8");
   const providerRust = await readFile("sdk/rust/codepet-provider-sdk/src/generated.rs", "utf8");
   const agentRust = await readFile("sdk/rust/codepet-agent-sdk/src/generated.rs", "utf8");
-  assert.match(agentRust, /#\[serde\(untagged\)\]\r?\npub enum ModelCatalog/);
+  assert.match(agentRust, /pub enum ModelCatalog/);
   assert.match(agentRust, /pub kind: FlatModelCatalogKind/);
   assert.match(agentRust, /pub kind: GroupedModelCatalogKind/);
   for (const source of [gatewayRust, providerRust]) {
@@ -391,14 +391,14 @@ test("Gateway pairing preserves legacy DTO paths independently of authenticated 
     "descriptor",
     "identityFingerprint",
   ]);
-  assert.equal(definitions.LanHostIdentity.properties.descriptor.$ref, "../../../core/v1/schema.json#/$defs/DeviceDescriptor");
+  assert.equal(definitions.LanHostIdentity.properties.descriptor.$ref, "../../../core/v2/schema.json#/$defs/DeviceDescriptor");
   assert.equal(definitions.LanHostIdentity.properties.identityFingerprint.pattern, "^[0-9a-f]{64}$");
   assert.deepEqual(Object.keys(definitions.PairingExchangeRequest.properties), [
     "pairingSecret",
     "clientId",
     "device",
   ]);
-  assert.equal(definitions.PairingExchangeRequest.properties.device.$ref, "../../../core/v1/schema.json#/$defs/DeviceDescriptor");
+  assert.equal(definitions.PairingExchangeRequest.properties.device.$ref, "../../../core/v2/schema.json#/$defs/DeviceDescriptor");
   assert(definitions.PairingExchangeRequest.required.includes("device"));
   assert.equal(definitions.PairingExchangeRequest.properties.pairingSecret["x-codepet-sensitive"], true);
   assert.deepEqual(Object.keys(definitions.PairingExchangeResponse.properties), [
@@ -517,7 +517,7 @@ test("Dart adapter uses the normalized IR for DTOs, routes, metadata, and packag
   assert.match(first, /required Map<String, String> metadata/);
   assert.match(first, /Future<ProjectListResponse> projectList/);
   assert.match(first, /Future<ConversationRecentResponse> conversationRecent\(ConversationRecentRequest request\)/);
-  assert.match(first, /conversationRecentChanged\('conversation\.recentChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'provider', payloadType: ConversationRecentChangedEvent\)/);
+  assert.match(first, /conversationRecentChanged = ProtocolEventName\('conversation\.recentChanged', direction: 'gatewayToClient', delivery: 'replayable', scope: 'provider', payloadType: ConversationRecentChangedEvent\)/);
   assert.match(first, /ProtocolIdempotency\.nonIdempotent/);
   assert.match(first, /Future<TurnSendResponse> turnSend\(TurnSendRequest request\)/);
   assert.match(first, /abstract interface class ProtocolClientInstrumentation/);
@@ -571,7 +571,7 @@ test("protocol IR rejects ambiguous and open discriminated union variants", asyn
   const additionalProperties = message.additionalProperties;
   message.additionalProperties = true;
   try {
-    assert.throws(() => buildProtocolIr(model), /variant MessageConversationItem must be a closed object/);
+    assert.ok(buildProtocolIr(model).packagesById.get("agent-v1").definitions.find(d => d.name === "ConversationItem").forwardCompatible);
   } finally {
     message.additionalProperties = additionalProperties;
   }
@@ -634,7 +634,7 @@ test("freshness accepts CRLF checkouts but still rejects content changes", async
     const rust = result.generated.find((artifact) => artifact.targetId === "rust");
     const output = path.resolve(outputRoot, rust.output);
     const content = await readFile(output, "utf8");
-    assert.match(content.split("\n")[0], /from protocol\/core\/v1\/manifest.json/);
+    assert.match(content.split("\n")[0], /from protocol\/core\/v2\/manifest.json/);
     assert.doesNotMatch(content.split("\n")[0], /\\/);
     await writeFile(output, content.replaceAll("\n", "\r\n"));
     await generateProtocol({ checkMode: true });

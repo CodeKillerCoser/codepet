@@ -348,13 +348,19 @@ impl ProviderHostState {
             provider_id,
             RuntimeSelectRequest { candidate: provider_runtime_candidate(candidate) },
         ).await.map_err(|error| error.to_string())?;
-        Ok(AgentRuntimeInstallation {
-            executable_path: response.selected.executable_path,
-            version: response.selected.version,
-            source: agent_runtime_source(response.selected.source),
-            minimum_version: response.selected.minimum_version,
-            incompatibility_reason: response.selected.incompatibility_reason,
-        })
+        let selected = response.selected;
+        if let Some(selected) = selected {
+            return Ok(AgentRuntimeInstallation {
+                executable_path: selected.executable_path, version: selected.version,
+                source: agent_runtime_source(selected.source), minimum_version: selected.minimum_version,
+                incompatibility_reason: selected.incompatibility_reason,
+            });
+        }
+        let pending = response.pending.ok_or_else(|| "Provider did not acknowledge runtime selection".to_string())?;
+        // Legacy desktop IPC uses an empty version only for this pending acknowledgement.
+        // Provider/Gateway inventory continues to contain verified installations only.
+        Ok(AgentRuntimeInstallation { executable_path: pending.executable_path, version: String::new(),
+            source: agent_runtime_source(pending.source), minimum_version: None, incompatibility_reason: None })
     }
 
     pub(crate) fn start_in_background(&self) {
@@ -463,7 +469,7 @@ fn provider_runtime_candidate(candidate: AgentRuntimeCandidate) -> RuntimeCandid
 
 fn agent_runtime_source(source: RuntimeCandidateSource) -> AgentRuntimeSource {
     match source {
-        RuntimeCandidateSource::Configured => AgentRuntimeSource::Configured,
+        RuntimeCandidateSource::Configured | RuntimeCandidateSource::Unrecognized(_) => AgentRuntimeSource::Configured,
         RuntimeCandidateSource::Environment => AgentRuntimeSource::Environment,
         RuntimeCandidateSource::CurrentPath => AgentRuntimeSource::CurrentPath,
         RuntimeCandidateSource::LoginShell => AgentRuntimeSource::LoginShell,

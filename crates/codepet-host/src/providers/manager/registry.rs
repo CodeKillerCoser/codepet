@@ -1,3 +1,7 @@
+//! Plugin-level Provider Registry. The manager's single active catalog is the
+//! source for desktop views, Gateway lists and heartbeat snapshots. This module
+//! owns package installation, enumeration and complete live uninstallation;
+//! instance_registry persists stable identities/history, not a second live list.
 use super::*;
 use crate::providers::catalog::PLUGIN_MANIFEST_FILE_NAME;
 use std::path::{Path, PathBuf};
@@ -129,9 +133,30 @@ fn prepare_import(manifest: &Path, root: &Path) -> HostResult<PreparedImport> {
 }
 
 impl PluginManager {
-    /// Stop and archive an imported package, retaining all Provider data and history.
+    pub async fn snapshots(&self) -> Vec<PluginRuntimeSnapshot> {
+        self.inner
+            .plugins
+            .read()
+            .await
+            .values()
+            .map(PluginEntry::snapshot)
+            .collect()
+    }
+
+    pub async fn snapshot(&self, plugin_id: &str) -> HostResult<PluginRuntimeSnapshot> {
+        self.inner
+            .plugins
+            .read()
+            .await
+            .get(plugin_id)
+            .map(PluginEntry::snapshot)
+            .ok_or_else(|| unknown_plugin(plugin_id))
+    }
+
+
+    /// Uninstall a managed package, closing its process/observers before unregistering.
     pub async fn remove_plugin(&self, plugin_id: &str, root: PathBuf) -> HostResult<()> {
-        let _import = self.inner.import_operation.lock().await;
+        let _registry = self.inner.registry_operation.lock().await;
         let operation = self.plugin_operation(plugin_id)?;
         let _operation = operation.lock().await;
         let snapshot = self.snapshot(plugin_id).await?;
@@ -139,22 +164,46 @@ impl PluginManager {
         let installed = root.join(plugin_id);
         let package = snapshot.catalog.env.get("CODEPET_PROVIDER_PACKAGE_DIRECTORY")
             .map(PathBuf::from).ok_or_else(|| import_error("Only imported Provider packages can be removed"))?;
-        // Never move built-ins, external search directories, or symlink escapes.
-        if installed.parent() != Some(root.as_path()) || installed.is_symlink()
-            || package.canonicalize().map_err(import_error)? != installed {
+        // The Host-recorded package location must belong to managed imports even
+        // when files were removed externally. Never infer ownership from absence.
+        if installed.parent() != Some(root.as_path()) || package != installed {
             return Err(import_error("Only imported Provider packages can be removed"));
         }
-        self.stop_plugin(plugin_id).await?;
-        let archive_root = root.parent().ok_or_else(|| import_error("Missing archive directory"))?.join("removed-providers");
-        std::fs::create_dir_all(&archive_root).map_err(import_error)?;
-        let archive = archive_root.join(format!("{}-{}", plugin_id, uuid::Uuid::new_v4()));
-        std::fs::rename(&installed, &archive).map_err(import_error)?;
-        let mut plugins = self.inner.plugins.write().await;
-        let catalog = PluginCatalog::from_entries(plugins.iter().filter(|(id, _)| id.as_str() != plugin_id).map(|(_, entry)| entry.catalog.clone()))?;
-        if let Err(error) = self.inner.instances.synchronize_catalog(&catalog) {
-            let _ = std::fs::rename(&archive, &installed);
-            return Err(error);
+        let package_exists = match std::fs::symlink_metadata(&installed) {
+            Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => {
+                if installed.canonicalize().map_err(import_error)? != installed {
+                    return Err(import_error("Provider package escapes the installation directory"));
+                }
+                true
+            }
+            Ok(_) => return Err(import_error("Provider package must be a regular directory")),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+            Err(error) => return Err(import_error(error)),
+        };
+        if let Err(error) = self.stop_plugin(plugin_id).await {
+            // Graceful shutdown can fail even after forced termination succeeded.
+            // Continue only when the process owner has confirmed it is gone.
+            if self.inner.plugins.read().await.get(plugin_id).is_some_and(|entry| entry.process.is_some()) {
+                return Err(error);
+            }
         }
+        // Dropping the hub closes every local observer. Subscription operations
+        // share the per-plugin lifecycle gate, so no late hub can be inserted.
+        self.inner.subscriptions.lock().map_err(|_| update_channel_error())?.remove(plugin_id);
+        let catalog = {
+            let plugins = self.inner.plugins.read().await;
+            PluginCatalog::from_entries(plugins.iter().filter(|(id, _)| id.as_str() != plugin_id).map(|(_, entry)| entry.catalog.clone()))?
+        };
+        if package_exists {
+            // Do not hold the global catalog lock or block an async worker while
+            // deleting a package: unrelated Providers continue serving requests.
+            tokio::task::spawn_blocking(move || std::fs::remove_dir_all(installed))
+                .await.map_err(import_error)?.map_err(import_error)?;
+        }
+        // Failure here is reported; the stopped entry can be removed again even
+        // though its files are already gone. Never report a partial uninstall as success.
+        self.inner.instances.synchronize_catalog(&catalog)?;
+        let mut plugins = self.inner.plugins.write().await;
         plugins.remove(plugin_id);
         drop(plugins);
         self.inner.status_changes.send_modify(|r| *r = r.saturating_add(1));
@@ -164,12 +213,13 @@ impl PluginManager {
 
     /// Adds a new package to this running manager. Existing routes/processes remain intact.
     pub async fn import_plugin(&self, manifest: PathBuf, root: PathBuf) -> HostResult<ProviderImportResult> {
-        let _import = self.inner.import_operation.lock().await;
+        let _registry = self.inner.registry_operation.lock().await;
         let prepared = tokio::task::spawn_blocking(move || prepare_import(&manifest, &root))
             .await.map_err(import_error)??;
         let descriptor = prepared.descriptor.clone();
         let plugin_id = descriptor.plugin_id.clone();
-        let operation = Arc::new(Mutex::new(()));
+        let operation = self.inner.plugin_operations.lock().map_err(|_| update_channel_error())?
+            .entry(plugin_id.clone()).or_insert_with(|| Arc::new(Mutex::new(()))).clone();
         let _operation = operation.lock().await;
         {
             let mut plugins = self.inner.plugins.write().await;

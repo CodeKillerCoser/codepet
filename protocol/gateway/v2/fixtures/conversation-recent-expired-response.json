@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-recent-next",
+  "error": {
+    "code": -32000,
+    "message": "recent_cursor_expired",
+    "data": {
+      "code": "recent_cursor_expired",
+      "message": "recent_cursor_expired",
+      "retryable": false
+    }
+  }
+}

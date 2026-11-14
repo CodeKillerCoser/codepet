@@ -3,13 +3,12 @@ import { readFile } from 'node:fs/promises';
 import { loadModularContract, providerPublicationInputs, validateDescriptions } from './modular-contract.mjs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-export const CONTRACT_PATH = 'v1/provider';
 const clone = value => structuredClone(value);
 const assert = (value, message) => { if (!value) throw new Error(`Provider IDL: ${message}`); };
 const encode = value => `${JSON.stringify(value, null, 2)}\n`;
 export async function loadProviderContract(protocolRoot) {
-  const root = path.join(protocolRoot, CONTRACT_PATH);
   const canonical = await loadModularContract(protocolRoot);
+  const root = path.join(protocolRoot, `v${canonical.index.version}/provider`);
   const { index, files } = providerPublicationInputs(canonical);
   const entryKeys=['manifestSchema','profiles','transportHandshakeSchema','rpcEnvelopeSchema','commonSchema','agentDomainSchema','providerLifecycleSchema','providerMessagesSchema','methods','events'];
   const expected=new Set(['sdk-manifest.json',...entryKeys.map(key=>index[key])]);

@@ -1,0 +1,19 @@
+{
+  "jsonrpc": "2.0",
+  "method": "conversation.upserted",
+  "params": {
+    "eventCursor": "event-41",
+    "payload": {
+      "conversation": {
+        "resource": {
+          "providerId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "project": null,
+        "title": "Gateway protocol foundation",
+        "status": "running",
+        "updatedAt": 1787700001000
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://code-pet.dev/protocol/channel/control/v1/schema.json",
-  "description": "Generated compatibility view of protocol/v1; edit the functional IDL modules and run protocol:generate.",
+  "description": "Generated compatibility view of protocol/v2; edit the functional IDL modules and run protocol:generate.",
   "$defs": {
     "ControlPrepare": {
       "type": "object",

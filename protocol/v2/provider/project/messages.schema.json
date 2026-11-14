@@ -1,0 +1,227 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v2/provider/project/messages.schema.json",
+  "description": "provider 的 project 功能模块交互对象。",
+  "$defs": {
+    "ProjectChangedEvent": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属项目的资源引用或项目快照；null 或缺省语义见约束。"
+        },
+        "changeType": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ProjectChangeType",
+          "description": "本次项目变更的类别。"
+        }
+      },
+      "required": [
+        "project",
+        "changeType"
+      ],
+      "additionalProperties": true,
+      "description": "项目变化事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    "ProjectCreateRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        },
+        "idempotencyKey": {
+          "$ref": "../../common/types.schema.json#/$defs/RequestId",
+          "description": "本次操作的幂等键。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的名称。"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/ProjectRoot",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "项目根目录清单。"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "description": "可扩展字典中单个值的结构与约束。"
+          },
+          "description": "此对象的可扩展元数据。"
+        }
+      },
+      "required": [
+        "route",
+        "idempotencyKey",
+        "name",
+        "roots",
+        "metadata"
+      ],
+      "additionalProperties": true,
+      "description": "项目创建的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProjectCreateResponse": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Project",
+          "description": "所属项目的资源引用或项目快照；null 或缺省语义见约束。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "项目创建响应，作为对应方法成功响应的 result。"
+    },
+    "ProjectDeleteRequest": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属项目的资源引用或项目快照；null 或缺省语义见约束。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "项目删除的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProjectDeleteResponse": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true,
+      "description": "项目删除响应，作为对应方法成功响应的 result。"
+    },
+    "ProjectGetRequest": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属项目的资源引用或项目快照；null 或缺省语义见约束。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "项目读取的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProjectGetResponse": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Project",
+          "description": "所属项目的资源引用或项目快照；null 或缺省语义见约束。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "项目读取响应，作为对应方法成功响应的 result。"
+    },
+    "ProjectListRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        },
+        "cursor": {
+          "$ref": "../../common/types.schema.json#/$defs/Cursor",
+          "description": "上一页返回的分页游标；需保持查询条件不变。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
+        }
+      },
+      "required": [
+        "route"
+      ],
+      "additionalProperties": true,
+      "description": "项目列表的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProjectListResponse": {
+      "type": "object",
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/Project",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "项目清单。"
+        },
+        "pageInfo": {
+          "$ref": "../../common/types.schema.json#/$defs/PageInfo",
+          "description": "本页的继续获取信息。"
+        }
+      },
+      "required": [
+        "projects",
+        "pageInfo"
+      ],
+      "additionalProperties": true,
+      "description": "项目列表响应，作为对应方法成功响应的 result。"
+    },
+    "ProjectUpdateRequest": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属项目的资源引用或项目快照；null 或缺省语义见约束。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的名称。"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/ProjectRoot",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "项目根目录清单。"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "description": "可扩展字典中单个值的结构与约束。"
+          },
+          "description": "此对象的可扩展元数据。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "项目更新的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProjectUpdateResponse": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Project",
+          "description": "所属项目的资源引用或项目快照；null 或缺省语义见约束。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "项目更新响应，作为对应方法成功响应的 result。"
+    }
+  }
+}

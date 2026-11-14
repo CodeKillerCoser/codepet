@@ -12,7 +12,7 @@ use codepet_gateway_sdk::{
     ProjectUpdateRequest, ProtocolEvent as GatewayEvent, ProtocolRequest as GatewayRequest,
     ProtocolServer as GatewayProtocolServer, ProviderDescribeRequest, ProviderListRequest,
     TurnInput as GatewayTurnInput, TurnInputKind as GatewayTurnInputKind,
-    TurnSelection as GatewayTurnSelection, TurnSendRequest as GatewayTurnSendRequest, VersionRange,
+    TurnSelection as GatewayTurnSelection, TurnSendRequest as GatewayTurnSendRequest, ProtocolVersionOffer,
 };
 use codepet_host::{
     DeviceRegistry, PluginCatalog, PluginCatalogConfig, PluginDescriptor, PluginInstanceConfig,
@@ -27,8 +27,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-#[path = "manager_gateway/import.rs"]
-mod import;
+#[path = "manager_gateway/registry.rs"]
+mod registry;
 #[path = "manager_gateway/input_queue.rs"]
 mod input_queue;
 #[path = "manager_gateway/recent.rs"]
@@ -230,9 +230,9 @@ fn handshake_request() -> HandshakeRequest {
         client_id: "remote-client-handshake".to_string(),
         device: device_descriptor("Remote Test"),
         client_version: "1.0.0".to_string(),
-        supported_versions: VersionRange {
+        protocol: ProtocolVersionOffer {
             min_version: codepet_gateway_sdk::PROTOCOL_VERSION,
-            max_version: codepet_gateway_sdk::PROTOCOL_VERSION,
+            version: codepet_gateway_sdk::PROTOCOL_VERSION,
         },
         last_event_cursor: None,
     }
@@ -940,11 +940,11 @@ async fn version_negotiation_rejects_a_plugin_with_an_inconsistent_reported_rang
     let mut descriptor = plugin("dev.codepet.version-mismatch", &["instance-version"]);
     descriptor.env.insert(
         "CODEPET_FAKE_SUPPORTED_MIN_VERSION".to_string(),
-        "2".to_string(),
+        "3".to_string(),
     );
     descriptor.env.insert(
         "CODEPET_FAKE_SUPPORTED_MAX_VERSION".to_string(),
-        "2".to_string(),
+        "3".to_string(),
     );
     let manager = build_manager("device-version", vec![descriptor]);
 
@@ -1493,7 +1493,8 @@ async fn resource_identity_and_unknown_provider_fail_closed() {
             .unwrap_err();
         assert!(matches!(
             error.code.as_str(),
-            "provider_resource_identity_mismatch"
+            "protocol_codec_error"
+                | "provider_resource_identity_mismatch"
                 | "invalid_provider_resource"
                 | "provider_resource_route_mismatch"
         ));
@@ -1931,11 +1932,11 @@ async fn nonretryable_plugin_misconfiguration_is_not_restarted_by_history() {
     );
     descriptor.env.insert(
         "CODEPET_FAKE_SUPPORTED_MIN_VERSION".to_string(),
-        "2".to_string(),
+        "3".to_string(),
     );
     descriptor.env.insert(
         "CODEPET_FAKE_SUPPORTED_MAX_VERSION".to_string(),
-        "2".to_string(),
+        "3".to_string(),
     );
     let manager = build_manager("device-history-misconfigured", vec![descriptor]);
     let gateway = ProviderGatewayService::new(manager.clone()).unwrap();

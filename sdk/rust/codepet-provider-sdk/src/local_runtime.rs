@@ -88,7 +88,7 @@ where
                 0,
                 RuntimeCandidate {
                     executable_path: selected.executable_path,
-                    source: selected.source,
+                    source: selected.source.clone(),
                 },
             );
         }
@@ -423,7 +423,7 @@ impl RuntimeScanner {
                 .cloned();
             let selected = if let Some(mut selected) = cached {
                 require_compatible_runtime(&selected)?;
-                selected.source = candidate.source;
+                selected.source = candidate.source.clone();
                 if let Some(storage) = self.storage.lock().unwrap().as_ref() {
                     storage.save_last_selected(Some(&selected.executable_path))?;
                 }
@@ -442,12 +442,12 @@ impl RuntimeScanner {
                 // Return a pending result; publish and persist selection only after validation.
                 let selected = crate::RuntimeInstallation { minimum_version: None, incompatibility_reason: None,
                     executable_path: path.to_string_lossy().into_owned(),
-                    source: candidate.source,
+                    source: candidate.source.clone(),
                     version: String::new(),
                 };
                 let candidate = RuntimeCandidate {
                     executable_path: selected.executable_path.clone(),
-                    source: selected.source,
+                    source: selected.source.clone(),
                 };
                 let snapshot = self.snapshot.clone();
                 let events = self.events.clone();
@@ -816,7 +816,7 @@ mod tests {
             scanner.start("agent", "missing",
                 move || vec![candidate(path, RuntimeCandidateSource::CurrentPath)],
                 |candidate, _| Ok(crate::RuntimeInstallation {
-                    executable_path: candidate.executable_path, source: candidate.source,
+                    executable_path: candidate.executable_path, source: candidate.source.clone(),
                     version: "1.0.0".into(), minimum_version: None, incompatibility_reason: None,
                 }));
             tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv()).await.unwrap().unwrap();
@@ -854,7 +854,7 @@ mod tests {
         let inventory = runtime_inventory("agent", "missing", None,
             move || vec![candidate(binary, RuntimeCandidateSource::CurrentPath)],
             |candidate, _| Ok(crate::RuntimeInstallation {
-                executable_path: candidate.executable_path, source: candidate.source,
+                executable_path: candidate.executable_path, source: candidate.source.clone(),
                 version: "1.0.0".into(), minimum_version: None, incompatibility_reason: None,
             })).await.unwrap();
         assert_eq!(inventory.harness_list.len(), 1);
@@ -932,7 +932,7 @@ mod tests {
         let scanner = RuntimeScanner::new(std::sync::Arc::new(|_| Ok(())));
         scanner.snapshot.lock().unwrap().harness_list.push(runtime.clone());
         assert!(scanner.select(&RuntimeCandidate {
-            executable_path: runtime.executable_path.clone(), source: runtime.source,
+            executable_path: runtime.executable_path.clone(), source: runtime.source.clone(),
         }).is_err());
         assert!(scanner.snapshot().selected.is_none());
         for version in ["0.151.0", "0.153.4"] {
@@ -1002,7 +1002,7 @@ mod tests {
                     .expect("probe blocked executor");
                 Ok(crate::RuntimeInstallation { minimum_version: None, incompatibility_reason: None,
                     executable_path: candidate.executable_path,
-                    source: candidate.source,
+                    source: candidate.source.clone(),
                     version: "fixture".into(),
                 })
             },
@@ -1040,7 +1040,7 @@ mod tests {
                 probes.wait();
                 Ok(crate::RuntimeInstallation { minimum_version: None, incompatibility_reason: None,
                     executable_path: candidate.executable_path,
-                    source: candidate.source,
+                    source: candidate.source.clone(),
                     version: "test".into(),
                 })
             },
@@ -1079,7 +1079,7 @@ mod tests {
         scanner.start("agent", "missing", Vec::new, |candidate, _| {
             Ok(crate::RuntimeInstallation { minimum_version: None, incompatibility_reason: None,
                 executable_path: candidate.executable_path,
-                source: candidate.source,
+                source: candidate.source.clone(),
                 version: "detected".into(),
             })
         });
@@ -1105,7 +1105,7 @@ mod tests {
         scanner.start("agent", "missing", Vec::new, |candidate, _| {
             Ok(crate::RuntimeInstallation { minimum_version: None, incompatibility_reason: None,
                 executable_path: candidate.executable_path,
-                source: candidate.source,
+                source: candidate.source.clone(),
                 version: "rescanned".into(),
             })
         });

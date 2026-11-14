@@ -5,6 +5,7 @@ import type { ClientId, JsonObject, ProtocolError, ProtocolVersion, RequestId, T
 export type { ClientId, JsonObject, ProtocolError, ProtocolVersion, RequestId, TimestampMs, VersionRange } from "../../codepet-core-sdk/src/generated";
 
 export const PROTOCOL_VERSION = 1 as const;
+export const MIN_PROTOCOL_VERSION = 1 as const;
 export const PROTOCOL_METHODS = ["protocol.initialize", "pet.snapshot", "pet.action", "source.setEnabled"] as const;
 export const PROTOCOL_EVENTS = ["pet.snapshot", "pet.patch"] as const;
 

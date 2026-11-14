@@ -1,0 +1,22 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-active-list-response",
+  "result": {
+    "conversations": [
+      {
+        "conversation": {
+          "deviceId": "device-macbook-1",
+          "providerPluginId": "dev.codepet.codex",
+          "providerInstanceId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "status": "running",
+        "activityVersion": "activity-42"
+      }
+    ],
+    "pageInfo": {
+      "nextCursor": "active-page-2"
+    },
+    "revision": "active-snapshot-7"
+  }
+}

@@ -2,7 +2,7 @@ use codepet_host::{PluginDescriptor, PluginProcess, PluginProcessOptions};
 use codepet_provider_sdk::{
     ConversationGetRequest, InstanceCreateRequest, InstanceDestroyRequest, InstanceStartRequest,
     InstanceStatus, InstanceStopRequest, JsonObject, ProtocolEvent, ProviderDescribeRequest,
-    ProviderInitializeRequest, ProviderInstanceRoute, ProviderResourceId, VersionRange,
+    ProviderInitializeRequest, ProviderInstanceRoute, ProviderResourceId, ProtocolVersionOffer,
 };
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -42,9 +42,9 @@ async fn ready_process(plugin_id: &str, instance_id: &str) -> PluginProcess {
             host_client_id: "client-test".to_string(),
             host_device_id: "device-test".to_string(),
             host_version: "test".to_string(),
-            supported_versions: VersionRange {
-                min_version: 1,
-                max_version: 1,
+            protocol: ProtocolVersionOffer {
+                min_version: 2,
+                version: 2,
             },
         })
         .await
@@ -206,9 +206,9 @@ async fn shutdown_waits_for_a_provider_that_closes_stdout_before_delayed_clean_e
             host_client_id: "client-test".to_string(),
             host_device_id: "device-test".to_string(),
             host_version: "test".to_string(),
-            supported_versions: VersionRange {
-                min_version: 1,
-                max_version: 1,
+            protocol: ProtocolVersionOffer {
+                min_version: 2,
+                version: 2,
             },
         })
         .await
@@ -252,9 +252,9 @@ async fn shutdown_discards_late_events_without_closing_provider_stdout() {
             host_client_id: "client-test".to_string(),
             host_device_id: "device-test".to_string(),
             host_version: "test".to_string(),
-            supported_versions: VersionRange {
-                min_version: 1,
-                max_version: 1,
+            protocol: ProtocolVersionOffer {
+                min_version: 2,
+                version: 2,
             },
         })
         .await
@@ -396,7 +396,7 @@ async fn mux_handshake_cancel_and_shutdown_use_the_production_sdk_runtime() {
     let process = Arc::new(PluginProcess::spawn(&plugin, options()).unwrap());
     let p = process.clone();
     let pending = tokio::spawn(async move {
-        p.client().provider_initialize(ProviderInitializeRequest { directories: None, host_client_id: "test".into(), host_device_id: "test".into(), host_version: "test".into(), supported_versions: VersionRange { min_version: 1, max_version: 1 } }).await
+        p.client().provider_initialize(ProviderInitializeRequest { directories: None, host_client_id: "test".into(), host_device_id: "test".into(), host_version: "test".into(), protocol: ProtocolVersionOffer { min_version: 2, version: 2 } }).await
     });
     tokio::time::sleep(Duration::from_millis(100)).await;
     pending.abort(); let _ = pending.await;

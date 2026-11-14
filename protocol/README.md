@@ -4,7 +4,7 @@
 
 Provider 是插件与 Host 之间的协议；Gateway 是 UI、手机、TUI 等操作端与 Host 之间的协议。两段分别编码和解码。两者共享业务对象的结构，不共享进程生命周期，也不要求使用同一种通道或压缩方式。
 
-权威输入位于 `protocol/v1/`，版本统一放在这一层：
+权威输入位于 `protocol/v2/`，版本统一放在这一层：
 
 ```text
 v1/
@@ -53,15 +53,15 @@ IPC、WebSocket、WebRTC 是 Gateway 的承载适配器，不需要每种通道�
 
 资源在客户端使用不透明 `providerId + nativeResourceId`；Host 与 Provider 使用完整实例路由，并校验跨资源实例一致性。客户端不能解析或拼接事件游标。快照边界在发起查询前捕获；客户端原样保存 snapshotCursor，按订阅结果衔接 replay 与实时事件。分页逐页返回，不在中间层聚合全量历史。
 
-领域联合使用必填的单值 kind 判别，生成器拒绝歧义联合和开放结构。工具调用的输入、结果各只有一个完整载荷所有者；终态正文归完整 item，进行中正文通过 delta 投递。具体约束继续遵循 `knowledge/60-rules/` 中的协议分层、工具载荷所有权、分页与同步规约。
+领域联合使用必填的单值 kind 判别，生成器拒绝歧义联合；v2 对象允许忽略未知字段，未知枚举和联合保留原值，已知分支仍校验。工具调用的输入、结果各只有一个完整载荷所有者；终态正文归完整 item，进行中正文通过 delta 投递。具体约束继续遵循 `knowledge/60-rules/` 中的协议分层、工具载荷所有权、分页与同步规约。
 
 ## 生成、构建和分发
 
 `tools/protocol-codegen/modular-contract.mjs` 加载权威模块并组装视图；`generate.mjs` 根据 `codegen.json` 的包与 target 配置生成 Rust、TypeScript、Dart。Python target 尚未实现，选择时明确失败。手写代码负责业务、连接和编解码机制，不能成为第二份 DTO 或方法注册表。
 
-`core/v1/schema.json`、`agent/v1/schema.json`、`provider/v1/{schema,manifest}.json`、`gateway/v1/{schema,manifest}.json` 以及 `channel/{lan,control}/v1/{schema,manifest}.json` 是生成的兼容视图，保留既有语言包、Host、桌面、手机的引用路径，不可直接修改。旧路径下的 fixtures 是回归样本。仓库默认生成必须读取 protocol/v1，不能退回兼容视图作为事实源。
+`core/v2/schema.json`、`agent/v2/schema.json`、`provider/v2/{schema,manifest}.json`、`gateway/v2/{schema,manifest}.json` 以及 `channel/{lan,control}/v1/{schema,manifest}.json` 是生成的兼容视图，保留既有语言包、Host、桌面、手机的引用路径，不可直接修改。v1 来源及视图冻结，v2 fixtures 是当前回归样本。仓库默认生成必须读取 protocol/v2，不能退回兼容视图作为事实源。
 
-对外导出仍为 `provider-sdk/v1/{sdk-manifest.json,README.md,protocol/}`；protocol 内分安装清单 Schema 与 sdk 通信生成输入。导出器复制所需依赖闭包、聚合功能模块、重写相对引用并生成源摘要。包内不包含 Gateway、配对、通道控制、fixtures、Host 源码或语言生成工具。App staging 使用同一导出器。内部 cp-sdk-gen 仍供开发者导出语言 SDK，不随 App 公开 SDK 分发。
+对外导出仍为 `provider-sdk/v2/{sdk-manifest.json,README.md,protocol/}`；protocol 内分安装清单 Schema 与 sdk 通信生成输入。导出器复制所需依赖闭包、聚合功能模块、重写相对引用并生成源摘要。包内不包含 Gateway、配对、通道控制、fixtures、Host 源码或语言生成工具。App staging 使用同一导出器。内部 cp-sdk-gen 仍供开发者导出语言 SDK，不随 App 公开 SDK 分发。
 
 ```sh
 npm run protocol:generate
@@ -72,3 +72,17 @@ npm run sdkgen:test
 ```
 
 协议检查覆盖迁移前后的 wire 结构摘要、模块重名、description、引用/依赖、默认值、能力关联、fixtures 和生成新鲜度。再以语言 SDK 测试及 Host 的真实 Provider 进程、Gateway、LAN/RTC 测试验证运行行为。内部代码生成工具不能代替独立 Provider 的跨进程互通验收。
+
+
+## version/minVersion 演进合同（已确认，尚未启用）
+
+下一版 Provider 与 Gateway 采用 `protocol.version`（当前支持上界）和 `protocol.minVersion`（兼容下界），响应另含 `protocol.selectedVersion`，共同最高版本为两端 version 的较小值，且必须不低于两端 minVersion。两层分别协商；协议版本不等于软件、manifest、SDK 或 transport 版本。
+
+权威草案入口为 `v2/protocol.json`，结构见 `v2/common/version.schema.json`、`v2/provider/lifecycle/messages.schema.json`、`v2/gateway/session/messages.schema.json`；[前向兼容规则与生成改造](v2/README.md)包含未知字段/能力/事件/枚举/联合、升级条件和跨语言改造清单。v2 当前只覆盖握手演进，不是完整服务，标记 draft-not-generated。v1 仍是当前生成、导出和运行时合同。不能直接改 v1 的 supportedVersions 或放宽全局校验冒充新机制已落地。
+
+首次新握手无法直接兼容严格 v1，因此初始为 version=2、minVersion=2；后续纯增量版本保持兼容下界。旧端支持若有需求须显式保留 v1 adapter，不静默探测或重发写请求。目录入口格式与两层业务版本数值的解耦列为后续生成工作，本轮不修改当前工具。
+## 版本协商与前向兼容
+
+当前业务范围为 2/2，由各服务 protocol.json 的 version/minVersion 独立声明；codegen.json 的 sourceVersion 只选择源目录。Provider Initialize 与 Gateway handshake 均交换 protocol 区间，响应携带 responder 的区间及 selectedVersion，选择双方最高共同版本，请求方复核。v1 是冻结基线，不进行自动回退。
+
+接收忽略未知字段，保留未知枚举/联合原值；已知字段仍严格校验。普通请求编码拒绝未知选择。客户端跳过未知事件并推进合法游标，未知能力不调用、未知状态不当成空闲/终态或授权。版本升级规则、生成边界与首次迁移见 [v2/README.md](v2/README.md)。

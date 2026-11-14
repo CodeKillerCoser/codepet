@@ -457,27 +457,34 @@
 
   let providerAddButton: HTMLButtonElement;
   let providerImportNotice = "";
+  let providerOperationError = "";
+  let providerErrorElement: HTMLParagraphElement;
   let providerImportBusy = false;
 
   async function removeCustomProvider(runtime: AgentRuntime) {
     if (providerImportBusy || busyRuntime !== null) return;
-    if (!await confirmDialog(`移除 ${runtime.displayName}？这会停止该 Provider 的运行任务，并从加载列表移除。插件包将归档，历史和数据库保留。`, { title: "移除自定义 Provider", kind: "warning", okLabel: "移除", cancelLabel: "取消" })) return;
+    if (!await confirmDialog(`移除 ${runtime.displayName}？这会停止该 Provider 的运行任务，并从加载列表移除。安装的插件包会删除，相关进程和连接会关闭，历史和数据库保留。`, { title: "移除自定义 Provider", kind: "warning", okLabel: "移除", cancelLabel: "取消" })) return;
     providerImportBusy = true;
     busyRuntime = runtime.providerId;
     providerImportNotice = "";
+    providerOperationError = "";
     error = "";
     try {
       await removeProviderPlugin(runtime.providerId);
-      await runtimeObserver.refresh();
-      providerImportNotice = `${runtime.displayName} 已移除，历史数据已保留。`;
-    } catch (currentError) { error = String(currentError); }
-    finally { providerImportBusy = false; busyRuntime = null; await tick(); providerAddButton?.focus(); }
+      agentRuntimes = agentRuntimes.filter(item => item.providerId !== runtime.providerId);
+      providerConnections = providerConnections.filter(item => item.providerId !== runtime.providerId);
+      providerImportNotice = `${runtime.displayName} 已卸载，安装包已删除，历史数据已保留。`;
+      try { await runtimeObserver.refresh(); }
+      catch { providerOperationError = "已移除，但刷新列表失败，请重新打开本机运行时页面。"; }
+    } catch (currentError) { providerOperationError = `移除 ${runtime.displayName} 失败：${String(currentError)}`; }
+    finally { providerImportBusy = false; busyRuntime = null; await tick(); if (providerOperationError) providerErrorElement?.focus(); else providerAddButton?.focus(); }
   }
 
   async function addCustomProvider() {
     if (providerImportBusy) return;
     providerImportBusy = true;
     providerImportNotice = "";
+    providerOperationError = "";
     error = "";
     try {
       const manifest = await open({ multiple: false, directory: false,
@@ -1826,6 +1833,8 @@
     {:else if tab === "runtimes"}
       <div class="connection-workspace">
         <section class="runtime-section pixel-panel">
+          {#if providerOperationError}<p bind:this={providerErrorElement} class="runtime-operation-error" role="alert" tabindex="-1">{providerOperationError}</p>{/if}
+          {#if providerImportNotice}<p class="runtime-operation-notice" role="status">{providerImportNotice}</p>{/if}
           <div class="runtime-group">
             <h3 class="runtime-group-title">内置 Provider</h3>
             <div class="runtime-list">
@@ -1844,7 +1853,7 @@
               <h3 class="runtime-group-title">自定义 Provider</h3>
               <div class="runtime-list">
                 {#each agentRuntimes.filter((runtime) => !isBuiltinProvider(runtime.providerId)) as runtime (runtime.providerId)}
-                  <ProviderRuntimeInfo {runtime} connection={providerConnections.find((state) => state.providerId === runtime.providerId)} connectionsLoaded={providerConnectionsLoaded} busy={busyRuntime === "all" || busyRuntime === runtime.providerId} onSelect={selectInstalledRuntime} onRemove={removeCustomProvider} />
+                  <ProviderRuntimeInfo {runtime} connection={providerConnections.find((state) => state.providerId === runtime.providerId)} connectionsLoaded={providerConnectionsLoaded} busy={providerImportBusy || busyRuntime === "all" || busyRuntime === runtime.providerId} onSelect={selectInstalledRuntime} onRemove={removeCustomProvider} />
                 {/each}
               </div>
             </div>
@@ -1852,7 +1861,6 @@
           <div class="runtime-custom-provider">
             <h3>添加自定义 Provider</h3>
             <button bind:this={providerAddButton} class="runtime-add-provider" type="button" aria-label="添加自定义 Provider" title="选择 Provider manifest" disabled={providerImportBusy} on:click={addCustomProvider}><Plus size={24} aria-hidden="true" /></button>
-            {#if providerImportNotice}<p role="status">{providerImportNotice}</p>{/if}
           </div>
         </section>
       </div>

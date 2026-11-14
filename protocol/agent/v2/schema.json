@@ -1,0 +1,2719 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/agent/v2/schema.json",
+  "description": "Generated compatibility view of protocol/v2; edit the functional IDL modules and run protocol:generate.",
+  "$defs": {
+    "Approval": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "用于区分联合类型分支的种类标记。"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "项目、会话或选项的显示标题。"
+        },
+        "description": {
+          "type": "string",
+          "description": "面向用户或接入者的说明文字。"
+        },
+        "status": {
+          "$ref": "#/$defs/ApprovalStatus"
+        },
+        "decisions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ApprovalDecision"
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "该审批允许的决策清单。"
+        },
+        "requestedAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        },
+        "resolvedAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        },
+        "decision": {
+          "$ref": "#/$defs/ApprovalDecision"
+        }
+      },
+      "required": [
+        "resource",
+        "conversation",
+        "turn",
+        "kind",
+        "title",
+        "status",
+        "decisions"
+      ],
+      "additionalProperties": true,
+      "description": "审批的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ApprovalDecision": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "deny"
+      ],
+      "description": "审批决策的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ApprovalStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "approved",
+        "denied",
+        "expired"
+      ],
+      "description": "审批状态的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "Conversation": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "project": {
+          "oneOf": [
+            {
+              "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "所属项目的资源引用或项目快照；null 或缺省语义见约束。"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "项目、会话或选项的显示标题。"
+        },
+        "preview": {
+          "type": "string",
+          "description": "供列表展示的简短预览。"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationStatus"
+        },
+        "permissionLevel": {
+          "type": "string",
+          "minLength": 1,
+          "description": "业务允许的权限等级选择。"
+        },
+        "model": {
+          "type": "string",
+          "description": "模型标识或模型选择。"
+        },
+        "reasoningEffort": {
+          "type": "string",
+          "description": "推理强度选择。"
+        },
+        "selection": {
+          "$ref": "#/$defs/TurnSelection"
+        },
+        "workspaceRoot": {
+          "type": "string",
+          "minLength": 1,
+          "description": "会话工作目录或工作区根绝对路径。"
+        },
+        "createdAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        },
+        "updatedAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        },
+        "activeTurn": {
+          "$ref": "#/$defs/TurnTask"
+        },
+        "readState": {
+          "$ref": "#/$defs/ConversationReadState"
+        }
+      },
+      "required": [
+        "resource",
+        "project",
+        "title",
+        "status"
+      ],
+      "additionalProperties": true,
+      "description": "会话的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ContentBlock": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/TextContentBlock"
+        },
+        {
+          "$ref": "#/$defs/ReasoningSummaryContentBlock"
+        },
+        {
+          "$ref": "#/$defs/OutputContentBlock"
+        },
+        {
+          "$ref": "#/$defs/ActivitySummaryContentBlock"
+        },
+        {
+          "$ref": "#/$defs/StructuredJsonContentBlock"
+        },
+        {
+          "$ref": "#/$defs/ImageContentBlock"
+        },
+        {
+          "$ref": "#/$defs/AudioContentBlock"
+        },
+        {
+          "$ref": "#/$defs/ResourceLinkContentBlock"
+        },
+        {
+          "$ref": "#/$defs/EmbeddedResourceContentBlock"
+        }
+      ],
+      "description": "内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ContentTruncation": {
+      "type": "object",
+      "properties": {
+        "originalBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "裁剪前内容的字节数。"
+        },
+        "retainedBytes": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "裁剪后保留内容的字节数。"
+        },
+        "strategy": {
+          "$ref": "#/$defs/ContentTruncationStrategy"
+        }
+      },
+      "required": [
+        "originalBytes",
+        "retainedBytes",
+        "strategy"
+      ],
+      "additionalProperties": true,
+      "description": "内容裁剪的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ContentTruncationStrategy": {
+      "type": "string",
+      "enum": [
+        "head",
+        "tail",
+        "head-tail",
+        "structural-preview"
+      ],
+      "description": "内容裁剪策略的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "TextContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "text"
+      ],
+      "description": "文本内容块种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "TextContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/TextContentBlockKind"
+        },
+        "text": {
+          "type": "string",
+          "description": "此内容块的文本。"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "text"
+      ],
+      "additionalProperties": true,
+      "description": "文本内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ReasoningSummaryContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "reasoning-summary"
+      ],
+      "description": "推理摘要内容块种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ReasoningSummaryContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ReasoningSummaryContentBlockKind"
+        },
+        "text": {
+          "type": "string",
+          "description": "此内容块的文本。"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "text"
+      ],
+      "additionalProperties": true,
+      "description": "推理摘要内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "OutputContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "output"
+      ],
+      "description": "输出内容块种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "OutputContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/OutputContentBlockKind"
+        },
+        "text": {
+          "type": "string",
+          "description": "此内容块的文本。"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "text"
+      ],
+      "additionalProperties": true,
+      "description": "输出内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ActivitySummaryContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "activity-summary"
+      ],
+      "description": "活动摘要内容块种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ActivitySummaryContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ActivitySummaryContentBlockKind"
+        },
+        "text": {
+          "type": "string",
+          "description": "此内容块的文本。"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "text"
+      ],
+      "additionalProperties": true,
+      "description": "活动摘要内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "StructuredJsonContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "structured-json"
+      ],
+      "description": "结构化JSON内容块种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "StructuredJsonContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/StructuredJsonContentBlockKind"
+        },
+        "value": {
+          "$ref": "../../core/v2/schema.json#/$defs/JsonObject"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "value"
+      ],
+      "additionalProperties": true,
+      "description": "结构化JSON内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ImageContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "image"
+      ],
+      "description": "图片内容块种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ImageContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ImageContentBlockKind"
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "description": "资源统一标识，不等同于本机路径。"
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1,
+          "description": "内容的媒体类型。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的名称。"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "uri"
+      ],
+      "additionalProperties": true,
+      "description": "图片内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "AudioContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "audio"
+      ],
+      "description": "音频内容块种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "AudioContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/AudioContentBlockKind"
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "description": "资源统一标识，不等同于本机路径。"
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1,
+          "description": "内容的媒体类型。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的名称。"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "uri"
+      ],
+      "additionalProperties": true,
+      "description": "音频内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ResourceLinkContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "resource-link"
+      ],
+      "description": "资源链接内容块种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ResourceLinkContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ResourceLinkContentBlockKind"
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "description": "资源统一标识，不等同于本机路径。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的名称。"
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1,
+          "description": "内容的媒体类型。"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "uri"
+      ],
+      "additionalProperties": true,
+      "description": "资源链接内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "EmbeddedResourceContentBlockKind": {
+      "type": "string",
+      "enum": [
+        "embedded-resource"
+      ],
+      "description": "嵌入资源内容块种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "EmbeddedResourceContentBlock": {
+      "type": "object",
+      "properties": {
+        "contentId": {
+          "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/EmbeddedResourceContentBlockKind"
+        },
+        "text": {
+          "type": "string",
+          "description": "此内容块的文本。"
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1,
+          "description": "内容的媒体类型。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的名称。"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "contentId",
+        "kind",
+        "text"
+      ],
+      "additionalProperties": true,
+      "description": "嵌入资源内容块的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationContentKind": {
+      "type": "string",
+      "enum": [
+        "text",
+        "reasoning-summary",
+        "output",
+        "activity-summary",
+        "structured-json",
+        "image",
+        "audio",
+        "resource-link",
+        "embedded-resource"
+      ],
+      "description": "会话内容种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolAnnotations": {
+      "type": "object",
+      "properties": {
+        "readOnly": {
+          "type": "boolean",
+          "description": "是否声明为只读操作。"
+        },
+        "destructive": {
+          "type": "boolean",
+          "description": "是否可能产生破坏性副作用。"
+        },
+        "idempotent": {
+          "type": "boolean",
+          "description": "重复执行是否具有幂等性。"
+        },
+        "openWorld": {
+          "type": "boolean",
+          "description": "工具是否可能访问开放世界资源。"
+        }
+      },
+      "additionalProperties": true,
+      "description": "Advisory UI hints only; hosts must not use these fields as authorization decisions."
+    },
+    "ToolCategory": {
+      "type": "string",
+      "enum": [
+        "command",
+        "read",
+        "write",
+        "search",
+        "web",
+        "agent",
+        "computer",
+        "media",
+        "other"
+      ],
+      "description": "工具类别的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolCommandAction": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ToolCommandActionKind"
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "工具执行的命令文本或参数描述。"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的名称。"
+        },
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "本机文件系统路径。"
+        },
+        "query": {
+          "type": "string",
+          "description": "本次查询的结构化条件。"
+        }
+      },
+      "required": [
+        "kind",
+        "command"
+      ],
+      "additionalProperties": true,
+      "description": "工具命令动作的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolCommandActionKind": {
+      "type": "string",
+      "enum": [
+        "execute",
+        "read",
+        "list",
+        "search",
+        "unknown"
+      ],
+      "description": "工具命令动作种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "CommandToolInputKind": {
+      "type": "string",
+      "enum": [
+        "command"
+      ],
+      "description": "命令工具输入种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "CommandToolInput": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/CommandToolInputKind"
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1,
+          "description": "工具执行的命令文本或参数描述。"
+        },
+        "cwd": {
+          "type": "string",
+          "minLength": 1,
+          "description": "工具命令的工作目录。"
+        },
+        "shell": {
+          "type": "string",
+          "minLength": 1,
+          "description": "执行命令所用 shell。"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ToolCommandAction"
+          },
+          "description": "命令对应的结构化动作清单。"
+        }
+      },
+      "required": [
+        "kind",
+        "command"
+      ],
+      "additionalProperties": true,
+      "description": "命令工具输入的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "StructuredToolInputKind": {
+      "type": "string",
+      "enum": [
+        "structured"
+      ],
+      "description": "结构化工具输入种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "StructuredToolInput": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/StructuredToolInputKind"
+        },
+        "value": {
+          "$ref": "../../core/v2/schema.json#/$defs/JsonObject"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": true,
+      "description": "结构化工具输入的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "OpaqueToolInputKind": {
+      "type": "string",
+      "enum": [
+        "opaque"
+      ],
+      "description": "不透明工具输入种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "OpaqueToolInput": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/OpaqueToolInputKind"
+        },
+        "value": {
+          "type": "string",
+          "description": "该指标或选项的值。"
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1,
+          "description": "内容的媒体类型。"
+        },
+        "truncation": {
+          "$ref": "#/$defs/ContentTruncation"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": true,
+      "description": "不透明工具输入的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolInput": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/CommandToolInput"
+        },
+        {
+          "$ref": "#/$defs/StructuredToolInput"
+        },
+        {
+          "$ref": "#/$defs/OpaqueToolInput"
+        }
+      ],
+      "description": "工具输入的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolExecutionError": {
+      "type": "object",
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "description": "错误代码；具体类型区分 RPC 数字码与业务字符串码。"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "供调用者理解的错误或提示文字。"
+        },
+        "retryable": {
+          "type": "boolean",
+          "description": "同一操作是否适合在条件恢复后重试。"
+        }
+      },
+      "required": [
+        "message"
+      ],
+      "additionalProperties": true,
+      "description": "工具执行错误的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolInvocation": {
+      "type": "object",
+      "properties": {
+        "callId": {
+          "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的名称。"
+        },
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "description": "扩展或工具来源的命名空间。"
+        },
+        "category": {
+          "$ref": "#/$defs/ToolCategory"
+        },
+        "origin": {
+          "$ref": "#/$defs/ToolOrigin"
+        },
+        "input": {
+          "$ref": "#/$defs/ToolInput"
+        },
+        "outcome": {
+          "$ref": "#/$defs/ToolOutcome"
+        },
+        "timing": {
+          "$ref": "#/$defs/ToolTiming"
+        },
+        "annotations": {
+          "$ref": "#/$defs/ToolAnnotations"
+        }
+      },
+      "required": [
+        "callId",
+        "name",
+        "category",
+        "origin",
+        "input"
+      ],
+      "additionalProperties": true,
+      "description": "Provider-neutral client-safe tool-call envelope with one canonical input and one canonical outcome. Lifecycle remains ConversationItem.status."
+    },
+    "ToolOrigin": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ToolOriginKind"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的名称。"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": true,
+      "description": "工具来源的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolOriginKind": {
+      "type": "string",
+      "enum": [
+        "builtin",
+        "mcp",
+        "plugin",
+        "server",
+        "custom",
+        "unknown"
+      ],
+      "description": "工具来源种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolSuccessOutcomeKind": {
+      "type": "string",
+      "enum": [
+        "success"
+      ],
+      "description": "工具成功结果种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolSuccessOutcome": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ToolSuccessOutcomeKind"
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          },
+          "description": "消息或结果包含的内容块。"
+        },
+        "exitCode": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "description": "原生命令退出码。"
+        },
+        "processId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "原生进程身份。"
+        }
+      },
+      "required": [
+        "kind",
+        "content"
+      ],
+      "additionalProperties": true,
+      "description": "工具成功结果的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolFailureOutcomeKind": {
+      "type": "string",
+      "enum": [
+        "failure"
+      ],
+      "description": "工具失败结果种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolFailureOutcome": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ToolFailureOutcomeKind"
+        },
+        "content": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          },
+          "description": "消息或结果包含的内容块。"
+        },
+        "error": {
+          "$ref": "#/$defs/ToolExecutionError"
+        },
+        "exitCode": {
+          "type": "integer",
+          "minimum": -2147483648,
+          "maximum": 2147483647,
+          "description": "原生命令退出码。"
+        },
+        "processId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "原生进程身份。"
+        }
+      },
+      "required": [
+        "kind",
+        "content",
+        "error"
+      ],
+      "additionalProperties": true,
+      "description": "工具失败结果的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolOutcome": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ToolSuccessOutcome"
+        },
+        {
+          "$ref": "#/$defs/ToolFailureOutcome"
+        }
+      ],
+      "description": "工具结果的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolTiming": {
+      "type": "object",
+      "properties": {
+        "startedAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        },
+        "completedAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        },
+        "durationMs": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "持续时间，毫秒。"
+        }
+      },
+      "additionalProperties": true,
+      "description": "工具时间信息的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationItem": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/MessageConversationItem"
+        },
+        {
+          "$ref": "#/$defs/ReasoningConversationItem"
+        },
+        {
+          "$ref": "#/$defs/CommandConversationItem"
+        },
+        {
+          "$ref": "#/$defs/FileChangeConversationItem"
+        },
+        {
+          "$ref": "#/$defs/ToolConversationItem"
+        },
+        {
+          "$ref": "#/$defs/ApprovalConversationItem"
+        },
+        {
+          "$ref": "#/$defs/UnknownConversationItem"
+        }
+      ],
+      "description": "会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "MessageConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "message"
+      ],
+      "description": "消息会话条目种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "MessageConversationItem": {
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "$ref": "../../core/v2/schema.json#/$defs/JsonObject"
+        },
+        "resource": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/MessageConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "role": {
+          "$ref": "#/$defs/ConversationItemRole"
+        },
+        "contents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          },
+          "description": "嵌入资源的内容。"
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status",
+        "role",
+        "contents"
+      ],
+      "additionalProperties": true,
+      "description": "消息会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ReasoningConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "reasoning"
+      ],
+      "description": "推理会话条目种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ReasoningConversationItem": {
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "$ref": "../../core/v2/schema.json#/$defs/JsonObject"
+        },
+        "resource": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ReasoningConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "contents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          },
+          "description": "嵌入资源的内容。"
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status",
+        "contents"
+      ],
+      "additionalProperties": true,
+      "description": "推理会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "CommandConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "command"
+      ],
+      "description": "命令会话条目种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "CommandConversationItem": {
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "$ref": "../../core/v2/schema.json#/$defs/JsonObject"
+        },
+        "resource": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/CommandConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "项目、会话或选项的显示标题。"
+        },
+        "tool": {
+          "$ref": "#/$defs/ToolInvocation"
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status",
+        "tool"
+      ],
+      "additionalProperties": true,
+      "description": "命令会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "FileChangeConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "file-change"
+      ],
+      "description": "文件变更会话条目种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "FileChangeConversationItem": {
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "$ref": "../../core/v2/schema.json#/$defs/JsonObject"
+        },
+        "resource": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/FileChangeConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "项目、会话或选项的显示标题。"
+        },
+        "contents": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ContentBlock"
+          },
+          "description": "嵌入资源的内容。"
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status",
+        "contents"
+      ],
+      "additionalProperties": true,
+      "description": "文件变更会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "tool"
+      ],
+      "description": "工具会话条目种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ToolConversationItem": {
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "$ref": "../../core/v2/schema.json#/$defs/JsonObject"
+        },
+        "resource": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ToolConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "项目、会话或选项的显示标题。"
+        },
+        "tool": {
+          "$ref": "#/$defs/ToolInvocation"
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status",
+        "tool"
+      ],
+      "additionalProperties": true,
+      "description": "工具会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ApprovalConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "approval"
+      ],
+      "description": "审批会话条目种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ApprovalConversationItem": {
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "$ref": "../../core/v2/schema.json#/$defs/JsonObject"
+        },
+        "resource": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/ApprovalConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "项目、会话或选项的显示标题。"
+        },
+        "relatedItem": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "approval": {
+          "$ref": "#/$defs/Approval"
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status",
+        "approval"
+      ],
+      "additionalProperties": true,
+      "description": "审批会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UnknownConversationItemKind": {
+      "type": "string",
+      "enum": [
+        "unknown"
+      ],
+      "description": "未知会话条目种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UnknownConversationItem": {
+      "type": "object",
+      "properties": {
+        "_meta": {
+          "$ref": "../../core/v2/schema.json#/$defs/JsonObject"
+        },
+        "resource": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "turn": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "kind": {
+          "$ref": "#/$defs/UnknownConversationItemKind"
+        },
+        "status": {
+          "$ref": "#/$defs/ConversationItemStatus"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "项目、会话或选项的显示标题。"
+        }
+      },
+      "required": [
+        "resource",
+        "turn",
+        "conversation",
+        "kind",
+        "status"
+      ],
+      "additionalProperties": true,
+      "description": "未知会话条目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationItemRole": {
+      "type": "string",
+      "enum": [
+        "user",
+        "assistant"
+      ],
+      "description": "会话条目角色的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationItemStatus": {
+      "type": "string",
+      "enum": [
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "interrupted",
+        "declined",
+        "approved",
+        "denied",
+        "expired",
+        "unknown"
+      ],
+      "description": "会话条目状态的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationReadState": {
+      "type": "object",
+      "properties": {
+        "unread": {
+          "type": "boolean",
+          "description": "是否存在未读活动。"
+        },
+        "activityVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "会话当前活动版本，用于无丢失确认已读。"
+        }
+      },
+      "required": [
+        "unread",
+        "activityVersion"
+      ],
+      "additionalProperties": true,
+      "description": "会话阅读状态的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationStatus": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "running",
+        "waiting-approval",
+        "waiting-user-input",
+        "error",
+        "archived"
+      ],
+      "description": "会话状态的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ChoiceOption": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ProviderId"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "面向用户的名称。"
+        },
+        "description": {
+          "type": "string",
+          "description": "面向用户或接入者的说明文字。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "是否启用此配置或能力。"
+        },
+        "disabledReason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此选项不可选择的原因。"
+        }
+      },
+      "required": [
+        "id",
+        "displayName"
+      ],
+      "additionalProperties": true,
+      "description": "选择选项的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ChoiceSet": {
+      "type": "object",
+      "properties": {
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChoiceOption"
+          },
+          "minItems": 1,
+          "description": "允许选择的选项清单。"
+        },
+        "defaultId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "本集合中的默认选项 ID，必须存在且未禁用；Provider 返回实际 selection 时应填入已经生效的选择。"
+        }
+      },
+      "required": [
+        "options"
+      ],
+      "additionalProperties": true,
+      "description": "同一能力维度可选择的选项集合；defaultId 若存在，必须指向本集合中未禁用的选项。"
+    },
+    "FlatModelCatalogKind": {
+      "type": "string",
+      "enum": [
+        "flat"
+      ],
+      "description": "平面模型目录种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "FlatModelSelection": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FlatModelCatalogKind"
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "模型稳定标识。"
+        }
+      },
+      "required": [
+        "kind",
+        "modelId"
+      ],
+      "additionalProperties": true,
+      "description": "平面模型选择的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "FlatModelCatalog": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/FlatModelCatalogKind"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChoiceOption"
+          },
+          "minItems": 1,
+          "description": "模型选项清单。"
+        },
+        "defaultSelection": {
+          "$ref": "#/$defs/FlatModelSelection"
+        }
+      },
+      "required": [
+        "kind",
+        "models"
+      ],
+      "additionalProperties": true,
+      "description": "平面模型目录的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "GroupedModelCatalogKind": {
+      "type": "string",
+      "enum": [
+        "grouped"
+      ],
+      "description": "分组模型目录种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "GroupedModelProvider": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的稳定标识。"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "面向用户的名称。"
+        },
+        "description": {
+          "type": "string",
+          "description": "面向用户或接入者的说明文字。"
+        },
+        "models": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ChoiceOption"
+          },
+          "minItems": 1,
+          "description": "模型选项清单。"
+        }
+      },
+      "required": [
+        "id",
+        "displayName",
+        "models"
+      ],
+      "additionalProperties": true,
+      "description": "分组模型Provider的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "GroupedModelSelection": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/GroupedModelCatalogKind"
+        },
+        "providerId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共享领域对象所属的 Provider 实例路由身份。"
+        },
+        "modelId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "模型稳定标识。"
+        }
+      },
+      "required": [
+        "kind",
+        "providerId",
+        "modelId"
+      ],
+      "additionalProperties": true,
+      "description": "分组模型选择的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "GroupedModelCatalog": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/GroupedModelCatalogKind"
+        },
+        "providers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/GroupedModelProvider"
+          },
+          "minItems": 1,
+          "description": "模型服务商分组清单。"
+        },
+        "defaultSelection": {
+          "$ref": "#/$defs/GroupedModelSelection"
+        }
+      },
+      "required": [
+        "kind",
+        "providers"
+      ],
+      "additionalProperties": true,
+      "description": "分组模型目录的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ModelCatalog": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/FlatModelCatalog"
+        },
+        {
+          "$ref": "#/$defs/GroupedModelCatalog"
+        }
+      ],
+      "description": "模型目录的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ModelSelection": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/FlatModelSelection"
+        },
+        {
+          "$ref": "#/$defs/GroupedModelSelection"
+        }
+      ],
+      "description": "模型选择的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "TurnSendCapabilities": {
+      "type": "object",
+      "properties": {
+        "accessMode": {
+          "$ref": "#/$defs/ChoiceSet"
+        },
+        "reasoningEffort": {
+          "$ref": "#/$defs/ChoiceSet"
+        },
+        "modelCatalog": {
+          "$ref": "#/$defs/ModelCatalog"
+        }
+      },
+      "additionalProperties": true,
+      "description": "同一实例当前支持的发送选择目录。返回的 selection 必须与此目录一致；目录更新通过能力 revision 区分，调用方不得用旧目录构造新请求。未声明维度表示不提供该选择，原生运行时自行管理模型时不应虚构可切换的模型目录。"
+    },
+    "ConversationCreateCapabilities": {
+      "type": "object",
+      "properties": {
+        "supportsTitle": {
+          "type": "boolean",
+          "description": "创建会话时是否支持设置标题。"
+        },
+        "selection": {
+          "$ref": "#/$defs/TurnSendCapabilities"
+        },
+        "workspaceMode": {
+          "$ref": "#/$defs/ChoiceSet"
+        }
+      },
+      "required": [
+        "supportsTitle"
+      ],
+      "additionalProperties": true,
+      "description": "会话创建能力的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "TurnInputKind": {
+      "type": "string",
+      "enum": [
+        "text"
+      ],
+      "description": "任务输入种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "TurnInput": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/TurnInputKind"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此内容块的文本。"
+        }
+      },
+      "required": [
+        "kind",
+        "text"
+      ],
+      "additionalProperties": true,
+      "description": "任务输入的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "TurnSelection": {
+      "type": "object",
+      "properties": {
+        "accessModeId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "访问模式选项标识。"
+        },
+        "reasoningEffortId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "推理强度选项标识。"
+        },
+        "model": {
+          "$ref": "#/$defs/ModelSelection"
+        }
+      },
+      "additionalProperties": true,
+      "description": "当前实例实际生效的发送选择。已声明的能力维度必须使用同一实例 turnSend 目录中存在且未禁用的选项；有默认值时 Provider 应在 create/acquire/turn 返回中给出实际选择。未声明的维度不应携带值。模型相关推理选项还需满足所选模型的目录约束。此跨对象语义由实现校验，不能仅凭结构 Schema 判断一致性。"
+    },
+    "Project": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的名称。"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProjectRoot"
+          },
+          "description": "项目根目录清单。"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "description": "可扩展字典中单个值的结构与约束。"
+          },
+          "description": "此对象的可扩展元数据。"
+        },
+        "position": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991,
+          "description": "Provider-defined ordering position. Read-only in Project v1 operations."
+        },
+        "createdAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        },
+        "updatedAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "resource",
+        "name",
+        "roots",
+        "metadata",
+        "position",
+        "createdAt",
+        "updatedAt"
+      ],
+      "additionalProperties": true,
+      "description": "项目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProjectChangeType": {
+      "type": "string",
+      "enum": [
+        "created",
+        "updated",
+        "deleted"
+      ],
+      "description": "项目变更类别的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProjectRoot": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "本机文件系统路径。"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": true,
+      "description": "项目根目录的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderAuthenticationStatus": {
+      "type": "string",
+      "enum": [
+        "unknown",
+        "signed-in",
+        "signed-out",
+        "expired",
+        "error",
+        "unsupported"
+      ],
+      "description": "Provider认证状态的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderAuthentication": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/ProviderAuthenticationStatus"
+        },
+        "displayText": {
+          "type": "string",
+          "minLength": 1,
+          "description": "面向用户的文本摘要。"
+        }
+      },
+      "required": [
+        "status"
+      ],
+      "additionalProperties": true,
+      "description": "Provider认证的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identity of one Gateway provider."
+    },
+    "TurnStatus": {
+      "type": "string",
+      "enum": [
+        "queued",
+        "running",
+        "waiting-approval",
+        "completed",
+        "failed",
+        "interrupted"
+      ],
+      "description": "任务状态的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "TurnTask": {
+      "type": "object",
+      "properties": {
+        "resource": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "conversation": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "status": {
+          "$ref": "#/$defs/TurnStatus"
+        },
+        "displaySummary": {
+          "type": "string",
+          "description": "面向用户的工具输入或执行摘要。"
+        },
+        "startedAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        },
+        "updatedAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        },
+        "completedAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        },
+        "error": {
+          "$ref": "../../core/v2/schema.json#/$defs/ProtocolError"
+        }
+      },
+      "required": [
+        "resource",
+        "conversation",
+        "status"
+      ],
+      "additionalProperties": true,
+      "description": "Terminal execution failure, present only for failed turns. retryable indicates a new user-initiated attempt may succeed; never automatically resubmit accepted input. Omitted by older providers."
+    },
+    "UsageMetric": {
+      "type": "string",
+      "enum": [
+        "totalTokens",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens"
+      ],
+      "description": "用量指标的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageCompleteness": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "unknown"
+      ],
+      "description": "用量完整性的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageTimeBucket": {
+      "type": "string",
+      "enum": [
+        "none",
+        "halfHour",
+        "hour",
+        "day",
+        "month"
+      ],
+      "description": "用量时间桶的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageTimeRange": {
+      "type": "object",
+      "properties": {
+        "from": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+          "description": "时间范围起点；单位与边界规则见所属类型。"
+        },
+        "to": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+          "description": "时间范围终点；单位与边界规则见所属类型。"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "additionalProperties": true,
+      "description": "Half-open [from,to), from < to. Calendar validity and supported bucket alignment are validated by Provider."
+    },
+    "UsageAllTime": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/UsageAllTimeKind"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": true,
+      "description": "用量全部时间的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageBoundedTime": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/UsageBoundedTimeKind"
+        },
+        "range": {
+          "$ref": "#/$defs/UsageTimeRange"
+        }
+      },
+      "required": [
+        "kind",
+        "range"
+      ],
+      "additionalProperties": true,
+      "description": "用量有界时间的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageTimeFilter": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/UsageAllTime"
+        },
+        {
+          "$ref": "#/$defs/UsageBoundedTime"
+        }
+      ],
+      "description": "用量时间筛选的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageFilter": {
+      "type": "object",
+      "properties": {
+        "time": {
+          "$ref": "#/$defs/UsageTimeFilter"
+        },
+        "modelIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "uniqueItems": true,
+          "description": "需要纳入统计或查询的模型标识清单。"
+        },
+        "includeUnknownModel": {
+          "type": "boolean",
+          "description": "是否纳入模型身份未知的数据。"
+        }
+      },
+      "required": [
+        "time"
+      ],
+      "additionalProperties": true,
+      "description": "Absent modelIds selects all; empty modelIds is invalid. Unknown models are included by default only without a model filter."
+    },
+    "UsageAggregation": {
+      "type": "object",
+      "properties": {
+        "timeBucket": {
+          "$ref": "#/$defs/UsageTimeBucket"
+        },
+        "timeZone": {
+          "type": "string",
+          "minLength": 1,
+          "description": "聚合或展示所用时区。"
+        },
+        "groupBy": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageAggregationGroupByItems"
+          },
+          "uniqueItems": true,
+          "description": "分组维度清单。"
+        }
+      },
+      "required": [
+        "timeBucket",
+        "timeZone",
+        "groupBy"
+      ],
+      "additionalProperties": true,
+      "description": "IANA timezone; sum additive metrics. Unsupported grouping, precision or timezone must return unsupported_usage_query, never silently coarsen or prorate."
+    },
+    "UsageOrder": {
+      "type": "object",
+      "properties": {
+        "field": {
+          "$ref": "#/$defs/UsageOrderField"
+        },
+        "direction": {
+          "$ref": "#/$defs/UsageOrderDirection"
+        }
+      },
+      "required": [
+        "field",
+        "direction"
+      ],
+      "additionalProperties": true,
+      "description": "用量排序的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsagePage": {
+      "type": "object",
+      "properties": {
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000,
+          "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
+        },
+        "cursor": {
+          "type": "string",
+          "minLength": 1,
+          "description": "上一页返回的分页游标；需保持查询条件不变。"
+        }
+      },
+      "required": [],
+      "additionalProperties": true,
+      "description": "Default limit 100. Cursor binds exact query, source scope and immutable revision. Expired revisions return usage_cursor_expired."
+    },
+    "UsageQuery": {
+      "type": "object",
+      "properties": {
+        "datasetId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "用量数据集稳定标识。"
+        },
+        "filter": {
+          "$ref": "#/$defs/UsageFilter"
+        },
+        "aggregation": {
+          "$ref": "#/$defs/UsageAggregation"
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageMetric"
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "需要返回的指标清单。"
+        },
+        "summaries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageQuerySummariesItems"
+          },
+          "uniqueItems": true,
+          "description": "需要计算的汇总或已计算的汇总。"
+        },
+        "orderBy": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageOrder"
+          },
+          "description": "结果排序规则。"
+        },
+        "page": {
+          "$ref": "#/$defs/UsagePage"
+        }
+      },
+      "required": [
+        "datasetId",
+        "filter",
+        "aggregation",
+        "metrics"
+      ],
+      "additionalProperties": true,
+      "description": "Filter before aggregation and pagination. Summaries cover every filtered record, never just a page. Defaults sort bucketStart then modelId ascending, unknown model first. Metric sorts require that metric. Group summaries require model grouping. PeakDaily uses totalTokens per calendar day, ties select earliest date; all-time means available dataset history, not account lifetime."
+    },
+    "UsageMetricValue": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "该指标或选项的值。"
+        },
+        "completeness": {
+          "$ref": "#/$defs/UsageCompleteness"
+        }
+      },
+      "required": [
+        "value",
+        "completeness"
+      ],
+      "additionalProperties": true,
+      "description": "用量指标值的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageValues": {
+      "type": "object",
+      "properties": {
+        "totalTokens": {
+          "$ref": "#/$defs/UsageMetricValue"
+        },
+        "inputTokens": {
+          "$ref": "#/$defs/UsageMetricValue"
+        },
+        "outputTokens": {
+          "$ref": "#/$defs/UsageMetricValue"
+        },
+        "cacheReadTokens": {
+          "$ref": "#/$defs/UsageMetricValue"
+        },
+        "cacheWriteTokens": {
+          "$ref": "#/$defs/UsageMetricValue"
+        }
+      },
+      "required": [],
+      "additionalProperties": true,
+      "description": "Return exactly requested metrics. Input includes cache read/write; total = input + output. Cache is not added twice. Missing metrics are null/unknown; incomplete sums are partial."
+    },
+    "UsageCoverage": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "$ref": "#/$defs/UsageCoverageScope"
+        },
+        "availableFrom": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "数据可查询的最早时间戳。"
+        },
+        "completeThrough": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "数据已确认完整覆盖到的时间戳。"
+        },
+        "status": {
+          "$ref": "#/$defs/UsageCoverageStatus"
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageTimeRange"
+          },
+          "description": "已知数据缺口清单。"
+        }
+      },
+      "required": [
+        "scope",
+        "availableFrom",
+        "completeThrough",
+        "status",
+        "gaps"
+      ],
+      "additionalProperties": true,
+      "description": "Completeness is relative to dataset scope. Missing buckets are not zero unless coverage establishes completeness."
+    },
+    "UsageRow": {
+      "type": "object",
+      "properties": {
+        "bucket": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTimeRange"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "当前行的时间桶。"
+        },
+        "modelId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "模型稳定标识。"
+        },
+        "values": {
+          "$ref": "#/$defs/UsageValues"
+        },
+        "completeness": {
+          "$ref": "#/$defs/UsageCompleteness"
+        },
+        "provisional": {
+          "type": "boolean",
+          "description": "是否仍为临时估计值。"
+        }
+      },
+      "required": [
+        "bucket",
+        "values",
+        "completeness",
+        "provisional"
+      ],
+      "additionalProperties": true,
+      "description": "用量行的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageDailyPeak": {
+      "type": "object",
+      "properties": {
+        "date": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "description": "统计所属日期。"
+        },
+        "totalTokens": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991,
+          "description": "总 token 数量。"
+        },
+        "completeness": {
+          "$ref": "#/$defs/UsageCompleteness"
+        }
+      },
+      "required": [
+        "date",
+        "totalTokens",
+        "completeness"
+      ],
+      "additionalProperties": true,
+      "description": "用量每日峰值的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageGroupTotal": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "模型稳定标识。"
+        },
+        "values": {
+          "$ref": "#/$defs/UsageValues"
+        }
+      },
+      "required": [
+        "modelId",
+        "values"
+      ],
+      "additionalProperties": true,
+      "description": "用量分组总计的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageGroupPeak": {
+      "type": "object",
+      "properties": {
+        "modelId": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "模型稳定标识。"
+        },
+        "peak": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageDailyPeak"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "峰值结果。"
+        }
+      },
+      "required": [
+        "modelId",
+        "peak"
+      ],
+      "additionalProperties": true,
+      "description": "用量分组峰值的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageSummaries": {
+      "type": "object",
+      "properties": {
+        "totals": {
+          "$ref": "#/$defs/UsageValues"
+        },
+        "peakDaily": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageDailyPeak"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "按日统计的峰值。"
+        },
+        "totalsByGroup": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageGroupTotal"
+          },
+          "description": "按分组维度计算的总计。"
+        },
+        "peakDailyByGroup": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageGroupPeak"
+          },
+          "description": "按组统计的每日峰值。"
+        }
+      },
+      "required": [],
+      "additionalProperties": true,
+      "description": "用量汇总的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageQueryResult": {
+      "type": "object",
+      "properties": {
+        "datasetId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "用量数据集稳定标识。"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前快照或能力的修订标识，用于拒绝陈旧状态。"
+        },
+        "generatedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})$",
+          "description": "统计结果生成时间戳，毫秒。"
+        },
+        "updatedAt": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "最后更新时间戳，毫秒。"
+        },
+        "coverage": {
+          "$ref": "#/$defs/UsageCoverage"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageRow"
+          },
+          "description": "统计结果行清单。"
+        },
+        "summaries": {
+          "$ref": "#/$defs/UsageSummaries"
+        },
+        "nextCursor": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageText"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "下一页游标；缺省表示没有可继续获取的页。"
+        },
+        "nativeAccountSummary": {
+          "$ref": "#/$defs/UsageNativeAccountSummary"
+        }
+      },
+      "required": [
+        "datasetId",
+        "revision",
+        "generatedAt",
+        "updatedAt",
+        "coverage",
+        "rows",
+        "nextCursor"
+      ],
+      "additionalProperties": true,
+      "description": "用量查询结果的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageDataset": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的稳定标识。"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "面向用户的名称。"
+        },
+        "scope": {
+          "$ref": "#/$defs/UsageDatasetScope"
+        },
+        "metrics": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageMetric"
+          },
+          "uniqueItems": true,
+          "description": "需要返回的指标清单。"
+        },
+        "timeBuckets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/UsageTimeBucket"
+          },
+          "uniqueItems": true,
+          "description": "支持的时间桶选项。"
+        },
+        "modelFilter": {
+          "type": "boolean",
+          "description": "模型筛选条件。"
+        },
+        "modelGrouping": {
+          "type": "boolean",
+          "description": "统计中的模型分组方式。"
+        },
+        "timeZones": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "uniqueItems": true,
+          "description": "支持的时区清单。"
+        },
+        "baseBucketMinutes": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageBucketMinutes"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "底层原始数据桶宽度，分钟。"
+        }
+      },
+      "required": [
+        "id",
+        "displayName",
+        "scope",
+        "metrics",
+        "timeBuckets",
+        "modelFilter",
+        "modelGrouping",
+        "timeZones",
+        "baseBucketMinutes"
+      ],
+      "additionalProperties": true,
+      "description": "timeZones empty means any supported IANA timezone; otherwise only listed zones. Capability is about available source data, not UI preferences."
+    },
+    "UsageText": {
+      "type": "string",
+      "description": "用量文本的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageTokenCount": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991,
+      "description": "用量Token数量的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageBucketMinutes": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "用量桶分钟的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageAllTimeKind": {
+      "type": "string",
+      "enum": [
+        "all"
+      ],
+      "description": "用量全部时间种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageBoundedTimeKind": {
+      "type": "string",
+      "enum": [
+        "range"
+      ],
+      "description": "用量有界时间种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageAggregationGroupByItems": {
+      "type": "string",
+      "enum": [
+        "model"
+      ],
+      "description": "用量聚合分组按条目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageOrderField": {
+      "type": "string",
+      "enum": [
+        "bucketStart",
+        "modelId",
+        "totalTokens",
+        "inputTokens",
+        "outputTokens",
+        "cacheReadTokens",
+        "cacheWriteTokens"
+      ],
+      "description": "用量排序字段的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageOrderDirection": {
+      "type": "string",
+      "enum": [
+        "asc",
+        "desc"
+      ],
+      "description": "用量排序方向的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageQuerySummariesItems": {
+      "type": "string",
+      "enum": [
+        "totals",
+        "peakDaily",
+        "totalsByGroup",
+        "peakDailyByGroup"
+      ],
+      "description": "用量查询汇总条目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageCoverageScope": {
+      "type": "string",
+      "enum": [
+        "account",
+        "local"
+      ],
+      "description": "用量覆盖作用域的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageCoverageStatus": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "partial",
+        "backfilling",
+        "unknown"
+      ],
+      "description": "用量覆盖状态的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageDatasetScope": {
+      "type": "string",
+      "enum": [
+        "account",
+        "local"
+      ],
+      "description": "用量数据集作用域的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "UsageNativeAccountSummary": {
+      "type": "object",
+      "properties": {
+        "lifetimeTokens": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "累计 token 使用量。"
+        },
+        "peakDailyTokens": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "单日 token 使用峰值。"
+        },
+        "longestRunningTurnSec": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "最长任务运行时长，秒。"
+        },
+        "currentStreakDays": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "截至当前的连续活跃天数。"
+        },
+        "longestStreakDays": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/UsageTokenCount"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "最长连续活跃天数。"
+        }
+      },
+      "required": [
+        "lifetimeTokens",
+        "peakDailyTokens",
+        "longestRunningTurnSec",
+        "currentStreakDays",
+        "longestStreakDays"
+      ],
+      "additionalProperties": true,
+      "description": "Unfiltered native account facts, independent of query filters and daily bucket retention. Never combine with local observed totals."
+    },
+    "ProviderUsage": {
+      "type": "object",
+      "properties": {
+        "displayText": {
+          "type": "string",
+          "minLength": 1,
+          "description": "面向用户的文本摘要。"
+        },
+        "observedAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderUsageDetail"
+          },
+          "description": "可供调用者处理的结构化诊断详情。"
+        }
+      },
+      "required": [
+        "displayText"
+      ],
+      "additionalProperties": true,
+      "description": "Provider用量的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderUsageDetail": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "description": "扩展或工具来源的命名空间。"
+        },
+        "schemaVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此数据集或载荷自身的格式版本。"
+        },
+        "data": {
+          "$ref": "../../core/v2/schema.json#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "namespace",
+        "schemaVersion",
+        "data"
+      ],
+      "additionalProperties": true,
+      "description": "Provider用量明细的完整数据定义；字段、可选性与允许值见本对象约束。"
+    }
+  }
+}

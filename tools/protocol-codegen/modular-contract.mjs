@@ -23,8 +23,9 @@ function targetOf(ref, source) {
   return { file: relative ? resolveFile(source, relative) : source, fragment };
 }
 
-export async function loadModularContract(protocolRoot) {
-  const root = path.join(protocolRoot, 'v1');
+export async function loadModularContract(protocolRoot, { version } = {}) {
+  version ??= await readFile(path.join(protocolRoot, 'codegen.json'), 'utf8').then(v => JSON.parse(v).sourceVersion ?? 1, () => 1);
+  const root = path.join(protocolRoot, `v${version}`);
   const files = new Map(), layers = new Map(), schemaLayers = new Map();
   async function read(file, layer) {
     assert(!path.posix.isAbsolute(file) && !file.startsWith('../'), `source escapes v1: ${file}`);
@@ -35,12 +36,12 @@ export async function loadModularContract(protocolRoot) {
     return value;
   }
   const index = await read('protocol.json', 'index');
-  assert(index.version === 1, 'unsupported source version');
+  assert([1, 2].includes(index.version), 'unsupported source version');
   for (const key of ['commonSchema', 'rpcEnvelopeSchema']) await read(index[key], 'common');
   await read(index.agentDomainSchema, 'agent');
   async function service(file, layer) {
     const entry = await read(file, layer), modules = [], moduleIds = new Set();
-    assert(entry.version === index.version, `${file}: inconsistent protocol version`);
+    assert(Number.isInteger(entry.version) && entry.version >= 1 && (entry.minVersion ?? entry.version) <= entry.version, `${file}: invalid protocol version interval`);
     assert(!entry.service.methods && !entry.service.events, `${file}: methods/events belong to modules`);
     for (const module of entry.modules) {
       assert(module.id && !moduleIds.has(module.id), `${file}: duplicate module ${module.id}`);
@@ -129,8 +130,8 @@ function rewrite(value, source, destination, mapping, { legacy = false } = {}) {
 function mergedSchema(canonical, mapping, destination, { legacy = false } = {}) {
   const result = {
     $schema: 'https://json-schema.org/draft/2020-12/schema',
-    $id: `https://code-pet.dev/${legacy ? 'protocol/' : 'provider-sdk/v1/'}${destination}`,
-    description: legacy ? 'Generated compatibility view of protocol/v1; edit the functional IDL modules and run protocol:generate.' : '由权威功能模块组装的协议类型。',
+    $id: `https://code-pet.dev/${legacy ? 'protocol/' : `provider-sdk/v${canonical.index.version}/`}${destination}`,
+    description: legacy ? `Generated compatibility view of protocol/v${canonical.index.version}; edit the functional IDL modules and run protocol:generate.` : '由权威功能模块组装的协议类型。',
     $defs: {},
   };
   for (const [file, target] of mapping) if (target === destination) {
@@ -159,7 +160,7 @@ export function providerPublicationInputs(canonical) {
   for (const key of ['commonSchema', 'agentDomainSchema', 'rpcEnvelopeSchema', 'manifestSchema', 'profiles', 'transportHandshakeSchema']) {
     const source = [...mapping].find(([, target]) => target === sdk[key])[0];
     const value = rewrite(canonical.files.get(source), source, sdk[key], mapping);
-    if (value.$id) value.$id = `https://code-pet.dev/provider-sdk/v1/${sdk[key]}`;
+    if (value.$id) value.$id = `https://code-pet.dev/provider-sdk/v${sdk.sdkVersion}/${sdk[key]}`;
     files.set(sdk[key], value);
   }
   for (const key of ['providerLifecycleSchema', 'providerMessagesSchema']) files.set(sdk[key], mergedSchema(canonical, mapping, sdk[key]));
@@ -172,7 +173,9 @@ export function providerPublicationInputs(canonical) {
 
 export function modularCompatibilityViews(canonical) {
   const { index, provider, gateway, control } = canonical;
+  const v = index.version;
   const paths = { common: 'core/v1/schema.json', agent: 'agent/v1/schema.json', provider: 'provider/v1/schema.json', gateway: 'gateway/v1/schema.json', pairing: 'channel/lan/v1/schema.json', control: 'channel/control/v1/schema.json' };
+  for (const key of ['common', 'agent', 'provider', 'gateway']) paths[key] = paths[key].replace('/v1/', `/v${v}/`);
   const mapping = new Map();
   for (const [file, layer] of canonical.schemaLayers) {
     if (file === index.rpcEnvelopeSchema || file === provider.manifestSchemaFile) continue;
@@ -181,21 +184,24 @@ export function modularCompatibilityViews(canonical) {
   const views = new Map();
   for (const destination of Object.values(paths)) views.set(destination, encode(mergedSchema(canonical, mapping, destination, { legacy: true })));
   for (const service of [provider, gateway]) {
-    const destination = service === provider ? 'provider/v1/manifest.json' : 'gateway/v1/manifest.json';
+    const destination = service === provider ? `provider/v${v}/manifest.json` : `gateway/v${v}/manifest.json`;
     const metadata = rewrite(service.entry.service, service.file, destination, mapping, { legacy: true });
-    const manifest = { ...metadata, description: 'Generated compatibility view of protocol/v1; do not edit.', version: service.entry.version };
+    const manifest = { ...metadata, description: `Generated compatibility view of protocol/v${v}; do not edit.`, version: service.entry.version, ...(service.entry.minVersion ? {minVersion:service.entry.minVersion} : {}) };
     if (service === provider) manifest.transport = {
       kind: 'json-rpc-2.0', framing: provider.profiles.defaultProfile,
-      hello: { $ref: '../../core/v1/schema.json#/$defs/ProviderTransportHello' },
-      selection: { $ref: '../../core/v1/schema.json#/$defs/ProviderTransportSelection' },
+      hello: { $ref: `../../core/v${v}/schema.json#/$defs/ProviderTransportHello` },
+      selection: { $ref: `../../core/v${v}/schema.json#/$defs/ProviderTransportSelection` },
       requestDiscriminator: 'method', eventDiscriminator: 'method', jsonRpcVersion: canonical.files.get(index.rpcEnvelopeSchema).$defs.Request.properties.jsonrpc.const,
-      requestId: { $ref: '../../core/v1/schema.json#/$defs/RequestId' }, rpcError: { $ref: '../../core/v1/schema.json#/$defs/RpcError' },
+      requestId: { $ref: `../../core/v${v}/schema.json#/$defs/RequestId` }, rpcError: { $ref: `../../core/v${v}/schema.json#/$defs/RpcError` },
     };
     else Object.assign(manifest.transport, service.entry.compatibility);
     manifest.methods = registry(canonical, service, 'methods', destination, mapping, { legacy: true });
     manifest.events = registry(canonical, service, 'events', destination, mapping, { legacy: true });
     manifest.fixtures = 'fixtures/index.json';
     views.set(destination, encode(manifest));
+  }
+  for (const [layer, name] of [['common','core'],['agent','agent']]) {
+    views.set(`${name}/v${v}/manifest.json`, encode({name:`codepet-${name}`,layer:name,version:v,...(name === "agent" && v === 1 ? {fixtures:"fixtures/index.json"} : {}),kind:'types',methods:[],events:[]}));
   }
   const pairing = gateway.modules.find(module => module.id === 'pairing');
   views.set('channel/lan/v1/manifest.json', encode({ ...pairing.service.compatibilityService, description: 'Generated compatibility view of Gateway pairing; legacy package name retained.' }));

@@ -4,6 +4,7 @@
 
 import 'dart:convert';
 
+const bool _forwardCompatible = false;
 final class ProtocolCodecException implements Exception {
   const ProtocolCodecException(this.path, this.message);
 
@@ -26,7 +27,7 @@ Map<String, Object?> _object(Object? value, String path) {
 
 void _expectKeys(Map<String, Object?> value, Set<String> allowed, String path) {
   for (final key in value.keys) {
-    if (!allowed.contains(key)) throw ProtocolCodecException('$path.$key', 'unknown field');
+    if (!allowed.contains(key) && !_forwardCompatible) throw ProtocolCodecException('$path.$key', 'unknown field');
   }
 }
 

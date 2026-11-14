@@ -1,0 +1,14 @@
+{
+  "jsonrpc": "2.0",
+  "method": "conversation.inputQueueChanged",
+  "params": {
+    "eventCursor": "event-43",
+    "payload": {
+      "conversation": {
+        "providerId": "codex-work",
+        "nativeResourceId": "thread-01"
+      },
+      "revision": 4
+    }
+  }
+}

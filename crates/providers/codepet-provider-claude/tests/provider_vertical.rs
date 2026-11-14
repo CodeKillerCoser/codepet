@@ -13,7 +13,7 @@ use codepet_provider_sdk::{
     JsonObject, ProtocolEvent, ProtocolServer as ProviderProtocolServer, ProviderFrameCodec,
     ProviderCapability, ProviderInitializeRequest, ProviderInstanceRoute, ProviderResourceId,
     ProviderShutdownRequest, ProviderWireMessage, RoutedResourceId, TurnInput, TurnInputKind, TurnInterruptRequest,
-    TurnSelection, TurnStartRequest, TurnStatus, TurnSteerRequest, VersionRange,
+    TurnSelection, TurnStartRequest, TurnStatus, TurnSteerRequest, ProtocolVersionOffer,
     PROTOCOL_VERSION,
 };
 use serde_json::{json, Value};
@@ -143,9 +143,9 @@ async fn configured_provider(
             host_client_id: "client-claude-fixture".to_string(),
             host_device_id: device_id.to_string(),
             host_version: "test".to_string(),
-            supported_versions: VersionRange {
+            protocol: ProtocolVersionOffer {
                 min_version: PROTOCOL_VERSION,
-                max_version: PROTOCOL_VERSION,
+                version: PROTOCOL_VERSION,
             },
         },
     )
@@ -968,7 +968,7 @@ fn provider_binary_negotiates_mux_by_default_before_generated_dispatch() {
             "hostClientId": "client-binary",
             "hostDeviceId": "device-binary",
             "hostVersion": "test",
-            "supportedVersions": { "minVersion": 1, "maxVersion": 1 }
+            "protocol": {"version": 2, "minVersion": 2}
         }),
     );
     assert_eq!(
@@ -1380,7 +1380,7 @@ fn active_provider_binary(workspace: &Path) -> ActiveProviderBinary {
             "hostClientId": "active-binary",
             "hostDeviceId": "active-device",
             "hostVersion": "test",
-            "supportedVersions": { "minVersion": 1, "maxVersion": 1 }
+            "protocol": {"version": 2, "minVersion": 2}
         }),
         &mut pending,
     );
@@ -1561,7 +1561,7 @@ async fn starting_waits_for_parallel_probes_and_refresh_failure_keeps_ready() {
     let route = route("startup-probes");
     ProviderProtocolServer::provider_initialize(provider.as_ref(), ProviderInitializeRequest { directories: None,
         host_client_id: "startup".into(), host_device_id: route.device_id.clone(), host_version: "test".into(),
-        supported_versions: VersionRange { min_version: PROTOCOL_VERSION, max_version: PROTOCOL_VERSION },
+        protocol: ProtocolVersionOffer { min_version: PROTOCOL_VERSION, version: PROTOCOL_VERSION },
     }).await.unwrap();
     let mut settings = instance_settings(&fixture_executable());
     settings.insert("claudeConfigDir".into(), json!(config));

@@ -1,0 +1,18 @@
+{
+  "jsonrpc": "2.0",
+  "id": "gateway-handshake-1",
+  "result": {
+    "protocol": {
+      "version": 2,
+      "minVersion": 2,
+      "selectedVersion": 2
+    },
+    "device": {
+      "name": "MacBook",
+      "operatingSystem": "macOS",
+      "systemVersion": "15.6"
+    },
+    "providers": [],
+    "eventCursor": "event-40"
+  }
+}

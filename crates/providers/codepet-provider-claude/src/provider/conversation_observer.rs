@@ -20,23 +20,23 @@ impl ClaudeInstanceRuntime {
         }, move |result| {
             let Some(runtime) = publisher.upgrade() else { return Stop; };
             let mut state = lock(&runtime.mutable);
-            if state.lifecycle_generation != generation || !matches!(state.status, InstanceStatus::Starting | InstanceStatus::Ready) { return Stop; }
+            if state.lifecycle_generation != generation || !matches!(state.status.clone(), InstanceStatus::Starting | InstanceStatus::Ready) { return Stop; }
             // Failed revocations are retried before another scan can advertise readiness.
             if state.atomic_readiness_pending {
-                if runtime.events.publish(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent { instance: runtime.snapshot_locked(&state), previous_status: Some(state.status) } }).is_err() { return Retry; }
+                if runtime.events.publish(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent { instance: runtime.snapshot_locked(&state), previous_status: Some(state.status.clone()) } }).is_err() { return Retry; }
                 state.atomic_readiness_pending = false;
             }
             match result {
                 Ok(delta) => {
                     let old_ready = state.atomic_facts_ready;
                     let old_epoch = state.atomic_facts_epoch;
-                    if state.status != InstanceStatus::Ready { return Retry; }
+                    if state.status.clone() != InstanceStatus::Ready { return Retry; }
                     let expected = delta.event_epoch;
                     let mut events = conversation_atoms::summary_delta_events(&runtime.route, delta);
                     if !old_ready {
                         state.atomic_facts_ready = true;
                         state.atomic_facts_epoch = old_epoch.saturating_add(1);
-                        events.push(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent { instance: runtime.snapshot_locked(&state), previous_status: Some(state.status) } });
+                        events.push(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent { instance: runtime.snapshot_locked(&state), previous_status: Some(state.status.clone()) } });
                     }
                     match runtime.atoms.commit_events(expected, events) {
                         Ok(true) => Applied,
@@ -45,7 +45,7 @@ impl ClaudeInstanceRuntime {
                             state.atomic_facts_ready = false;
                             state.atomic_facts_epoch = state.atomic_facts_epoch.saturating_add(1);
                             state.atomic_readiness_pending = true;
-                            if runtime.events.publish(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent { instance: runtime.snapshot_locked(&state), previous_status: Some(state.status) } }).is_ok() { state.atomic_readiness_pending = false; }
+                            if runtime.events.publish(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent { instance: runtime.snapshot_locked(&state), previous_status: Some(state.status.clone()) } }).is_ok() { state.atomic_readiness_pending = false; }
                             Retry
                         },
                     }
@@ -57,7 +57,7 @@ impl ClaudeInstanceRuntime {
                         state.atomic_facts_ready = false;
                         state.atomic_facts_epoch = state.atomic_facts_epoch.saturating_add(1);
                         state.atomic_readiness_pending = true;
-                        if runtime.events.publish(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent { instance: runtime.snapshot_locked(&state), previous_status: Some(state.status) } }).is_ok() { state.atomic_readiness_pending = false; }
+                        if runtime.events.publish(ProtocolEvent::EventInstanceStatusChanged { jsonrpc: "2.0".into(), params: InstanceStatusChangedEvent { instance: runtime.snapshot_locked(&state), previous_status: Some(state.status.clone()) } }).is_ok() { state.atomic_readiness_pending = false; }
                     }
                     Retry
                 }

@@ -52,8 +52,13 @@ const codexPath = "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexC
 let runtimeInventory = runtimeCase === "missing" ? [...absentRuntimes, missingRuntime("dev.codepet.codex", "Codex")]
   : runtimeCase === "chatgpt" ? [...absentRuntimes, { ...runtime, providerId: "dev.codepet.codex", displayName: "Codex", source: "macos-application", configuredExecutable: null,
     resolvedExecutable: codexPath, version: "0.166.0-alpha.5.1", installed: [{executablePath: codexPath, version: "0.166.0-alpha.5.1", source: "macos-application"}] }]
-  : [runtime];
-const runtimeConnections = () => runtimeInventory.map((item) => ({providerId:item.providerId,displayName:item.displayName,icon:"https://avatars.githubusercontent.com/u/14957082?s=200&v=4",version:"0.1.0",defaultWorkspaceRoot:"/Users/wangxin/.codepet/remote_workspace/codex",connectionStatus:"online",generation:1,instances:[{id:"qa",status:"ready"}]}));
+  : runtimeCase === "cards" ? [runtime,
+    { ...runtime, providerId: "dev.codepet.codex", displayName: "Codex", resolvedExecutable: codexPath, installed: [{executablePath: codexPath, version: "0.167.0", source: "macos-application"}] },
+    { ...runtime, providerId: "dev.codepet.opencode", displayName: "OpenCode", resolvedExecutable: "/opt/homebrew/lib/node_modules/@opencode/cli/bin/opencode.exe", installed: [] },
+    { ...runtime, providerId: "qa.notification", displayName: "消息通知", status: "not-required", resolvedExecutable: null },
+    { ...runtime, providerId: "qa.agent", displayName: "本地助手", status: "not-required", resolvedExecutable: null },
+  ] : [runtime];
+const runtimeConnections = () => runtimeInventory.map((item) => ({providerId:item.providerId,displayName:item.displayName,icon:"https://avatars.githubusercontent.com/u/14957082?s=200&v=4",version:"0.1.0",defaultWorkspaceRoot:"/Users/wangxin/.codepet/remote_workspace/codex",connectionStatus:"online",generation:1,instances:[{id:item.providerId,status:"ready"}]}));
 mockIPC((command, raw) => {
   const permissionScenario = new URLSearchParams(location.search);
   if (command === "get_system_permission_settings") {
@@ -96,6 +101,7 @@ mockIPC((command, raw) => {
   if (command === "plugin:path|basename") return "codepet-provider.json";
   if (command === "plugin:dialog|message") return args.buttons?.OkCancelCustom?.[0] ?? "Ok";
   if (command === "remove_provider_plugin") {
+    if (permissionScenario.get("removeCase") === "error") throw new Error("测试：模拟移除失败");
     runtimeInventory = runtimeInventory.filter(item => item.providerId !== args.providerId);
     void emit("provider-connection-status", runtimeConnections());
     return null;
@@ -133,7 +139,7 @@ mockIPC((command, raw) => {
     let result: any;
     if (request.method === "provider.list") result = {providers: []};
     else if (request.method === "conversation.get") result = { conversation: { status: "idle" }, items: [] };
-    else if (request.method === "provider.describe") result = { capabilities: { revision: "fixture", methods: ["turn.send"] } };
+    else if (request.method === "provider.describe") result = { capabilities: { revision: "fixture", methods: request.params.providerId === "qa.notification" ? ["observation.subscribe"] : ["turn.send"] } };
     else if (request.method === "conversation.acquireInteraction") result = { selection: {} };
     else if (request.method === "turn.send") result = { accepted: true };
     else throw new Error(`Unhandled fixture gateway method: ${request.method}`);

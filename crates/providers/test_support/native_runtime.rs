@@ -22,9 +22,9 @@ pub async fn check_native_runtime(
             host_client_id: "runtime-smoke".into(),
             host_device_id: "runtime-smoke-device".into(),
             host_version: "test".into(),
-            supported_versions: VersionRange {
+            protocol: ProtocolVersionOffer {
                 min_version: PROTOCOL_VERSION,
-                max_version: PROTOCOL_VERSION,
+                version: PROTOCOL_VERSION,
             },
         })
         .await
@@ -55,7 +55,7 @@ pub async fn check_native_runtime(
                 },
             })
             .await?
-            .selected;
+            .selected.expect("cached runtime selection must already be validated");
         let reread = provider
             .runtime_get_installed(RuntimeGetInstalledRequest { refresh: None })
             .await?;

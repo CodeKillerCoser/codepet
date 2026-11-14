@@ -1,0 +1,24 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-list-ids-request",
+  "method": "conversation.list",
+  "params": {
+    "route": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work"
+    },
+    "projectFilter": {
+      "kind": "all"
+    },
+    "query": {
+      "kind": "ids",
+      "ids": [
+        "thread-01",
+        "deleted-thread"
+      ]
+    },
+    "readerScope": "remote:client-01",
+    "limit": 20
+  }
+}

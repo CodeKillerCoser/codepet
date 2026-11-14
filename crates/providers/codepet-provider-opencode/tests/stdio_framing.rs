@@ -20,7 +20,7 @@ fn standalone_binary_negotiates_mux_by_default() {
                 "hostClientId": "framing-host",
                 "hostDeviceId": "framing-device",
                 "hostVersion": "0.1.0",
-                "supportedVersions": {"minVersion": 1, "maxVersion": 1}
+                "protocol": {"version": 2, "minVersion": 2}
             }
         }),
         serde_json::json!({
@@ -48,7 +48,7 @@ fn standalone_binary_negotiates_mux_by_default() {
     assert!(status.success());
     assert_eq!(responses.len(), 3);
     assert_eq!(responses[0]["id"], "1");
-    assert_eq!(responses[0]["result"]["selectedVersion"], 1);
+    assert_eq!(responses[0]["result"]["protocol"]["selectedVersion"], 2);
     assert_eq!(responses[1]["result"]["plugin"]["pluginId"], "dev.codepet.opencode");
     assert_eq!(responses[2]["result"]["accepted"], true);
 }
@@ -84,7 +84,7 @@ fn start_turn_resource_from_fresh_provider() -> String {
                 "hostClientId": "generation-host",
                 "hostDeviceId": "generation-device",
                 "hostVersion": "0.1.0",
-                "supportedVersions": {"minVersion": 1, "maxVersion": 1}
+                "protocol": {"version": 2, "minVersion": 2}
             }
         }),
         serde_json::json!({
@@ -204,7 +204,7 @@ fn malformed_host_frame_still_cleans_up_the_owned_server() {
                 "hostClientId": "framing-host",
                 "hostDeviceId": "framing-device",
                 "hostVersion": "0.1.0",
-                "supportedVersions": {"minVersion": 1, "maxVersion": 1}
+                "protocol": {"version": 2, "minVersion": 2}
             }
         }),
         serde_json::json!({

@@ -15,7 +15,7 @@ const init = {
   hostClientId: "c",
   hostDeviceId: "d",
   hostVersion: "test",
-  supportedVersions: { minVersion: 1, maxVersion: 1 },
+  protocol: { version: 2, minVersion: 2 },
 };
 function connect(child) {
   let next = 0,
@@ -57,7 +57,7 @@ test("failed initialization does not commit; heartbeat invariants; concurrent re
     (
       await rpc("provider.initialize", {
         ...init,
-        supportedVersions: { minVersion: 2, maxVersion: 2 },
+        protocol: { version: 1, minVersion: 1 },
       })
     ).error,
   );
@@ -66,8 +66,8 @@ test("failed initialization does not commit; heartbeat invariants; concurrent re
     "not_initialized",
   );
   assert.equal(
-    (await rpc("provider.initialize", init)).result.selectedVersion,
-    1,
+    (await rpc("provider.initialize", init)).result.protocol.selectedVersion,
+    2,
   );
   const slow = rpc("provider.describe", {});
   const ping = {
@@ -209,8 +209,8 @@ test("one partial/stalled provider leaves independent provider responsive", asyn
   const healthy = launch(t);
   const { rpc } = connect(healthy);
   assert.equal(
-    (await rpc("provider.initialize", init)).result.selectedVersion,
-    1,
+    (await rpc("provider.initialize", init)).result.protocol.selectedVersion,
+    2,
   );
   assert.equal(
     (

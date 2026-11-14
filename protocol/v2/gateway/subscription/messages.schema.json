@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v2/gateway/subscription/messages.schema.json",
+  "description": "gateway 的 subscription 功能模块交互对象。",
+  "$defs": {
+    "EventSubscribeRequest": {
+      "type": "object",
+      "properties": {
+        "afterCursor": {
+          "$ref": "../../common/types.schema.json#/$defs/EventCursor",
+          "description": "引用 EventCursor 的结构与约束。"
+        }
+      },
+      "required": [
+        "afterCursor"
+      ],
+      "additionalProperties": true,
+      "description": "EventSubscribeRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "EventSubscribeResponse": {
+      "type": "object",
+      "properties": {
+        "subscribedAfterCursor": {
+          "$ref": "../../common/types.schema.json#/$defs/EventCursor",
+          "description": "引用 EventCursor 的结构与约束。"
+        }
+      },
+      "required": [
+        "subscribedAfterCursor"
+      ],
+      "additionalProperties": true,
+      "description": "EventSubscribeResponse 的成功返回结果。"
+    }
+  }
+}

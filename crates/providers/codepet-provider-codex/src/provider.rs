@@ -39,7 +39,7 @@ use codepet_provider_sdk::{
     RuntimeGetInstalledResponse, RuntimeInstallation, RuntimeSelectRequest, RuntimeSelectResponse,
     TurnTask, TurnStatus, TurnInterruptRequest, TurnInterruptResponse,
     TurnSelection, TurnStartRequest, TurnStartResponse, TurnSteerRequest, TurnSteerResponse,
-    VersionRange, PROTOCOL_VERSION,
+    ProtocolVersionOffer, PROTOCOL_VERSION,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -489,7 +489,7 @@ impl CodexInstanceRuntime {
             self.instance_kind.clone(),
             self.display_name.clone(),
             mutable.harness.clone(),
-            mutable.status,
+            mutable.status.clone(),
             mutable.authentication.clone(),
             mutable.usage.clone(),
             capabilities,
@@ -521,7 +521,7 @@ impl CodexInstanceRuntime {
     fn refresh_metadata(self: &Arc<Self>) {
         let _transition = lock(&self.lifecycle_transition);
         let mut mutable = lock(&self.mutable);
-        if !matches!(mutable.status, InstanceStatus::Starting | InstanceStatus::Ready)
+        if !matches!(mutable.status.clone(), InstanceStatus::Starting | InstanceStatus::Ready)
             || (mutable.status == InstanceStatus::Starting && mutable.metadata_task.is_some()) {
             return;
         }
@@ -576,10 +576,10 @@ impl CodexInstanceRuntime {
     fn apply_metadata(&self, epoch: u64, update: impl FnOnce(&mut InstanceMutable)) {
         let _transition = lock(&self.lifecycle_transition);
         let mut mutable = lock(&self.mutable);
-        if !matches!(mutable.status, InstanceStatus::Starting | InstanceStatus::Ready) || mutable.metadata_epoch != epoch {
+        if !matches!(mutable.status.clone(), InstanceStatus::Starting | InstanceStatus::Ready) || mutable.metadata_epoch != epoch {
             return;
         }
-        let previous = mutable.status;
+        let previous = mutable.status.clone();
         update(&mut mutable);
         mutable.status = InstanceStatus::Ready;
         self.lifecycle_changed.notify_all();
@@ -641,7 +641,7 @@ impl CodexInstanceRuntime {
             mutable.sessions.remove(&slot.id);
             mutable.server_session_id = None;
             mutable.server_generation = None;
-            let previous = mutable.status;
+            let previous = mutable.status.clone();
             mutable.status = InstanceStatus::Error;
             self.lifecycle_changed.notify_all();
             previous
@@ -673,14 +673,14 @@ impl CodexInstanceRuntime {
                 drop(mutable);
                 StopAction::Return(Box::new(self.snapshot()))
             } else {
-            match mutable.status {
+            match mutable.status.clone() {
                 InstanceStatus::Stopped => {
                     drop(mutable);
                     StopAction::Return(Box::new(self.snapshot()))
                 }
                 InstanceStatus::Stopping => StopAction::Wait,
                 InstanceStatus::Created => {
-                    let previous = mutable.status;
+                    let previous = mutable.status.clone();
                     Self::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
                     mutable.status = InstanceStatus::Stopped;
@@ -689,7 +689,7 @@ impl CodexInstanceRuntime {
                     StopAction::Return(Box::new(self.publish_status_change(previous)?))
                 }
                 _ => {
-                    let previous = mutable.status;
+                    let previous = mutable.status.clone();
                     Self::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
                     let lifecycle_generation = mutable.lifecycle_generation;
@@ -762,7 +762,7 @@ impl CodexInstanceRuntime {
                         if mutable.status == InstanceStatus::Stopping
                             && mutable.lifecycle_generation == lifecycle_generation
                         {
-                            let previous = mutable.status;
+                            let previous = mutable.status.clone();
                             mutable.status = InstanceStatus::Stopped;
                             mutable.pending_approvals.clear();
                             mutable.approval_history.clear();
@@ -808,7 +808,7 @@ impl CodexInstanceRuntime {
 
     fn ready_server(&self) -> Result<CodexAppServerSession, ProtocolError> {
         let mutable = lock(&self.mutable);
-        if mutable.status != InstanceStatus::Ready {
+        if mutable.status.clone() != InstanceStatus::Ready {
             return Err(protocol_error(
                 "provider_unavailable",
                 format!(
@@ -843,7 +843,7 @@ impl CodexInstanceRuntime {
                     .and_then(|id| mutable.sessions.get(&id))
                     .and_then(|slot| slot.session())
                     .is_some();
-                if mutable.status != InstanceStatus::Ready || !server_ready {
+                if mutable.status.clone() != InstanceStatus::Ready || !server_ready {
                     return Err(protocol_error(
                         "provider_unavailable",
                         format!(
@@ -1278,11 +1278,11 @@ impl CodexInstanceRuntime {
             let _transition = lock(&self.lifecycle_transition);
             let mut mutable = lock(&self.mutable);
             if mutable.server_generation.as_deref() != Some(server_generation)
-                || !matches!(mutable.status, InstanceStatus::Ready | InstanceStatus::Starting)
+                || !matches!(mutable.status.clone(), InstanceStatus::Ready | InstanceStatus::Starting)
             {
                 return;
             }
-            let previous = mutable.status;
+            let previous = mutable.status.clone();
             Self::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
             let failure_generation = mutable.lifecycle_generation;
@@ -1399,9 +1399,9 @@ impl CodexProvider {
             display_name: "Codex".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
             default_workspace_root: codepet_paths::remote_workspace_for_user("codex"),
-            supported_versions: VersionRange {
-                min_version: PROTOCOL_VERSION,
-                max_version: PROTOCOL_VERSION,
+            protocol: ProtocolVersionOffer {
+                min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION,
+                version: PROTOCOL_VERSION,
             },
             instance_kinds: vec![CODEX_INSTANCE_KIND.to_string()],
         }
@@ -1486,7 +1486,7 @@ impl CodexProvider {
                 if !mutable.failed_shutdown_sessions.is_empty() {
                     return Err(protocol_error("interaction_release_failed", "Previous harness termination failed; retry release first".into(), true));
                 }
-                match mutable.status {
+                match mutable.status.clone() {
                     InstanceStatus::Ready => {
                         if explicit_resume { mutable.interaction_released = false; }
                         drop(mutable);
@@ -1509,7 +1509,7 @@ impl CodexProvider {
                     _ => {}
                 }
                 if explicit_resume { mutable.interaction_released = false; }
-                let previous = mutable.status;
+                let previous = mutable.status.clone();
                 CodexInstanceRuntime::cancel_metadata(&mut mutable);
                     mutable.lifecycle_generation = mutable.lifecycle_generation.wrapping_add(1);
                 mutable.status = InstanceStatus::Starting;
@@ -1539,7 +1539,7 @@ impl CodexProvider {
                 let status = {
                     let mut state = lock(&runtime.mutable);
                     state.atomic_facts_epoch = state.atomic_facts_epoch.saturating_add(1);
-                    state.status
+                    state.status.clone()
                 };
                 if status == InstanceStatus::Ready { let _ = runtime.publish_status_change(status); }
             }
@@ -1669,22 +1669,8 @@ impl Provider for CodexProvider {
         request: ProviderInitializeRequest,
     ) -> ProtocolFuture<'a, ProviderInitializeResponse> {
         Box::pin(async move {
-            if request.supported_versions.min_version > request.supported_versions.max_version {
-                return Err(protocol_error(
-                    "invalid_protocol_range",
-                    "Host protocol range is invalid".to_string(),
-                    false,
-                ));
-            }
-            if PROTOCOL_VERSION < request.supported_versions.min_version
-                || PROTOCOL_VERSION > request.supported_versions.max_version
-            {
-                return Err(protocol_error(
-                    "unsupported_protocol_version",
-                    "Provider protocol v1 is outside the Host-supported range".to_string(),
-                    false,
-                ));
-            }
+            let protocol = ProtocolVersionOffer { version: PROTOCOL_VERSION, min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION }
+                .negotiate(&request.protocol)?;
             if request.host_client_id.trim().is_empty()
                 || request.host_device_id.trim().is_empty()
                 || request.host_version.trim().is_empty()
@@ -1716,7 +1702,7 @@ impl Provider for CodexProvider {
             eprintln!("provider.initialize completed; business storage configured={}", self.data.configured());
             self.scanner.start_cancellable("codex", "@openai/codex", discover_codex_candidates, |candidate, timeout, control| inspect_runtime_candidate(candidate, "codex", timeout, control));
             Ok(ProviderInitializeResponse {
-                selected_version: PROTOCOL_VERSION,
+                protocol,
                 plugin: Self::descriptor(),
             })
         })
@@ -1768,7 +1754,10 @@ impl Provider for CodexProvider {
             candidate.executable_path = local_runtime::resolve_executable(std::path::Path::new(&candidate.executable_path), "codex", "@openai/codex")
                 .map_err(|error| protocol_error("invalid_runtime_selection", error, false))?.to_string_lossy().into_owned();
             let selected=self.scanner.select(&candidate)?;
-            Ok(RuntimeSelectResponse {selected})
+            Ok(RuntimeSelectResponse {
+                pending: selected.version.is_empty().then(|| RuntimeCandidate { executable_path: selected.executable_path.clone(), source: selected.source.clone() }),
+                selected: (!selected.version.is_empty()).then_some(selected),
+            })
         })
     }
 
@@ -1874,7 +1863,7 @@ impl Provider for CodexProvider {
             let _release = runtime.release_transition.lock().await;
             {
                 let state = lock(&runtime.mutable);
-                if self.shutdown.load(Ordering::SeqCst) || state.destroyed || state.status != InstanceStatus::Ready {
+                if self.shutdown.load(Ordering::SeqCst) || state.destroyed || state.status.clone() != InstanceStatus::Ready {
                     return Ok(InstanceReleaseControlResponse { outcome: Outcome::Unavailable });
                 }
                 if !state.pending_approvals.is_empty() || state.executions.values().any(|slot| match &*lock(&slot.state) {
@@ -1919,7 +1908,7 @@ impl Provider for CodexProvider {
                 }
                 if mutable.cleanup_in_progress
                     || matches!(
-                        mutable.status,
+                        mutable.status.clone(),
                         InstanceStatus::Ready
                             | InstanceStatus::Starting
                             | InstanceStatus::Stopping
@@ -2325,7 +2314,7 @@ impl Provider for CodexProvider {
                 // Retrying a completed release must not recycle the clean server again.
                 if {
                     let state = lock(&runtime.mutable);
-                    state.interaction_released && matches!(state.status, InstanceStatus::Ready | InstanceStatus::Starting)
+                    state.interaction_released && matches!(state.status.clone(), InstanceStatus::Ready | InstanceStatus::Starting)
                         && state.executions.is_empty() && state.failed_shutdown_sessions.is_empty()
                 } {
                     return Ok(codepet_provider_sdk::ConversationReleaseInteractionResponse {
@@ -2373,7 +2362,7 @@ impl Provider for CodexProvider {
                 self.start_runtime(runtime.clone(), true).await?;
                 tokio::time::timeout(Duration::from_secs(30), async {
                     loop {
-                        let status = lock(&runtime.mutable).status;
+                        let status = lock(&runtime.mutable).status.clone();
                         match status {
                             InstanceStatus::Ready => return Ok(()),
                             InstanceStatus::Starting => tokio::time::sleep(Duration::from_millis(10)).await,
@@ -2487,7 +2476,7 @@ impl Provider for CodexProvider {
                     CodexRequestOutcome::Success(snapshot) => {
                         let mut mutable = lock(&operation_runtime.mutable);
                         if mutable.server_generation.as_deref() != Some(session.generation())
-                            || mutable.status != InstanceStatus::Ready {
+                            || mutable.status.clone() != InstanceStatus::Ready {
                             return Err(instance_session_cancelled_error("server"));
                         }
                         let slot = Arc::new(ExecutionSlot::new());
@@ -2616,6 +2605,7 @@ impl Provider for CodexProvider {
                             }
                         };
                         let model = match effective_selection.model.as_ref() {
+                            Some(ModelSelection::Unrecognized(_)) => return Err(protocol_error("unsupported_model_selection", "Unknown model selection".into(), false)),
                             Some(ModelSelection::FlatModelSelection(selection)) => {
                                 Some(selection.model_id.clone())
                             }
@@ -2883,7 +2873,7 @@ impl Provider for CodexProvider {
                         }
                         match handle
                             .session
-                            .respond_to_approval_outcome(&pending_request, decision)
+                            .respond_to_approval_outcome(&pending_request, decision.clone())
                         {
                             CodexRequestOutcome::Success(()) => {
                                 lock(&execution_runtime.mutable)
@@ -2892,7 +2882,7 @@ impl Provider for CodexProvider {
                                 let (approval, event) = lock(&execution_runtime.mapper)
                                     .approval_resolved(
                                         pending_approval.clone(),
-                                        decision,
+                                        decision.clone(),
                                         now_ms(),
                                     )?;
                                 {
@@ -3615,6 +3605,7 @@ fn resolve_turn_selection(
         "reasoningEffortId",
     )?;
     let model = match turn_send.model_catalog.as_ref() {
+        Some(ModelCatalog::Unrecognized(_)) => return Err(protocol_error("unsupported_model_catalog", "Unknown model catalog".into(), false)),
         None => {
             if requested.model.is_some() {
                 return Err(protocol_error(
@@ -3627,6 +3618,7 @@ fn resolve_turn_selection(
         }
         Some(ModelCatalog::FlatModelCatalog(catalog)) => {
             let requested_model = match requested.model {
+                Some(ModelSelection::Unrecognized(_)) => return Err(protocol_error("unsupported_model_selection", "Unknown model selection".into(), false)),
                 Some(ModelSelection::FlatModelSelection(selection)) => Some(selection.model_id),
                 Some(ModelSelection::GroupedModelSelection(_)) => {
                     return Err(protocol_error(

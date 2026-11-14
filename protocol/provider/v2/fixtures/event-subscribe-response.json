@@ -1,0 +1,8 @@
+{
+  "jsonrpc": "2.0",
+  "id": "sub-1",
+  "result": {
+    "subscriptionId": "host-1",
+    "message": "installed"
+  }
+}

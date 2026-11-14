@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-active-list-next",
+  "error": {
+    "code": -32000,
+    "message": "protocol method is not implemented",
+    "data": {
+      "code": "method_not_implemented",
+      "message": "protocol method is not implemented",
+      "retryable": false
+    }
+  }
+}

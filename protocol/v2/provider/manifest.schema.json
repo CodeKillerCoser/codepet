@@ -1,0 +1,114 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Code Pet Provider package manifest v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifestVersion",
+    "pluginId",
+    "displayName",
+    "command",
+    "transport"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "供编辑器读取的 Schema 标识或路径。"
+    },
+    "manifestVersion": {
+      "const": 2,
+      "description": "插件安装清单格式，固定为版本 2。"
+    },
+    "pluginId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "稳定插件身份，须与 Initialize 报告一致。"
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1,
+      "description": "面向用户的插件或实例名称。"
+    },
+    "icon": {
+      "type": "string",
+      "minLength": 1,
+      "description": "不含认证信息的绝对 HTTPS 图标 URL。"
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Host 直接执行的程序路径或 PATH 程序名，不经过隐式 shell。"
+    },
+    "args": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "description": "列表中单个元素的结构。"
+      },
+      "default": [],
+      "description": "原样传入的命令行参数数组，不包含 command 本身。"
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "description": "可扩展字典中单个值的结构。"
+      },
+      "default": {},
+      "description": "继承 Host 环境后叠加的字符串环境项，不得覆盖 Host 保留键。"
+    },
+    "transport": {
+      "description": "选择的 stdio profile ID，必须与实现支持的协议一致。",
+      "type": "string",
+      "x-codepet-profile-enum": true
+    },
+    "enabled": {
+      "type": "boolean",
+      "default": true,
+      "description": "是否启用插件或实例，缺省 true。"
+    },
+    "instances": {
+      "type": "array",
+      "default": [],
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "instanceKind",
+          "displayName"
+        ],
+        "properties": {
+          "instanceId": {
+            "type": "string",
+            "minLength": 1,
+            "description": "实例稳定身份；缺省时由 Host 分配和保存。"
+          },
+          "instanceKind": {
+            "type": "string",
+            "minLength": 1,
+            "description": "插件声明支持的实例种类。"
+          },
+          "displayName": {
+            "type": "string",
+            "minLength": 1,
+            "description": "面向用户的插件或实例名称。"
+          },
+          "settings": {
+            "type": "object",
+            "default": {},
+            "description": "插件自行解释的实例配置对象。"
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true,
+            "description": "是否启用插件或实例，缺省 true。"
+          }
+        },
+        "description": "列表中单个元素的结构。"
+      },
+      "description": "Host 自动配置的实例列表，缺省为空。"
+    }
+  },
+  "$id": "https://code-pet.dev/protocol/v2/provider/manifest.schema.json",
+  "description": "Provider 插件包安装清单；描述身份、资源、进程启动方式、通信 profile 和实例配置，不是二进制文件头。"
+}

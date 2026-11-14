@@ -1,0 +1,7 @@
+{
+  "jsonrpc": "2.0",
+  "id": "release-1",
+  "result": {
+    "outcome": "released"
+  }
+}

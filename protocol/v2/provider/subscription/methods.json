@@ -1,0 +1,29 @@
+{
+  "description": "provider subscription 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "event.subscribe",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/EventSubscribeRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/EventSubscribeResponse"
+      },
+      "description": "事件订阅方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    },
+    {
+      "name": "event.unsubscribe",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/EventUnsubscribeRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/EventUnsubscribeResponse"
+      },
+      "description": "事件取消订阅方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "jsonrpc": "2.0",
+  "id": "queue-get-1",
+  "result": {
+    "conversation": {
+      "providerId": "codex-work",
+      "nativeResourceId": "thread-01"
+    },
+    "revision": 3,
+    "paused": false,
+    "items": [
+      {
+        "id": "queue-01",
+        "sequence": 1,
+        "input": {
+          "kind": "text",
+          "text": "Continue with the implementation"
+        },
+        "selection": {
+          "accessModeId": "workspace-write",
+          "reasoningEffortId": "high",
+          "model": {
+            "kind": "flat",
+            "modelId": "gpt-5"
+          }
+        },
+        "capabilityRevision": "codex-session-42",
+        "state": "queued",
+        "createdAt": 1787700001000
+      }
+    ],
+    "recoverableEdits": [],
+    "snapshotCursor": "event-42"
+  }
+}

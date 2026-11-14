@@ -1,0 +1,801 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v2/provider/conversation/messages.schema.json",
+  "description": "provider 的 conversation 功能模块交互对象。",
+  "$defs": {
+    "ConversationReleaseInteractionRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": true,
+      "description": "会话释放交互控制的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ConversationReleaseInteractionResponse": {
+      "type": "object",
+      "properties": {
+        "released": {
+          "type": "boolean",
+          "description": "交互控制或运行时是否已释放。"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "providerInstance"
+          ],
+          "description": "此数据、覆盖范围或操作生效的范围。"
+        }
+      },
+      "required": [
+        "released",
+        "scope"
+      ],
+      "additionalProperties": true,
+      "description": "会话释放交互控制响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationAcquireInteractionRequest": {
+      "type": "object",
+      "properties": {
+        "force": {
+          "type": "boolean",
+          "description": "Explicit inactive-conversation desktop takeover. Omitted means false; unsupported providers must reject true."
+        },
+        "conversation": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": true,
+      "description": "会话获取交互控制的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ConversationAcquireInteractionResponse": {
+      "type": "object",
+      "properties": {
+        "selection": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/TurnSelection",
+          "description": "请求或当前使用的模型、权限等选择。"
+        },
+        "leaseExpiresAt": {
+          "$ref": "../../common/types.schema.json#/$defs/TimestampMs",
+          "description": "交互租约失效的时间戳，毫秒。"
+        }
+      },
+      "required": [
+        "selection"
+      ],
+      "additionalProperties": true,
+      "description": "会话获取交互控制响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationCreateRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "项目、会话或选项的显示标题。"
+        },
+        "permissionLevel": {
+          "type": "string",
+          "minLength": 1,
+          "description": "业务允许的权限等级选择。"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "模型标识或模型选择。"
+        },
+        "reasoningEffort": {
+          "type": "string",
+          "minLength": 1,
+          "description": "推理强度选择。"
+        },
+        "workspaceRoot": {
+          "type": "string",
+          "minLength": 1,
+          "description": "会话工作目录或工作区根绝对路径。"
+        },
+        "workspaceMode": {
+          "type": "string",
+          "minLength": 1,
+          "description": "工作区隔离或执行模式。"
+        },
+        "project": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属项目的资源引用或项目快照；null 或缺省语义见约束。"
+        },
+        "extension": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderExtension",
+          "description": "扩展命名空间及扩展载荷。"
+        }
+      },
+      "required": [
+        "route",
+        "permissionLevel"
+      ],
+      "additionalProperties": true,
+      "description": "会话创建的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ConversationCreateResponse": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Conversation",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": true,
+      "description": "会话创建响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationGetRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        },
+        "cursor": {
+          "$ref": "../../common/types.schema.json#/$defs/Cursor",
+          "description": "上一页返回的分页游标；需保持查询条件不变。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum number of native conversation turns to include in this history page."
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": true,
+      "description": "会话读取的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ConversationGetResponse": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Conversation",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationItem",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "当前页的会话条目清单。"
+        },
+        "pageInfo": {
+          "$ref": "../../common/types.schema.json#/$defs/PageInfo",
+          "description": "本页的继续获取信息。"
+        }
+      },
+      "required": [
+        "conversation",
+        "items"
+      ],
+      "additionalProperties": true,
+      "description": "会话读取响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationListRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        },
+        "projectFilter": {
+          "$ref": "#/$defs/ConversationProjectFilter",
+          "description": "会话所属项目的过滤条件。"
+        },
+        "cursor": {
+          "$ref": "../../common/types.schema.json#/$defs/Cursor",
+          "description": "上一页返回的分页游标；需保持查询条件不变。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
+        },
+        "query": {
+          "$ref": "#/$defs/ConversationListQuery",
+          "description": "本次查询的结构化条件。"
+        },
+        "readerScope": {
+          "$ref": "#/$defs/ReaderScope",
+          "description": "未读状态所属的阅读者作用域。"
+        }
+      },
+      "required": [
+        "route",
+        "projectFilter"
+      ],
+      "additionalProperties": true,
+      "description": "Without query/readerScope, preserve existing projectFilter/cursor/limit behavior. query requires its conversationListQuery capability; readerScope additionally requires conversation.unread.list capability and an authoritative read store. updatedAfter intersects projectFilter; ids requires projectFilter.kind=all. With readerScope, return authoritative Conversation.readState for every summary. Cursors bind route, query, projectFilter and readerScope; changing any is invalid_cursor."
+    },
+    "ConversationListResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/Conversation",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "会话摘要清单。"
+        },
+        "pageInfo": {
+          "$ref": "../../common/types.schema.json#/$defs/PageInfo",
+          "description": "本页的继续获取信息。"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo"
+      ],
+      "additionalProperties": true,
+      "description": "会话列表响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationProjectFilter": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ConversationProjectFilterAll",
+          "description": "引用 ConversationProjectFilterAll 的分支定义。"
+        },
+        {
+          "$ref": "#/$defs/ConversationProjectFilterStandalone",
+          "description": "引用 ConversationProjectFilterStandalone 的分支定义。"
+        },
+        {
+          "$ref": "#/$defs/ConversationProjectFilterProject",
+          "description": "引用 ConversationProjectFilterProject 的分支定义。"
+        }
+      ],
+      "description": "会话项目筛选的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationProjectFilterAll": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationProjectFilterAllKind",
+          "description": "用于区分联合类型分支的种类标记。"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": true,
+      "description": "会话项目筛选全部的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationProjectFilterAllKind": {
+      "type": "string",
+      "enum": [
+        "all"
+      ],
+      "description": "会话项目筛选全部种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationProjectFilterStandalone": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationProjectFilterStandaloneKind",
+          "description": "用于区分联合类型分支的种类标记。"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": true,
+      "description": "会话项目筛选未归属项目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationProjectFilterStandaloneKind": {
+      "type": "string",
+      "enum": [
+        "standalone"
+      ],
+      "description": "会话项目筛选未归属项目种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationProjectFilterProject": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationProjectFilterProjectKind",
+          "description": "用于区分联合类型分支的种类标记。"
+        },
+        "project": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属项目的资源引用或项目快照；null 或缺省语义见约束。"
+        }
+      },
+      "required": [
+        "kind",
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "会话项目筛选项目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationProjectFilterProjectKind": {
+      "type": "string",
+      "enum": [
+        "project"
+      ],
+      "description": "会话项目筛选项目种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationSearchRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        },
+        "searchTerm": {
+          "type": "string",
+          "minLength": 1,
+          "description": "搜索关键词。"
+        },
+        "cursor": {
+          "$ref": "../../common/types.schema.json#/$defs/Cursor",
+          "description": "上一页返回的分页游标；需保持查询条件不变。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
+        }
+      },
+      "required": [
+        "route",
+        "searchTerm"
+      ],
+      "additionalProperties": true,
+      "description": "会话搜索的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ConversationSearchResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent-domain/domain.schema.json#/$defs/Conversation",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "会话摘要清单。"
+        },
+        "pageInfo": {
+          "$ref": "../../common/types.schema.json#/$defs/PageInfo",
+          "description": "本页的继续获取信息。"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo"
+      ],
+      "additionalProperties": true,
+      "description": "会话搜索响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationUpsertedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/Conversation",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": true,
+      "description": "会话新增或更新事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    "ConversationItemUpsertedEvent": {
+      "type": "object",
+      "properties": {
+        "updateId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable source event identity for deduplicating content invalidations."
+        },
+        "conversation": {
+          "$ref": "../../common/types.schema.json#/$defs/RoutedResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        },
+        "item": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationItem",
+          "description": "完整会话条目。"
+        }
+      },
+      "description": "Canonical item update, or a content invalidation with conversation and no item. Receivers fetch the latest page only when they do not hold interaction control. At least one of item or conversation is required; when both exist their conversation routes must agree.",
+      "additionalProperties": true
+    },
+    "ReaderScope": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque reader identity supplied only by the trusted Host from authenticated caller context. Preserve existing callerScope identity and baseline; never accept a Remote-selected scope."
+    },
+    "ConversationEnumerationRevision": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identity of one immutable active or reader-scoped unread enumeration snapshot within one running instance generation. Equal on every page of that enumeration; a new enumeration may get a different identity even when facts are unchanged. Never compare identities across enumerations, with event invalidation identities, activityVersion, Gateway eventCursor, or recent revision."
+    },
+    "ConversationListQuery": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ConversationUpdatedAfterQuery",
+          "description": "引用 ConversationUpdatedAfterQuery 的分支定义。"
+        },
+        {
+          "$ref": "#/$defs/ConversationIdsQuery",
+          "description": "引用 ConversationIdsQuery 的分支定义。"
+        }
+      ],
+      "description": "会话列表查询的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationUpdatedAfterQuery": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationUpdatedAfterQueryKind",
+          "description": "用于区分联合类型分支的种类标记。"
+        },
+        "updatedAfter": {
+          "$ref": "../../common/types.schema.json#/$defs/TimestampMs",
+          "description": "查询更新时间不早于该毫秒时间戳的会话。"
+        }
+      },
+      "required": [
+        "kind",
+        "updatedAfter"
+      ],
+      "additionalProperties": true,
+      "description": "Inclusive UTC epoch-millisecond updatedAt boundary. Filter the complete source before pagination, then order updatedAt descending with native ID ascending as tie breaker. Missing updatedAt does not match. No recent-feed policy belongs here."
+    },
+    "ConversationIdsQuery": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationIdsQueryKind",
+          "description": "用于区分联合类型分支的种类标记。"
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "$ref": "../../common/types.schema.json#/$defs/NativeResourceId",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "需要按身份枚举的会话资源清单。"
+        }
+      },
+      "required": [
+        "kind",
+        "ids"
+      ],
+      "additionalProperties": true,
+      "description": "Request 1..100 distinct native conversation IDs within route. Filter before pagination; enumerate the full requested set across pages in native ID ascending order. Deleted IDs may be omitted; lookup failures must fail the request, never masquerade as deletion. Larger batches are invalid_request. Requires projectFilter.kind=all; other filters are invalid_request."
+    },
+    "ConversationListQueryCapabilities": {
+      "type": "object",
+      "properties": {
+        "updatedAfter": {
+          "type": "boolean",
+          "description": "查询更新时间不早于该毫秒时间戳的会话。"
+        },
+        "ids": {
+          "type": "boolean",
+          "description": "需要按身份枚举的会话资源清单。"
+        }
+      },
+      "required": [
+        "updatedAfter",
+        "ids"
+      ],
+      "additionalProperties": true,
+      "description": "Advertise only modes implemented with complete filtering before pagination. Absent or false means unsupported. readerScope additionally requires conversation.unread.list capability and an available authoritative read store."
+    },
+    "ConversationActiveEntry": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        },
+        "status": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationStatus",
+          "description": "此对象当前状态；允许值见枚举。"
+        },
+        "activityVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "会话当前活动版本，用于无丢失确认已读。"
+        }
+      },
+      "required": [
+        "conversation",
+        "status",
+        "activityVersion"
+      ],
+      "additionalProperties": true,
+      "description": "One active conversation. Active includes running, waiting-approval and waiting-user-input execution; preserve existing execution semantics. activityVersion is the existing unread observation version, not this enumeration revision."
+    },
+    "ConversationUnreadEntry": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        },
+        "readState": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationReadState",
+          "description": "当前阅读作用域下的权威已读状态。"
+        }
+      },
+      "required": [
+        "conversation",
+        "readState"
+      ],
+      "additionalProperties": true,
+      "description": "One unread conversation for the requested readerScope; readState.unread must be true."
+    },
+    "ConversationActiveListRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        },
+        "cursor": {
+          "$ref": "../../common/types.schema.json#/$defs/Cursor",
+          "description": "上一页返回的分页游标；需保持查询条件不变。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
+        }
+      },
+      "required": [
+        "route"
+      ],
+      "additionalProperties": true,
+      "description": "Enumerate a complete immutable snapshot, default limit 20, maximum 100. Cursor binds route/current generation and, for unread, readerScope. Invalid bindings return invalid_cursor; expired snapshots return conversation_cursor_expired. Unsupported must be an error, never an empty result."
+    },
+    "ConversationActiveListResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationActiveEntry",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "会话摘要清单。"
+        },
+        "pageInfo": {
+          "$ref": "../../common/types.schema.json#/$defs/PageInfo",
+          "description": "本页的继续获取信息。"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConversationEnumerationRevision",
+          "description": "当前快照或能力的修订标识，用于拒绝陈旧状态。"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo",
+        "revision"
+      ],
+      "additionalProperties": true,
+      "description": "All pages belong to one complete snapshot; nextCursor absence alone indicates exhaustion. No arbitrary truncation. Records are ordered by nativeResourceId ascending."
+    },
+    "ConversationUnreadListRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderInstanceRoute",
+          "description": "Host 设备、插件和实例组成的完整路由。"
+        },
+        "readerScope": {
+          "$ref": "#/$defs/ReaderScope",
+          "description": "未读状态所属的阅读者作用域。"
+        },
+        "cursor": {
+          "$ref": "../../common/types.schema.json#/$defs/Cursor",
+          "description": "上一页返回的分页游标；需保持查询条件不变。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
+        }
+      },
+      "required": [
+        "route",
+        "readerScope"
+      ],
+      "additionalProperties": true,
+      "description": "Enumerate a complete immutable snapshot, default limit 20, maximum 100. Cursor binds route/current generation and, for unread, readerScope. Invalid bindings return invalid_cursor; expired snapshots return conversation_cursor_expired. Unsupported must be an error, never an empty result."
+    },
+    "ConversationUnreadListResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationUnreadEntry",
+            "description": "清单中单个元素的结构与约束。"
+          },
+          "description": "会话摘要清单。"
+        },
+        "pageInfo": {
+          "$ref": "../../common/types.schema.json#/$defs/PageInfo",
+          "description": "本页的继续获取信息。"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConversationEnumerationRevision",
+          "description": "当前快照或能力的修订标识，用于拒绝陈旧状态。"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo",
+        "revision"
+      ],
+      "additionalProperties": true,
+      "description": "All pages belong to one complete snapshot; nextCursor absence alone indicates exhaustion. No arbitrary truncation. Records are ordered by nativeResourceId ascending."
+    },
+    "ConversationMarkReadRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        },
+        "readerScope": {
+          "$ref": "#/$defs/ReaderScope",
+          "description": "未读状态所属的阅读者作用域。"
+        },
+        "observedActivityVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "用户实际看到的活动版本，只确认已观察到的内容。"
+        }
+      },
+      "required": [
+        "conversation",
+        "readerScope",
+        "observedActivityVersion"
+      ],
+      "additionalProperties": true,
+      "description": "Advance this reader only up to the observed activity version, monotonically and durably. A newer activity remains unread. Preserve baseline/read progress; reject an invalid or future version as invalid_activity_version."
+    },
+    "ConversationMarkReadResponse": {
+      "type": "object",
+      "properties": {
+        "readState": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationReadState",
+          "description": "当前阅读作用域下的权威已读状态。"
+        }
+      },
+      "required": [
+        "readState"
+      ],
+      "additionalProperties": true,
+      "description": "会话标记阅读响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationActiveChangedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        },
+        "status": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationStatus",
+          "description": "此对象当前状态；允许值见枚举。"
+        },
+        "activityVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "会话当前活动版本，用于无丢失确认已读。"
+        },
+        "active": {
+          "type": "boolean",
+          "description": "活跃会话条目清单。"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque invalidation identity in this ordered event stream, not an enumeration snapshot identity. Never compare with list response.revision or use equality/order to suppress an invalidation; every received event invalidates the affected view."
+        }
+      },
+      "required": [
+        "conversation",
+        "status",
+        "activityVersion",
+        "active",
+        "revision"
+      ],
+      "additionalProperties": true,
+      "description": "Ordered active-set invalidation and current fact, including active=false on exit. revision identifies this invalidation, not any active enumeration snapshot. Events must cover externally observed execution too. Host tracks a local event fence during snapshot construction."
+    },
+    "ConversationUnreadChangedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        },
+        "readerScope": {
+          "$ref": "#/$defs/ReaderScope",
+          "description": "未读状态所属的阅读者作用域。"
+        },
+        "readState": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/ConversationReadState",
+          "description": "当前阅读作用域下的权威已读状态。"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque invalidation identity in this ordered event stream, not an enumeration snapshot identity. Never compare with list response.revision or use equality/order to suppress an invalidation; every received event invalidates the affected view."
+        }
+      },
+      "required": [
+        "conversation",
+        "readerScope",
+        "readState",
+        "revision"
+      ],
+      "additionalProperties": true,
+      "description": "Ordered reader-scoped unread fact/invalidation, including unread=false after markRead. revision identifies this invalidation, not any unread enumeration snapshot. Host must not forward scope or read state to other readers; every activity or markRead event invalidates the affected reader view."
+    },
+    "ConversationDeletedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../instance/messages.schema.json#/$defs/ProviderResourceId",
+          "description": "所属会话的资源引用或会话快照，形态见引用类型。"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": true,
+      "description": "Ordered authoritative deletion invalidation. Missing requested IDs are not evidence of deletion unless the Provider established absence. Invalidate affected list/active/unread snapshots."
+    },
+    "ConversationUpdatedAfterQueryKind": {
+      "type": "string",
+      "enum": [
+        "updatedAfter"
+      ],
+      "description": "会话已更新之后查询种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationIdsQueryKind": {
+      "type": "string",
+      "enum": [
+        "ids"
+      ],
+      "description": "会话ID清单查询种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    }
+  }
+}

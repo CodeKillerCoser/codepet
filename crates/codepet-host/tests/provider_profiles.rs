@@ -5,7 +5,7 @@ use codepet_host::{
     PluginProcess, PluginProcessOptions, ProviderGatewayService, ProviderInstanceRegistry,
 };
 use codepet_provider_sdk::{
-    ProviderDescribeRequest, ProviderInitializeRequest, ProviderPingRequest, VersionRange,
+    ProviderDescribeRequest, ProviderInitializeRequest, ProviderPingRequest, ProtocolVersionOffer,
 };
 use serde_json::{json, Value};
 use std::{
@@ -97,9 +97,9 @@ async fn initialize(process: &PluginProcess) {
             host_client_id: "profile-host".into(),
             host_device_id: "profile-device".into(),
             host_version: "1".into(),
-            supported_versions: VersionRange {
-                min_version: 1,
-                max_version: 1,
+            protocol: ProtocolVersionOffer {
+                min_version: 2,
+                version: 2,
             },
             directories: None,
         })
@@ -297,9 +297,9 @@ async fn slow_requests_and_stalled_frames_only_block_their_own_connection() {
                 host_client_id: "h".into(),
                 host_device_id: "d".into(),
                 host_version: "1".into(),
-                supported_versions: VersionRange {
-                    min_version: 1,
-                    max_version: 1,
+                protocol: ProtocolVersionOffer {
+                    min_version: 2,
+                    version: 2,
                 },
                 directories: None,
             });

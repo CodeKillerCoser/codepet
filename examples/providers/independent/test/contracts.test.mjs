@@ -15,6 +15,8 @@ import {
 
 test("canonical SDK manifest resolves every registry reference across schema modules", () => {
   assert.equal(sdkManifest.formatVersion, 3);
+  assert.equal(sdkManifest.protocolVersion, 2);
+  assert.equal(sdkManifest.sdkVersion, 2);
   assert.equal(requestValidators.size, methods.length);
   assert.equal(responseValidators.size, methods.length);
   assert.equal(eventValidators.size, events.length);
@@ -36,7 +38,7 @@ test("canonical SDK manifest resolves every registry reference across schema mod
       hostClientId: "client",
       hostDeviceId: "device",
       hostVersion: "test",
-      supportedVersions: { minVersion: 1, maxVersion: 1 },
+      protocol: { version: 2, minVersion: 2 },
     }),
     true,
   );

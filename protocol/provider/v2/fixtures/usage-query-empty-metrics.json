@@ -1,0 +1,34 @@
+{
+  "route": {
+    "deviceId": "device-macbook-1",
+    "providerPluginId": "dev.codepet.claude",
+    "providerInstanceId": "claude-work"
+  },
+  "query": {
+    "datasetId": "observed-model-tokens",
+    "filter": {
+      "time": {
+        "kind": "range",
+        "range": {
+          "from": "2026-09-01T00:00:00Z",
+          "to": "2026-09-02T00:00:00Z"
+        }
+      }
+    },
+    "aggregation": {
+      "timeBucket": "halfHour",
+      "timeZone": "UTC",
+      "groupBy": [
+        "model"
+      ]
+    },
+    "metrics": [],
+    "summaries": [
+      "totals",
+      "peakDaily"
+    ],
+    "page": {
+      "limit": 100
+    }
+  }
+}

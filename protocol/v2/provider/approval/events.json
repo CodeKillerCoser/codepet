@@ -1,0 +1,25 @@
+{
+  "description": "provider approval 模块的events注册表。",
+  "events": [
+    {
+      "name": "event.approvalRequested",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "approval",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ApprovalRequestedEvent"
+      },
+      "description": "审批请求事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    {
+      "name": "event.approvalResolved",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "approval",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ApprovalResolvedEvent"
+      },
+      "description": "审批已处理事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    }
+  ]
+}

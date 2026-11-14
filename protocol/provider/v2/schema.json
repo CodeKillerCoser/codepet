@@ -1,0 +1,2108 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/provider/v2/schema.json",
+  "description": "Generated compatibility view of protocol/v2; edit the functional IDL modules and run protocol:generate.",
+  "$defs": {
+    "ProviderPingRequest": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前心跳序号；同一进程内严格递增。"
+        },
+        "hostSessionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前 Provider 进程的 Host 心跳会话身份。"
+        },
+        "clients": {
+          "$ref": "../../core/v2/schema.json#/$defs/ClientConnectionsSnapshot"
+        },
+        "instances": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderInstanceRoute"
+          },
+          "description": "实例配置或路由清单；具体元素结构由 items 定义。"
+        }
+      },
+      "required": [
+        "sequence",
+        "hostSessionId",
+        "clients",
+        "instances"
+      ],
+      "additionalProperties": true,
+      "description": "Provider心跳的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProviderPingResponse": {
+      "type": "object",
+      "properties": {
+        "sequence": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "当前心跳序号；同一进程内严格递增。"
+        },
+        "clientsRevision": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "本次心跳请求 clients.revision 的回显值。"
+        }
+      },
+      "required": [
+        "sequence",
+        "clientsRevision"
+      ],
+      "additionalProperties": true,
+      "description": "Provider心跳响应，作为对应方法成功响应的 result。"
+    },
+    "ProviderDescribeRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true,
+      "description": "Provider描述查询的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProviderDescribeResponse": {
+      "type": "object",
+      "properties": {
+        "plugin": {
+          "$ref": "#/$defs/ProviderPluginDescriptor"
+        }
+      },
+      "required": [
+        "plugin"
+      ],
+      "additionalProperties": true,
+      "description": "Provider描述查询响应，作为对应方法成功响应的 result。"
+    },
+    "ProviderInitializeRequest": {
+      "type": "object",
+      "properties": {
+        "hostClientId": {
+          "$ref": "../../core/v2/schema.json#/$defs/ClientId"
+        },
+        "hostDeviceId": {
+          "$ref": "../../core/v2/schema.json#/$defs/DeviceId"
+        },
+        "hostVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host 软件版本，不是协议版本。"
+        },
+        "directories": {
+          "$ref": "#/$defs/ProviderDirectories"
+        },
+        "protocol": {
+          "$ref": "../../core/v2/schema.json#/$defs/ProtocolVersionOffer"
+        }
+      },
+      "required": [
+        "hostClientId",
+        "hostDeviceId",
+        "hostVersion",
+        "protocol"
+      ],
+      "additionalProperties": true,
+      "description": "Provider初始化的请求参数；具体调用方向与幂等性见 methods.json。 v2 草案：接收未知字段时忽略，已知字段继续校验。"
+    },
+    "ProviderInitializeResponse": {
+      "type": "object",
+      "properties": {
+        "plugin": {
+          "$ref": "#/$defs/ProviderPluginDescriptor"
+        },
+        "protocol": {
+          "$ref": "../../core/v2/schema.json#/$defs/ProtocolVersionSelection"
+        }
+      },
+      "required": [
+        "plugin",
+        "protocol"
+      ],
+      "additionalProperties": true,
+      "description": "Provider初始化响应，作为对应方法成功响应的 result。 v2 草案：接收未知字段时忽略，已知字段继续校验。"
+    },
+    "ProviderPluginDescriptor": {
+      "type": "object",
+      "properties": {
+        "pluginId": {
+          "$ref": "../../core/v2/schema.json#/$defs/ProviderPluginId"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "面向用户的名称。"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "插件软件发布版本字符串；业务协议版本仅由 protocol.version/minVersion 表示。"
+        },
+        "defaultWorkspaceRoot": {
+          "type": "string",
+          "minLength": 1,
+          "description": "插件报告的默认会话工作目录。"
+        },
+        "instanceKinds": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderInstanceKind"
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "插件支持的实例种类清单。"
+        },
+        "protocol": {
+          "$ref": "../../core/v2/schema.json#/$defs/ProtocolVersionOffer"
+        }
+      },
+      "required": [
+        "pluginId",
+        "displayName",
+        "version",
+        "instanceKinds",
+        "protocol"
+      ],
+      "additionalProperties": true,
+      "description": "Provider插件描述的完整数据定义；字段、可选性与允许值见本对象约束。 v2 草案：接收未知字段时忽略，已知字段继续校验。"
+    },
+    "ProviderShutdownRequest": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true,
+      "description": "Provider关闭的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProviderShutdownResponse": {
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "type": "boolean",
+          "description": "请求是否已被受理，不代表异步工作已完成。"
+        }
+      },
+      "required": [
+        "accepted"
+      ],
+      "additionalProperties": true,
+      "description": "Provider关闭响应，作为对应方法成功响应的 result。"
+    },
+    "ProviderDirectories": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host 分配的 Provider 自有数据目录绝对路径；不等同于会话工作区。"
+        },
+        "logs": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host 分配的绝对日志目录。"
+        },
+        "databasePath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host 分配的 Provider 自有数据库文件绝对路径，直接位于 data 下。"
+        }
+      },
+      "required": [
+        "data",
+        "logs",
+        "databasePath"
+      ],
+      "additionalProperties": true,
+      "description": "Host-assigned absolute Provider-owned paths, independent of harness storage. Database file must reside directly in data. Provider owns schema and transactions. Never exposed remotely."
+    },
+    "InstanceCapabilitiesRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        }
+      },
+      "required": [
+        "route"
+      ],
+      "additionalProperties": true,
+      "description": "实例能力的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "InstanceCapabilitiesResponse": {
+      "type": "object",
+      "properties": {
+        "capabilities": {
+          "$ref": "#/$defs/ProviderCapabilities"
+        }
+      },
+      "required": [
+        "capabilities"
+      ],
+      "additionalProperties": true,
+      "description": "实例能力响应，作为对应方法成功响应的 result。"
+    },
+    "InstanceCreateRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "instanceKind": {
+          "$ref": "#/$defs/ProviderInstanceKind"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "面向用户的名称。"
+        },
+        "settings": {
+          "$ref": "../../core/v2/schema.json#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "route",
+        "instanceKind",
+        "displayName",
+        "settings"
+      ],
+      "additionalProperties": true,
+      "description": "实例创建的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "InstanceCreateResponse": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "$ref": "#/$defs/ProviderInstance"
+        }
+      },
+      "required": [
+        "instance"
+      ],
+      "additionalProperties": true,
+      "description": "实例创建响应，作为对应方法成功响应的 result。"
+    },
+    "InstanceDestroyRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        }
+      },
+      "required": [
+        "route"
+      ],
+      "additionalProperties": true,
+      "description": "实例销毁的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "InstanceDestroyResponse": {
+      "type": "object",
+      "properties": {
+        "destroyed": {
+          "type": "boolean",
+          "description": "实例是否已经销毁。"
+        }
+      },
+      "required": [
+        "destroyed"
+      ],
+      "additionalProperties": true,
+      "description": "实例销毁响应，作为对应方法成功响应的 result。"
+    },
+    "InstanceStartRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        }
+      },
+      "required": [
+        "route"
+      ],
+      "additionalProperties": true,
+      "description": "实例启动的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "InstanceStartResponse": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "$ref": "#/$defs/ProviderInstance"
+        }
+      },
+      "required": [
+        "instance"
+      ],
+      "additionalProperties": true,
+      "description": "实例启动响应，作为对应方法成功响应的 result。"
+    },
+    "ProviderInstanceKind": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Provider实例种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "InstanceStatus": {
+      "type": "string",
+      "enum": [
+        "created",
+        "starting",
+        "ready",
+        "stopping",
+        "stopped",
+        "error"
+      ],
+      "description": "实例状态的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "InstanceStatusChangedEvent": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "$ref": "#/$defs/ProviderInstance"
+        },
+        "previousStatus": {
+          "$ref": "#/$defs/InstanceStatus"
+        }
+      },
+      "required": [
+        "instance"
+      ],
+      "additionalProperties": true,
+      "description": "实例状态变化事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    "InstanceStopRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        }
+      },
+      "required": [
+        "route"
+      ],
+      "additionalProperties": true,
+      "description": "实例停止的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "InstanceStopResponse": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "$ref": "#/$defs/ProviderInstance"
+        }
+      },
+      "required": [
+        "instance"
+      ],
+      "additionalProperties": true,
+      "description": "实例停止响应，作为对应方法成功响应的 result。"
+    },
+    "ProviderCapability": {
+      "type": "string",
+      "enum": [
+        "project.list",
+        "project.get",
+        "project.create",
+        "project.update",
+        "project.delete",
+        "conversation.list",
+        "conversation.search",
+        "conversation.get",
+        "conversation.releaseInteraction",
+        "conversation.create",
+        "turn.start",
+        "turn.steer",
+        "turn.interrupt",
+        "approval.resolve",
+        "conversation.active.list",
+        "conversation.unread.list",
+        "conversation.markRead",
+        "usage.query",
+        "instance.releaseControl"
+      ],
+      "description": "Provider能力的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderCapabilities": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "当前快照或能力的修订标识，用于拒绝陈旧状态。"
+        },
+        "methods": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderCapability"
+          },
+          "uniqueItems": true,
+          "description": "当前真正实现且可用的方法能力清单。"
+        },
+        "turnSend": {
+          "$ref": "../../agent/v2/schema.json#/$defs/TurnSendCapabilities"
+        },
+        "conversationCreate": {
+          "$ref": "../../agent/v2/schema.json#/$defs/ConversationCreateCapabilities"
+        },
+        "extensions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProviderExtension"
+          },
+          "description": "Provider 扩展能力描述清单。"
+        },
+        "conversationListQuery": {
+          "$ref": "#/$defs/ConversationListQueryCapabilities"
+        },
+        "usageDatasets": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v2/schema.json#/$defs/UsageDataset"
+          },
+          "description": "此 Provider 可查询的用量数据集描述。"
+        }
+      },
+      "required": [
+        "revision",
+        "methods",
+        "extensions"
+      ],
+      "additionalProperties": true,
+      "description": "Provider能力的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderExtension": {
+      "type": "object",
+      "properties": {
+        "namespace": {
+          "type": "string",
+          "minLength": 1,
+          "description": "扩展或工具来源的命名空间。"
+        },
+        "data": {
+          "$ref": "../../core/v2/schema.json#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "namespace",
+        "data"
+      ],
+      "additionalProperties": true,
+      "description": "Provider扩展的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderInstance": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "pluginId": {
+          "$ref": "../../core/v2/schema.json#/$defs/ProviderPluginId"
+        },
+        "instanceKind": {
+          "$ref": "#/$defs/ProviderInstanceKind"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "面向用户的名称。"
+        },
+        "harness": {
+          "$ref": "#/$defs/HarnessDescriptor"
+        },
+        "status": {
+          "$ref": "#/$defs/InstanceStatus"
+        },
+        "authentication": {
+          "$ref": "../../agent/v2/schema.json#/$defs/ProviderAuthentication"
+        },
+        "capabilities": {
+          "$ref": "#/$defs/ProviderCapabilities"
+        },
+        "usage": {
+          "$ref": "../../agent/v2/schema.json#/$defs/ProviderUsage"
+        }
+      },
+      "required": [
+        "route",
+        "pluginId",
+        "instanceKind",
+        "displayName",
+        "harness",
+        "status",
+        "capabilities"
+      ],
+      "additionalProperties": true,
+      "description": "Provider实例的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProviderResourceId": {
+      "type": "object",
+      "properties": {
+        "deviceId": {
+          "$ref": "../../core/v2/schema.json#/$defs/DeviceId"
+        },
+        "providerPluginId": {
+          "$ref": "../../core/v2/schema.json#/$defs/ProviderPluginId"
+        },
+        "providerInstanceId": {
+          "$ref": "../../core/v2/schema.json#/$defs/ProviderInstanceId"
+        },
+        "nativeResourceId": {
+          "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+        }
+      },
+      "required": [
+        "deviceId",
+        "providerPluginId",
+        "providerInstanceId",
+        "nativeResourceId"
+      ],
+      "additionalProperties": true,
+      "description": "Provider-private complete route for a provider-native resource."
+    },
+    "ProviderInstanceRoute": {
+      "type": "object",
+      "properties": {
+        "deviceId": {
+          "$ref": "../../core/v2/schema.json#/$defs/DeviceId"
+        },
+        "providerPluginId": {
+          "$ref": "../../core/v2/schema.json#/$defs/ProviderPluginId"
+        },
+        "providerInstanceId": {
+          "$ref": "../../core/v2/schema.json#/$defs/ProviderInstanceId"
+        }
+      },
+      "required": [
+        "deviceId",
+        "providerPluginId",
+        "providerInstanceId"
+      ],
+      "additionalProperties": true,
+      "description": "Provider实例路由的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "InstanceReleaseControlRequest": {
+      "description": "Host-scheduled, conditional release of idle native control. The Provider must atomically reject active/uncertain work and requests in flight, and must never reacquire old conversations. Unsupported Providers return unsupported without side effects.",
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "idleTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 86400,
+          "description": "释放控制策略使用的空闲时间，秒。"
+        }
+      },
+      "required": [
+        "route",
+        "idleTimeoutSeconds"
+      ],
+      "additionalProperties": true
+    },
+    "InstanceReleaseControlOutcome": {
+      "type": "string",
+      "enum": [
+        "released",
+        "busy",
+        "notIdle",
+        "unavailable",
+        "unsupported"
+      ],
+      "description": "实例释放控制权结果的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "InstanceReleaseControlResponse": {
+      "description": "released means old control is released and a clean runtime start was accepted; readiness continues through instance status events. No snapshot is returned to avoid overwriting newer lifecycle events.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "$ref": "#/$defs/InstanceReleaseControlOutcome"
+        }
+      },
+      "required": [
+        "outcome"
+      ],
+      "additionalProperties": true
+    },
+    "HarnessDescriptor": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的稳定标识。"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "description": "面向用户的名称。"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "组件自身版本字符串。"
+        },
+        "executablePath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "本机运行时可执行程序的绝对路径。"
+        }
+      },
+      "required": [
+        "id",
+        "displayName"
+      ],
+      "additionalProperties": true,
+      "description": "原生运行时描述的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "RuntimeCandidateSource": {
+      "type": "string",
+      "enum": [
+        "configured",
+        "environment",
+        "current-path",
+        "login-shell",
+        "macos-application",
+        "windows-application"
+      ],
+      "description": "运行时候选来源的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "RuntimeCandidate": {
+      "type": "object",
+      "properties": {
+        "executablePath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "本机运行时可执行程序的绝对路径。"
+        },
+        "source": {
+          "$ref": "#/$defs/RuntimeCandidateSource"
+        }
+      },
+      "required": [
+        "executablePath",
+        "source"
+      ],
+      "additionalProperties": true,
+      "description": "运行时候选的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "RuntimeInstallation": {
+      "type": "object",
+      "properties": {
+        "minimumVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "兼容所需的最低运行时版本。"
+        },
+        "incompatibilityReason": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此运行时不兼容的原因；缺省表示未标注不兼容。"
+        },
+        "executablePath": {
+          "type": "string",
+          "minLength": 1,
+          "description": "本机运行时可执行程序的绝对路径。"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1,
+          "description": "组件自身版本字符串。"
+        },
+        "source": {
+          "$ref": "#/$defs/RuntimeCandidateSource"
+        }
+      },
+      "required": [
+        "executablePath",
+        "version",
+        "source"
+      ],
+      "additionalProperties": true,
+      "description": "运行时安装的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "RuntimeGetInstalledRequest": {
+      "type": "object",
+      "properties": {
+        "refresh": {
+          "type": "boolean",
+          "description": "是否发起重新扫描；缺省可读取已有快照。"
+        }
+      },
+      "additionalProperties": true,
+      "description": "运行时读取安装库存的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "RuntimeGetInstalledResponse": {
+      "type": "object",
+      "properties": {
+        "selectionRequired": {
+          "type": "boolean",
+          "description": "Defaults to true. False means the Provider manages its runtime dependencies and needs no Host runtime selection. Return an empty harnessList, selected:null, scanning:false (or absent), and no scanError."
+        },
+        "harnessList": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/RuntimeInstallation"
+          },
+          "description": "已检测到的运行时安装清单，含不兼容项及原因。"
+        },
+        "selected": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RuntimeInstallation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "当前选中的运行时安装；null 表示未选择。"
+        },
+        "scanning": {
+          "type": "boolean",
+          "description": "运行时扫描是否仍在进行。"
+        },
+        "scanError": {
+          "type": "string",
+          "description": "扫描失败原因；不得将失败解释为已确认不存在运行时。"
+        }
+      },
+      "required": [
+        "harnessList",
+        "selected"
+      ],
+      "additionalProperties": true,
+      "description": "运行时读取安装库存响应，作为对应方法成功响应的 result。"
+    },
+    "RuntimeSelectRequest": {
+      "type": "object",
+      "properties": {
+        "candidate": {
+          "$ref": "#/$defs/RuntimeCandidate"
+        }
+      },
+      "required": [
+        "candidate"
+      ],
+      "additionalProperties": true,
+      "description": "运行时选择的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "RuntimeSelectResponse": {
+      "type": "object",
+      "properties": {
+        "selected": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RuntimeInstallation"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "已验证的安装；异步探测期间为 null，不能把未验证路径当作可执行运行时。"
+        },
+        "pending": {
+          "$ref": "#/$defs/RuntimeCandidate"
+        }
+      },
+      "required": [
+        "selected"
+      ],
+      "additionalProperties": true,
+      "description": "运行时选择响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationReleaseInteractionRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": true,
+      "description": "会话释放交互控制的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ConversationReleaseInteractionResponse": {
+      "type": "object",
+      "properties": {
+        "released": {
+          "type": "boolean",
+          "description": "交互控制或运行时是否已释放。"
+        },
+        "scope": {
+          "type": "string",
+          "enum": [
+            "providerInstance"
+          ],
+          "description": "此数据、覆盖范围或操作生效的范围。"
+        }
+      },
+      "required": [
+        "released",
+        "scope"
+      ],
+      "additionalProperties": true,
+      "description": "会话释放交互控制响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationAcquireInteractionRequest": {
+      "type": "object",
+      "properties": {
+        "force": {
+          "type": "boolean",
+          "description": "Explicit inactive-conversation desktop takeover. Omitted means false; unsupported providers must reject true."
+        },
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": true,
+      "description": "会话获取交互控制的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ConversationAcquireInteractionResponse": {
+      "type": "object",
+      "properties": {
+        "selection": {
+          "$ref": "../../agent/v2/schema.json#/$defs/TurnSelection"
+        },
+        "leaseExpiresAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "selection"
+      ],
+      "additionalProperties": true,
+      "description": "会话获取交互控制响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationCreateRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "项目、会话或选项的显示标题。"
+        },
+        "permissionLevel": {
+          "type": "string",
+          "minLength": 1,
+          "description": "业务允许的权限等级选择。"
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "description": "模型标识或模型选择。"
+        },
+        "reasoningEffort": {
+          "type": "string",
+          "minLength": 1,
+          "description": "推理强度选择。"
+        },
+        "workspaceRoot": {
+          "type": "string",
+          "minLength": 1,
+          "description": "会话工作目录或工作区根绝对路径。"
+        },
+        "workspaceMode": {
+          "type": "string",
+          "minLength": 1,
+          "description": "工作区隔离或执行模式。"
+        },
+        "project": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "extension": {
+          "$ref": "#/$defs/ProviderExtension"
+        }
+      },
+      "required": [
+        "route",
+        "permissionLevel"
+      ],
+      "additionalProperties": true,
+      "description": "会话创建的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ConversationCreateResponse": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../agent/v2/schema.json#/$defs/Conversation"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": true,
+      "description": "会话创建响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationGetRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "cursor": {
+          "$ref": "../../core/v2/schema.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "Maximum number of native conversation turns to include in this history page."
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": true,
+      "description": "会话读取的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ConversationGetResponse": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../agent/v2/schema.json#/$defs/Conversation"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v2/schema.json#/$defs/ConversationItem"
+          },
+          "description": "当前页的会话条目清单。"
+        },
+        "pageInfo": {
+          "$ref": "../../core/v2/schema.json#/$defs/PageInfo"
+        }
+      },
+      "required": [
+        "conversation",
+        "items"
+      ],
+      "additionalProperties": true,
+      "description": "会话读取响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationListRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "projectFilter": {
+          "$ref": "#/$defs/ConversationProjectFilter"
+        },
+        "cursor": {
+          "$ref": "../../core/v2/schema.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
+        },
+        "query": {
+          "$ref": "#/$defs/ConversationListQuery"
+        },
+        "readerScope": {
+          "$ref": "#/$defs/ReaderScope"
+        }
+      },
+      "required": [
+        "route",
+        "projectFilter"
+      ],
+      "additionalProperties": true,
+      "description": "Without query/readerScope, preserve existing projectFilter/cursor/limit behavior. query requires its conversationListQuery capability; readerScope additionally requires conversation.unread.list capability and an authoritative read store. updatedAfter intersects projectFilter; ids requires projectFilter.kind=all. With readerScope, return authoritative Conversation.readState for every summary. Cursors bind route, query, projectFilter and readerScope; changing any is invalid_cursor."
+    },
+    "ConversationListResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v2/schema.json#/$defs/Conversation"
+          },
+          "description": "会话摘要清单。"
+        },
+        "pageInfo": {
+          "$ref": "../../core/v2/schema.json#/$defs/PageInfo"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo"
+      ],
+      "additionalProperties": true,
+      "description": "会话列表响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationProjectFilter": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ConversationProjectFilterAll"
+        },
+        {
+          "$ref": "#/$defs/ConversationProjectFilterStandalone"
+        },
+        {
+          "$ref": "#/$defs/ConversationProjectFilterProject"
+        }
+      ],
+      "description": "会话项目筛选的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationProjectFilterAll": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationProjectFilterAllKind"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": true,
+      "description": "会话项目筛选全部的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationProjectFilterAllKind": {
+      "type": "string",
+      "enum": [
+        "all"
+      ],
+      "description": "会话项目筛选全部种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationProjectFilterStandalone": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationProjectFilterStandaloneKind"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": true,
+      "description": "会话项目筛选未归属项目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationProjectFilterStandaloneKind": {
+      "type": "string",
+      "enum": [
+        "standalone"
+      ],
+      "description": "会话项目筛选未归属项目种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationProjectFilterProject": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationProjectFilterProjectKind"
+        },
+        "project": {
+          "$ref": "#/$defs/ProviderResourceId"
+        }
+      },
+      "required": [
+        "kind",
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "会话项目筛选项目的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationProjectFilterProjectKind": {
+      "type": "string",
+      "enum": [
+        "project"
+      ],
+      "description": "会话项目筛选项目种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationSearchRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "searchTerm": {
+          "type": "string",
+          "minLength": 1,
+          "description": "搜索关键词。"
+        },
+        "cursor": {
+          "$ref": "../../core/v2/schema.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
+        }
+      },
+      "required": [
+        "route",
+        "searchTerm"
+      ],
+      "additionalProperties": true,
+      "description": "会话搜索的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ConversationSearchResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v2/schema.json#/$defs/Conversation"
+          },
+          "description": "会话摘要清单。"
+        },
+        "pageInfo": {
+          "$ref": "../../core/v2/schema.json#/$defs/PageInfo"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo"
+      ],
+      "additionalProperties": true,
+      "description": "会话搜索响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationUpsertedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "../../agent/v2/schema.json#/$defs/Conversation"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": true,
+      "description": "会话新增或更新事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    "ConversationItemUpsertedEvent": {
+      "type": "object",
+      "properties": {
+        "updateId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable source event identity for deduplicating content invalidations."
+        },
+        "conversation": {
+          "$ref": "../../core/v2/schema.json#/$defs/RoutedResourceId"
+        },
+        "item": {
+          "$ref": "../../agent/v2/schema.json#/$defs/ConversationItem"
+        }
+      },
+      "description": "Canonical item update, or a content invalidation with conversation and no item. Receivers fetch the latest page only when they do not hold interaction control. At least one of item or conversation is required; when both exist their conversation routes must agree.",
+      "additionalProperties": true
+    },
+    "ReaderScope": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque reader identity supplied only by the trusted Host from authenticated caller context. Preserve existing callerScope identity and baseline; never accept a Remote-selected scope."
+    },
+    "ConversationEnumerationRevision": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Opaque identity of one immutable active or reader-scoped unread enumeration snapshot within one running instance generation. Equal on every page of that enumeration; a new enumeration may get a different identity even when facts are unchanged. Never compare identities across enumerations, with event invalidation identities, activityVersion, Gateway eventCursor, or recent revision."
+    },
+    "ConversationListQuery": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ConversationUpdatedAfterQuery"
+        },
+        {
+          "$ref": "#/$defs/ConversationIdsQuery"
+        }
+      ],
+      "description": "会话列表查询的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationUpdatedAfterQuery": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationUpdatedAfterQueryKind"
+        },
+        "updatedAfter": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        }
+      },
+      "required": [
+        "kind",
+        "updatedAfter"
+      ],
+      "additionalProperties": true,
+      "description": "Inclusive UTC epoch-millisecond updatedAt boundary. Filter the complete source before pagination, then order updatedAt descending with native ID ascending as tie breaker. Missing updatedAt does not match. No recent-feed policy belongs here."
+    },
+    "ConversationIdsQuery": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/ConversationIdsQueryKind"
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+          },
+          "minItems": 1,
+          "uniqueItems": true,
+          "description": "需要按身份枚举的会话资源清单。"
+        }
+      },
+      "required": [
+        "kind",
+        "ids"
+      ],
+      "additionalProperties": true,
+      "description": "Request 1..100 distinct native conversation IDs within route. Filter before pagination; enumerate the full requested set across pages in native ID ascending order. Deleted IDs may be omitted; lookup failures must fail the request, never masquerade as deletion. Larger batches are invalid_request. Requires projectFilter.kind=all; other filters are invalid_request."
+    },
+    "ConversationListQueryCapabilities": {
+      "type": "object",
+      "properties": {
+        "updatedAfter": {
+          "type": "boolean",
+          "description": "查询更新时间不早于该毫秒时间戳的会话。"
+        },
+        "ids": {
+          "type": "boolean",
+          "description": "需要按身份枚举的会话资源清单。"
+        }
+      },
+      "required": [
+        "updatedAfter",
+        "ids"
+      ],
+      "additionalProperties": true,
+      "description": "Advertise only modes implemented with complete filtering before pagination. Absent or false means unsupported. readerScope additionally requires conversation.unread.list capability and an available authoritative read store."
+    },
+    "ConversationActiveEntry": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "status": {
+          "$ref": "../../agent/v2/schema.json#/$defs/ConversationStatus"
+        },
+        "activityVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "会话当前活动版本，用于无丢失确认已读。"
+        }
+      },
+      "required": [
+        "conversation",
+        "status",
+        "activityVersion"
+      ],
+      "additionalProperties": true,
+      "description": "One active conversation. Active includes running, waiting-approval and waiting-user-input execution; preserve existing execution semantics. activityVersion is the existing unread observation version, not this enumeration revision."
+    },
+    "ConversationUnreadEntry": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "readState": {
+          "$ref": "../../agent/v2/schema.json#/$defs/ConversationReadState"
+        }
+      },
+      "required": [
+        "conversation",
+        "readState"
+      ],
+      "additionalProperties": true,
+      "description": "One unread conversation for the requested readerScope; readState.unread must be true."
+    },
+    "ConversationActiveListRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "cursor": {
+          "$ref": "../../core/v2/schema.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
+        }
+      },
+      "required": [
+        "route"
+      ],
+      "additionalProperties": true,
+      "description": "Enumerate a complete immutable snapshot, default limit 20, maximum 100. Cursor binds route/current generation and, for unread, readerScope. Invalid bindings return invalid_cursor; expired snapshots return conversation_cursor_expired. Unsupported must be an error, never an empty result."
+    },
+    "ConversationActiveListResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationActiveEntry"
+          },
+          "description": "会话摘要清单。"
+        },
+        "pageInfo": {
+          "$ref": "../../core/v2/schema.json#/$defs/PageInfo"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConversationEnumerationRevision"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo",
+        "revision"
+      ],
+      "additionalProperties": true,
+      "description": "All pages belong to one complete snapshot; nextCursor absence alone indicates exhaustion. No arbitrary truncation. Records are ordered by nativeResourceId ascending."
+    },
+    "ConversationUnreadListRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "readerScope": {
+          "$ref": "#/$defs/ReaderScope"
+        },
+        "cursor": {
+          "$ref": "../../core/v2/schema.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
+        }
+      },
+      "required": [
+        "route",
+        "readerScope"
+      ],
+      "additionalProperties": true,
+      "description": "Enumerate a complete immutable snapshot, default limit 20, maximum 100. Cursor binds route/current generation and, for unread, readerScope. Invalid bindings return invalid_cursor; expired snapshots return conversation_cursor_expired. Unsupported must be an error, never an empty result."
+    },
+    "ConversationUnreadListResponse": {
+      "type": "object",
+      "properties": {
+        "conversations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ConversationUnreadEntry"
+          },
+          "description": "会话摘要清单。"
+        },
+        "pageInfo": {
+          "$ref": "../../core/v2/schema.json#/$defs/PageInfo"
+        },
+        "revision": {
+          "$ref": "#/$defs/ConversationEnumerationRevision"
+        }
+      },
+      "required": [
+        "conversations",
+        "pageInfo",
+        "revision"
+      ],
+      "additionalProperties": true,
+      "description": "All pages belong to one complete snapshot; nextCursor absence alone indicates exhaustion. No arbitrary truncation. Records are ordered by nativeResourceId ascending."
+    },
+    "ConversationMarkReadRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "readerScope": {
+          "$ref": "#/$defs/ReaderScope"
+        },
+        "observedActivityVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "用户实际看到的活动版本，只确认已观察到的内容。"
+        }
+      },
+      "required": [
+        "conversation",
+        "readerScope",
+        "observedActivityVersion"
+      ],
+      "additionalProperties": true,
+      "description": "Advance this reader only up to the observed activity version, monotonically and durably. A newer activity remains unread. Preserve baseline/read progress; reject an invalid or future version as invalid_activity_version."
+    },
+    "ConversationMarkReadResponse": {
+      "type": "object",
+      "properties": {
+        "readState": {
+          "$ref": "../../agent/v2/schema.json#/$defs/ConversationReadState"
+        }
+      },
+      "required": [
+        "readState"
+      ],
+      "additionalProperties": true,
+      "description": "会话标记阅读响应，作为对应方法成功响应的 result。"
+    },
+    "ConversationActiveChangedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "status": {
+          "$ref": "../../agent/v2/schema.json#/$defs/ConversationStatus"
+        },
+        "activityVersion": {
+          "type": "string",
+          "minLength": 1,
+          "description": "会话当前活动版本，用于无丢失确认已读。"
+        },
+        "active": {
+          "type": "boolean",
+          "description": "活跃会话条目清单。"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque invalidation identity in this ordered event stream, not an enumeration snapshot identity. Never compare with list response.revision or use equality/order to suppress an invalidation; every received event invalidates the affected view."
+        }
+      },
+      "required": [
+        "conversation",
+        "status",
+        "activityVersion",
+        "active",
+        "revision"
+      ],
+      "additionalProperties": true,
+      "description": "Ordered active-set invalidation and current fact, including active=false on exit. revision identifies this invalidation, not any active enumeration snapshot. Events must cover externally observed execution too. Host tracks a local event fence during snapshot construction."
+    },
+    "ConversationUnreadChangedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "readerScope": {
+          "$ref": "#/$defs/ReaderScope"
+        },
+        "readState": {
+          "$ref": "../../agent/v2/schema.json#/$defs/ConversationReadState"
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Opaque invalidation identity in this ordered event stream, not an enumeration snapshot identity. Never compare with list response.revision or use equality/order to suppress an invalidation; every received event invalidates the affected view."
+        }
+      },
+      "required": [
+        "conversation",
+        "readerScope",
+        "readState",
+        "revision"
+      ],
+      "additionalProperties": true,
+      "description": "Ordered reader-scoped unread fact/invalidation, including unread=false after markRead. revision identifies this invalidation, not any unread enumeration snapshot. Host must not forward scope or read state to other readers; every activity or markRead event invalidates the affected reader view."
+    },
+    "ConversationDeletedEvent": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        }
+      },
+      "required": [
+        "conversation"
+      ],
+      "additionalProperties": true,
+      "description": "Ordered authoritative deletion invalidation. Missing requested IDs are not evidence of deletion unless the Provider established absence. Invalidate affected list/active/unread snapshots."
+    },
+    "ConversationUpdatedAfterQueryKind": {
+      "type": "string",
+      "enum": [
+        "updatedAfter"
+      ],
+      "description": "会话已更新之后查询种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ConversationIdsQueryKind": {
+      "type": "string",
+      "enum": [
+        "ids"
+      ],
+      "description": "会话ID清单查询种类的完整数据定义；字段、可选性与允许值见本对象约束。"
+    },
+    "ProjectChangedEvent": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "changeType": {
+          "$ref": "../../agent/v2/schema.json#/$defs/ProjectChangeType"
+        }
+      },
+      "required": [
+        "project",
+        "changeType"
+      ],
+      "additionalProperties": true,
+      "description": "项目变化事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    "ProjectCreateRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "idempotencyKey": {
+          "$ref": "../../core/v2/schema.json#/$defs/RequestId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的名称。"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v2/schema.json#/$defs/ProjectRoot"
+          },
+          "description": "项目根目录清单。"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "description": "可扩展字典中单个值的结构与约束。"
+          },
+          "description": "此对象的可扩展元数据。"
+        }
+      },
+      "required": [
+        "route",
+        "idempotencyKey",
+        "name",
+        "roots",
+        "metadata"
+      ],
+      "additionalProperties": true,
+      "description": "项目创建的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProjectCreateResponse": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../agent/v2/schema.json#/$defs/Project"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "项目创建响应，作为对应方法成功响应的 result。"
+    },
+    "ProjectDeleteRequest": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "#/$defs/ProviderResourceId"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "项目删除的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProjectDeleteResponse": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": true,
+      "description": "项目删除响应，作为对应方法成功响应的 result。"
+    },
+    "ProjectGetRequest": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "#/$defs/ProviderResourceId"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "项目读取的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProjectGetResponse": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../agent/v2/schema.json#/$defs/Project"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "项目读取响应，作为对应方法成功响应的 result。"
+    },
+    "ProjectListRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "cursor": {
+          "$ref": "../../core/v2/schema.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100,
+          "description": "本次最多返回的条目数；历史接口按原生 turn 计数。"
+        }
+      },
+      "required": [
+        "route"
+      ],
+      "additionalProperties": true,
+      "description": "项目列表的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProjectListResponse": {
+      "type": "object",
+      "properties": {
+        "projects": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v2/schema.json#/$defs/Project"
+          },
+          "description": "项目清单。"
+        },
+        "pageInfo": {
+          "$ref": "../../core/v2/schema.json#/$defs/PageInfo"
+        }
+      },
+      "required": [
+        "projects",
+        "pageInfo"
+      ],
+      "additionalProperties": true,
+      "description": "项目列表响应，作为对应方法成功响应的 result。"
+    },
+    "ProjectUpdateRequest": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "此对象的名称。"
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "$ref": "../../agent/v2/schema.json#/$defs/ProjectRoot"
+          },
+          "description": "项目根目录清单。"
+        },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "description": "可扩展字典中单个值的结构与约束。"
+          },
+          "description": "此对象的可扩展元数据。"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "项目更新的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ProjectUpdateResponse": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "$ref": "../../agent/v2/schema.json#/$defs/Project"
+        }
+      },
+      "required": [
+        "project"
+      ],
+      "additionalProperties": true,
+      "description": "项目更新响应，作为对应方法成功响应的 result。"
+    },
+    "TurnInterruptRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "turn": {
+          "$ref": "#/$defs/ProviderResourceId"
+        }
+      },
+      "required": [
+        "conversation",
+        "turn"
+      ],
+      "additionalProperties": true,
+      "description": "任务中断的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "TurnInterruptResponse": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../agent/v2/schema.json#/$defs/TurnTask"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "additionalProperties": true,
+      "description": "任务中断响应，作为对应方法成功响应的 result。"
+    },
+    "TurnOutputDeltaEvent": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "itemId": {
+          "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+        },
+        "contentId": {
+          "$ref": "../../core/v2/schema.json#/$defs/NativeResourceId"
+        },
+        "kind": {
+          "$ref": "../../agent/v2/schema.json#/$defs/ConversationContentKind"
+        },
+        "delta": {
+          "type": "string",
+          "description": "本次追加的文本增量；通过 itemId/contentId 关联最终完整条目。"
+        },
+        "extension": {
+          "$ref": "#/$defs/ProviderExtension"
+        }
+      },
+      "required": [
+        "turn",
+        "conversation",
+        "itemId",
+        "contentId",
+        "kind",
+        "delta"
+      ],
+      "additionalProperties": true,
+      "description": "任务输出增量事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    "TurnStartRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "clientRequestId": {
+          "$ref": "../../core/v2/schema.json#/$defs/RequestId"
+        },
+        "capabilityRevision": {
+          "type": "string",
+          "minLength": 1,
+          "description": "调用依据的能力修订标识，避免使用陈旧选择。"
+        },
+        "input": {
+          "$ref": "../../agent/v2/schema.json#/$defs/TurnInput"
+        },
+        "selection": {
+          "$ref": "../../agent/v2/schema.json#/$defs/TurnSelection"
+        }
+      },
+      "required": [
+        "conversation",
+        "clientRequestId",
+        "capabilityRevision",
+        "input",
+        "selection"
+      ],
+      "additionalProperties": true,
+      "description": "任务启动的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "TurnStartResponse": {
+      "type": "object",
+      "properties": {
+        "accepted": {
+          "type": "boolean",
+          "description": "请求是否已被受理，不代表异步工作已完成。"
+        },
+        "turn": {
+          "$ref": "../../agent/v2/schema.json#/$defs/TurnTask"
+        },
+        "userItem": {
+          "oneOf": [
+            {
+              "$ref": "../../agent/v2/schema.json#/$defs/ConversationItem"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "本次输入形成的用户消息条目。"
+        },
+        "effectiveSelection": {
+          "$ref": "../../agent/v2/schema.json#/$defs/TurnSelection"
+        }
+      },
+      "required": [
+        "accepted",
+        "turn",
+        "userItem",
+        "effectiveSelection"
+      ],
+      "additionalProperties": true,
+      "description": "任务启动响应，作为对应方法成功响应的 result。"
+    },
+    "TurnSteerRequest": {
+      "type": "object",
+      "properties": {
+        "conversation": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "turn": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "clientMessageId": {
+          "$ref": "../../core/v2/schema.json#/$defs/RequestId"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "供调用者理解的错误或提示文字。"
+        }
+      },
+      "required": [
+        "conversation",
+        "turn",
+        "clientMessageId",
+        "message"
+      ],
+      "additionalProperties": true,
+      "description": "任务追加引导的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "TurnSteerResponse": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../agent/v2/schema.json#/$defs/TurnTask"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "additionalProperties": true,
+      "description": "任务追加引导响应，作为对应方法成功响应的 result。"
+    },
+    "TurnUpsertedEvent": {
+      "type": "object",
+      "properties": {
+        "turn": {
+          "$ref": "../../agent/v2/schema.json#/$defs/TurnTask"
+        }
+      },
+      "required": [
+        "turn"
+      ],
+      "additionalProperties": true,
+      "description": "任务新增或更新事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    "ApprovalRequestedEvent": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../agent/v2/schema.json#/$defs/Approval"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "additionalProperties": true,
+      "description": "审批请求事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    "ApprovalResolveRequest": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "#/$defs/ProviderResourceId"
+        },
+        "decision": {
+          "$ref": "../../agent/v2/schema.json#/$defs/ApprovalDecision"
+        }
+      },
+      "required": [
+        "approval",
+        "decision"
+      ],
+      "additionalProperties": true,
+      "description": "审批处理的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "ApprovalResolveResponse": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../agent/v2/schema.json#/$defs/Approval"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "additionalProperties": true,
+      "description": "审批处理响应，作为对应方法成功响应的 result。"
+    },
+    "ApprovalResolvedEvent": {
+      "type": "object",
+      "properties": {
+        "approval": {
+          "$ref": "../../agent/v2/schema.json#/$defs/Approval"
+        }
+      },
+      "required": [
+        "approval"
+      ],
+      "additionalProperties": true,
+      "description": "审批已处理事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    "EventSubscribeRequest": {
+      "type": "object",
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "订阅身份，用于匹配事件和取消订阅。"
+        }
+      },
+      "required": [
+        "subscriptionId"
+      ],
+      "additionalProperties": true,
+      "description": "事件订阅的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "EventSubscribeResponse": {
+      "type": "object",
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "订阅身份，用于匹配事件和取消订阅。"
+        },
+        "message": {
+          "type": "string",
+          "description": "供调用者理解的错误或提示文字。"
+        }
+      },
+      "required": [
+        "subscriptionId",
+        "message"
+      ],
+      "additionalProperties": true,
+      "description": "事件订阅响应，作为对应方法成功响应的 result。"
+    },
+    "EventUnsubscribeRequest": {
+      "type": "object",
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "订阅身份，用于匹配事件和取消订阅。"
+        }
+      },
+      "required": [
+        "subscriptionId"
+      ],
+      "additionalProperties": true,
+      "description": "事件取消订阅的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "EventUnsubscribeResponse": {
+      "type": "object",
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "订阅身份，用于匹配事件和取消订阅。"
+        }
+      },
+      "required": [
+        "subscriptionId"
+      ],
+      "additionalProperties": true,
+      "description": "事件取消订阅响应，作为对应方法成功响应的 result。"
+    },
+    "ProviderNotificationEvent": {
+      "type": "object",
+      "properties": {
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "订阅身份，用于匹配事件和取消订阅。"
+        },
+        "eventId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "通知事件的稳定身份。"
+        },
+        "receivedAt": {
+          "$ref": "../../core/v2/schema.json#/$defs/TimestampMs"
+        },
+        "payload": {
+          "$ref": "../../core/v2/schema.json#/$defs/JsonObject"
+        }
+      },
+      "required": [
+        "subscriptionId",
+        "eventId",
+        "receivedAt",
+        "payload"
+      ],
+      "additionalProperties": true,
+      "description": "Provider通知事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
+    },
+    "UsageQueryRequest": {
+      "type": "object",
+      "properties": {
+        "route": {
+          "$ref": "#/$defs/ProviderInstanceRoute"
+        },
+        "query": {
+          "$ref": "../../agent/v2/schema.json#/$defs/UsageQuery"
+        }
+      },
+      "required": [
+        "route",
+        "query"
+      ],
+      "additionalProperties": true,
+      "description": "用量查询的请求参数；具体调用方向与幂等性见 methods.json。"
+    },
+    "UsageQueryResponse": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "$ref": "../../agent/v2/schema.json#/$defs/UsageQueryResult"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": true,
+      "description": "用量查询响应，作为对应方法成功响应的 result。"
+    }
+  }
+}

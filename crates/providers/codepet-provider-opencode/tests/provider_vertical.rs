@@ -10,7 +10,7 @@ use codepet_provider_sdk::{
     ModelSelection, ProtocolServer, ProviderInitializeRequest, ProviderInstanceRoute,
     ProviderResourceId, RoutedResourceId,
     TurnInput, TurnInputKind, TurnInterruptRequest, TurnSelection, TurnStartRequest, TurnStatus,
-    TurnSteerRequest, VersionRange, PROTOCOL_VERSION,
+    TurnSteerRequest, ProtocolVersionOffer, PROTOCOL_VERSION,
 };
 use serde_json::json;
 use std::collections::BTreeMap;
@@ -62,7 +62,7 @@ async fn cancelling_start_before_health_or_during_discovery_cannot_orphan_server
         })));
         provider.provider_initialize(ProviderInitializeRequest { directories: None,
             host_client_id: "host-cancel".into(), host_device_id: "device-cancel".into(),
-            host_version: "0.1.0".into(), supported_versions: VersionRange { min_version: PROTOCOL_VERSION, max_version: PROTOCOL_VERSION },
+            host_version: "0.1.0".into(), protocol: ProtocolVersionOffer { min_version: PROTOCOL_VERSION, version: PROTOCOL_VERSION },
         }).await.unwrap();
         let route = ProviderInstanceRoute { device_id: "device-cancel".into(),
             provider_plugin_id: OPENCODE_PLUGIN_ID.into(), provider_instance_id: "cancel".into() };
@@ -117,9 +117,9 @@ async fn official_v2_shapes_map_through_the_provider_protocol() {
             host_client_id: "host-fixture".to_string(),
             host_device_id: "device-fixture".to_string(),
             host_version: "0.1.0".to_string(),
-            supported_versions: VersionRange {
+            protocol: ProtocolVersionOffer {
                 min_version: PROTOCOL_VERSION,
-                max_version: PROTOCOL_VERSION,
+                version: PROTOCOL_VERSION,
             },
         })
         .await
@@ -670,9 +670,9 @@ async fn provider_real_opencode_server_smoke() {
             host_client_id: "real-smoke-host".to_string(),
             host_device_id: "real-smoke-device".to_string(),
             host_version: "0.1.0".to_string(),
-            supported_versions: VersionRange {
+            protocol: ProtocolVersionOffer {
                 min_version: PROTOCOL_VERSION,
-                max_version: PROTOCOL_VERSION,
+                version: PROTOCOL_VERSION,
             },
         })
         .await
@@ -904,9 +904,9 @@ async fn account_probes_are_parallel_notify_later_and_cancel_on_stop() {
             host_client_id: "background".into(),
             host_device_id: "background".into(),
             host_version: "test".into(),
-            supported_versions: VersionRange {
+            protocol: ProtocolVersionOffer {
                 min_version: PROTOCOL_VERSION,
-                max_version: PROTOCOL_VERSION,
+                version: PROTOCOL_VERSION,
             },
         })
         .await
@@ -1058,7 +1058,7 @@ async fn recent_atoms_exhaust_creation_order_pages_and_recover_active_outside_li
     std::fs::write(directory.path().join("opencode-fixture-startup.json"), br#"{"recentFixture":true}"#).unwrap();
     let (sender, receiver) = mpsc::channel();
     let provider = OpenCodeProvider::new(Arc::new(move |event| { sender.send(event).unwrap(); Ok(()) }));
-    provider.provider_initialize(ProviderInitializeRequest { directories: None, host_client_id: "host-atoms".into(), host_device_id: "device-atoms".into(), host_version: "0.1.0".into(), supported_versions: VersionRange { min_version: PROTOCOL_VERSION, max_version: PROTOCOL_VERSION } }).await.unwrap();
+    provider.provider_initialize(ProviderInitializeRequest { directories: None, host_client_id: "host-atoms".into(), host_device_id: "device-atoms".into(), host_version: "0.1.0".into(), protocol: ProtocolVersionOffer { min_version: PROTOCOL_VERSION, version: PROTOCOL_VERSION } }).await.unwrap();
     let route = ProviderInstanceRoute { device_id: "device-atoms".into(), provider_plugin_id: OPENCODE_PLUGIN_ID.into(), provider_instance_id: "atoms".into() };
     provider.instance_create(InstanceCreateRequest { route: route.clone(), instance_kind: OPENCODE_INSTANCE_KIND.into(), display_name: "Atoms".into(), settings: BTreeMap::from([
         ("serverExecutable".into(), json!(env!("CARGO_BIN_EXE_opencode-server-fixture"))),

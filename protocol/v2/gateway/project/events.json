@@ -1,0 +1,15 @@
+{
+  "description": "gateway project 模块的events注册表。",
+  "events": [
+    {
+      "name": "project.changed",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "project",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/ProjectChangedEvent"
+      },
+      "description": "project.changed 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    }
+  ]
+}

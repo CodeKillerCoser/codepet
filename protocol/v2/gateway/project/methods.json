@@ -1,0 +1,70 @@
+{
+  "description": "gateway project 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "project.list",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "project.list",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ProjectListRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ProjectListResponse"
+      },
+      "description": "project.list 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "project.get",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "project.get",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ProjectGetRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ProjectGetResponse"
+      },
+      "description": "project.get 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "project.create",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "project.create",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ProjectCreateRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ProjectCreateResponse"
+      },
+      "description": "project.create 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "project.update",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "project.update",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ProjectUpdateRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ProjectUpdateResponse"
+      },
+      "description": "project.update 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "project.delete",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "project.delete",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ProjectDeleteRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ProjectDeleteResponse"
+      },
+      "description": "project.delete 的调用定义；请求、结果与幂等性以本条目为准。"
+    }
+  ]
+}

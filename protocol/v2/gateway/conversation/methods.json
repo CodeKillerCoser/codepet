@@ -1,0 +1,119 @@
+{
+  "description": "gateway conversation 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "conversation.releaseInteraction",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "capability": "conversation.releaseInteraction",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ConversationReleaseInteractionRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ConversationReleaseInteractionResponse"
+      },
+      "description": "conversation.releaseInteraction 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.recent",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "conversation.recent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ConversationRecentRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ConversationRecentResponse"
+      },
+      "description": "conversation.recent 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.list",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "conversation.list",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ConversationListRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ConversationListResponse"
+      },
+      "description": "conversation.list 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.search",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "conversation.search",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ConversationSearchRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ConversationSearchResponse"
+      },
+      "description": "conversation.search 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.get",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "capability": "conversation.get",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ConversationGetRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ConversationGetResponse"
+      },
+      "description": "conversation.get 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.markRead",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ConversationMarkReadRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ConversationMarkReadResponse"
+      },
+      "description": "conversation.markRead 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.acquireInteraction",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ConversationAcquireInteractionRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ConversationAcquireInteractionResponse"
+      },
+      "description": "conversation.acquireInteraction 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.resume",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ConversationResumeRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ConversationResumeResponse"
+      },
+      "description": "conversation.resume 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "conversation.create",
+      "direction": "clientToGateway",
+      "idempotency": "nonIdempotent",
+      "capability": "conversation.create",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ConversationCreateRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ConversationCreateResponse"
+      },
+      "description": "conversation.create 的调用定义；请求、结果与幂等性以本条目为准。"
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "jsonrpc": "2.0",
+  "method": "event.notification",
+  "params": {
+    "subscriptionId": "host-1",
+    "eventId": "event-1",
+    "receivedAt": 1,
+    "payload": {
+      "hook_event_name": "Stop",
+      "session_id": "session-1"
+    }
+  }
+}

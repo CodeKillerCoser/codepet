@@ -1,0 +1,21 @@
+{
+  "jsonrpc": "2.0",
+  "id": "direct-steer-1",
+  "method": "turn.steer",
+  "params": {
+    "conversation": {
+      "providerId": "codex-work",
+      "nativeResourceId": "thread-01"
+    },
+    "turn": {
+      "providerId": "codex-work",
+      "nativeResourceId": "turn-01"
+    },
+    "clientRequestId": "direct-steer-1",
+    "capabilityRevision": "codex-session-42",
+    "input": {
+      "kind": "text",
+      "text": "Continue with the implementation"
+    }
+  }
+}

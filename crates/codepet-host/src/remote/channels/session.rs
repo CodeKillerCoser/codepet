@@ -239,7 +239,7 @@ fn event_turn(event: &gateway::ProtocolEvent) -> Option<&gateway::RoutedResource
         gateway::ProtocolEvent::TurnUpserted { params, .. } => Some(&params.payload.turn.resource),
         gateway::ProtocolEvent::TurnOutputDelta { params, .. } => Some(&params.payload.turn),
         gateway::ProtocolEvent::ConversationItemUpserted { params, .. } => {
-            params.payload.item.as_ref().map(gateway_item_turn)
+            params.payload.item.as_ref().and_then(gateway_item_turn)
         }
         gateway::ProtocolEvent::ApprovalRequested { params, .. } => {
             Some(&params.payload.approval.turn)
@@ -266,7 +266,7 @@ fn event_conversation(event: &gateway::ProtocolEvent) -> Option<&gateway::Routed
             .payload
             .item
             .as_ref()
-            .map(gateway_item_conversation)
+            .and_then(gateway_item_conversation)
             .or(params.payload.conversation.as_ref()),
         gateway::ProtocolEvent::ApprovalRequested { params, .. } => {
             Some(&params.payload.approval.conversation)
@@ -278,27 +278,29 @@ fn event_conversation(event: &gateway::ProtocolEvent) -> Option<&gateway::Routed
     }
 }
 
-fn gateway_item_turn(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId {
+fn gateway_item_turn(item: &gateway::ConversationItem) -> Option<&gateway::RoutedResourceId> {
     match item {
-        gateway::ConversationItem::MessageConversationItem(item) => &item.turn,
-        gateway::ConversationItem::ReasoningConversationItem(item) => &item.turn,
-        gateway::ConversationItem::CommandConversationItem(item) => &item.turn,
-        gateway::ConversationItem::FileChangeConversationItem(item) => &item.turn,
-        gateway::ConversationItem::ToolConversationItem(item) => &item.turn,
-        gateway::ConversationItem::ApprovalConversationItem(item) => &item.turn,
-        gateway::ConversationItem::UnknownConversationItem(item) => &item.turn,
+        gateway::ConversationItem::MessageConversationItem(item) => Some(&item.turn),
+        gateway::ConversationItem::ReasoningConversationItem(item) => Some(&item.turn),
+        gateway::ConversationItem::CommandConversationItem(item) => Some(&item.turn),
+        gateway::ConversationItem::FileChangeConversationItem(item) => Some(&item.turn),
+        gateway::ConversationItem::ToolConversationItem(item) => Some(&item.turn),
+        gateway::ConversationItem::ApprovalConversationItem(item) => Some(&item.turn),
+        gateway::ConversationItem::UnknownConversationItem(item) => Some(&item.turn),
+        gateway::ConversationItem::Unrecognized(_) => None,
     }
 }
 
-fn gateway_item_conversation(item: &gateway::ConversationItem) -> &gateway::RoutedResourceId {
+fn gateway_item_conversation(item: &gateway::ConversationItem) -> Option<&gateway::RoutedResourceId> {
     match item {
-        gateway::ConversationItem::MessageConversationItem(item) => &item.conversation,
-        gateway::ConversationItem::ReasoningConversationItem(item) => &item.conversation,
-        gateway::ConversationItem::CommandConversationItem(item) => &item.conversation,
-        gateway::ConversationItem::FileChangeConversationItem(item) => &item.conversation,
-        gateway::ConversationItem::ToolConversationItem(item) => &item.conversation,
-        gateway::ConversationItem::ApprovalConversationItem(item) => &item.conversation,
-        gateway::ConversationItem::UnknownConversationItem(item) => &item.conversation,
+        gateway::ConversationItem::MessageConversationItem(item) => Some(&item.conversation),
+        gateway::ConversationItem::ReasoningConversationItem(item) => Some(&item.conversation),
+        gateway::ConversationItem::CommandConversationItem(item) => Some(&item.conversation),
+        gateway::ConversationItem::FileChangeConversationItem(item) => Some(&item.conversation),
+        gateway::ConversationItem::ToolConversationItem(item) => Some(&item.conversation),
+        gateway::ConversationItem::ApprovalConversationItem(item) => Some(&item.conversation),
+        gateway::ConversationItem::UnknownConversationItem(item) => Some(&item.conversation),
+        gateway::ConversationItem::Unrecognized(_) => None,
     }
 }
 

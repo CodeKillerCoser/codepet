@@ -1,0 +1,10 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-mark-read-response",
+  "result": {
+    "readState": {
+      "unread": true,
+      "activityVersion": "activity-42"
+    }
+  }
+}

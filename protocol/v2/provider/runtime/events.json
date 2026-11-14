@@ -1,0 +1,15 @@
+{
+  "description": "provider runtime 模块的events注册表。",
+  "events": [
+    {
+      "name": "runtime.inventoryChanged",
+      "direction": "pluginToHost",
+      "delivery": "ordered",
+      "scope": "plugin",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/RuntimeGetInstalledResponse"
+      },
+      "description": "运行时读取安装库存响应，作为对应方法成功响应的 result。"
+    }
+  ]
+}

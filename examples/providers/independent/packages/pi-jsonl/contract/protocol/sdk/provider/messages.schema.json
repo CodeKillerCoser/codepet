@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://code-pet.dev/provider-sdk/v1/protocol/sdk/provider/messages.schema.json",
+  "$id": "https://code-pet.dev/provider-sdk/v2/protocol/sdk/provider/messages.schema.json",
   "description": "由权威功能模块组装的协议类型。",
   "$defs": {
     "InstanceCapabilitiesRequest": {
@@ -14,7 +14,7 @@
       "required": [
         "route"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "实例能力的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "InstanceCapabilitiesResponse": {
@@ -28,7 +28,7 @@
       "required": [
         "capabilities"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "实例能力响应，作为对应方法成功响应的 result。"
     },
     "InstanceCreateRequest": {
@@ -58,7 +58,7 @@
         "displayName",
         "settings"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "实例创建的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "InstanceCreateResponse": {
@@ -72,7 +72,7 @@
       "required": [
         "instance"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "实例创建响应，作为对应方法成功响应的 result。"
     },
     "InstanceDestroyRequest": {
@@ -86,7 +86,7 @@
       "required": [
         "route"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "实例销毁的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "InstanceDestroyResponse": {
@@ -100,7 +100,7 @@
       "required": [
         "destroyed"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "实例销毁响应，作为对应方法成功响应的 result。"
     },
     "InstanceStartRequest": {
@@ -114,7 +114,7 @@
       "required": [
         "route"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "实例启动的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "InstanceStartResponse": {
@@ -128,7 +128,7 @@
       "required": [
         "instance"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "实例启动响应，作为对应方法成功响应的 result。"
     },
     "ProviderInstanceKind": {
@@ -163,7 +163,7 @@
       "required": [
         "instance"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "实例状态变化事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
     },
     "InstanceStopRequest": {
@@ -177,7 +177,7 @@
       "required": [
         "route"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "实例停止的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "InstanceStopResponse": {
@@ -191,7 +191,7 @@
       "required": [
         "instance"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "实例停止响应，作为对应方法成功响应的 result。"
     },
     "ProviderCapability": {
@@ -270,7 +270,7 @@
         "methods",
         "extensions"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Provider能力的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ProviderExtension": {
@@ -290,7 +290,7 @@
         "namespace",
         "data"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Provider扩展的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ProviderInstance": {
@@ -343,7 +343,7 @@
         "status",
         "capabilities"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Provider实例的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ProviderResourceId": {
@@ -372,7 +372,7 @@
         "providerInstanceId",
         "nativeResourceId"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Provider-private complete route for a provider-native resource."
     },
     "ProviderInstanceRoute": {
@@ -396,7 +396,7 @@
         "providerPluginId",
         "providerInstanceId"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Provider实例路由的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "InstanceReleaseControlRequest": {
@@ -418,7 +418,7 @@
         "route",
         "idleTimeoutSeconds"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "InstanceReleaseControlOutcome": {
       "type": "string",
@@ -443,7 +443,7 @@
       "required": [
         "outcome"
       ],
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "HarnessDescriptor": {
       "type": "object",
@@ -473,7 +473,7 @@
         "id",
         "displayName"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "原生运行时描述的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "RuntimeCandidateSource": {
@@ -505,7 +505,7 @@
         "executablePath",
         "source"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "运行时候选的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "RuntimeInstallation": {
@@ -541,7 +541,7 @@
         "version",
         "source"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "运行时安装的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "RuntimeGetInstalledRequest": {
@@ -552,7 +552,7 @@
           "description": "是否发起重新扫描；缺省可读取已有快照。"
         }
       },
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "运行时读取安装库存的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "RuntimeGetInstalledResponse": {
@@ -596,7 +596,7 @@
         "harnessList",
         "selected"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "运行时读取安装库存响应，作为对应方法成功响应的 result。"
     },
     "RuntimeSelectRequest": {
@@ -610,21 +610,34 @@
       "required": [
         "candidate"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "运行时选择的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "RuntimeSelectResponse": {
       "type": "object",
       "properties": {
         "selected": {
-          "$ref": "#/$defs/RuntimeInstallation",
-          "description": "当前选中的运行时安装；null 表示未选择。"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/RuntimeInstallation",
+              "description": "已完成探测并选中的安装。"
+            },
+            {
+              "type": "null",
+              "description": "探测尚未完成，或尚未选中。"
+            }
+          ],
+          "description": "已验证的安装；异步探测期间为 null，不能把未验证路径当作可执行运行时。"
+        },
+        "pending": {
+          "$ref": "#/$defs/RuntimeCandidate",
+          "description": "可选的正在探测候选；仅用于显示进度。最终成功或失败通过 runtime.inventoryChanged 更新。"
         }
       },
       "required": [
         "selected"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "运行时选择响应，作为对应方法成功响应的 result。"
     },
     "ConversationReleaseInteractionRequest": {
@@ -638,7 +651,7 @@
       "required": [
         "conversation"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话释放交互控制的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "ConversationReleaseInteractionResponse": {
@@ -660,7 +673,7 @@
         "released",
         "scope"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话释放交互控制响应，作为对应方法成功响应的 result。"
     },
     "ConversationAcquireInteractionRequest": {
@@ -678,7 +691,7 @@
       "required": [
         "conversation"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话获取交互控制的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "ConversationAcquireInteractionResponse": {
@@ -696,7 +709,7 @@
       "required": [
         "selection"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话获取交互控制响应，作为对应方法成功响应的 result。"
     },
     "ConversationCreateRequest": {
@@ -749,7 +762,7 @@
         "route",
         "permissionLevel"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话创建的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "ConversationCreateResponse": {
@@ -763,7 +776,7 @@
       "required": [
         "conversation"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话创建响应，作为对应方法成功响应的 result。"
     },
     "ConversationGetRequest": {
@@ -787,7 +800,7 @@
       "required": [
         "conversation"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话读取的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "ConversationGetResponse": {
@@ -814,7 +827,7 @@
         "conversation",
         "items"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话读取响应，作为对应方法成功响应的 result。"
     },
     "ConversationListRequest": {
@@ -851,7 +864,7 @@
         "route",
         "projectFilter"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Without query/readerScope, preserve existing projectFilter/cursor/limit behavior. query requires its conversationListQuery capability; readerScope additionally requires conversation.unread.list capability and an authoritative read store. updatedAfter intersects projectFilter; ids requires projectFilter.kind=all. With readerScope, return authoritative Conversation.readState for every summary. Cursors bind route, query, projectFilter and readerScope; changing any is invalid_cursor."
     },
     "ConversationListResponse": {
@@ -874,7 +887,7 @@
         "conversations",
         "pageInfo"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话列表响应，作为对应方法成功响应的 result。"
     },
     "ConversationProjectFilter": {
@@ -905,7 +918,7 @@
       "required": [
         "kind"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话项目筛选全部的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ConversationProjectFilterAllKind": {
@@ -926,7 +939,7 @@
       "required": [
         "kind"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话项目筛选未归属项目的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ConversationProjectFilterStandaloneKind": {
@@ -952,7 +965,7 @@
         "kind",
         "project"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话项目筛选项目的完整数据定义；字段、可选性与允许值见本对象约束。"
     },
     "ConversationProjectFilterProjectKind": {
@@ -989,7 +1002,7 @@
         "route",
         "searchTerm"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话搜索的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "ConversationSearchResponse": {
@@ -1012,7 +1025,7 @@
         "conversations",
         "pageInfo"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话搜索响应，作为对应方法成功响应的 result。"
     },
     "ConversationUpsertedEvent": {
@@ -1026,7 +1039,7 @@
       "required": [
         "conversation"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话新增或更新事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
     },
     "ConversationItemUpsertedEvent": {
@@ -1047,7 +1060,7 @@
         }
       },
       "description": "Canonical item update, or a content invalidation with conversation and no item. Receivers fetch the latest page only when they do not hold interaction control. At least one of item or conversation is required; when both exist their conversation routes must agree.",
-      "additionalProperties": false
+      "additionalProperties": true
     },
     "ReaderScope": {
       "type": "string",
@@ -1088,7 +1101,7 @@
         "kind",
         "updatedAfter"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Inclusive UTC epoch-millisecond updatedAt boundary. Filter the complete source before pagination, then order updatedAt descending with native ID ascending as tie breaker. Missing updatedAt does not match. No recent-feed policy belongs here."
     },
     "ConversationIdsQuery": {
@@ -1113,7 +1126,7 @@
         "kind",
         "ids"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Request 1..100 distinct native conversation IDs within route. Filter before pagination; enumerate the full requested set across pages in native ID ascending order. Deleted IDs may be omitted; lookup failures must fail the request, never masquerade as deletion. Larger batches are invalid_request. Requires projectFilter.kind=all; other filters are invalid_request."
     },
     "ConversationListQueryCapabilities": {
@@ -1132,7 +1145,7 @@
         "updatedAfter",
         "ids"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Advertise only modes implemented with complete filtering before pagination. Absent or false means unsupported. readerScope additionally requires conversation.unread.list capability and an available authoritative read store."
     },
     "ConversationActiveEntry": {
@@ -1157,7 +1170,7 @@
         "status",
         "activityVersion"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "One active conversation. Active includes running, waiting-approval and waiting-user-input execution; preserve existing execution semantics. activityVersion is the existing unread observation version, not this enumeration revision."
     },
     "ConversationUnreadEntry": {
@@ -1176,7 +1189,7 @@
         "conversation",
         "readState"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "One unread conversation for the requested readerScope; readState.unread must be true."
     },
     "ConversationActiveListRequest": {
@@ -1200,7 +1213,7 @@
       "required": [
         "route"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Enumerate a complete immutable snapshot, default limit 20, maximum 100. Cursor binds route/current generation and, for unread, readerScope. Invalid bindings return invalid_cursor; expired snapshots return conversation_cursor_expired. Unsupported must be an error, never an empty result."
     },
     "ConversationActiveListResponse": {
@@ -1228,7 +1241,7 @@
         "pageInfo",
         "revision"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "All pages belong to one complete snapshot; nextCursor absence alone indicates exhaustion. No arbitrary truncation. Records are ordered by nativeResourceId ascending."
     },
     "ConversationUnreadListRequest": {
@@ -1257,7 +1270,7 @@
         "route",
         "readerScope"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Enumerate a complete immutable snapshot, default limit 20, maximum 100. Cursor binds route/current generation and, for unread, readerScope. Invalid bindings return invalid_cursor; expired snapshots return conversation_cursor_expired. Unsupported must be an error, never an empty result."
     },
     "ConversationUnreadListResponse": {
@@ -1285,7 +1298,7 @@
         "pageInfo",
         "revision"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "All pages belong to one complete snapshot; nextCursor absence alone indicates exhaustion. No arbitrary truncation. Records are ordered by nativeResourceId ascending."
     },
     "ConversationMarkReadRequest": {
@@ -1310,7 +1323,7 @@
         "readerScope",
         "observedActivityVersion"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Advance this reader only up to the observed activity version, monotonically and durably. A newer activity remains unread. Preserve baseline/read progress; reject an invalid or future version as invalid_activity_version."
     },
     "ConversationMarkReadResponse": {
@@ -1324,7 +1337,7 @@
       "required": [
         "readState"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "会话标记阅读响应，作为对应方法成功响应的 result。"
     },
     "ConversationActiveChangedEvent": {
@@ -1360,7 +1373,7 @@
         "active",
         "revision"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Ordered active-set invalidation and current fact, including active=false on exit. revision identifies this invalidation, not any active enumeration snapshot. Events must cover externally observed execution too. Host tracks a local event fence during snapshot construction."
     },
     "ConversationUnreadChangedEvent": {
@@ -1390,7 +1403,7 @@
         "readState",
         "revision"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Ordered reader-scoped unread fact/invalidation, including unread=false after markRead. revision identifies this invalidation, not any unread enumeration snapshot. Host must not forward scope or read state to other readers; every activity or markRead event invalidates the affected reader view."
     },
     "ConversationDeletedEvent": {
@@ -1404,7 +1417,7 @@
       "required": [
         "conversation"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Ordered authoritative deletion invalidation. Missing requested IDs are not evidence of deletion unless the Provider established absence. Invalidate affected list/active/unread snapshots."
     },
     "ConversationUpdatedAfterQueryKind": {
@@ -1437,7 +1450,7 @@
         "project",
         "changeType"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "项目变化事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
     },
     "ProjectCreateRequest": {
@@ -1480,7 +1493,7 @@
         "roots",
         "metadata"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "项目创建的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "ProjectCreateResponse": {
@@ -1494,7 +1507,7 @@
       "required": [
         "project"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "项目创建响应，作为对应方法成功响应的 result。"
     },
     "ProjectDeleteRequest": {
@@ -1508,13 +1521,13 @@
       "required": [
         "project"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "项目删除的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "ProjectDeleteResponse": {
       "type": "object",
       "properties": {},
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "项目删除响应，作为对应方法成功响应的 result。"
     },
     "ProjectGetRequest": {
@@ -1528,7 +1541,7 @@
       "required": [
         "project"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "项目读取的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "ProjectGetResponse": {
@@ -1542,7 +1555,7 @@
       "required": [
         "project"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "项目读取响应，作为对应方法成功响应的 result。"
     },
     "ProjectListRequest": {
@@ -1566,7 +1579,7 @@
       "required": [
         "route"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "项目列表的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "ProjectListResponse": {
@@ -1589,7 +1602,7 @@
         "projects",
         "pageInfo"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "项目列表响应，作为对应方法成功响应的 result。"
     },
     "ProjectUpdateRequest": {
@@ -1624,7 +1637,7 @@
       "required": [
         "project"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "项目更新的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "ProjectUpdateResponse": {
@@ -1638,7 +1651,7 @@
       "required": [
         "project"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "项目更新响应，作为对应方法成功响应的 result。"
     },
     "TurnInterruptRequest": {
@@ -1657,7 +1670,7 @@
         "conversation",
         "turn"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "任务中断的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "TurnInterruptResponse": {
@@ -1671,7 +1684,7 @@
       "required": [
         "turn"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "任务中断响应，作为对应方法成功响应的 result。"
     },
     "TurnOutputDeltaEvent": {
@@ -1714,7 +1727,7 @@
         "kind",
         "delta"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "任务输出增量事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
     },
     "TurnStartRequest": {
@@ -1749,7 +1762,7 @@
         "input",
         "selection"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "任务启动的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "TurnStartResponse": {
@@ -1787,7 +1800,7 @@
         "userItem",
         "effectiveSelection"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "任务启动响应，作为对应方法成功响应的 result。"
     },
     "TurnSteerRequest": {
@@ -1817,7 +1830,7 @@
         "clientMessageId",
         "message"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "任务追加引导的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "TurnSteerResponse": {
@@ -1831,7 +1844,7 @@
       "required": [
         "turn"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "任务追加引导响应，作为对应方法成功响应的 result。"
     },
     "TurnUpsertedEvent": {
@@ -1845,7 +1858,7 @@
       "required": [
         "turn"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "任务新增或更新事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
     },
     "ApprovalRequestedEvent": {
@@ -1859,7 +1872,7 @@
       "required": [
         "approval"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "审批请求事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
     },
     "ApprovalResolveRequest": {
@@ -1878,7 +1891,7 @@
         "approval",
         "decision"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "审批处理的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "ApprovalResolveResponse": {
@@ -1892,7 +1905,7 @@
       "required": [
         "approval"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "审批处理响应，作为对应方法成功响应的 result。"
     },
     "ApprovalResolvedEvent": {
@@ -1906,7 +1919,7 @@
       "required": [
         "approval"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "审批已处理事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
     },
     "EventSubscribeRequest": {
@@ -1921,7 +1934,7 @@
       "required": [
         "subscriptionId"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "事件订阅的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "EventSubscribeResponse": {
@@ -1941,7 +1954,7 @@
         "subscriptionId",
         "message"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "事件订阅响应，作为对应方法成功响应的 result。"
     },
     "EventUnsubscribeRequest": {
@@ -1956,7 +1969,7 @@
       "required": [
         "subscriptionId"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "事件取消订阅的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "EventUnsubscribeResponse": {
@@ -1971,7 +1984,7 @@
       "required": [
         "subscriptionId"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "事件取消订阅响应，作为对应方法成功响应的 result。"
     },
     "ProviderNotificationEvent": {
@@ -2002,7 +2015,7 @@
         "receivedAt",
         "payload"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "Provider通知事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
     },
     "UsageQueryRequest": {
@@ -2021,7 +2034,7 @@
         "route",
         "query"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "用量查询的请求参数；具体调用方向与幂等性见 methods.json。"
     },
     "UsageQueryResponse": {
@@ -2035,7 +2048,7 @@
       "required": [
         "result"
       ],
-      "additionalProperties": false,
+      "additionalProperties": true,
       "description": "用量查询响应，作为对应方法成功响应的 result。"
     }
   }

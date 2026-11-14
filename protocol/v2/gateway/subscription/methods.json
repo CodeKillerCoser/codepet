@@ -1,0 +1,17 @@
+{
+  "description": "gateway subscription 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "event.subscribe",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/EventSubscribeRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/EventSubscribeResponse"
+      },
+      "description": "event.subscribe 的调用定义；请求、结果与幂等性以本条目为准。"
+    }
+  ]
+}

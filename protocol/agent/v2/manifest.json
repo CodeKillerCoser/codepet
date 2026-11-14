@@ -1,0 +1,8 @@
+{
+  "name": "codepet-agent",
+  "layer": "agent",
+  "version": 2,
+  "kind": "types",
+  "methods": [],
+  "events": []
+}

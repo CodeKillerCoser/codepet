@@ -22,3 +22,10 @@ it('disables removal while busy', async () => {
   await tick(); const button = document.querySelector<HTMLButtonElement>('button')!;
   expect(button.disabled).toBe(true); button.click(); expect(onRemove).not.toHaveBeenCalled();
 });
+it('hides runtime controls for notification observers and self-managed agents', async () => {
+  component = mount(ProviderRuntimeInfo, { target: document.body, props: { runtime: { ...runtime, status: 'ready' }, connection: undefined, onSelect: vi.fn(), kind: 'observation' } });
+  await tick();
+  expect(document.body.textContent).toContain('通知观测');
+  expect(document.querySelector('select')).toBeNull();
+  expect(document.body.textContent).not.toContain('由 Provider 管理');
+});

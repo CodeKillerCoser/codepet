@@ -20,11 +20,13 @@ pub fn truncate_tool_item_text(item: &mut ConversationItem, max_bytes: usize) {
         ToolInput::OpaqueToolInput(input) => {
             truncate_text(&mut input.value, "/tool/input/value", max_bytes, &mut changes);
         }
+        ToolInput::Unrecognized(_) => {}
     }
     if let Some(outcome) = &mut item.tool.outcome {
         let content = match outcome {
             ToolOutcome::ToolSuccessOutcome(outcome) => &mut outcome.content,
             ToolOutcome::ToolFailureOutcome(outcome) => &mut outcome.content,
+            ToolOutcome::Unrecognized(_) => return,
         };
         for (index, block) in content.iter_mut().enumerate() {
             let path = format!("/tool/outcome/content/{index}");

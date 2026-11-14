@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v2/gateway/usage/messages.schema.json",
+  "description": "gateway 的 usage 功能模块交互对象。",
+  "$defs": {
+    "UsageQueryRequest": {
+      "type": "object",
+      "properties": {
+        "providerId": {
+          "$ref": "../../common/types.schema.json#/$defs/ProviderInstanceId",
+          "description": "引用 ProviderInstanceId 的结构与约束。"
+        },
+        "query": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/UsageQuery",
+          "description": "引用 UsageQuery 的结构与约束。"
+        }
+      },
+      "required": [
+        "providerId",
+        "query"
+      ],
+      "additionalProperties": true,
+      "description": "UsageQueryRequest 的请求参数；仅包含当前方法接受的字段。"
+    },
+    "UsageQueryResponse": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "$ref": "../../agent-domain/domain.schema.json#/$defs/UsageQueryResult",
+          "description": "引用 UsageQueryResult 的结构与约束。"
+        }
+      },
+      "required": [
+        "result"
+      ],
+      "additionalProperties": true,
+      "description": "UsageQueryResponse 的成功返回结果。"
+    }
+  }
+}

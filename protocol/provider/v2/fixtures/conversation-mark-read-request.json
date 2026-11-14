@@ -1,0 +1,15 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-mark-read-request",
+  "method": "conversation.markRead",
+  "params": {
+    "conversation": {
+      "deviceId": "device-macbook-1",
+      "providerPluginId": "dev.codepet.codex",
+      "providerInstanceId": "codex-work",
+      "nativeResourceId": "thread-01"
+    },
+    "readerScope": "remote:client-01",
+    "observedActivityVersion": "activity-41"
+  }
+}

@@ -405,6 +405,7 @@ impl ProviderGatewayService {
         filter: gateway::ConversationProjectFilter,
     ) -> Result<provider::ConversationProjectFilter, gateway::ProtocolError> {
         Ok(match filter {
+            gateway::ConversationProjectFilter::Unrecognized(_) => return Err(gateway::ProtocolError { code: "unsupported_filter".into(), message: "Unknown project filter".into(), retryable: false, details: None }),
             gateway::ConversationProjectFilter::ConversationProjectFilterAll(filter) => {
                 provider::ConversationProjectFilter::ConversationProjectFilterAll(
                     provider::ConversationProjectFilterAll {
@@ -1083,7 +1084,7 @@ impl ProtocolServer for ProviderGatewayService {
                     details: None,
                 }
             })?;
-            validate_gateway_version_range(&request.supported_versions)?;
+            let protocol = gateway_protocol_offer().negotiate(&request.protocol)?;
             if request.client_id.trim().is_empty()
                 || request.client_version.trim().is_empty()
                 || !device_descriptor_is_valid(&request.device)
@@ -1103,9 +1104,7 @@ impl ProtocolServer for ProviderGatewayService {
             // update is therefore either reflected in the snapshot or replayable after it.
             let event_cursor = self.current_event_cursor();
             Ok(gateway::HandshakeResponse {
-                protocol: gateway::GatewayProtocol {
-                    version: gateway::PROTOCOL_VERSION,
-                },
+                protocol,
                 device: gateway::GatewayDevice {
                     name: remote_host_identity.descriptor.device_name,
                     operating_system: remote_host_identity.descriptor.operating_system,
@@ -1678,7 +1677,7 @@ fn gateway_provider(
                     .and_then(|descriptor| descriptor.default_workspace_root.clone()),
             },
             runtime: gateway::ProviderRuntime {
-                connection_status: Some(plugin.connection_status),
+                connection_status: Some(plugin.connection_status.clone()),
                 generation: Some(plugin.generation),
                 status: if plugin.catalog.enabled && runtime.record.enabled {
                     provider_runtime_status(plugin.state, runtime.instance.as_ref())
@@ -1782,7 +1781,7 @@ fn provider_runtime_status(
         PluginRuntimeState::Stopped => gateway::ProviderStatus::Stopped,
         PluginRuntimeState::Starting => gateway::ProviderStatus::Connecting,
         PluginRuntimeState::Ready => instance
-            .map(|instance| instance_status_to_gateway(instance.status))
+            .map(|instance| instance_status_to_gateway(instance.status.clone()))
             .unwrap_or(gateway::ProviderStatus::Unavailable),
         PluginRuntimeState::Crashed => gateway::ProviderStatus::Error,
     }
@@ -1797,6 +1796,7 @@ fn instance_status_to_gateway(status: provider::InstanceStatus) -> gateway::Prov
         }
         provider::InstanceStatus::Ready => gateway::ProviderStatus::Ready,
         provider::InstanceStatus::Error => gateway::ProviderStatus::Error,
+        provider::InstanceStatus::Unrecognized(raw) => gateway::ProviderStatus::Unrecognized(raw),
     }
 }
 
@@ -1804,6 +1804,7 @@ fn map_capabilities(capabilities: &provider::ProviderCapabilities) -> gateway::G
     let mut methods = Vec::new();
     for method in &capabilities.methods {
         let mapped = match method {
+            provider::ProviderCapability::Unrecognized(_) => continue,
             provider::ProviderCapability::ProjectList => {
                 Some(gateway::GatewayCapability::ProjectList)
             }
@@ -2153,28 +2154,8 @@ fn validate_gateway_resource(
     Ok(())
 }
 
-fn validate_gateway_version_range(
-    supported: &gateway::VersionRange,
-) -> Result<(), gateway::ProtocolError> {
-    if supported.min_version > supported.max_version {
-        return Err(gateway::ProtocolError {
-            code: "invalid_protocol_range".to_string(),
-            message: "minimum Gateway version exceeds maximum version".to_string(),
-            retryable: false,
-            details: None,
-        });
-    }
-    if gateway::PROTOCOL_VERSION < supported.min_version
-        || gateway::PROTOCOL_VERSION > supported.max_version
-    {
-        return Err(gateway::ProtocolError {
-            code: "unsupported_protocol_version".to_string(),
-            message: "Gateway protocol version is outside the client-supported range".to_string(),
-            retryable: false,
-            details: None,
-        });
-    }
-    Ok(())
+fn gateway_protocol_offer() -> gateway::ProtocolVersionOffer {
+    gateway::ProtocolVersionOffer { version: gateway::PROTOCOL_VERSION, min_version: gateway::MIN_PROTOCOL_VERSION }
 }
 
 fn gateway_error(error: HostError) -> gateway::ProtocolError {

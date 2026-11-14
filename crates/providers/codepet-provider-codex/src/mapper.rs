@@ -733,7 +733,7 @@ impl CodexProtocolMapper {
             turn: approval.turn.clone(),
             conversation: approval.conversation.clone(),
             kind: ApprovalConversationItemKind::Approval,
-            status: approval_item_status(approval.status),
+            status: approval_item_status(approval.status.clone()),
             title: Some(approval.title.clone()),
             related_item: Some(self.resource(related_item_id.to_string())),
             approval: approval.clone(),
@@ -769,6 +769,7 @@ impl CodexProtocolMapper {
         approval.status = match decision {
             ApprovalDecision::Approve => ApprovalStatus::Approved,
             ApprovalDecision::Deny => ApprovalStatus::Denied,
+            ApprovalDecision::Unrecognized(_) => ApprovalStatus::Unrecognized("unknown".into()),
         };
         approval.decision = Some(decision);
         approval.resolved_at = Some(resolved_at_ms);
@@ -1195,6 +1196,7 @@ fn approval_item_status(status: ApprovalStatus) -> ConversationItemStatus {
         ApprovalStatus::Approved => ConversationItemStatus::Approved,
         ApprovalStatus::Denied => ConversationItemStatus::Denied,
         ApprovalStatus::Expired => ConversationItemStatus::Expired,
+        ApprovalStatus::Unrecognized(raw) => ConversationItemStatus::Unrecognized(raw),
     }
 }
 
@@ -1723,6 +1725,7 @@ mod tests {
             ConversationItem::ToolConversationItem(value) => &value.resource.native_resource_id,
             ConversationItem::ApprovalConversationItem(value) => &value.resource.native_resource_id,
             ConversationItem::UnknownConversationItem(value) => &value.resource.native_resource_id,
+            ConversationItem::Unrecognized(_) => panic!("test expected a known item"),
         }
     }
 
@@ -1735,6 +1738,7 @@ mod tests {
             ConversationItem::ToolConversationItem(value) => &value.conversation.native_resource_id,
             ConversationItem::ApprovalConversationItem(value) => &value.conversation.native_resource_id,
             ConversationItem::UnknownConversationItem(value) => &value.conversation.native_resource_id,
+            ConversationItem::Unrecognized(_) => panic!("test expected a known item"),
         }
     }
 
@@ -1746,12 +1750,12 @@ mod tests {
             ConversationItem::CommandConversationItem(value) => match &value.tool.outcome {
                 Some(ToolOutcome::ToolSuccessOutcome(outcome)) => &outcome.content,
                 Some(ToolOutcome::ToolFailureOutcome(outcome)) => &outcome.content,
-                None => return Vec::new(),
+                Some(ToolOutcome::Unrecognized(_)) | None => return Vec::new(),
             },
             ConversationItem::ToolConversationItem(value) => match &value.tool.outcome {
                 Some(ToolOutcome::ToolSuccessOutcome(outcome)) => &outcome.content,
                 Some(ToolOutcome::ToolFailureOutcome(outcome)) => &outcome.content,
-                None => return Vec::new(),
+                Some(ToolOutcome::Unrecognized(_)) | None => return Vec::new(),
             },
             _ => return Vec::new(),
         };
@@ -1765,6 +1769,7 @@ mod tests {
             ContentBlock::AudioContentBlock(value) => value.content_id.as_str(),
             ContentBlock::ResourceLinkContentBlock(value) => value.content_id.as_str(),
             ContentBlock::EmbeddedResourceContentBlock(value) => value.content_id.as_str(),
+            ContentBlock::Unrecognized(_) => panic!("test expected known content"),
         }).collect()
     }
 

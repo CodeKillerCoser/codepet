@@ -1,0 +1,11 @@
+{
+  "jsonrpc": "2.0",
+  "method": "conversation.recentChanged",
+  "params": {
+    "eventCursor": "event-43",
+    "payload": {
+      "providerId": "codex-work",
+      "revision": "recent-view-8"
+    }
+  }
+}

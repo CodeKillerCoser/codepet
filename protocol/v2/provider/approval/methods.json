@@ -1,0 +1,18 @@
+{
+  "description": "provider approval 模块的methods注册表。",
+  "methods": [
+    {
+      "name": "approval.resolve",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "capability": "approval.resolve",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/ApprovalResolveRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/ApprovalResolveResponse"
+      },
+      "description": "审批处理方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    }
+  ]
+}

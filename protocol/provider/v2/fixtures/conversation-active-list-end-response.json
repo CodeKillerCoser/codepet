@@ -1,0 +1,9 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-active-list-end-response",
+  "result": {
+    "conversations": [],
+    "pageInfo": {},
+    "revision": "active-snapshot-7"
+  }
+}

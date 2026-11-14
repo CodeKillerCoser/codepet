@@ -1,0 +1,195 @@
+{
+  "jsonrpc": "2.0",
+  "id": "conversation-get-1",
+  "result": {
+    "conversation": {
+      "resource": {
+        "providerId": "codex-work",
+        "nativeResourceId": "thread-01"
+      },
+      "project": null,
+      "title": "Provider protocol foundation",
+      "status": "idle",
+      "createdAt": 1787700000000,
+      "updatedAt": 1787700001000
+    },
+    "items": [
+      {
+        "resource": {
+          "providerId": "codex-work",
+          "nativeResourceId": "user-one"
+        },
+        "turn": {
+          "providerId": "codex-work",
+          "nativeResourceId": "turn-one"
+        },
+        "conversation": {
+          "providerId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "kind": "message",
+        "status": "completed",
+        "role": "user",
+        "contents": [
+          {
+            "contentId": "user-one:input:0",
+            "kind": "text",
+            "text": "Run the checks"
+          }
+        ]
+      },
+      {
+        "resource": {
+          "providerId": "codex-work",
+          "nativeResourceId": "reasoning-one"
+        },
+        "turn": {
+          "providerId": "codex-work",
+          "nativeResourceId": "turn-one"
+        },
+        "conversation": {
+          "providerId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "kind": "reasoning",
+        "status": "completed",
+        "contents": [
+          {
+            "contentId": "reasoning-one:summary:0",
+            "kind": "reasoning-summary",
+            "text": "Checked the relevant modules"
+          }
+        ]
+      },
+      {
+        "resource": {
+          "providerId": "codex-work",
+          "nativeResourceId": "command-one"
+        },
+        "turn": {
+          "providerId": "codex-work",
+          "nativeResourceId": "turn-one"
+        },
+        "conversation": {
+          "providerId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "kind": "command",
+        "status": "completed",
+        "title": "cargo test",
+        "tool": {
+          "callId": "command-one",
+          "name": "shell",
+          "category": "command",
+          "origin": {
+            "kind": "builtin"
+          },
+          "input": {
+            "kind": "command",
+            "command": "cargo test",
+            "cwd": "/workspace/codepet",
+            "truncation": {
+              "originalBytes": 4096,
+              "retainedBytes": 10,
+              "strategy": "head-tail"
+            },
+            "actions": [
+              {
+                "kind": "execute",
+                "command": "cargo test"
+              }
+            ]
+          },
+          "outcome": {
+            "kind": "success",
+            "content": [
+              {
+                "contentId": "command-one:result:0",
+                "kind": "output",
+                "text": "tests passed",
+                "truncation": {
+                  "originalBytes": 12000,
+                  "retainedBytes": 12,
+                  "strategy": "head-tail"
+                }
+              },
+              {
+                "contentId": "command-one:result:1",
+                "kind": "structured-json",
+                "value": {
+                  "checks": 24
+                }
+              }
+            ],
+            "exitCode": 0
+          },
+          "timing": {
+            "durationMs": 1250
+          }
+        }
+      },
+      {
+        "resource": {
+          "providerId": "codex-work",
+          "nativeResourceId": "approval-session-1"
+        },
+        "turn": {
+          "providerId": "codex-work",
+          "nativeResourceId": "turn-one"
+        },
+        "conversation": {
+          "providerId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "kind": "approval",
+        "status": "approved",
+        "title": "Run command",
+        "relatedItem": {
+          "providerId": "codex-work",
+          "nativeResourceId": "command-one"
+        },
+        "approval": {
+          "resource": {
+            "providerId": "codex-work",
+            "nativeResourceId": "approval-session-1"
+          },
+          "conversation": {
+            "providerId": "codex-work",
+            "nativeResourceId": "thread-01"
+          },
+          "turn": {
+            "providerId": "codex-work",
+            "nativeResourceId": "turn-one"
+          },
+          "kind": "command-execution",
+          "title": "Run command",
+          "status": "approved",
+          "decisions": [
+            "approve",
+            "deny"
+          ],
+          "requestedAt": 1787700000100,
+          "resolvedAt": 1787700000200,
+          "decision": "approve"
+        }
+      },
+      {
+        "resource": {
+          "providerId": "codex-work",
+          "nativeResourceId": "unknown-one"
+        },
+        "turn": {
+          "providerId": "codex-work",
+          "nativeResourceId": "turn-one"
+        },
+        "conversation": {
+          "providerId": "codex-work",
+          "nativeResourceId": "thread-01"
+        },
+        "kind": "unknown",
+        "status": "completed",
+        "title": "Unknown provider activity"
+      }
+    ]
+  }
+}

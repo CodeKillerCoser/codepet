@@ -179,7 +179,7 @@ impl InputQueueStore {
             )
             .map_err(db_error)?;
         let id = uuid::Uuid::new_v4().to_string();
-        let (kind, provider, model) = model_columns(&request.selection.model);
+        let (kind, provider, model) = model_columns(&request.selection.model)?;
         tx.execute("INSERT INTO conversation_inputs(id,conversation_id,owner,request_id,sequence,capability_revision,body,access_mode,reasoning_effort,model_kind,model_provider,model_id,state,created_at,updated_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,'queued',?13,?13)",params![id,cid,caller,request.client_request_id,seq,request.capability_revision,request.input.text,request.selection.access_mode_id,request.selection.reasoning_effort_id,kind,provider,model,now()]).map_err(db_error)?;
         tx.execute(
             "UPDATE conversations SET next_queue_sequence=next_queue_sequence+1 WHERE id=?1",
@@ -208,6 +208,7 @@ impl InputQueueStore {
         let kind = match request.kind {
             g::InputQueueWithdrawKind::Edit => "edit",
             g::InputQueueWithdrawKind::Delete => "delete",
+            g::InputQueueWithdrawKind::Unrecognized(_) => return Err(error("unsupported_operation", "Unknown queue operation")),
         };
         if operation(
             &tx,
@@ -465,7 +466,7 @@ impl InputQueueStore {
         } else if let Some(turn) = turn {
             tx.execute("UPDATE conversation_inputs SET state='accepted',target_turn_id=?2,error_code=NULL,error_message=NULL,updated_at=?3 WHERE id=?1 AND conversation_id=?4",params![id,turn.resource.native_resource_id,now(),cid]).map_err(db_error)?;
             remember_active(&tx, cid, &turn.resource.native_resource_id)?;
-            terminal(&tx, cid, &turn.resource.native_resource_id, turn.status)?;
+            terminal(&tx, cid, &turn.resource.native_resource_id, turn.status.clone())?;
         }
         bump(&tx, cid)?;
         let response = mutation(&tx, cid, id, route)?;
@@ -492,7 +493,7 @@ impl InputQueueStore {
                 )
                 .map_err(db_error)?;
             if tracked {
-                terminal(&tx, cid, &turn.resource.native_resource_id, turn.status)?;
+                terminal(&tx, cid, &turn.resource.native_resource_id, turn.status.clone())?;
             }
         }
         tx.commit().map_err(db_error)
@@ -557,14 +558,15 @@ fn read_item(
         error_message: r.get(13)?,
     })
 }
-fn model_columns(model: &Option<g::ModelSelection>) -> (Option<&str>, Option<&str>, Option<&str>) {
-    match model {
+fn model_columns(model: &Option<g::ModelSelection>) -> Result<(Option<&str>, Option<&str>, Option<&str>)> {
+    Ok(match model {
+        Some(g::ModelSelection::Unrecognized(_)) => return Err(error("unsupported_model_selection", "Unknown model selection")),
         None => (None, None, None),
         Some(g::ModelSelection::FlatModelSelection(m)) => (Some("flat"), None, Some(&m.model_id)),
         Some(g::ModelSelection::GroupedModelSelection(m)) => {
             (Some("grouped"), Some(&m.provider_id), Some(&m.model_id))
         }
-    }
+    })
 }
 fn find_conversation(db: &Connection, r: &g::RoutedResourceId) -> Result<Option<i64>> {
     db.query_row(
