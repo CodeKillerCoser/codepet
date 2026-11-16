@@ -32,6 +32,7 @@
     "test:pet": "vitest run frontend/lib/pet",
     "test:pet:ui": "node scripts/pet_notch_ui_qa.mjs",
     "test:pet:motion": "node scripts/pet_motion_ui_qa.mjs",
+    "test:pet:stack": "node scripts/pet_plane_stack_ui_qa.mjs",
     "sdk:export": "node scripts/export_provider_sdk.mjs"
   },
   "dependencies": {

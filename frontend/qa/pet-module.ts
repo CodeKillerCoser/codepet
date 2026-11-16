@@ -57,6 +57,24 @@ function fire(event: string, payload: unknown) {
   const id = listeners.get(event);
   if (id !== undefined) (window as any).__TAURI_INTERNALS__.runCallback(id, { event, id, payload });
 }
+// Presentation scenarios use concise fixtures; only the native mock translates
+// them into the current Notice contract. No retired RPC exists in production.
+let fixtureRevision=0;
+function fixtureNotice(task:any){
+  return {noticeId:task.id,pluginId:task.providerId.startsWith('dev.')?task.providerId:`dev.codepet.${task.providerId}`,sourceId:'qa',
+    revision:fixtureRevision,finished:['completed','interrupted'].includes(task.status),
+    status:{value:task.status,label:({'running':'运行中','completed':'已结束','interrupted':'已取消','waiting-input':'等待输入','waiting-approval':'等待授权','failed':'失败'}as Record<string,string>)[task.status]??task.status},
+    content:{title:task.title,progress:task.summary?{text:task.summary}:undefined},
+    actions:['waiting-input','waiting-approval','failed'].includes(task.status)?[{kind:'reply',id:'reply',label:'回复',enabled:true}]:[],
+    createdAt:task.updatedAt,updatedAt:task.updatedAt};
+}
+let fixtureTasks=qa.tasks;
+Object.defineProperty(qa,'tasks',{get:()=>fixtureTasks,set:(tasks)=>{
+  fixtureTasks=tasks;fixtureRevision++;
+  fire('provider-connection-status',[]);
+  fire('provider-connection-status',qa.providers);
+  for(const task of tasks)fire('codepet-gateway-event',{jsonrpc:'2.0',method:'notice.changed',params:{eventCursor:`qa-${fixtureRevision}-${task.id}`,payload:{notice:fixtureNotice(task)}}});
+}});
 qa.updateSettings = () => fire("settings-updated", qa.settings);
 let anchor: { x: number; y: number } | undefined;
 let lastLayout: any;
@@ -64,10 +82,11 @@ mockWindows("pet");
 mockIPC((command, args: any) => {
   if (command === "provider_connection_status") return qa.providers;
   if (command === "get_app_settings") return qa.settings;
-  if (command === "pet_gateway_request") {
-    const request = args.request;
-    if (qa.beforeSnapshot) return qa.beforeSnapshot().then(() => ({ ...request, response: { status: 'ok', result: { snapshot: { tasks: qa.tasks, sources: [] } } } }));
-    return { ...request, response: { status: "ok", result: { snapshot: { tasks: qa.tasks, sources: [] } } } };
+  if (command === "codepet_gateway_request") {
+    const request=args.request;
+    if(request.method !== 'notice.list') throw new Error(`Unexpected QA Gateway method ${request.method}`);
+    const response=()=>({jsonrpc:'2.0',id:request.id,result:{notices:qa.tasks.map(fixtureNotice),sources:qa.providers.map(p=>({pluginId:p.providerId,displayName:p.displayName,icon:p.icon,enabled:true,connected:true,message:''})),hasMore:false}});
+    return qa.beforeSnapshot ? qa.beforeSnapshot().then(response) : response();
   }
   if (command === "plugin:event|listen") { listeners.set(args.event, args.handler); return args.handler; }
   if (command === 'pet_surface_begin_frame') return 0;
