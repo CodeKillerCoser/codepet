@@ -1,0 +1,66 @@
+{
+  "description": "插件与 Host 的 Notice 方法，调用方向是合同的一部分。",
+  "methods": [
+    {
+      "name": "notice.create",
+      "direction": "pluginToHost",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/NoticeCreateRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/NoticePublishResponse"
+      },
+      "description": "notice.create：按条目归属和修订处理；重复操作不重复产生副作用。"
+    },
+    {
+      "name": "notice.update",
+      "direction": "pluginToHost",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/NoticeUpdateRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/NoticePublishResponse"
+      },
+      "description": "notice.update：按条目归属和修订处理；重复操作不重复产生副作用。"
+    },
+    {
+      "name": "notice.finish",
+      "direction": "pluginToHost",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/NoticeFinishRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/NoticePublishResponse"
+      },
+      "description": "notice.finish：按条目归属和修订处理；重复操作不重复产生副作用。"
+    },
+    {
+      "name": "notice.action.execute",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/NoticeActionExecuteRequest"
+      },
+      "response": {
+        "$ref": "../../common/notice.schema.json#/$defs/NoticeActionResult",
+        "description": "动作结果。"
+      },
+      "description": "notice.action.execute：按条目归属和修订处理；重复操作不重复产生副作用。"
+    },
+    {
+      "name": "notice.observe",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/NoticeObserveRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/NoticeObserveResponse"
+      },
+      "description": "notice.observe：按条目归属和修订处理；重复操作不重复产生副作用。"
+    }
+  ]
+}

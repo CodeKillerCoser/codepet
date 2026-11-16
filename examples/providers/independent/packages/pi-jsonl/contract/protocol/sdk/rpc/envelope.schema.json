@@ -888,64 +888,6 @@
               "description": "调用方提供的字符串请求 ID。"
             },
             "method": {
-              "const": "event.subscribe",
-              "description": "事件订阅方法；由 Host 发起，具体幂等性与调度通道见本条目。"
-            },
-            "params": {
-              "$ref": "../provider/messages.schema.json#/$defs/EventSubscribeRequest",
-              "description": "关联载荷的 Schema。"
-            }
-          },
-          "required": [
-            "jsonrpc",
-            "id",
-            "method",
-            "params"
-          ],
-          "additionalProperties": false,
-          "description": "事件订阅方法；由 Host 发起，具体幂等性与调度通道见本条目。"
-        },
-        {
-          "type": "object",
-          "properties": {
-            "jsonrpc": {
-              "const": "2.0",
-              "description": "JSON-RPC 版本，固定为 2.0。"
-            },
-            "id": {
-              "$ref": "../common/types.schema.json#/$defs/RequestId",
-              "description": "调用方提供的字符串请求 ID。"
-            },
-            "method": {
-              "const": "event.unsubscribe",
-              "description": "事件取消订阅方法；由 Host 发起，具体幂等性与调度通道见本条目。"
-            },
-            "params": {
-              "$ref": "../provider/messages.schema.json#/$defs/EventUnsubscribeRequest",
-              "description": "关联载荷的 Schema。"
-            }
-          },
-          "required": [
-            "jsonrpc",
-            "id",
-            "method",
-            "params"
-          ],
-          "additionalProperties": false,
-          "description": "事件取消订阅方法；由 Host 发起，具体幂等性与调度通道见本条目。"
-        },
-        {
-          "type": "object",
-          "properties": {
-            "jsonrpc": {
-              "const": "2.0",
-              "description": "JSON-RPC 版本，固定为 2.0。"
-            },
-            "id": {
-              "$ref": "../common/types.schema.json#/$defs/RequestId",
-              "description": "调用方提供的字符串请求 ID。"
-            },
-            "method": {
               "const": "usage.query",
               "description": "用量查询方法；由 Host 发起，具体幂等性与调度通道见本条目。"
             },
@@ -962,6 +904,151 @@
           ],
           "additionalProperties": false,
           "description": "用量查询方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0",
+              "description": "JSON-RPC 版本，固定为 2.0。"
+            },
+            "id": {
+              "$ref": "../common/types.schema.json#/$defs/RequestId",
+              "description": "调用方提供的字符串请求 ID。"
+            },
+            "method": {
+              "const": "notice.create",
+              "description": "notice.create：按条目归属和修订处理；重复操作不重复产生副作用。"
+            },
+            "params": {
+              "$ref": "../provider/messages.schema.json#/$defs/NoticeCreateRequest",
+              "description": "关联载荷的 Schema。"
+            }
+          },
+          "required": [
+            "jsonrpc",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false,
+          "description": "notice.create：按条目归属和修订处理；重复操作不重复产生副作用。"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0",
+              "description": "JSON-RPC 版本，固定为 2.0。"
+            },
+            "id": {
+              "$ref": "../common/types.schema.json#/$defs/RequestId",
+              "description": "调用方提供的字符串请求 ID。"
+            },
+            "method": {
+              "const": "notice.update",
+              "description": "notice.update：按条目归属和修订处理；重复操作不重复产生副作用。"
+            },
+            "params": {
+              "$ref": "../provider/messages.schema.json#/$defs/NoticeUpdateRequest",
+              "description": "关联载荷的 Schema。"
+            }
+          },
+          "required": [
+            "jsonrpc",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false,
+          "description": "notice.update：按条目归属和修订处理；重复操作不重复产生副作用。"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0",
+              "description": "JSON-RPC 版本，固定为 2.0。"
+            },
+            "id": {
+              "$ref": "../common/types.schema.json#/$defs/RequestId",
+              "description": "调用方提供的字符串请求 ID。"
+            },
+            "method": {
+              "const": "notice.finish",
+              "description": "notice.finish：按条目归属和修订处理；重复操作不重复产生副作用。"
+            },
+            "params": {
+              "$ref": "../provider/messages.schema.json#/$defs/NoticeFinishRequest",
+              "description": "关联载荷的 Schema。"
+            }
+          },
+          "required": [
+            "jsonrpc",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false,
+          "description": "notice.finish：按条目归属和修订处理；重复操作不重复产生副作用。"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0",
+              "description": "JSON-RPC 版本，固定为 2.0。"
+            },
+            "id": {
+              "$ref": "../common/types.schema.json#/$defs/RequestId",
+              "description": "调用方提供的字符串请求 ID。"
+            },
+            "method": {
+              "const": "notice.action.execute",
+              "description": "notice.action.execute：按条目归属和修订处理；重复操作不重复产生副作用。"
+            },
+            "params": {
+              "$ref": "../provider/messages.schema.json#/$defs/NoticeActionExecuteRequest",
+              "description": "关联载荷的 Schema。"
+            }
+          },
+          "required": [
+            "jsonrpc",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false,
+          "description": "notice.action.execute：按条目归属和修订处理；重复操作不重复产生副作用。"
+        },
+        {
+          "type": "object",
+          "properties": {
+            "jsonrpc": {
+              "const": "2.0",
+              "description": "JSON-RPC 版本，固定为 2.0。"
+            },
+            "id": {
+              "$ref": "../common/types.schema.json#/$defs/RequestId",
+              "description": "调用方提供的字符串请求 ID。"
+            },
+            "method": {
+              "const": "notice.observe",
+              "description": "notice.observe：按条目归属和修订处理；重复操作不重复产生副作用。"
+            },
+            "params": {
+              "$ref": "../provider/messages.schema.json#/$defs/NoticeObserveRequest",
+              "description": "关联载荷的 Schema。"
+            }
+          },
+          "required": [
+            "jsonrpc",
+            "id",
+            "method",
+            "params"
+          ],
+          "additionalProperties": false,
+          "description": "notice.observe：按条目归属和修订处理；重复操作不重复产生副作用。"
         }
       ]
     },
@@ -1255,30 +1342,6 @@
           ],
           "additionalProperties": false,
           "description": "审批已处理事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
-        },
-        {
-          "type": "object",
-          "properties": {
-            "jsonrpc": {
-              "const": "2.0",
-              "description": "JSON-RPC 版本，固定为 2.0。"
-            },
-            "method": {
-              "const": "event.notification",
-              "description": "Provider通知事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
-            },
-            "params": {
-              "$ref": "../provider/messages.schema.json#/$defs/ProviderNotificationEvent",
-              "description": "关联载荷的 Schema。"
-            }
-          },
-          "required": [
-            "jsonrpc",
-            "method",
-            "params"
-          ],
-          "additionalProperties": false,
-          "description": "Provider通知事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
         }
       ]
     },

@@ -1467,14 +1467,15 @@ pub struct ClaudeProvider {
 impl ClaudeProvider {
     pub fn new(events: Arc<dyn ProviderEventSink>) -> Self {
         let data=Arc::new(codepet_provider_data::ProviderData::default());
-        let events: Arc<dyn ProviderEventSink>=Arc::new(codepet_provider_data::UsageSink { data:data.clone(), downstream:events, provider:"claude" });
+        let usage=Arc::new(codepet_provider_data::UsageSink{data:data.clone(),downstream:events,provider:"claude"});
+        let events:Arc<dyn ProviderEventSink>=usage.clone();
         Self {
             data,
             scanner: local_runtime::RuntimeScanner::new(events.clone()),
             observation: codepet_observation::Observation::new(codepet_observation::Definition {
                 windows_command_override: false,
                 name: "claude", config: codepet_observation::config_home("CLAUDE_CONFIG_DIR", codepet_observation::home().join(".claude")).join("settings.json"), events: &["SessionStart", "SessionEnd", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PermissionRequest", "Stop", "SubagentStart", "SubagentStop", "PostToolUseFailure", "StopFailure", "Elicitation", "ElicitationResult"], plugin: None,
-            }, events.clone()),
+            }, events.clone()).with_observer(Arc::new(move |event:&codepet_observation::HookEvent|{usage.collect_hook(&event.event_id,event.received_at,&serde_json::Value::Object(event.payload.clone()));Ok(())})),
             state: Mutex::new(ProviderState {
                 host_device_id: None,
                 initialized_client_id: None,
@@ -1563,16 +1564,7 @@ impl ClaudeProvider {
 }
 
 impl Provider for ClaudeProvider {
-    fn event_subscribe<'a>(&'a self, request: codepet_provider_sdk::EventSubscribeRequest) -> codepet_provider_sdk::ProtocolFuture<'a, codepet_provider_sdk::EventSubscribeResponse> {
-        Box::pin(async move {
-            if self.is_shutdown() { return Err(codepet_provider_sdk::ProtocolError { code: "provider_shutdown".into(), message: "Provider stopped".into(), retryable: false, details: None }); }
-            if lock(&self.state).host_device_id.is_none() { return Err(protocol_error("provider_not_initialized", "Initialize Provider before subscribing".into(), false)); }
-            self.observation.subscribe(request.subscription_id).await
-        })
-    }
-    fn event_unsubscribe<'a>(&'a self, request: codepet_provider_sdk::EventUnsubscribeRequest) -> codepet_provider_sdk::ProtocolFuture<'a, codepet_provider_sdk::EventUnsubscribeResponse> {
-        Box::pin(async move { self.observation.unsubscribe(request.subscription_id).await })
-    }
+    fn notice_observe<'a>(&'a self,request:codepet_provider_sdk::NoticeObserveRequest)->codepet_provider_sdk::ProtocolFuture<'a,codepet_provider_sdk::NoticeObserveResponse>{Box::pin(async move{self.observation.observe(request.enabled).await})}
 
     fn provider_initialize<'a>(
         &'a self,

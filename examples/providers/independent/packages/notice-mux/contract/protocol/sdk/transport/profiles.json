@@ -1,0 +1,163 @@
+{
+  "formatVersion": 1,
+  "carrier": "stdio",
+  "rpc": "json-rpc-2.0",
+  "profiles": [
+    {
+      "id": "stdio-jsonrpc-v1",
+      "framing": "utf8-lf",
+      "compression": "none",
+      "multiplexing": "none",
+      "bootstrap": "provider.initialize",
+      "description": "UTF-8 JSON 按 LF 字节定界；无压缩和 mux，直接发送 Initialize。",
+      "limitsFrom": "handshake.schema.json#/$defs/ProviderTransportLimits"
+    },
+    {
+      "id": "stdio-codepet-zstd-v1",
+      "framing": "cprf-v1",
+      "compression": "zstd",
+      "multiplexing": "none",
+      "bootstrap": "provider.initialize",
+      "description": "每消息独立 zstd 压缩，以 CPRF 长度头定界；无 mux，Initialize 使用相同帧。",
+      "limitsFrom": "handshake.schema.json#/$defs/ProviderTransportLimits"
+    },
+    {
+      "id": "stdio-codepet-mux-v1",
+      "framing": "cprf-v1",
+      "compression": [
+        "raw-json",
+        "zstd-json"
+      ],
+      "multiplexing": "yamux-wire-0",
+      "bootstrap": "cpmx-v1",
+      "description": "先 CPMX 四阶段握手，再用 Yamux 多路复用；每消息 envelope/GRANT 与 CPRF raw/zstd，事件 ACK 保序。",
+      "limitsFrom": "handshake.schema.json#/$defs/ProviderTransportLimits"
+    }
+  ],
+  "description": "Host 与 Provider 支持的完整 stdio 协议组合。Profile ID 选定后双方按该组合读写，不自动探测或降级。",
+  "environmentKey": "CODEPET_PROVIDER_TRANSPORT",
+  "defaultProfile": "stdio-codepet-mux-v1",
+  "wire": {
+    "description": "stdio 帧格式、协商阶段和控制字节的权威定义，生成 Host 和内置 Provider 的常量。",
+    "bootstrap": {
+      "magic": "CPMX",
+      "version": 1,
+      "phases": {
+        "hello": 1,
+        "select": 2,
+        "confirm": 3,
+        "ready": 4
+      },
+      "confirmation": 1,
+      "maxJsonBytes": 4096,
+      "timeoutMs": 3000,
+      "features": [
+        "raw-json",
+        "zstd-json",
+        "yamux-1",
+        "message-grant",
+        "reserved-lanes",
+        "bounded-decode",
+        "reset",
+        "ordered-events"
+      ],
+      "maxSupportedVersions": 8,
+      "fields": [
+        {
+          "name": "magic",
+          "type": "bytes4",
+          "description": "协议标识"
+        },
+        {
+          "name": "version",
+          "type": "u8",
+          "description": "格式版本"
+        },
+        {
+          "name": "phase",
+          "type": "u8",
+          "description": "握手阶段"
+        },
+        {
+          "name": "jsonLength",
+          "type": "u16",
+          "description": "后续 JSON 字节长度"
+        }
+      ]
+    },
+    "frame": {
+      "magic": "CPRF",
+      "version": 1,
+      "headerBytes": 10,
+      "encodings": {
+        "raw": 0,
+        "zstd": 1
+      },
+      "fields": [
+        {
+          "name": "magic",
+          "type": "bytes4",
+          "description": "协议标识"
+        },
+        {
+          "name": "version",
+          "type": "u8",
+          "description": "格式版本"
+        },
+        {
+          "name": "encoding",
+          "type": "u8",
+          "description": "编码方式"
+        },
+        {
+          "name": "payloadLength",
+          "type": "u32",
+          "description": "后续 payload 字节长度"
+        }
+      ],
+      "zstdWindowLogMax": 27
+    },
+    "message": {
+      "version": 1,
+      "headerBytes": 10,
+      "classes": {
+        "normal": 0,
+        "small": 1,
+        "control": 2
+      },
+      "grant": 1,
+      "eventAck": 2,
+      "fields": [
+        {
+          "name": "version",
+          "type": "u8",
+          "description": "格式版本"
+        },
+        {
+          "name": "class",
+          "type": "u8",
+          "description": "消息资源通道"
+        },
+        {
+          "name": "encodedLength",
+          "type": "u32",
+          "description": "后续 CPRF 整帧字节长度"
+        },
+        {
+          "name": "decodedLength",
+          "type": "u32",
+          "description": "解码后的 UTF-8 JSON 字节长度"
+        }
+      ]
+    },
+    "compression": {
+      "thresholdBytes": 32768,
+      "largeMessageBytes": 1048576,
+      "normalLevel": 1,
+      "largeLevel": 3,
+      "minimumSavedBytes": 1024,
+      "minimumSavedPercent": 10
+    },
+    "byteOrder": "big-endian"
+  }
+}

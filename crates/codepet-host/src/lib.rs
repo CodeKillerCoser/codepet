@@ -13,6 +13,7 @@ mod gateway;
 mod providers;
 mod remote;
 mod storage;
+pub mod notices;
 mod input_queue;
 pub use codepet_provider_data::app_state::APP_STATE_DATABASE;
 mod log_origin;
@@ -24,10 +25,10 @@ pub use providers::catalog::{
 };
 pub use device::{DeviceDiagnostic, DeviceIdentity, DeviceRegistry};
 pub use error::{HostError, HostResult};
-pub use gateway::{GatewayEventSubscription, ProviderGatewayService, RemoteHostIdentity};
+pub use gateway::{NoticeActivator, GatewayEventSubscription, ProviderGatewayService, RemoteHostIdentity};
 pub use providers::instance_registry::{ProviderInstanceRecord, ProviderInstanceRegistry};
 pub use providers::manager::{
-    ProviderEventSubscription, PluginManager, PluginManagerConfig, PluginRuntimeSnapshot, PluginRuntimeState,
+    PluginManager, PluginManagerConfig, PluginRuntimeSnapshot, PluginRuntimeState,
     ProviderInstanceRuntimeSnapshot,
 };
 pub use providers::process::{
@@ -52,8 +53,6 @@ pub use remote::traffic::{ConnectionTraffic, ConnectionTrafficSnapshot};
 pub use remote::signaling_service::normalize_signaling_service;
 pub use remote::channels::webrtc::cloud::SignalingServiceController;
 
-pub mod pet_gateway;
-pub use pet_gateway::PetGateway;
 
 pub use remote::channels::webrtc::diagnostics::set_rtc_diagnostic_sink;
 

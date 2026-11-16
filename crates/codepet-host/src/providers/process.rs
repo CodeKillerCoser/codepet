@@ -74,6 +74,7 @@ enum ProcessCommand {
 pub struct ProviderInboundMessage {
     pub message: ProviderWireMessage,
     pub(crate) permit: codepet_transport::transport::mux::MessagePermit,
+    pub(crate) reply: Option<tokio::sync::oneshot::Sender<codepet_provider_sdk::JsonRpcResponse>>,
 }
 
 struct RpcShared {
@@ -143,7 +144,7 @@ impl RpcShared {
             .and_then(|sender| sender.clone())
             .ok_or_else(|| self.closed_error())?;
         sender
-            .try_send(ProviderInboundMessage { message, permit })
+            .try_send(ProviderInboundMessage { message, permit, reply: None })
             .map_err(|error| {
                 protocol_error(
                     "provider_inbound_backpressure",
@@ -151,6 +152,11 @@ impl RpcShared {
                     true,
                 )
             })
+    }
+
+    fn send_request(&self, message: ProviderWireMessage, permit: codepet_transport::transport::mux::MessagePermit, reply: tokio::sync::oneshot::Sender<codepet_provider_sdk::JsonRpcResponse>) -> Result<(), ProtocolError> {
+        let sender=self.inbound.lock().ok().and_then(|s|s.clone()).ok_or_else(||self.closed_error())?;
+        sender.try_send(ProviderInboundMessage{message,permit,reply:Some(reply)}).map_err(|_|protocol_error("provider_inbound_backpressure","Provider request queue is full",true))
     }
 
     async fn wait_inbound_consumed(&self) -> Result<(), ProtocolError> {
@@ -951,7 +957,7 @@ mod tests {
             let descriptor = PluginDescriptor {
                 plugin_id: format!("dev.codepet.terminal-{}", case.name),
                 display_name: "Failure fixture".to_string(),
-                icon: None,
+                icon: "https://example.com/provider.png".into(),
                 executable: "/bin/sh".into(),
                 args: vec![
                     "-c".to_string(),
@@ -1039,7 +1045,7 @@ mod tests {
         let descriptor = PluginDescriptor {
             plugin_id: "dev.codepet.process-tree".to_string(),
             display_name: "Process tree fixture".to_string(),
-            icon: None,
+            icon: "https://example.com/provider.png".into(),
             executable: "/bin/sh".into(),
             args: vec![
                 "-c".to_string(),

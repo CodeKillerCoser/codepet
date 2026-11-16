@@ -44,3 +44,28 @@ test('export refuses to mix existing private resources with the public SDK',asyn
   await writeFile(path.join(output,'private-source.rs'),'private');
   await assert.rejects(exportProviderSdk(output),/empty output/);
 });
+
+test('Notice-only authors receive the full contract without retired raw notifications or private layers',async()=>{
+  const output=await mkdtemp(path.join(os.tmpdir(),'provider-notice-export-'));
+  await exportProviderSdk(output);
+  const root=path.join(output,'v2');
+  const read=async name=>JSON.parse(await readFile(path.join(root,name),'utf8'));
+  assert.deepEqual((await readdir(root)).sort(),['README.md','protocol','sdk-manifest.json']);
+  const index=await read('sdk-manifest.json');
+  assert.equal(index.minProtocolVersion,4);
+  const methods=(await read(index.methods)).methods;
+  const direction=Object.fromEntries(methods.filter(m=>m.name.startsWith('notice.')).map(m=>[m.name,m.direction]));
+  assert.deepEqual(direction,{'notice.create':'pluginToHost','notice.update':'pluginToHost','notice.finish':'pluginToHost','notice.action.execute':'hostToPlugin','notice.observe':'hostToPlugin'});
+  assert.ok(!methods.some(m=>['event.subscribe','event.unsubscribe'].includes(m.name)));
+  assert.ok(!(await read(index.events)).events.some(e=>e.name==='event.notification'));
+  const common=(await read(index.commonSchema)).$defs;
+  const messages=(await read(index.providerMessagesSchema)).$defs;
+  assert.ok(common.Notice && common.NoticeAction && common.NoticeStatus);
+  assert.ok(messages.NoticeFinishRequest.required.includes('status'));
+  const descriptor=(await read(index.providerLifecycleSchema)).$defs.ProviderPluginDescriptor;
+  assert.equal(descriptor.properties.instanceKinds.minItems,0);
+  const guide=await readFile(path.join(root,index.guide),'utf8');
+  assert.match(guide,/features: \["observation"\]/);
+  assert.match(guide,/Provider 请求 \/ 响应 \/ 事件/);
+  assert.ok(!guide.includes('旧插件的运行时查询保持已有兼容入口'));
+});

@@ -1,7 +1,8 @@
 //! Shared local delivery and managed-file mechanics. Harness definitions live in each Provider.
 use axum::{extract::{DefaultBodyLimit, State}, http::{HeaderMap, StatusCode}, routing::post, Json, Router};
-use codepet_provider_sdk::{EventSubscribeResponse, EventUnsubscribeResponse, ProtocolError,
-    ProtocolEvent, ProviderEventSink, ProviderNotificationEvent};
+use codepet_provider_sdk::{NoticeObserveResponse, ProtocolError, ProviderEventSink};
+mod notices;
+pub use notices::{HookEvent,HookObserver};
 use fs2::FileExt;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -30,21 +31,25 @@ fn error(message: impl ToString) -> ProtocolError {
 struct Running {
     subscriptions: Arc<Mutex<BTreeSet<String>>>,
     server: JoinHandle<()>,
+    worker: JoinHandle<()>,
     _lock: fs::File,
     endpoint: PathBuf,
 }
-impl Drop for Running { fn drop(&mut self) { self.server.abort(); let _ = fs::remove_file(&self.endpoint); } }
+impl Drop for Running { fn drop(&mut self) { self.server.abort(); self.worker.abort(); let _ = fs::remove_file(&self.endpoint); } }
 
 pub struct Observation {
     definition: Definition,
     sink: Arc<dyn ProviderEventSink>,
+    observer: Option<Arc<dyn HookObserver>>,
     running: AsyncMutex<Option<Running>>,
 }
 impl Observation {
     pub fn new(definition: Definition, sink: Arc<dyn ProviderEventSink>) -> Self {
-        Self { definition, sink, running: AsyncMutex::new(None) }
+        Self { definition, sink, observer:None, running: AsyncMutex::new(None) }
     }
-    pub async fn subscribe(&self, id: String) -> Result<EventSubscribeResponse, ProtocolError> {
+    pub fn with_observer(mut self,observer:Arc<dyn HookObserver>)->Self{self.observer=Some(observer);self}
+    pub async fn observe(&self,enabled:bool)->Result<NoticeObserveResponse,ProtocolError>{if enabled{self.subscribe("notice-host".into()).await}else{self.unsubscribe("notice-host".into()).await}}
+    pub async fn subscribe(&self, id: String) -> Result<NoticeObserveResponse, ProtocolError> {
         if id.is_empty() || id.len() > 128 { return Err(error("Invalid subscription id")); }
         let mut running = self.running.lock().await;
         if running.is_none() {
@@ -72,32 +77,34 @@ impl Observation {
                 install_hooks_with_options(&self.definition.config, &script_path, &endpoint_path, self.definition.events, self.definition.windows_command_override)?;
             }
             let subscriptions = Arc::new(Mutex::new(BTreeSet::from([id.clone()])));
-            let state = Intake { token, sink: self.sink.clone(), subscriptions: subscriptions.clone(),
-                events: self.definition.events, gap: Arc::new(AtomicBool::new(false)) };
+            let (input,mut incoming)=tokio::sync::mpsc::channel::<(HookEvent,bool)>(256);
+            let observer=self.observer.clone();let mut publisher=notices::Publisher::new(self.definition.name,self.sink.clone());
+            let worker=tokio::spawn(async move {while let Some((event,publish))=incoming.recv().await{if let Some(observer)=observer.as_ref(){let _=observer.observe(&event);}if publish{if let Err(error)=publisher.apply(event).await{eprintln!("Notice publication failed: {}",error.message);}}}});
+            let state=Intake{token,input,subscriptions:subscriptions.clone(),events:self.definition.events,gap:Arc::new(AtomicBool::new(false))};
             let app = Router::new().route("/event", post(receive)).layer(DefaultBodyLimit::max(256 * 1024)).with_state(state);
             let server = tokio::spawn(async move { let _ = axum::serve(listener, app).await; });
-            *running = Some(Running { subscriptions, server, _lock: lock, endpoint: endpoint_path });
+            *running = Some(Running { subscriptions, server, worker, _lock: lock, endpoint: endpoint_path });
         } else {
             let ids = &running.as_ref().unwrap().subscriptions;
             let mut ids = ids.lock().unwrap();
             if ids.len() >= 8 && !ids.contains(&id) { return Err(error("Activity subscriber limit reached")); }
             ids.insert(id.clone());
         }
-        Ok(EventSubscribeResponse { subscription_id: id, message: format!("{} 接入已安装；请在原应用信任配置并开始新任务，收到事件后才可确认生效", self.definition.name) })
+        Ok(NoticeObserveResponse { enabled:true, message: format!("{} 接入已安装；请在原应用信任配置并开始新任务，收到事件后才可确认生效", self.definition.name) })
     }
-    pub async fn unsubscribe(&self, id: String) -> Result<EventUnsubscribeResponse, ProtocolError> {
+    pub async fn unsubscribe(&self, id: String) -> Result<NoticeObserveResponse, ProtocolError> {
         let mut running = self.running.lock().await;
         if let Some(active) = running.as_ref() {
             let empty = { let mut ids = active.subscriptions.lock().unwrap(); ids.remove(&id); ids.is_empty() };
             if empty { *running = None; }
         }
-        Ok(EventUnsubscribeResponse { subscription_id: id })
+        Ok(NoticeObserveResponse { enabled:false,message:"观察发布已关闭".into() })
     }
     pub async fn shutdown(&self) { self.running.lock().await.take(); }
 }
 
 #[derive(Clone)]
-struct Intake { token: String, sink: Arc<dyn ProviderEventSink>, subscriptions: Arc<Mutex<BTreeSet<String>>>, events: &'static [&'static str], gap: Arc<AtomicBool> }
+struct Intake { token: String, input: tokio::sync::mpsc::Sender<(HookEvent,bool)>, subscriptions: Arc<Mutex<BTreeSet<String>>>, events: &'static [&'static str], gap: Arc<AtomicBool> }
 #[derive(Deserialize)]
 #[serde(rename_all="camelCase")]
 struct Incoming { event_id: String, payload: serde_json::Map<String, Value> }
@@ -106,12 +113,10 @@ async fn receive(State(state): State<Intake>, headers: HeaderMap, Json(input): J
     let name = input.payload.get("hook_event_name").or_else(|| input.payload.get("type")).and_then(Value::as_str).unwrap_or("");
     if !state.events.contains(&name) || input.event_id.is_empty() || input.event_id.len() > 128 { return StatusCode::BAD_REQUEST; }
     let received_at = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-    let payload = json!({"codepet_observation": {"raw": input.payload, "gap": state.gap.swap(false, Ordering::SeqCst)}}).as_object().unwrap().clone();
-    for subscription_id in state.subscriptions.lock().unwrap().iter() {
-        let params = ProviderNotificationEvent { subscription_id: subscription_id.clone(), event_id: input.event_id.clone(),
-            received_at, payload: payload.clone().into_iter().collect() };
-        if state.sink.publish(ProtocolEvent::EventNotification { jsonrpc: "2.0".into(), params }).is_err() { state.gap.store(true, Ordering::SeqCst); return StatusCode::SERVICE_UNAVAILABLE; }
-    }
+    let payload=input.payload;
+    let gap=state.gap.swap(false,Ordering::SeqCst);
+    let publish=state.subscriptions.lock().unwrap().contains("notice-host");
+    if state.input.try_send((HookEvent{event_id:input.event_id,received_at,gap,payload},publish)).is_err(){state.gap.store(true,Ordering::SeqCst);return StatusCode::SERVICE_UNAVAILABLE;}
     StatusCode::NO_CONTENT
 }
 
@@ -235,42 +240,29 @@ mod tests {
     }
     #[tokio::test]
     async fn observation_preserves_raw_object_when_reporting_a_gap() {
-        let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
-        let sink: Arc<dyn ProviderEventSink> = Arc::new(move |e| { sender.send(e).unwrap(); Ok(()) });
-        let intake = Intake { token: "secret".into(), sink, subscriptions: Arc::new(Mutex::new(BTreeSet::from(["host".into()]))),
-            events: &["Stop"], gap: Arc::new(AtomicBool::new(true)) };
-        let raw = json!({"hook_event_name":"Stop", "codepet_gap":"native value", "nested":{"text":"原始内容", "null":null}});
-        let mut headers = HeaderMap::new(); headers.insert("authorization", "secret".parse().unwrap());
-        assert_eq!(receive(State(intake), headers, Json(Incoming { event_id:"one".into(), payload:raw.as_object().unwrap().clone() })).await, StatusCode::NO_CONTENT);
-        let ProtocolEvent::EventNotification { params, .. } = events.recv().await.unwrap() else { panic!("wrong event") };
-        assert_eq!(params.payload["codepet_observation"]["raw"], raw);
-        assert_eq!(params.payload["codepet_observation"]["gap"], true);
+        let (input,mut events)=tokio::sync::mpsc::channel(2);
+        let intake=Intake{token:"secret".into(),input,subscriptions:Arc::new(Mutex::new(BTreeSet::from(["notice-host".into()]))),events:&["Stop"],gap:Arc::new(AtomicBool::new(true))};
+        let raw=json!({"hook_event_name":"Stop","codepet_gap":"native value","nested":{"text":"原始内容","null":null}});
+        let mut headers=HeaderMap::new();headers.insert("authorization","secret".parse().unwrap());
+        assert_eq!(receive(State(intake.clone()),headers.clone(),Json(Incoming{event_id:"one".into(),payload:raw.as_object().unwrap().clone()})).await,StatusCode::NO_CONTENT);
+        let (event,publish)=events.recv().await.unwrap();assert_eq!(Value::Object(event.payload),raw);assert!(event.gap&&publish);
+        assert_eq!(receive(State(intake.clone()),HeaderMap::new(),Json(Incoming{event_id:"two".into(),payload:raw.as_object().unwrap().clone()})).await,StatusCode::UNAUTHORIZED);
+        for id in ["one","two"]{assert_eq!(receive(State(intake.clone()),headers.clone(),Json(Incoming{event_id:id.into(),payload:raw.as_object().unwrap().clone()})).await,StatusCode::NO_CONTENT);}
+        assert_eq!(receive(State(intake.clone()),headers.clone(),Json(Incoming{event_id:"overflow".into(),payload:raw.as_object().unwrap().clone()})).await,StatusCode::SERVICE_UNAVAILABLE);
+        events.recv().await.unwrap();events.recv().await.unwrap();
+        assert_eq!(receive(State(intake),headers,Json(Incoming{event_id:"after".into(),payload:raw.as_object().unwrap().clone()})).await,StatusCode::NO_CONTENT);assert!(events.recv().await.unwrap().0.gap);
     }
 
     #[tokio::test]
     async fn source_subscription_delivers_only_to_active_subscribers_and_releases_owner() {
         let temp = tempfile::tempdir().unwrap();
-        let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
-        let sink: Arc<dyn ProviderEventSink> = Arc::new(move |e| { sender.send(e).unwrap(); Ok(()) });
-        let make = || Observation::new(Definition { windows_command_override: true, name:"test", config:temp.path().join("hooks.json"), events:&["Stop"], plugin:None }, sink.clone());
-        let observer = make();
-        observer.subscribe("one".into()).await.unwrap();
-        observer.subscribe("two".into()).await.unwrap();
-        observer.unsubscribe("one".into()).await.unwrap();
-        let other = make();
-        assert!(other.subscribe("other".into()).await.is_err());
-        let endpoint: Value = serde_json::from_slice(&fs::read(temp.path().join("codepet-observation/endpoint.json")).unwrap()).unwrap();
-        let intake = Intake { token: endpoint["token"].as_str().unwrap().into(), sink: sink.clone(), subscriptions:observer.running.lock().await.as_ref().unwrap().subscriptions.clone(), events:&["Stop"], gap:Arc::new(AtomicBool::new(false)) };
-        let mut headers = HeaderMap::new();
-        headers.insert("authorization", endpoint["token"].as_str().unwrap().parse().unwrap());
-        let status = receive(State(intake), headers, Json(Incoming { event_id:"event-one".into(), payload:json!({"hook_event_name":"Stop"}).as_object().unwrap().clone() })).await;
-        assert_eq!(status, StatusCode::NO_CONTENT);
-        let ProtocolEvent::EventNotification { params, .. } = events.recv().await.unwrap() else { panic!("wrong event") };
-        assert_eq!(params.subscription_id,"two");
-        assert!(events.try_recv().is_err());
-        observer.unsubscribe("two".into()).await.unwrap();
-        other.subscribe("other".into()).await.unwrap();
-        other.shutdown().await;
+        let sink:Arc<dyn ProviderEventSink>=Arc::new(|_|Ok(()));
+        let make=||Observation::new(Definition{windows_command_override:true,name:"test",config:temp.path().join("hooks.json"),events:&["Stop"],plugin:None},sink.clone());
+        let observer=make();observer.subscribe("internal".into()).await.unwrap();observer.observe(true).await.unwrap();
+        let other=make();assert!(other.observe(true).await.is_err());
+        observer.observe(false).await.unwrap();assert!(observer.running.lock().await.is_some());
+        observer.unsubscribe("internal".into()).await.unwrap();assert!(observer.running.lock().await.is_none());
+        other.observe(true).await.unwrap();other.shutdown().await;
     }
     #[tokio::test]
     async fn installed_bridge_receives_multiple_processes_and_fails_open_when_offline() {
@@ -283,8 +275,9 @@ mod tests {
     async fn check_installed_bridge(codex: bool) {
         let temp = tempfile::tempdir().unwrap();
         let (sender, mut events) = tokio::sync::mpsc::unbounded_channel();
-        let sink: Arc<dyn ProviderEventSink> = Arc::new(move |e| { sender.send(e).unwrap(); Ok(()) });
-        let observer = Observation::new(Definition { windows_command_override: codex, name:"test", config:temp.path().join("hooks.json"), events:&["UserPromptSubmit"], plugin:None }, sink);
+        let sink: Arc<dyn ProviderEventSink> = Arc::new(|_|Ok(()));
+        let hook_observer:Arc<dyn HookObserver>=Arc::new(move |e:&HookEvent|{sender.send(e.payload.clone()).unwrap();Ok(())});
+        let observer = Observation::new(Definition { windows_command_override: codex, name:"test", config:temp.path().join("hooks.json"), events:&["UserPromptSubmit"], plugin:None }, sink).with_observer(hook_observer);
         observer.subscribe("host".into()).await.unwrap();
         let script = temp.path().join("codepet-observation").join("forward.mjs");
         let endpoint = temp.path().join("codepet-observation").join("endpoint.json");
@@ -340,8 +333,7 @@ mod tests {
         let mut sessions = BTreeSet::new();
         for _ in 0..2 {
             let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv()).await.unwrap().unwrap();
-            let ProtocolEvent::EventNotification { params, .. } = event else { panic!("wrong event") };
-            sessions.insert(params.payload["codepet_observation"]["raw"]["session_id"].as_str().unwrap().to_string());
+            sessions.insert(event["session_id"].as_str().unwrap().to_string());
         }
         assert_eq!(sessions, BTreeSet::from(["one".into(), "two".into()]));
         run("noise", "Notification").await.unwrap();

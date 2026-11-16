@@ -80,7 +80,7 @@ async fn provider() {
         StdioServerOptions::default(), |events| Fixture { text, events }).await.unwrap();
 }
 async fn trial(profile: &str, direction: &str, size: usize, rate: usize) -> Value {
-    let process = Arc::new(PluginProcess::spawn(&PluginDescriptor { plugin_id: "dev.codepet.mux-bench".into(), display_name: "benchmark".into(), icon: None,
+    let process = Arc::new(PluginProcess::spawn(&PluginDescriptor { plugin_id: "dev.codepet.mux-bench".into(), display_name: "benchmark".into(), icon: "data:image/svg+xml,%3Csvg xmlns=\"http://www.w3.org/2000/svg\"/%3E".into(),
         executable: std::env::current_exe().unwrap(), args: vec!["--provider".into()], env: BTreeMap::from([
             (TRANSPORT_ENV.into(), profile.into()), ("BENCH_DIRECTION".into(), direction.into()), ("BENCH_RATE".into(), rate.to_string()), ("BENCH_SIZE".into(), size.to_string())]),
         enabled: true, instances: vec![] }, PluginProcessOptions { stderr_observer: Some(diagnostic), ..PluginProcessOptions::default() }).unwrap());

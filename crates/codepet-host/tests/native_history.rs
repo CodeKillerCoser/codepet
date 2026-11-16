@@ -14,7 +14,7 @@ async fn installed_opencode_history_through_host_transport() {
         &PluginDescriptor {
             plugin_id: "dev.codepet.opencode".into(),
             display_name: "History diagnostic".into(),
-            icon: None,
+            icon: "https://example.com/provider.png".into(),
             executable: binary,
             args: vec![],
             env: Default::default(),

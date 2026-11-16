@@ -189,7 +189,6 @@ impl PluginManager {
         }
         // Dropping the hub closes every local observer. Subscription operations
         // share the per-plugin lifecycle gate, so no late hub can be inserted.
-        self.inner.subscriptions.lock().map_err(|_| update_channel_error())?.remove(plugin_id);
         let catalog = {
             let plugins = self.inner.plugins.read().await;
             PluginCatalog::from_entries(plugins.iter().filter(|(id, _)| id.as_str() != plugin_id).map(|(_, entry)| entry.catalog.clone()))?
@@ -202,6 +201,9 @@ impl PluginManager {
         }
         // Failure here is reported; the stopped entry can be removed again even
         // though its files are already gone. Never report a partial uninstall as success.
+        let notices=self.inner.notices.clone();let id=plugin_id.to_owned();
+        tokio::task::spawn_blocking(move||notices.remove_plugin(&id)).await.map_err(import_error)?.map_err(HostError::from)?;
+        self.inner.notice_sources.lock().map_err(|_|update_channel_error())?.remove(plugin_id);
         self.inner.instances.synchronize_catalog(&catalog)?;
         let mut plugins = self.inner.plugins.write().await;
         plugins.remove(plugin_id);

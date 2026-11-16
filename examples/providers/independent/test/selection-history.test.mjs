@@ -153,7 +153,7 @@ for (const [backend, profile] of [
       hostClientId: "test",
       hostDeviceId: "test",
       hostVersion: "test",
-      protocol: { version: 2, minVersion: 2 },
+      protocol: { version: 4, minVersion: 4 },
     });
     const route = {
       deviceId: "test",

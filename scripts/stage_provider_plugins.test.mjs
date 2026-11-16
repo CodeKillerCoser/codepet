@@ -55,11 +55,12 @@ test("staging contains Provider plugins and only the language-neutral extension 
     await writeFile(
       path.join(sourceDirectory, "codepet-provider.json"),
       JSON.stringify({
-        manifestVersion: 1,
+        manifestVersion: 2,
+        transport: "stdio-codepet-mux-v1",
         pluginId: provider.pluginId,
         displayName: provider.name,
         icon: provider.icon,
-        executable: provider.packageName,
+        command: provider.packageName,
         enabled: true,
         instances: [],
       }),
@@ -137,7 +138,9 @@ test("staging contains Provider plugins and only the language-neutral extension 
       );
       assert.equal(manifest.pluginId, provider.pluginId);
       assert.equal(manifest.icon, provider.icon);
-      assert.equal(manifest.executable, executable);
+      assert.equal(manifest.command, executable);
+      assert.equal(manifest.manifestVersion, 2);
+      assert.equal(manifest.executable, undefined);
       assert.deepEqual((await readdir(providerDirectory)).sort(), [
         "codepet-provider.json",
         executable,

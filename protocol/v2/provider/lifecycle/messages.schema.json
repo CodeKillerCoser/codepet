@@ -160,9 +160,9 @@
             "$ref": "../instance/messages.schema.json#/$defs/ProviderInstanceKind",
             "description": "清单中单个元素的结构与约束。"
           },
-          "minItems": 1,
+          "minItems": 0,
           "uniqueItems": true,
-          "description": "插件支持的实例种类清单。"
+          "description": "此插件可提供的 Agent 实例种类；纯 observation 插件必须允许空数组，不要求虚构实例类型。"
         },
         "protocol": {
           "$ref": "../../common/types.schema.json#/$defs/ProtocolVersionOffer",
@@ -175,7 +175,7 @@
             "description": "单项插件功能。"
           },
           "uniqueItems": true,
-          "description": "插件显式声明的可组合功能。缺失表示旧插件未声明，不通过方法前缀、名称、实例数量或运行时推断类型；空数组表示未提供这些已知功能。"
+          "description": "插件显式声明的可组合功能。缺失表示插件未声明功能，不通过方法前缀、名称、实例数量或运行时推断类型；空数组表示未提供这些已知功能。独立插件应显式声明实现的功能。"
         }
       },
       "required": [

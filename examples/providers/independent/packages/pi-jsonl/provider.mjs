@@ -480,9 +480,9 @@ var require_codegen = __commonJS({
       }
     };
     var Throw = class extends Node {
-      constructor(error) {
+      constructor(error2) {
         super();
-        this.error = error;
+        this.error = error2;
       }
       render({ _n }) {
         return `throw ${this.error};` + _n;
@@ -719,9 +719,9 @@ var require_codegen = __commonJS({
       }
     };
     var Catch = class extends BlockNode {
-      constructor(error) {
+      constructor(error2) {
         super();
-        this.error = error;
+        this.error = error2;
       }
       render(opts) {
         return `catch(${this.error})` + super.render(opts);
@@ -912,9 +912,9 @@ var require_codegen = __commonJS({
         this._blockNode(node);
         this.code(tryBody);
         if (catchCode) {
-          const error = this.name("e");
-          this._currNode = node.catch = new Catch(error);
-          catchCode(error);
+          const error2 = this.name("e");
+          this._currNode = node.catch = new Catch(error2);
+          catchCode(error2);
         }
         if (finallyCode) {
           this._currNode = node.finally = new Finally();
@@ -923,8 +923,8 @@ var require_codegen = __commonJS({
         return this._endBlockNode(Catch, Finally);
       }
       // `throw` statement
-      throw(error) {
-        return this._leafNode(new Throw(error));
+      throw(error2) {
+        return this._leafNode(new Throw(error2));
       }
       // start self-balancing block
       block(body, nodeCount) {
@@ -1280,10 +1280,10 @@ var require_errors = __commonJS({
     exports.keyword$DataError = {
       message: ({ keyword, schemaType }) => schemaType ? (0, codegen_1.str)`"${keyword}" keyword must be ${schemaType} ($data)` : (0, codegen_1.str)`"${keyword}" keyword is invalid ($data)`
     };
-    function reportError(cxt, error = exports.keywordError, errorPaths, overrideAllErrors) {
+    function reportError(cxt, error2 = exports.keywordError, errorPaths, overrideAllErrors) {
       const { it } = cxt;
       const { gen, compositeRule, allErrors } = it;
-      const errObj = errorObjectCode(cxt, error, errorPaths);
+      const errObj = errorObjectCode(cxt, error2, errorPaths);
       if (overrideAllErrors !== null && overrideAllErrors !== void 0 ? overrideAllErrors : compositeRule || allErrors) {
         addError(gen, errObj);
       } else {
@@ -1291,10 +1291,10 @@ var require_errors = __commonJS({
       }
     }
     exports.reportError = reportError;
-    function reportExtraError(cxt, error = exports.keywordError, errorPaths) {
+    function reportExtraError(cxt, error2 = exports.keywordError, errorPaths) {
       const { it } = cxt;
       const { gen, compositeRule, allErrors } = it;
-      const errObj = errorObjectCode(cxt, error, errorPaths);
+      const errObj = errorObjectCode(cxt, error2, errorPaths);
       addError(gen, errObj);
       if (!(compositeRule || allErrors)) {
         returnErrors(it, names_1.default.vErrors);
@@ -1345,19 +1345,19 @@ var require_errors = __commonJS({
       schema: new codegen_1.Name("schema"),
       parentSchema: new codegen_1.Name("parentSchema")
     };
-    function errorObjectCode(cxt, error, errorPaths) {
+    function errorObjectCode(cxt, error2, errorPaths) {
       const { createErrors } = cxt.it;
       if (createErrors === false)
         return (0, codegen_1._)`{}`;
-      return errorObject(cxt, error, errorPaths);
+      return errorObject(cxt, error2, errorPaths);
     }
-    function errorObject(cxt, error, errorPaths = {}) {
+    function errorObject(cxt, error2, errorPaths = {}) {
       const { gen, it } = cxt;
       const keyValues = [
         errorInstancePath(it, errorPaths),
         errorSchemaPath(cxt, errorPaths)
       ];
-      extraErrorProps(cxt, error, keyValues);
+      extraErrorProps(cxt, error2, keyValues);
       return gen.object(...keyValues);
     }
     function errorInstancePath({ errorPath }, { instancePath }) {
@@ -5078,7 +5078,7 @@ var require_limitNumber = __commonJS({
       exclusiveMaximum: { okStr: "<", ok: ops.LT, fail: ops.GTE },
       exclusiveMinimum: { okStr: ">", ok: ops.GT, fail: ops.LTE }
     };
-    var error = {
+    var error2 = {
       message: ({ keyword, schemaCode }) => (0, codegen_1.str)`must be ${KWDs[keyword].okStr} ${schemaCode}`,
       params: ({ keyword, schemaCode }) => (0, codegen_1._)`{comparison: ${KWDs[keyword].okStr}, limit: ${schemaCode}}`
     };
@@ -5087,7 +5087,7 @@ var require_limitNumber = __commonJS({
       type: "number",
       schemaType: "number",
       $data: true,
-      error,
+      error: error2,
       code(cxt) {
         const { keyword, data, schemaCode } = cxt;
         cxt.fail$data((0, codegen_1._)`${data} ${KWDs[keyword].fail} ${schemaCode} || isNaN(${data})`);
@@ -5103,7 +5103,7 @@ var require_multipleOf = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
-    var error = {
+    var error2 = {
       message: ({ schemaCode }) => (0, codegen_1.str)`must be multiple of ${schemaCode}`,
       params: ({ schemaCode }) => (0, codegen_1._)`{multipleOf: ${schemaCode}}`
     };
@@ -5112,7 +5112,7 @@ var require_multipleOf = __commonJS({
       type: "number",
       schemaType: "number",
       $data: true,
-      error,
+      error: error2,
       code(cxt) {
         const { gen, data, schemaCode, it } = cxt;
         const prec = it.opts.multipleOfPrecision;
@@ -5159,7 +5159,7 @@ var require_limitLength = __commonJS({
     var codegen_1 = require_codegen();
     var util_1 = require_util();
     var ucs2length_1 = require_ucs2length();
-    var error = {
+    var error2 = {
       message({ keyword, schemaCode }) {
         const comp = keyword === "maxLength" ? "more" : "fewer";
         return (0, codegen_1.str)`must NOT have ${comp} than ${schemaCode} characters`;
@@ -5171,7 +5171,7 @@ var require_limitLength = __commonJS({
       type: "string",
       schemaType: "number",
       $data: true,
-      error,
+      error: error2,
       code(cxt) {
         const { keyword, data, schemaCode, it } = cxt;
         const op = keyword === "maxLength" ? codegen_1.operators.GT : codegen_1.operators.LT;
@@ -5191,7 +5191,7 @@ var require_pattern = __commonJS({
     var code_1 = require_code2();
     var util_1 = require_util();
     var codegen_1 = require_codegen();
-    var error = {
+    var error2 = {
       message: ({ schemaCode }) => (0, codegen_1.str)`must match pattern "${schemaCode}"`,
       params: ({ schemaCode }) => (0, codegen_1._)`{pattern: ${schemaCode}}`
     };
@@ -5200,7 +5200,7 @@ var require_pattern = __commonJS({
       type: "string",
       schemaType: "string",
       $data: true,
-      error,
+      error: error2,
       code(cxt) {
         const { gen, data, $data, schema, schemaCode, it } = cxt;
         const u = it.opts.unicodeRegExp ? "u" : "";
@@ -5226,7 +5226,7 @@ var require_limitProperties = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
-    var error = {
+    var error2 = {
       message({ keyword, schemaCode }) {
         const comp = keyword === "maxProperties" ? "more" : "fewer";
         return (0, codegen_1.str)`must NOT have ${comp} than ${schemaCode} properties`;
@@ -5238,7 +5238,7 @@ var require_limitProperties = __commonJS({
       type: "object",
       schemaType: "number",
       $data: true,
-      error,
+      error: error2,
       code(cxt) {
         const { keyword, data, schemaCode } = cxt;
         const op = keyword === "maxProperties" ? codegen_1.operators.GT : codegen_1.operators.LT;
@@ -5257,7 +5257,7 @@ var require_required = __commonJS({
     var code_1 = require_code2();
     var codegen_1 = require_codegen();
     var util_1 = require_util();
-    var error = {
+    var error2 = {
       message: ({ params: { missingProperty } }) => (0, codegen_1.str)`must have required property '${missingProperty}'`,
       params: ({ params: { missingProperty } }) => (0, codegen_1._)`{missingProperty: ${missingProperty}}`
     };
@@ -5266,7 +5266,7 @@ var require_required = __commonJS({
       type: "object",
       schemaType: "array",
       $data: true,
-      error,
+      error: error2,
       code(cxt) {
         const { gen, schema, schemaCode, data, $data, it } = cxt;
         const { opts } = it;
@@ -5337,7 +5337,7 @@ var require_limitItems = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
-    var error = {
+    var error2 = {
       message({ keyword, schemaCode }) {
         const comp = keyword === "maxItems" ? "more" : "fewer";
         return (0, codegen_1.str)`must NOT have ${comp} than ${schemaCode} items`;
@@ -5349,7 +5349,7 @@ var require_limitItems = __commonJS({
       type: "array",
       schemaType: "number",
       $data: true,
-      error,
+      error: error2,
       code(cxt) {
         const { keyword, data, schemaCode } = cxt;
         const op = keyword === "maxItems" ? codegen_1.operators.GT : codegen_1.operators.LT;
@@ -5380,7 +5380,7 @@ var require_uniqueItems = __commonJS({
     var codegen_1 = require_codegen();
     var util_1 = require_util();
     var equal_1 = require_equal();
-    var error = {
+    var error2 = {
       message: ({ params: { i, j } }) => (0, codegen_1.str)`must NOT have duplicate items (items ## ${j} and ${i} are identical)`,
       params: ({ params: { i, j } }) => (0, codegen_1._)`{i: ${i}, j: ${j}}`
     };
@@ -5389,7 +5389,7 @@ var require_uniqueItems = __commonJS({
       type: "array",
       schemaType: "boolean",
       $data: true,
-      error,
+      error: error2,
       code(cxt) {
         const { gen, data, $data, schema, parentSchema, schemaCode, it } = cxt;
         if (!$data && !schema)
@@ -5446,14 +5446,14 @@ var require_const = __commonJS({
     var codegen_1 = require_codegen();
     var util_1 = require_util();
     var equal_1 = require_equal();
-    var error = {
+    var error2 = {
       message: "must be equal to constant",
       params: ({ schemaCode }) => (0, codegen_1._)`{allowedValue: ${schemaCode}}`
     };
     var def = {
       keyword: "const",
       $data: true,
-      error,
+      error: error2,
       code(cxt) {
         const { gen, data, $data, schemaCode, schema } = cxt;
         if ($data || schema && typeof schema == "object") {
@@ -5475,7 +5475,7 @@ var require_enum = __commonJS({
     var codegen_1 = require_codegen();
     var util_1 = require_util();
     var equal_1 = require_equal();
-    var error = {
+    var error2 = {
       message: "must be equal to one of the allowed values",
       params: ({ schemaCode }) => (0, codegen_1._)`{allowedValues: ${schemaCode}}`
     };
@@ -5483,7 +5483,7 @@ var require_enum = __commonJS({
       keyword: "enum",
       schemaType: "array",
       $data: true,
-      error,
+      error: error2,
       code(cxt) {
         const { gen, data, $data, schema, schemaCode, it } = cxt;
         if (!$data && schema.length === 0)
@@ -5562,7 +5562,7 @@ var require_additionalItems = __commonJS({
     exports.validateAdditionalItems = void 0;
     var codegen_1 = require_codegen();
     var util_1 = require_util();
-    var error = {
+    var error2 = {
       message: ({ params: { len } }) => (0, codegen_1.str)`must NOT have more than ${len} items`,
       params: ({ params: { len } }) => (0, codegen_1._)`{limit: ${len}}`
     };
@@ -5571,7 +5571,7 @@ var require_additionalItems = __commonJS({
       type: "array",
       schemaType: ["boolean", "object"],
       before: "uniqueItems",
-      error,
+      error: error2,
       code(cxt) {
         const { parentSchema, it } = cxt;
         const { items } = parentSchema;
@@ -5690,7 +5690,7 @@ var require_items2020 = __commonJS({
     var util_1 = require_util();
     var code_1 = require_code2();
     var additionalItems_1 = require_additionalItems();
-    var error = {
+    var error2 = {
       message: ({ params: { len } }) => (0, codegen_1.str)`must NOT have more than ${len} items`,
       params: ({ params: { len } }) => (0, codegen_1._)`{limit: ${len}}`
     };
@@ -5699,7 +5699,7 @@ var require_items2020 = __commonJS({
       type: "array",
       schemaType: ["object", "boolean"],
       before: "uniqueItems",
-      error,
+      error: error2,
       code(cxt) {
         const { schema, parentSchema, it } = cxt;
         const { prefixItems } = parentSchema;
@@ -5723,7 +5723,7 @@ var require_contains = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var util_1 = require_util();
-    var error = {
+    var error2 = {
       message: ({ params: { min, max } }) => max === void 0 ? (0, codegen_1.str)`must contain at least ${min} valid item(s)` : (0, codegen_1.str)`must contain at least ${min} and no more than ${max} valid item(s)`,
       params: ({ params: { min, max } }) => max === void 0 ? (0, codegen_1._)`{minContains: ${min}}` : (0, codegen_1._)`{minContains: ${min}, maxContains: ${max}}`
     };
@@ -5733,7 +5733,7 @@ var require_contains = __commonJS({
       schemaType: ["object", "boolean"],
       before: "uniqueItems",
       trackErrors: true,
-      error,
+      error: error2,
       code(cxt) {
         const { gen, schema, parentSchema, data, it } = cxt;
         let min;
@@ -5911,7 +5911,7 @@ var require_propertyNames = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var util_1 = require_util();
-    var error = {
+    var error2 = {
       message: "property name must be valid",
       params: ({ params }) => (0, codegen_1._)`{propertyName: ${params.propertyName}}`
     };
@@ -5919,7 +5919,7 @@ var require_propertyNames = __commonJS({
       keyword: "propertyNames",
       type: "object",
       schemaType: ["object", "boolean"],
-      error,
+      error: error2,
       code(cxt) {
         const { gen, schema, data, it } = cxt;
         if ((0, util_1.alwaysValidSchema)(it, schema))
@@ -5956,7 +5956,7 @@ var require_additionalProperties = __commonJS({
     var codegen_1 = require_codegen();
     var names_1 = require_names();
     var util_1 = require_util();
-    var error = {
+    var error2 = {
       message: "must NOT have additional properties",
       params: ({ params }) => (0, codegen_1._)`{additionalProperty: ${params.additionalProperty}}`
     };
@@ -5966,7 +5966,7 @@ var require_additionalProperties = __commonJS({
       schemaType: ["boolean", "object"],
       allowUndefined: true,
       trackErrors: true,
-      error,
+      error: error2,
       code(cxt) {
         const { gen, schema, parentSchema, data, errsCount, it } = cxt;
         if (!errsCount)
@@ -6240,7 +6240,7 @@ var require_oneOf = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var util_1 = require_util();
-    var error = {
+    var error2 = {
       message: "must match exactly one schema in oneOf",
       params: ({ params }) => (0, codegen_1._)`{passingSchemas: ${params.passing}}`
     };
@@ -6248,7 +6248,7 @@ var require_oneOf = __commonJS({
       keyword: "oneOf",
       schemaType: "array",
       trackErrors: true,
-      error,
+      error: error2,
       code(cxt) {
         const { gen, schema, parentSchema, it } = cxt;
         if (!Array.isArray(schema))
@@ -6325,7 +6325,7 @@ var require_if = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var util_1 = require_util();
-    var error = {
+    var error2 = {
       message: ({ params }) => (0, codegen_1.str)`must match "${params.ifClause}" schema`,
       params: ({ params }) => (0, codegen_1._)`{failingKeyword: ${params.ifClause}}`
     };
@@ -6333,7 +6333,7 @@ var require_if = __commonJS({
       keyword: "if",
       schemaType: ["object", "boolean"],
       trackErrors: true,
-      error,
+      error: error2,
       code(cxt) {
         const { gen, parentSchema, it } = cxt;
         if (parentSchema.then === void 0 && parentSchema.else === void 0) {
@@ -6658,7 +6658,7 @@ var require_unevaluatedProperties = __commonJS({
     var codegen_1 = require_codegen();
     var util_1 = require_util();
     var names_1 = require_names();
-    var error = {
+    var error2 = {
       message: "must NOT have unevaluated properties",
       params: ({ params }) => (0, codegen_1._)`{unevaluatedProperty: ${params.unevaluatedProperty}}`
     };
@@ -6667,7 +6667,7 @@ var require_unevaluatedProperties = __commonJS({
       type: "object",
       schemaType: ["boolean", "object"],
       trackErrors: true,
-      error,
+      error: error2,
       code(cxt) {
         const { gen, schema, data, errsCount, it } = cxt;
         if (!errsCount)
@@ -6723,7 +6723,7 @@ var require_unevaluatedItems = __commonJS({
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
     var util_1 = require_util();
-    var error = {
+    var error2 = {
       message: ({ params: { len } }) => (0, codegen_1.str)`must NOT have more than ${len} items`,
       params: ({ params: { len } }) => (0, codegen_1._)`{limit: ${len}}`
     };
@@ -6731,7 +6731,7 @@ var require_unevaluatedItems = __commonJS({
       keyword: "unevaluatedItems",
       type: "array",
       schemaType: ["boolean", "object"],
-      error,
+      error: error2,
       code(cxt) {
         const { gen, schema, data, it } = cxt;
         const items = it.items || 0;
@@ -6778,7 +6778,7 @@ var require_format = __commonJS({
     "use strict";
     Object.defineProperty(exports, "__esModule", { value: true });
     var codegen_1 = require_codegen();
-    var error = {
+    var error2 = {
       message: ({ schemaCode }) => (0, codegen_1.str)`must match format "${schemaCode}"`,
       params: ({ schemaCode }) => (0, codegen_1._)`{format: ${schemaCode}}`
     };
@@ -6787,7 +6787,7 @@ var require_format = __commonJS({
       type: ["number", "string"],
       schemaType: "string",
       $data: true,
-      error,
+      error: error2,
       code(cxt, ruleType) {
         const { gen, data, $data, schema, schemaCode, it } = cxt;
         const { opts, errSchemaPath, schemaEnv, self } = it;
@@ -6948,7 +6948,7 @@ var require_discriminator = __commonJS({
     var compile_1 = require_compile();
     var ref_error_1 = require_ref_error();
     var util_1 = require_util();
-    var error = {
+    var error2 = {
       message: ({ params: { discrError, tagName } }) => discrError === types_1.DiscrError.Tag ? `tag "${tagName}" must be string` : `value of tag "${tagName}" must be in oneOf`,
       params: ({ params: { discrError, tag, tagName } }) => (0, codegen_1._)`{error: ${discrError}, tag: ${tagName}, tagValue: ${tag}}`
     };
@@ -6956,7 +6956,7 @@ var require_discriminator = __commonJS({
       keyword: "discriminator",
       type: "object",
       schemaType: "object",
-      error,
+      error: error2,
       code(cxt) {
         const { gen, data, schema, parentSchema, it } = cxt;
         const { oneOf } = parentSchema;
@@ -7524,7 +7524,7 @@ var require__ = __commonJS({
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-var import__, root, sdkManifest, read, ajv, documents, methods, events, profiles, handshakeSchema, schemaValidator, registryValidator, requestValidators, responseValidators, eventValidators, validateHello, validateLimits, validatePluginManifest;
+var import__, root, sdkManifest, read, ajv, documents, methods, events, profiles, handshakeSchema, schemaValidator, registryValidator, requestValidators, responseValidators, eventValidators, validateHello, validateLimits, validatePluginManifest, validateNoticeAction;
 var init_contracts = __esm({
   "contracts.mjs"() {
     import__ = __toESM(require__(), 1);
@@ -7594,6 +7594,10 @@ var init_contracts = __esm({
       strict: false,
       allErrors: true
     }).compile(read(sdkManifest.manifestSchema));
+    validateNoticeAction = schemaValidator(
+      sdkManifest.commonSchema,
+      "#/$defs/NoticeAction"
+    );
   }
 });
 
@@ -7911,16 +7915,16 @@ var init_dist = __esm({
           this.localClosed = true;
           this.maybeFinalizeStream();
           callback();
-        } catch (error) {
-          callback(error);
+        } catch (error2) {
+          callback(error2);
         }
       }
-      _destroy(error, callback) {
+      _destroy(error2, callback) {
         if (!this.remoteReset && !this.reset && !this.isClosed()) try {
           this.sendReset();
         } catch {
         }
-        callback(error);
+        callback(error2);
       }
       flushOutboundQueue() {
         if (this.reset) {
@@ -7985,7 +7989,7 @@ var init_dist = __esm({
         this.maxFrameSize = options.maxFrameSize ?? 65536;
         this.nextStreamId = this.role === "client" ? 1 : 2;
         this.transport.on("data", (chunk) => this.onTransportData(chunk));
-        this.transport.on("error", (error) => this.onTransportError(error));
+        this.transport.on("error", (error2) => this.onTransportError(error2));
         this.transport.on("close", () => this.onTransportClose());
         this.transport.on("end", () => this.onTransportClose());
       }
@@ -8059,8 +8063,8 @@ var init_dist = __esm({
         try {
           const frames = this.codec.decode(chunk);
           for (const frame2 of frames) this.handleFrame(frame2);
-        } catch (error) {
-          this.handleProtocolViolation(error);
+        } catch (error2) {
+          this.handleProtocolViolation(error2);
         }
       }
       handleFrame(frame2) {
@@ -8184,8 +8188,8 @@ var init_dist = __esm({
         stream.once("close", () => {
           if (stream.isClosed()) this.streams.delete(streamId);
         });
-        stream.once("error", (error) => {
-          this.emit("error", error);
+        stream.once("error", (error2) => {
+          this.emit("error", error2);
         });
         this.streams.set(streamId, stream);
         return stream;
@@ -8202,16 +8206,16 @@ var init_dist = __esm({
         if (!this.transport.write(encoded)) {
         }
       }
-      onTransportError(error) {
-        this.emit("error", error);
+      onTransportError(error2) {
+        this.emit("error", error2);
         this.close();
       }
       onTransportClose() {
         if (this.closed) return;
         this.close();
       }
-      handleProtocolViolation(error) {
-        this.emit("error", error);
+      handleProtocolViolation(error2) {
+        this.emit("error", error2);
         this.goAway(GoAwayCode.ProtocolError);
         this.close();
       }
@@ -8400,8 +8404,31 @@ async function start({ handle: handle2, frame: frame2, unframe: unframe2, writeB
       }
     })();
   });
+  async function outgoingRequest(message) {
+    const stream = session.openStream();
+    const reader = new Reader(stream);
+    stream.on("error", () => {
+    });
+    let release;
+    try {
+      await sendMessage(
+        stream,
+        reader,
+        message,
+        controlMethods.has(message.method) ? 2 : void 0
+      );
+      const received = await receive(reader, stream);
+      release = received.release;
+      await handle2(received.message);
+      stream.end();
+    } finally {
+      release?.();
+      reader.detach();
+    }
+  }
   let eventsChain = Promise.resolve();
   setSend((message) => {
+    if (message.id && message.method) return outgoingRequest(message);
     eventsChain = eventsChain.then(async () => {
       const stream = session.openStream();
       const reader = new Reader(stream);
@@ -8573,13 +8600,13 @@ var PiSession = class extends EventEmitter {
       }
     });
   }
-  failure(error) {
+  failure(error2) {
     for (const { reject, timer } of this.pending.values()) {
       clearTimeout(timer);
-      reject(error);
+      reject(error2);
     }
     this.pending.clear();
-    this.emit("failed", error);
+    this.emit("failed", error2);
   }
   onRecord(record) {
     if (record.type === "response" && typeof record.id === "string") {
@@ -8619,8 +8646,8 @@ var PiSession = class extends EventEmitter {
       this.pending.set(id2, { resolve, reject, timer, type });
       this.child.stdin.write(
         JSON.stringify({ id: id2, type, ...fields }) + "\n",
-        (error) => {
-          if (error) {
+        (error2) => {
+          if (error2) {
             clearTimeout(timer);
             this.pending.delete(id2);
             reject(Error("pi input failed"));
@@ -8646,13 +8673,13 @@ var PiSession = class extends EventEmitter {
         this.off("done", done);
         this.off("failed", failed);
       };
-      const done = (error) => {
+      const done = (error2) => {
         cleanup();
-        chain.then(() => error ? reject(error) : resolve(), reject);
+        chain.then(() => error2 ? reject(error2) : resolve(), reject);
       };
-      const failed = (error) => {
+      const failed = (error2) => {
         cleanup();
-        reject(error);
+        reject(error2);
       };
       this.on("delta", delta);
       this.once("done", done);
@@ -8666,6 +8693,196 @@ var PiSession = class extends EventEmitter {
   close() {
     this.closed = true;
     this.child.kill();
+  }
+};
+
+// notices.mjs
+var pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+var error = (message, code = "invalid_notice_action") => Object.assign(Error(message), { protocolCode: code });
+var NoticeFixture = class {
+  constructor({ call, pluginId: pluginId2, env = process.env }) {
+    this.call = call;
+    this.pluginId = pluginId2;
+    this.env = env;
+    this.enabled = env.NOTICE_ENABLED !== "0";
+    this.closed = false;
+    this.started = false;
+    this.latest = null;
+    this.executions = /* @__PURE__ */ new Map();
+    this.executionCount = 0;
+    this.unknownUsed = false;
+    this.state = "idle";
+    this.waiters = [];
+    this.creationKey = env.NOTICE_CREATION_KEY || "independent-notice-lifecycle-v1";
+    this.sourceId = env.NOTICE_SOURCE_ID || "fixture-source";
+    this.actions = [
+      {
+        kind: "reply",
+        id: "reply",
+        label: "Fixture reply",
+        enabled: true,
+        placeholder: "A local deterministic reply"
+      },
+      {
+        kind: "permission",
+        id: "permission",
+        label: "Fixture permission",
+        enabled: true,
+        description: "Local fixture decision only",
+        options: [
+          { id: "once", label: "Allow once" },
+          { id: "deny", label: "Deny" }
+        ]
+      },
+      {
+        kind: "activate",
+        id: "activate",
+        label: "Open Node.js",
+        enabled: true,
+        target: { kind: "uri", uri: "https://nodejs.org/" }
+      },
+      {
+        kind: "reply",
+        id: "disabled",
+        label: "Disabled fixture action",
+        enabled: false
+      }
+    ];
+  }
+  start() {
+    if (this.started || this.closed || this.env.NOTICE_AUTOPUBLISH === "0")
+      return;
+    this.started = true;
+    this.task = this.publish().catch((e) => {
+      this.state = e.protocolCode === "rpc_result_unknown" ? "unknown" : `failed:${e.protocolCode || "rpc_error"}`;
+    });
+  }
+  async gate() {
+    while (!this.enabled && !this.closed)
+      await new Promise((resolve) => this.waiters.push(resolve));
+    if (this.closed) throw error("fixture stopped", "fixture_stopped");
+  }
+  close() {
+    this.closed = true;
+    for (const resolve of this.waiters.splice(0)) resolve();
+  }
+  async publish() {
+    await this.gate();
+    this.state = "creating";
+    this.latest = (await this.call("notice.create", {
+      creationKey: this.creationKey,
+      sourceId: this.sourceId,
+      status: {
+        value: this.env.NOTICE_INITIAL_STATUS || "fixture_queued_blue",
+        label: "Queued by fixture"
+      },
+      content: {
+        title: "Independent Notice fixture",
+        progress: { text: "Created locally", percent: 0 }
+      },
+      actions: this.actions
+    })).notice;
+    if (this.latest.pluginId !== this.pluginId)
+      throw error(
+        "Host returned another plugin notice",
+        "invalid_notice_response"
+      );
+    if (this.latest.finished) {
+      this.state = "already-finished";
+      return;
+    }
+    this.state = "created";
+    await pause(Number(this.env.NOTICE_UPDATE_DELAY_MS || 50));
+    await this.gate();
+    this.latest = (await this.call("notice.update", {
+      noticeId: this.latest.noticeId,
+      operationId: `${this.creationKey}:update:1`,
+      expectedRevision: this.latest.revision,
+      status: {
+        value: this.env.NOTICE_UPDATE_STATUS || "fixture_working_violet",
+        label: "Working in fixture"
+      },
+      content: {
+        title: "Independent Notice fixture updated",
+        progress: { text: "Deterministic local progress", percent: 50 }
+      }
+    })).notice;
+    this.state = "updated";
+    await pause(Number(this.env.NOTICE_FINISH_DELAY_MS || 50));
+    await this.gate();
+    this.latest = (await this.call("notice.finish", {
+      noticeId: this.latest.noticeId,
+      operationId: `${this.creationKey}:finish:1`,
+      expectedRevision: this.latest.revision,
+      status: {
+        value: this.env.NOTICE_FINAL_STATUS || "fixture_done_copper",
+        label: "Fixture finished"
+      },
+      content: {
+        title: "Independent Notice fixture finished",
+        progress: {
+          text: "No account, message, or model was contacted",
+          percent: 100
+        }
+      }
+    })).notice;
+    this.state = "finished";
+  }
+  observe({ enabled }) {
+    this.enabled = enabled;
+    if (enabled) {
+      for (const resolve of this.waiters.splice(0)) resolve();
+      this.start();
+    }
+    return {
+      enabled,
+      message: `fixture observation ${enabled ? "enabled" : "disabled"}; publish=${this.state}; executions=${this.executionCount}`
+    };
+  }
+  execute(params) {
+    const { executionId, noticeId, actionId, expectedRevision, input } = params;
+    const signature = JSON.stringify({
+      noticeId,
+      actionId,
+      expectedRevision,
+      input: input.kind === "reply" ? { kind: "reply", text: input.text } : input.kind === "permission" ? { kind: "permission", optionId: input.optionId } : { kind: input.kind }
+    });
+    const accepted2 = this.executions.get(executionId);
+    if (accepted2) {
+      if (accepted2.signature !== signature)
+        throw error(
+          "executionId reused with changed request",
+          "execution_conflict"
+        );
+      return accepted2.result;
+    }
+    if (!this.latest || noticeId !== this.latest.noticeId)
+      throw error("unknown fixture notice", "notice_not_found");
+    if (expectedRevision !== this.latest.revision)
+      throw error("notice revision changed", "revision_conflict");
+    const action = this.latest.actions.find((action2) => action2.id === actionId);
+    if (!action || action.enabled !== true)
+      throw error("action missing or disabled");
+    if (action.kind === "activate")
+      throw error(
+        "activate belongs to the Host platform adapter",
+        "host_action_required"
+      );
+    if (action.kind !== input.kind) throw error("action kind mismatch");
+    if (action.kind === "permission" && !action.options?.some((option) => option.id === input.optionId))
+      throw error("unsupported permission option");
+    if (this.executions.size >= 1024)
+      throw error("fixture execution capacity exceeded", "capacity_exceeded");
+    const count = ++this.executionCount;
+    const unknown = this.env.NOTICE_UNKNOWN_ONCE === "1" && !this.unknownUsed;
+    if (unknown) this.unknownUsed = true;
+    const result = {
+      executionId,
+      status: unknown ? "unknown" : "succeeded",
+      message: unknown ? `Fixture result unknown; execution ${count} will not be repeated` : action.kind === "reply" ? `Fixture reply receipt ${count}: ${input.text}` : `Fixture permission receipt ${count}: ${input.optionId}`
+    };
+    this.executions.set(executionId, { signature, result });
+    return result;
   }
 };
 
@@ -8723,9 +8940,10 @@ var numeric = (name, fallback) => Number(
     process.env[`ECHO_${name.replaceAll("-", "_").toUpperCase()}`] || fallback
   )
 );
-var protocolVersion = numeric("protocol-version", 3);
-if (![2, 3].includes(protocolVersion))
-  throw Error("unsupported business protocol fixture version");
+if (process.env.ECHO_PROTOCOL_VERSION !== void 0 && process.env.ECHO_PROTOCOL_VERSION !== "4")
+  throw Error("business protocol must be 4/4");
+if (arg("protocol-version", "4") !== "4")
+  throw Error("business protocol must be 4/4");
 var controls = {
   describeDelayMs: numeric("describe-delay-ms", 0),
   turnDelayMs: numeric("turn-delay-ms", 30),
@@ -8795,6 +9013,80 @@ async function unframe(buf, decodedLength) {
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
 }
 var send;
+var methodDirections = new Map(
+  methods.map((method) => [method.name, method.direction])
+);
+var pendingRpc = /* @__PURE__ */ new Map();
+var outboundSequence = 0;
+var receiveResponse = (message) => {
+  const waiting = pendingRpc.get(message.id);
+  if (!waiting) return;
+  pendingRpc.delete(message.id);
+  clearTimeout(waiting.timer);
+  if (message.jsonrpc !== "2.0" || !Object.hasOwn(message, "result") && !message.error) {
+    waiting.reject(
+      Object.assign(Error("invalid Host response"), {
+        protocolCode: "invalid_notice_response"
+      })
+    );
+    return;
+  }
+  if (message.error) {
+    waiting.reject(
+      Object.assign(Error(message.error.message || "Host rejected request"), {
+        protocolCode: message.error.data?.code || "host_rpc_error"
+      })
+    );
+    return;
+  }
+  const validate = responseValidators.get(waiting.method);
+  if (!validate(message.result)) {
+    waiting.reject(
+      Object.assign(Error("invalid Host result"), {
+        protocolCode: "invalid_notice_response"
+      })
+    );
+    return;
+  }
+  waiting.resolve(message.result);
+};
+function callHost(method, params) {
+  if (methodDirections.get(method) !== "pluginToHost" || !requestValidators.get(method)?.(params))
+    return Promise.reject(
+      Object.assign(Error("invalid outgoing request"), {
+        protocolCode: "invalid_request"
+      })
+    );
+  if (pendingRpc.size >= 64)
+    return Promise.reject(Error("outgoing request capacity exceeded"));
+  const id2 = `provider-${++outboundSequence}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => {
+        pendingRpc.delete(id2);
+        reject(
+          Object.assign(Error("Host request result unknown; no retry"), {
+            protocolCode: "rpc_result_unknown"
+          })
+        );
+      },
+      Number(process.env.NOTICE_RPC_TIMEOUT_MS || 3e3)
+    );
+    pendingRpc.set(id2, { method, resolve, reject, timer });
+    Promise.resolve(send({ jsonrpc: "2.0", id: id2, method, params })).catch(
+      (error2) => {
+        if (!pendingRpc.delete(id2)) return;
+        clearTimeout(timer);
+        reject(
+          Object.assign(Error("Host request result unknown; no retry"), {
+            protocolCode: "rpc_result_unknown"
+          })
+        );
+      }
+    );
+  });
+}
+var noticeFixture = backend === "notice" ? new NoticeFixture({ call: callHost, pluginId }) : null;
 var capabilities = {
   revision: backend === "pi" ? "independent-pi-v2" : "independent-echo-v2",
   methods: [
@@ -8831,11 +9123,11 @@ if (backend === "pi") {
 capabilities.conversationCreate.selection = capabilities.turnSend;
 var plugin = {
   pluginId,
-  displayName: backend === "pi" ? "Independent Pi RPC" : "Independent JavaScript Echo",
-  version: "3.0.0",
-  protocol: { version: protocolVersion, minVersion: 2 },
-  ...protocolVersion >= 3 ? { features: ["agent"] } : {},
-  instanceKinds: [kind]
+  displayName: backend === "notice" ? "Independent Notice fixture" : backend === "pi" ? "Independent Pi RPC" : "Independent JavaScript Echo",
+  version: "4.0.0",
+  protocol: { version: 4, minVersion: 4 },
+  features: backend === "notice" ? ["observation"] : ["agent"],
+  instanceKinds: backend === "notice" ? [] : [kind]
 };
 var initialized = false;
 var pingState;
@@ -8980,6 +9272,10 @@ async function business(method, p) {
     return { protocol: { ...plugin.protocol, selectedVersion }, plugin };
   }
   if (!initialized) fail("initialize required", "not_initialized");
+  if (method === "notice.observe" && noticeFixture)
+    return noticeFixture.observe(p);
+  if (method === "notice.action.execute" && noticeFixture)
+    return noticeFixture.execute(p);
   switch (method) {
     case "provider.describe":
       await sleep(controls.describeDelayMs);
@@ -9002,6 +9298,8 @@ async function business(method, p) {
       return { sequence: p.sequence, clientsRevision: p.clients.revision };
     }
     case "instance.create": {
+      if (noticeFixture)
+        fail("observation fixture has no Agent instances", "unsupported");
       if (p.instanceKind !== kind) fail("unsupported instance kind");
       if (p.route.providerPluginId !== pluginId) fail("plugin route mismatch");
       let old = instances.get(p.route.providerInstanceId);
@@ -9262,15 +9560,9 @@ async function business(method, p) {
       }
       return { turn };
     }
-    case "event.subscribe":
-      return {
-        subscriptionId: p.subscriptionId,
-        message: "ordered events enabled"
-      };
-    case "event.unsubscribe":
-      return { subscriptionId: p.subscriptionId };
     case "provider.shutdown":
       for (const entry of conversations.values()) entry.pi?.close();
+      noticeFixture?.close();
       closing = true;
       return { accepted: true };
     default:
@@ -9278,12 +9570,17 @@ async function business(method, p) {
   }
 }
 async function handle(req, reply = send) {
+  if (req && typeof req.id === "string" && req.method === void 0) {
+    receiveResponse(req);
+    return;
+  }
   let response;
   try {
     if (req?.jsonrpc !== "2.0" || typeof req.id !== "string" || typeof req.method !== "string")
       fail("invalid JSON-RPC request");
     const validate = requestValidators.get(req.method);
-    if (!validate) fail("method not found", "method_not_found");
+    if (!validate || methodDirections.get(req.method) === "pluginToHost")
+      fail("method not found", "method_not_found");
     if (!validate(req.params ?? {}))
       fail(`invalid params: ${JSON.stringify(validate.errors)}`);
     const result = await business(req.method, req.params ?? {});
@@ -9307,6 +9604,8 @@ async function handle(req, reply = send) {
     };
   }
   await reply(response);
+  if (req?.method === "provider.initialize" && !response.error)
+    noticeFixture?.start();
   if (req?.method === "provider.shutdown" && !response.error) {
     await writeChain;
     process.exit(0);
@@ -9362,6 +9661,7 @@ async function serial() {
   if (buf.length) throw Error("truncated EOF record");
   await Promise.all(decodes);
   closing = true;
+  noticeFixture?.close();
   for (const entry of conversations.values()) entry.pi?.close();
   await writeChain;
   process.exit(0);

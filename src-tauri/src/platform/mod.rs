@@ -9,3 +9,5 @@ pub mod macos_window;
 
 #[cfg(target_os = "macos")]
 pub mod power;
+
+pub mod notice_activation;

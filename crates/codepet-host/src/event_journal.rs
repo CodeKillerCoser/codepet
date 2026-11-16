@@ -118,12 +118,6 @@ impl EventJournal {
     }
 
     pub fn provider(&self, provider: &str, event: &ProtocolEvent) {
-        if let ProtocolEvent::EventNotification { params, .. } = event {
-            // Observation's envelope preserves the original object, including arbitrary keys.
-            if let Some(raw) = params.payload.get("codepet_observation").and_then(|v| v.get("raw")) {
-                self.hook(provider, raw.clone());
-            }
-        }
         self.submit(Input::Provider(provider.to_owned(), event.clone()));
     }
 
@@ -204,31 +198,6 @@ mod tests {
     use super::*;
     use serde_json::json;
     use std::{fs::OpenOptions, io::Write};
-
-    #[test]
-    fn provider_writer_records_raw_hook_and_typed_event_without_a_remote() {
-        let directory = tempfile::tempdir().unwrap();
-        let journal = EventJournal::open(directory.path().into()).unwrap();
-        let raw = json!({"hook_event_name":"Stop", "prompt":"中文 原始", "codepet_gap":"user data"});
-        let event = ProtocolEvent::EventNotification { jsonrpc: "2.0".into(), params: codepet_provider_sdk::ProviderNotificationEvent {
-            subscription_id: "host".into(), event_id: "native-1".into(), received_at: 5,
-            payload: json!({"codepet_observation":{"raw":raw,"gap":true}}).as_object().unwrap().clone().into_iter().collect(),
-        } };
-        journal.provider("dev.codepet.claude", &event);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
-        loop {
-            let page = journal.query(JournalQuery::default()).unwrap();
-            if page.cursor == 2 {
-                assert_eq!(page.events[0].source, "provider");
-                assert_eq!(page.events[0].payload, serde_json::to_value(&event).unwrap());
-                assert_eq!(page.events[1].source, "hook");
-                assert_eq!(page.events[1].payload, raw);
-                break;
-            }
-            assert!(std::time::Instant::now() < deadline);
-            std::thread::sleep(std::time::Duration::from_millis(5));
-        }
-    }
 
     #[test]
     fn queue_overflow_never_waits_for_the_file_lock_and_reports_loss() {

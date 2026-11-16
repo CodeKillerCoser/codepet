@@ -60,8 +60,8 @@ test("recent v1 preserves list and read boundaries with capability-gated atomic 
   const model = await loadProtocolModel();
   const provider = record(model, "provider-v1");
   const gateway = record(model, "gateway-v1");
-  assert.equal(provider.manifest.version, 3);
-  assert.equal(gateway.manifest.version, 3);
+  assert.equal(provider.manifest.version, 4);
+  assert.equal(gateway.manifest.version, 4);
   for (const name of ["conversation.active.list", "conversation.unread.list", "conversation.markRead"]) {
     assert.equal(provider.manifest.methods.find((method) => method.name === name)?.capability, name);
   }
@@ -112,7 +112,6 @@ test("schema and method/event manifests are self-consistent", async () => {
     model.records.map((entry) => entry.packageConfig.id),
     [
       "core-v1",
-      "pet-v1",
       "agent-v1",
       "provider-v1",
       "gateway-v1",
@@ -123,28 +122,12 @@ test("schema and method/event manifests are self-consistent", async () => {
   );
 });
 
-test("core has no upward dependency and pet never references provider or gateway", async () => {
+test("core and shared Notice objects have no upward dependency", async () => {
   const model = await loadProtocolModel();
-  assert.deepEqual(record(model, "core-v1").packageConfig.dependencies, []);
-  const pet = record(model, "pet-v1");
-  assert.deepEqual(pet.packageConfig.dependencies, ["core-v1"]);
-  assert.equal(allRefs(pet.schema).some((ref) => ref.includes("provider") || ref.includes("gateway")), false);
-  assert.equal(JSON.stringify(pet.schema).includes("Provider"), false);
-});
-
-test("manifest references obey the same declared dependency and layer rules as schemas", async () => {
-  const model = await loadProtocolModel();
-  const pet = record(model, "pet-v1");
-  const original = pet.manifest.error.$ref;
-  pet.manifest.error.$ref = "../../provider/v2/schema.json#/$defs/ProviderInitializeRequest";
-  try {
-    assert.throws(
-      () => validatePackageReferences(pet, model),
-      /pet-v1 manifest may not reference provider package provider-v1/,
-    );
-  } finally {
-    pet.manifest.error.$ref = original;
-  }
+  const common = record(model,"core-v1");
+  assert.deepEqual(common.packageConfig.dependencies, []);
+  assert.equal(allRefs(common.schema).some(ref => ref.includes("provider") || ref.includes("gateway")),false);
+  assert.ok(common.schema.$defs.Notice);
 });
 
 test("provider is JSON-RPC over stdio and owns plugin instance lifecycle", async () => {
@@ -583,7 +566,6 @@ test("TypeScript adapter handles multiple packages and cross-schema imports", as
     result.generated.map(({ packageId, targetId }) => [packageId, targetId]),
     [
       ["core-v1", "typescript"],
-      ["pet-v1", "typescript"],
       ["agent-v1", "typescript"],
       ["provider-v1", "typescript"],
       ["gateway-v1", "typescript"],

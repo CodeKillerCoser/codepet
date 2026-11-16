@@ -2,6 +2,7 @@
   "manifestVersion": 2,
   "pluginId": "independent.pi.jsonl",
   "displayName": "Independent Pi RPC",
+  "icon": "https://pi.dev/logo.svg",
   "command": "node",
   "args": [
     "provider.mjs"

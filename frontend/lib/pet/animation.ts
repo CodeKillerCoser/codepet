@@ -30,13 +30,10 @@ export function actionFor(status: TaskStatus, interaction: PetInteraction, start
   return "idle";
 }
 
-export function taskStatusForPet(tasks: readonly { status: string }[]): TaskStatus {
-  // Approval/input and failures remain visible even while another task runs.
-  if (tasks.some(task => ["waiting-approval", "waiting-input"].includes(task.status))) return "waiting-approval";
-  if (tasks.some(task => task.status === "failed")) return "failed";
-  if (tasks.some(task => task.status === "running")) return "running";
-  if (tasks.some(task => task.status === "completed")) return "done";
-  return "idle";
+export function noticeStatusForPet(notices: readonly { finished: boolean; actions: readonly {kind: string; enabled: boolean}[] }[]): TaskStatus {
+  if (notices.some(notice => !notice.finished && notice.actions.some(action => action.enabled && ['permission','reply'].includes(action.kind)))) return 'waiting-approval';
+  if (notices.some(notice => !notice.finished)) return 'running';
+  return notices.length ? 'done' : 'idle';
 }
 
 export function frameAt(action: PetAction, elapsedMs: number) {

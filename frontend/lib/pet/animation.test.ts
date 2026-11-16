@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actionFor, animations, frameAt, petSize, taskStatusForPet } from "./animation";
+import { actionFor, animations, frameAt, petSize, noticeStatusForPet } from "./animation";
 
 describe("pet animation contract", () => {
   it("never plays the empty trailing cells, including after long background pauses", () => {
@@ -17,8 +17,8 @@ describe("pet animation contract", () => {
   });
 
   it("prioritizes required attention while allowing explicit dragging and petting", () => {
-    expect(taskStatusForPet([{ status: "running" }, { status: "waiting-input" }])).toBe("waiting-approval");
-    expect(taskStatusForPet([{ status: "running" }, { status: "failed" }])).toBe("failed");
+    expect(noticeStatusForPet([{finished:false,actions:[]},{finished:false,actions:[{kind:"reply",enabled:true}]}])).toBe("waiting-approval");
+    expect(noticeStatusForPet([{finished:true,actions:[]}])).toBe("done");
     expect(actionFor("waiting-approval", "pet")).toBe("waiting");
     expect(actionFor("failed", "hover")).toBe("failed");
     expect(actionFor("idle", "pet")).toBe("celebrate");

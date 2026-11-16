@@ -2,6 +2,7 @@
   "manifestVersion": 2,
   "pluginId": "independent.echo.mux",
   "displayName": "Independent Echo (mux)",
+  "icon": "https://nodejs.org/static/images/favicons/favicon.png",
   "command": "node",
   "args": [
     "provider.mjs"

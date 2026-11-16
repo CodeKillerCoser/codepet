@@ -968,7 +968,7 @@ fn provider_binary_negotiates_mux_by_default_before_generated_dispatch() {
             "hostClientId": "client-binary",
             "hostDeviceId": "device-binary",
             "hostVersion": "test",
-            "protocol": {"version": 2, "minVersion": 2}
+            "protocol": {"version": codepet_provider_sdk::PROTOCOL_VERSION, "minVersion": codepet_provider_sdk::MIN_PROTOCOL_VERSION}
         }),
     );
     assert_eq!(
@@ -1380,7 +1380,7 @@ fn active_provider_binary(workspace: &Path) -> ActiveProviderBinary {
             "hostClientId": "active-binary",
             "hostDeviceId": "active-device",
             "hostVersion": "test",
-            "protocol": {"version": 2, "minVersion": 2}
+            "protocol": {"version": codepet_provider_sdk::PROTOCOL_VERSION, "minVersion": codepet_provider_sdk::MIN_PROTOCOL_VERSION}
         }),
         &mut pending,
     );

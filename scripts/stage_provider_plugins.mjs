@@ -242,7 +242,7 @@ export async function stageProviderPlugins({
       );
     }
     const executable = binaryFileName(provider, target);
-    manifest.executable = executable;
+    manifest.command = executable;
     const destinationDirectory = path.join(resolvedStagingDirectory, provider.name);
     const destinationBinary = path.join(destinationDirectory, executable);
     await mkdir(destinationDirectory, { recursive: true });

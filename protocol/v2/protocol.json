@@ -101,5 +101,8 @@
       "selectedVersion": null,
       "compatible": false
     }
+  ],
+  "commonSchemas": [
+    "common/notice.schema.json"
   ]
 }

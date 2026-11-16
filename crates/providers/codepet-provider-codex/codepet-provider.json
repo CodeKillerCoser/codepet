@@ -1,10 +1,9 @@
 {
-  "manifestVersion": 1,
+  "manifestVersion": 2,
   "transport": "stdio-codepet-mux-v1",
   "pluginId": "dev.codepet.codex",
   "displayName": "Codex",
   "icon": "https://avatars.githubusercontent.com/u/14957082?s=200&v=4",
-  "executable": "codepet-provider-codex",
   "args": [],
   "env": {},
   "enabled": true,
@@ -14,9 +13,14 @@
       "instanceKind": "codex",
       "displayName": "Codex",
       "settings": {
-        "appServerArgs": ["app-server", "--listen", "stdio://"]
+        "appServerArgs": [
+          "app-server",
+          "--listen",
+          "stdio://"
+        ]
       },
       "enabled": true
     }
-  ]
+  ],
+  "command": "codepet-provider-codex"
 }

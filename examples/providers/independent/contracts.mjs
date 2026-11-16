@@ -79,3 +79,8 @@ export const validatePluginManifest = new Ajv({
   strict: false,
   allErrors: true,
 }).compile(read(sdkManifest.manifestSchema));
+
+export const validateNoticeAction = schemaValidator(
+  sdkManifest.commonSchema,
+  "#/$defs/NoticeAction",
+);

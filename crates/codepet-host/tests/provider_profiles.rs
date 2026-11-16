@@ -98,8 +98,8 @@ async fn initialize(process: &PluginProcess) {
             host_device_id: "profile-device".into(),
             host_version: "1".into(),
             protocol: ProtocolVersionOffer {
-                min_version: 2,
-                version: 2,
+                min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION,
+                version: codepet_provider_sdk::PROTOCOL_VERSION,
             },
             directories: None,
         })
@@ -298,8 +298,8 @@ async fn slow_requests_and_stalled_frames_only_block_their_own_connection() {
                 host_device_id: "d".into(),
                 host_version: "1".into(),
                 protocol: ProtocolVersionOffer {
-                    min_version: 2,
-                    version: 2,
+                    min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION,
+                    version: codepet_provider_sdk::PROTOCOL_VERSION,
                 },
                 directories: None,
             });
@@ -399,27 +399,32 @@ async fn schema_only_pi_plugin_runs_deepseek_flash_through_jsonrpc_profile() {
     println!("INDEPENDENT_PI_FLASH_OK: manifest v2, JSONL, real pi RPC/read tool, DeepSeek Flash, delta and complete history; no Rust bridge or Host source used by plugin author");
 }
 
-#[tokio::test]
-async fn older_schema_only_v2_plugins_remain_usable_without_feature_declarations() {
-    let directory = tempfile::tempdir().unwrap();
-    let root = directory.path();
-    let manager = manager(root).await;
-    let gateway = Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());
-    gateway.start_event_forwarding();
-    for profile in ["jsonl", "zstd", "mux"] {
-        let manifest = package(&root.join(format!("legacy-{profile}")), profile, json!({"ECHO_PROTOCOL_VERSION":"2"}));
-        let imported = manager.import_plugin(manifest, root.join("installed")).await.unwrap();
-        assert!(imported.loaded, "{:?}", imported.diagnostic);
-        let id = format!("independent.echo.{profile}");
-        let descriptor = manager.snapshot(&id).await.unwrap().reported.unwrap();
-        assert_eq!(descriptor.protocol.version, 2);
-        assert_eq!(descriptor.features, None);
-        let described = request(&gateway, "provider.describe", json!({"providerId":format!("independent-echo-{profile}")})).await;
-        assert_eq!(described["provider"]["pluginId"], id);
-        assert!(described["provider"].get("features").is_none());
-        let inventory = manager.runtime_get_installed(&id, codepet_provider_sdk::RuntimeGetInstalledRequest { refresh: None }).await.unwrap();
-        assert_eq!(inventory.selection_required, Some(false));
-        manager.remove_plugin(&id, root.join("installed")).await.unwrap();
+#[tokio::test(flavor="multi_thread",worker_threads=4)]
+async fn notice_only_plugins_publish_and_act_concurrently_on_all_profiles(){
+    let directory=tempfile::tempdir().unwrap();let root=directory.path();let manager=manager(root).await;
+    manager.start_notice_observation();let gateway=Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());gateway.start_event_forwarding();
+    let mut local=gateway.subscribe_local_events(None).unwrap();let mut remote=gateway.subscribe_events(None).unwrap();
+    for profile in ["jsonl","zstd","mux"]{
+        let manifest=package(&root.join(format!("notice-{profile}")),&format!("notice-{profile}"),json!({"NOTICE_UPDATE_DELAY_MS":"50","NOTICE_FINISH_DELAY_MS":"80","NOTICE_UNKNOWN_ONCE":"1"}));
+        let imported=manager.import_plugin(manifest,root.join("installed")).await.unwrap();assert!(imported.loaded,"{:?}",imported.diagnostic);
     }
+    let notices=tokio::time::timeout(Duration::from_secs(12),async{loop{
+        let result=request(&gateway,"notice.list",json!({})).await;
+        if result["notices"].as_array().is_some_and(|a|a.len()==3&&a.iter().all(|n|n["finished"]==true)) {break result["notices"].as_array().unwrap().clone();}
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+    }}).await.expect("all three independent profiles publish without Agent instances");
+    for notice in &notices{
+        let id=notice["pluginId"].as_str().unwrap();let snapshot=manager.snapshot(id).await.unwrap();assert!(snapshot.instances.is_empty());assert_eq!(snapshot.reported.unwrap().instance_kinds.len(),0);
+        let args=json!({"noticeId":notice["noticeId"],"actionId":"reply","expectedRevision":notice["revision"],"executionId":format!("{id}-reply"),"input":{"kind":"reply","text":"真实双向管道回环"}});
+        let first=request(&gateway,"notice.action.execute",args.clone()).await;assert_eq!(first["status"],"unknown");
+        let duplicate=request(&gateway,"notice.action.execute",args).await;assert_eq!(duplicate,first);
+        let permission=request(&gateway,"notice.action.execute",json!({"noticeId":notice["noticeId"],"actionId":"permission","expectedRevision":notice["revision"],"executionId":format!("{id}-permission"),"input":{"kind":"permission","optionId":"deny"}})).await;assert_eq!(permission["status"],"succeeded","permission response: {permission}");
+        let source=request(&gateway,"notice.source.setEnabled",json!({"pluginId":id,"enabled":false})).await;assert_eq!(source["source"]["enabled"],false);
+        let wire=serde_json::from_value(json!({"jsonrpc":"2.0","id":"remote-notice","method":"notice.get","params":{"noticeId":notice["noticeId"]}})).unwrap();let response=serde_json::to_value(gateway.dispatch_for_caller_scope("remote",wire).await).unwrap();assert!(response.get("error").is_some(),"local Notice methods must not be exposed remotely");
+    }
+    let local_event=tokio::time::timeout(Duration::from_secs(2),async{loop{let event=local.next_event().await.unwrap();if matches!(event,codepet_gateway_sdk::ProtocolEvent::NoticeChanged{..}){break event;}}}).await.unwrap();assert!(matches!(local_event,codepet_gateway_sdk::ProtocolEvent::NoticeChanged{..}));
+    while let Ok(Ok(event))=tokio::time::timeout(Duration::from_millis(100),remote.next_event()).await{assert!(!matches!(event,codepet_gateway_sdk::ProtocolEvent::NoticeChanged{..}));}
+    assert!(gateway.replay_events(None).unwrap().iter().all(|event|!matches!(event,codepet_gateway_sdk::ProtocolEvent::NoticeChanged{..})));
     manager.shutdown().await;
 }

@@ -55,7 +55,34 @@
         "ProviderTransportHello",
         "ProviderTransportSelection",
         "ProtocolVersionOffer",
-        "ProtocolVersionSelection"
+        "ProtocolVersionSelection",
+        "NoticeStatus",
+        "NoticeProgress",
+        "NoticeContent",
+        "NoticeActivationTarget",
+        "NoticePermissionOption",
+        "NoticeAction",
+        "NoticeActionInput",
+        "NoticeActionResult",
+        "Notice",
+        "NoticeSource",
+        "NoticeApplicationTarget",
+        "NoticeUriTarget",
+        "NoticeReplyAction",
+        "NoticeActivateAction",
+        "NoticePermissionAction",
+        "NoticeReplyInput",
+        "NoticeActivateInput",
+        "NoticePermissionInput",
+        "NoticeActionResultStatus",
+        "NoticeApplicationTargetKind",
+        "NoticeUriTargetKind",
+        "NoticeReplyActionKind",
+        "NoticeActivateActionKind",
+        "NoticePermissionActionKind",
+        "NoticeReplyInputKind",
+        "NoticeActivateInputKind",
+        "NoticePermissionInputKind"
       ],
       "outputs": {
         "rust": "sdk/rust/codepet-core-sdk/src/generated.rs",
@@ -63,20 +90,6 @@
         "dart": "sdk/dart/codepet-core-sdk/lib/src/generated.dart"
       },
       "forwardCompatible": true
-    },
-    {
-      "id": "pet-v1",
-      "layer": "pet",
-      "version": 1,
-      "schema": "pet/v1/schema.json",
-      "manifest": "pet/v1/manifest.json",
-      "dependencies": [
-        "core-v1"
-      ],
-      "outputs": {
-        "rust": "sdk/rust/codepet-pet-sdk/src/generated.rs",
-        "typescript": "sdk/typescript/codepet-pet-sdk/src/generated.ts"
-      }
     },
     {
       "id": "agent-v1",

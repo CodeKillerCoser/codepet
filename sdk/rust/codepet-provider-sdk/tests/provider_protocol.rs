@@ -18,8 +18,8 @@ fn descriptor() -> ProviderPluginDescriptor {
         version: "1.0.0".to_string(),
         default_workspace_root: Some("/Users/example/.codex".to_string()),
         protocol: ProtocolVersionOffer {
-            min_version: 2,
-            version: 2,
+            min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION,
+            version: codepet_provider_sdk::PROTOCOL_VERSION,
         },
         instance_kinds: vec!["codex".to_string()],
     }
@@ -32,7 +32,7 @@ impl ProtocolServer for InitializeServer {
     ) -> ProtocolFuture<'a, ProviderInitializeResponse> {
         Box::pin(async {
             Ok(ProviderInitializeResponse {
-                protocol: codepet_provider_sdk::ProtocolVersionSelection {version: 2,min_version: 2,selected_version: 2},
+                protocol: codepet_provider_sdk::ProtocolVersionSelection {version: codepet_provider_sdk::PROTOCOL_VERSION,min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION,selected_version: codepet_provider_sdk::PROTOCOL_VERSION},
                 plugin: descriptor(),
             })
         })
@@ -52,7 +52,7 @@ async fn json_rpc_dispatcher_routes_initialize_to_the_async_server_trait() {
     let JsonRpcResponsePayload::Ok { result } = response.response else {
         panic!("expected successful result");
     };
-    assert_eq!(result["protocol"]["selectedVersion"], 2);
+    assert_eq!(result["protocol"]["selectedVersion"], codepet_provider_sdk::PROTOCOL_VERSION);
 }
 
 #[tokio::test]
@@ -212,17 +212,16 @@ fn provider_initialize_fixture_uses_json_rpc_stdio_envelope() {
 }
 
 #[test]
-fn instance_kind_is_required_across_descriptor_request_and_instance_response() {
+fn observers_allow_empty_kinds_but_advertised_and_instance_kinds_remain_validated() {
     let descriptor = descriptor();
     descriptor.validate_instance_kind("codex").unwrap();
     let error = descriptor.validate_instance_kind("qoder").unwrap_err();
     assert_eq!(error.code, "unsupported_instance_kind");
     let mut empty_descriptor = descriptor.clone();
     empty_descriptor.instance_kinds.clear();
-    assert_eq!(
-        empty_descriptor.validate_instance_kinds().unwrap_err().code,
-        "invalid_provider_descriptor"
-    );
+    empty_descriptor.features=Some(vec![codepet_provider_sdk::ProviderFeature::Observation]);
+    empty_descriptor.validate_instance_kinds().unwrap();
+    assert!(empty_descriptor.validate_instance_kind("codex").is_err());
     let mut blank_kind_descriptor = descriptor.clone();
     blank_kind_descriptor.instance_kinds = vec![String::new()];
     assert_eq!(

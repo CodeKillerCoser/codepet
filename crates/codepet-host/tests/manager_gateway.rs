@@ -46,7 +46,7 @@ async fn codepet_usage_routes_to_provider_and_host_assigns_private_storage_and_l
     let marker=directory.path().join("directories.json");
     descriptor.env.insert("CODEPET_FAKE_DIRECTORIES_MARKER".into(),marker.to_string_lossy().into_owned());
     let catalog_dir=directory.path().join("plugins");std::fs::create_dir_all(catalog_dir.join("fixture")).unwrap();
-    let mut manifest=serde_json::to_value(&descriptor).unwrap();manifest["manifestVersion"]=serde_json::json!(1);
+    let mut manifest=serde_json::to_value(&descriptor).unwrap();manifest["manifestVersion"]=serde_json::json!(2);manifest["transport"]=serde_json::json!("stdio-codepet-mux-v1");
     std::fs::write(catalog_dir.join("fixture/codepet-provider.json"),serde_json::to_vec(&manifest).unwrap()).unwrap();
     let catalog=PluginCatalog::discover(PluginCatalogConfig::default().with_directory(catalog_dir));
     let registry=ProviderInstanceRegistry::open(directory.path().join("instances.json"),device_id).unwrap();
@@ -59,7 +59,7 @@ async fn codepet_usage_routes_to_provider_and_host_assigns_private_storage_and_l
     // Presence is liveness data, not authorization or a prerequisite for local reads.
     // Remote channel admission still validates credentials before dispatch.
     let without_phone=gateway.dispatch_for_caller_scope("client",request.clone()).await;
-    assert!(matches!(without_phone.response, JsonRpcResponsePayload::Ok { .. }));
+    assert!(matches!(without_phone.response, JsonRpcResponsePayload::Ok { .. }),"{without_phone:?}");
     let response=gateway.dispatch_for_local_client("desktop-main",request).await;
     assert!(manager.remote_connections().snapshot().connections.is_empty());
     let JsonRpcResponsePayload::Ok{result}=response.response else{panic!("usage query failed: {response:?}")};
@@ -89,7 +89,7 @@ fn plugin(plugin_id: &str, instances: &[&str]) -> PluginDescriptor {
     PluginDescriptor {
         plugin_id: plugin_id.to_string(),
         display_name: format!("Fake {plugin_id}"),
-        icon: Some("https://example.com/fake.png".to_string()),
+        icon: "https://example.com/fake.png".to_string(),
         executable: env!("CARGO_BIN_EXE_codepet-host-fake-provider").into(),
         args: Vec::new(),
         env: BTreeMap::from([(
@@ -160,7 +160,8 @@ fn build_manager_at(device_id: &str,descriptors: Vec<PluginDescriptor>,event_cap
         manifest
             .as_object_mut()
             .unwrap()
-            .insert("manifestVersion".to_string(), serde_json::json!(1));
+            .insert("manifestVersion".to_string(), serde_json::json!(2));
+        manifest["transport"] = manifest["env"].get("CODEPET_PROVIDER_TRANSPORT").cloned().unwrap_or(serde_json::json!("stdio-codepet-mux-v1"));
         std::fs::write(
             directory.join("codepet-provider.json"),
             serde_json::to_vec(&manifest).unwrap(),
@@ -2072,39 +2073,6 @@ async fn history_recovery_racing_shutdown_does_not_resurrect_the_plugin() {
     assert_eq!(retry.code, "provider_manager_shutting_down");
     #[cfg(unix)]
     assert!(!pid_is_alive(&pid_marker));
-}
-
-#[tokio::test]
-async fn observation_fans_out_locally_without_a_remote_instance() {
-    let plugin_id = "dev.codepet.codex";
-    let manager = build_manager("pet-device", vec![plugin(plugin_id, &[])]);
-    manager.enable_connection_heartbeats();
-    let remote = ProviderGatewayService::new(manager.clone()).unwrap();
-    assert!(manager.start_enabled().await.into_iter().all(|(_, result)| result.is_ok()));
-    let mut one = manager.subscribe_events(plugin_id, "consumer-one").await.unwrap();
-    let mut two = manager.subscribe_events(plugin_id, "consumer-two").await.unwrap();
-    let first = tokio::time::timeout(Duration::from_secs(3), one.receiver.recv()).await.unwrap().unwrap();
-    let second = tokio::time::timeout(Duration::from_secs(3), two.receiver.recv()).await.unwrap().unwrap();
-    assert_eq!(first.event_id, second.event_id);
-    assert_eq!(first.subscription_id, second.subscription_id);
-    assert!(first.subscription_id.starts_with("host-"));
-    manager.unsubscribe_events(plugin_id, "consumer-one").await.unwrap();
-    assert!(tokio::time::timeout(Duration::from_secs(3), two.receiver.recv()).await.unwrap().is_some());
-    let directory = tempfile::tempdir().unwrap();
-    let pet = codepet_host::PetGateway::new(manager.clone(), directory.path().join("sources.json"));
-    pet.start();
-    tokio::time::timeout(Duration::from_secs(3), async {
-        while pet.snapshot().tasks.is_empty() { tokio::time::sleep(Duration::from_millis(50)).await; }
-    }).await.unwrap();
-    assert_eq!(pet.snapshot().tasks[0].title, "Observed outside Remote");
-    assert!(manager.snapshot(plugin_id).await.unwrap().instances.is_empty());
-    pet.set_enabled(codepet_pet_sdk::PetSourceSetEnabledRequest { source_id: "codex".into(), enabled: false }).unwrap();
-    assert!(pet.snapshot().tasks.is_empty());
-    assert!(tokio::time::timeout(Duration::from_secs(3), two.receiver.recv()).await.unwrap().is_some());
-    // Keeping Remote alive must not receive or validate an observation as a routed control event.
-    assert_eq!(manager.snapshot(plugin_id).await.unwrap().state, PluginRuntimeState::Ready);
-    drop(remote);
-    manager.shutdown().await;
 }
 
 #[tokio::test]

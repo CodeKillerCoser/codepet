@@ -120,17 +120,8 @@
         "$ref": "messages.schema.json#/$defs/ApprovalResolvedEvent"
       },
       "description": "审批已处理事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
-    },
-    {
-      "name": "event.notification",
-      "direction": "pluginToHost",
-      "delivery": "ordered",
-      "scope": "subscription",
-      "payload": {
-        "$ref": "messages.schema.json#/$defs/ProviderNotificationEvent"
-      },
-      "description": "Provider通知事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
     }
   ],
-  "version": 3
+  "version": 4,
+  "minVersion": 4
 }

@@ -51,8 +51,25 @@ test('manifest transport values come from the same profile registry; generated o
   assert.equal(model.files.get(model.index.manifestSchema).properties.transport.enum, undefined);
   assert.ok(!model.files.get(model.index.rpcEnvelopeSchema).$defs.Request.oneOf);
 });
-test('installation code generation rejects unsupported validation keywords instead of ignoring constraints', async () => {
-  const root = await fixture(); await change(root, 'provider/manifest.schema.json', d => d.properties.command.format = 'uri');
-  const model = await loadProviderContract(root);
-  assert.throws(() => providerRuntimeArtifacts(model, publishProviderContract(model)), /Unsupported installation Schema keyword format/);
+test('Host embeds the exact published Manifest Schema including standard validator keywords', async () => {
+  const root = await fixture();
+  await change(root, 'provider/manifest.schema.json', d => d.properties.command.maxLength = 4096);
+  const model = await loadProviderContract(root), published = publishProviderContract(model);
+  const runtime = providerRuntimeArtifacts(model, published);
+  const schema = JSON.parse(runtime.get('crates/codepet-host/src/providers/manifest.schema.generated.json'));
+  assert.deepEqual(schema, JSON.parse(published.get(model.index.manifestSchema)));
+  assert.equal(schema.properties.command.maxLength, 4096);
+  assert.ok(schema.required.includes('icon'));
+  assert.equal(schema['x-codepet-existing-installation'], undefined);
+  assert.doesNotMatch(runtime.get('crates/codepet-host/src/providers/manifest_generated.rs'), /validate_existing|fn validate_v2|regex::/);
+});
+
+test('published business minimum and guide derive from the Provider version range',async()=>{
+  const root=await fixture();
+  await change(root,'provider/protocol.json',d=>{d.minVersion=3;});
+  const model=await loadProviderContract(root),published=publishProviderContract(model);
+  assert.equal(JSON.parse(published.get('sdk-manifest.json')).minProtocolVersion,3);
+  assert.equal(JSON.parse(published.get(model.index.methods)).minVersion,3);
+  assert.equal(JSON.parse(published.get(model.index.events)).minVersion,3);
+  assert.match(published.get('README.md'),/业务区间为 4\/3/);
 });

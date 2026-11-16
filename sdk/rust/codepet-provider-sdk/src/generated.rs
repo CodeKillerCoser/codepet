@@ -8,10 +8,10 @@ use std::future::Future;
 use std::pin::Pin;
 
 pub use codepet_agent_sdk::*;
-pub use codepet_core_sdk::{ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, PageInfo, ProtocolError, ProtocolVersionOffer, ProtocolVersionSelection, ProviderFeature, ProviderInstanceId, ProviderPluginId, ProviderTransportHello, ProviderTransportSelection, RequestId, RoutedResourceId, RpcError, TimestampMs};
+pub use codepet_core_sdk::{ClientConnectionsSnapshot, ClientId, Cursor, DeviceId, JsonObject, NativeResourceId, Notice, NoticeAction, NoticeActionInput, NoticeActionResult, NoticeContent, NoticeStatus, PageInfo, ProtocolError, ProtocolVersionOffer, ProtocolVersionSelection, ProviderFeature, ProviderInstanceId, ProviderPluginId, ProviderTransportHello, ProviderTransportSelection, RequestId, RoutedResourceId, RpcError, TimestampMs};
 
-pub const PROTOCOL_VERSION: u32 = 3;
-pub const MIN_PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 4;
+pub const MIN_PROTOCOL_VERSION: u32 = 4;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -374,31 +374,6 @@ pub struct ConversationUpsertedEvent {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct EventSubscribeRequest {
-    pub subscription_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EventSubscribeResponse {
-    pub subscription_id: String,
-    pub message: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EventUnsubscribeRequest {
-    pub subscription_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EventUnsubscribeResponse {
-    pub subscription_id: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct HarnessDescriptor {
     pub id: String,
     pub display_name: String,
@@ -533,6 +508,73 @@ pub struct InstanceStopRequest {
 #[serde(rename_all = "camelCase")]
 pub struct InstanceStopResponse {
     pub instance: ProviderInstance,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeActionExecuteRequest {
+    pub notice_id: String,
+    pub action_id: String,
+    pub expected_revision: u64,
+    pub execution_id: String,
+    pub input: NoticeActionInput,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeCreateRequest {
+    pub creation_key: String,
+    pub source_id: String,
+    pub status: NoticeStatus,
+    pub content: NoticeContent,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<NoticeAction>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeFinishRequest {
+    pub notice_id: String,
+    pub operation_id: String,
+    pub expected_revision: u64,
+    pub status: NoticeStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<NoticeContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<NoticeAction>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeObserveRequest {
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeObserveResponse {
+    pub enabled: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticePublishResponse {
+    pub notice: Notice,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeUpdateRequest {
+    pub notice_id: String,
+    pub operation_id: String,
+    pub expected_revision: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<NoticeStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<NoticeContent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub actions: Option<Vec<NoticeAction>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -737,15 +779,6 @@ pub struct ProviderInstanceRoute {
     pub device_id: DeviceId,
     pub provider_plugin_id: ProviderPluginId,
     pub provider_instance_id: ProviderInstanceId,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderNotificationEvent {
-    pub subscription_id: String,
-    pub event_id: String,
-    pub received_at: TimestampMs,
-    pub payload: JsonObject,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -957,14 +990,7 @@ pub struct UsageQueryResponse {
 
 impl ProviderPluginDescriptor {
     pub fn validate_instance_kinds(&self) -> Result<(), ProtocolError> {
-        if self.instance_kinds.is_empty() {
-            return Err(ProtocolError {
-                code: "invalid_provider_descriptor".to_string(),
-                message: "provider descriptor must declare at least one instance kind".to_string(),
-                retryable: false,
-                details: None,
-            });
-        }
+
         for (index, instance_kind) in self.instance_kinds.iter().enumerate() {
             if instance_kind.is_empty() {
                 return Err(ProtocolError {
@@ -1139,7 +1165,7 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
         "items": {
           "ref": "provider:ProviderInstanceKind"
         },
-        "minItems": 1,
+        "minItems": 0,
         "uniqueItems": true
       },
       "protocol": {
@@ -2816,88 +2842,6 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
     ],
     "additionalProperties": true
   },
-  "provider:EventSubscribeRequest": {
-    "type": "object",
-    "properties": {
-      "subscriptionId": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "required": [
-      "subscriptionId"
-    ],
-    "additionalProperties": true
-  },
-  "provider:EventSubscribeResponse": {
-    "type": "object",
-    "properties": {
-      "subscriptionId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "message": {
-        "type": "string"
-      }
-    },
-    "required": [
-      "subscriptionId",
-      "message"
-    ],
-    "additionalProperties": true
-  },
-  "provider:EventUnsubscribeRequest": {
-    "type": "object",
-    "properties": {
-      "subscriptionId": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "required": [
-      "subscriptionId"
-    ],
-    "additionalProperties": true
-  },
-  "provider:EventUnsubscribeResponse": {
-    "type": "object",
-    "properties": {
-      "subscriptionId": {
-        "type": "string",
-        "minLength": 1
-      }
-    },
-    "required": [
-      "subscriptionId"
-    ],
-    "additionalProperties": true
-  },
-  "provider:ProviderNotificationEvent": {
-    "type": "object",
-    "properties": {
-      "subscriptionId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "eventId": {
-        "type": "string",
-        "minLength": 1
-      },
-      "receivedAt": {
-        "ref": "core:TimestampMs"
-      },
-      "payload": {
-        "ref": "core:JsonObject"
-      }
-    },
-    "required": [
-      "subscriptionId",
-      "eventId",
-      "receivedAt",
-      "payload"
-    ],
-    "additionalProperties": true
-  },
   "provider:UsageQueryRequest": {
     "type": "object",
     "properties": {
@@ -2923,6 +2867,179 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
     },
     "required": [
       "result"
+    ],
+    "additionalProperties": true
+  },
+  "provider:NoticeCreateRequest": {
+    "type": "object",
+    "properties": {
+      "creationKey": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "status": {
+        "ref": "core:NoticeStatus"
+      },
+      "content": {
+        "ref": "core:NoticeContent"
+      },
+      "actions": {
+        "type": "array",
+        "items": {
+          "ref": "core:NoticeAction"
+        }
+      }
+    },
+    "required": [
+      "creationKey",
+      "sourceId",
+      "status",
+      "content"
+    ],
+    "additionalProperties": true
+  },
+  "provider:NoticePublishResponse": {
+    "type": "object",
+    "properties": {
+      "notice": {
+        "ref": "core:Notice"
+      }
+    },
+    "required": [
+      "notice"
+    ],
+    "additionalProperties": true
+  },
+  "provider:NoticeUpdateRequest": {
+    "type": "object",
+    "properties": {
+      "noticeId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "operationId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "status": {
+        "ref": "core:NoticeStatus"
+      },
+      "content": {
+        "ref": "core:NoticeContent"
+      },
+      "actions": {
+        "type": "array",
+        "items": {
+          "ref": "core:NoticeAction"
+        }
+      }
+    },
+    "required": [
+      "noticeId",
+      "operationId",
+      "expectedRevision"
+    ],
+    "additionalProperties": true
+  },
+  "provider:NoticeFinishRequest": {
+    "type": "object",
+    "properties": {
+      "noticeId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "operationId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "status": {
+        "ref": "core:NoticeStatus"
+      },
+      "content": {
+        "ref": "core:NoticeContent"
+      },
+      "actions": {
+        "type": "array",
+        "items": {
+          "ref": "core:NoticeAction"
+        }
+      }
+    },
+    "required": [
+      "noticeId",
+      "operationId",
+      "expectedRevision",
+      "status"
+    ],
+    "additionalProperties": true
+  },
+  "provider:NoticeActionExecuteRequest": {
+    "type": "object",
+    "properties": {
+      "noticeId": {
+        "type": "string"
+      },
+      "actionId": {
+        "type": "string"
+      },
+      "expectedRevision": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "executionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "input": {
+        "ref": "core:NoticeActionInput"
+      }
+    },
+    "required": [
+      "noticeId",
+      "actionId",
+      "expectedRevision",
+      "executionId",
+      "input"
+    ],
+    "additionalProperties": true
+  },
+  "provider:NoticeObserveRequest": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "enabled"
+    ],
+    "additionalProperties": true
+  },
+  "provider:NoticeObserveResponse": {
+    "type": "object",
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "message": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "enabled",
+      "message"
     ],
     "additionalProperties": true
   },
@@ -3210,6 +3327,466 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
       "agent",
       "observation",
       "runtimeInventory"
+    ]
+  },
+  "core:NoticeStatus": {
+    "type": "object",
+    "properties": {
+      "value": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024
+      }
+    },
+    "required": [
+      "value",
+      "label"
+    ],
+    "additionalProperties": true
+  },
+  "core:NoticeProgress": {
+    "type": "object",
+    "properties": {
+      "text": {
+        "type": "string"
+      },
+      "percent": {
+        "type": "integer",
+        "minimum": 0,
+        "maximum": 100
+      }
+    },
+    "required": [],
+    "additionalProperties": true
+  },
+  "core:NoticeContent": {
+    "type": "object",
+    "properties": {
+      "progress": {
+        "ref": "core:NoticeProgress"
+      }
+    },
+    "required": [
+      "title"
+    ],
+    "additionalProperties": true
+  },
+  "core:NoticeActivationTarget": {
+    "oneOf": [
+      {
+        "ref": "core:NoticeApplicationTarget"
+      },
+      {
+        "ref": "core:NoticeUriTarget"
+      }
+    ],
+    "discriminator": {
+      "field": "kind",
+      "variants": {
+        "application": "core:NoticeApplicationTarget",
+        "uri": "core:NoticeUriTarget"
+      }
+    }
+  },
+  "core:NoticePermissionOption": {
+    "type": "object",
+    "properties": {
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required": [
+      "id",
+      "label"
+    ],
+    "additionalProperties": true
+  },
+  "core:NoticeAction": {
+    "oneOf": [
+      {
+        "ref": "core:NoticeReplyAction"
+      },
+      {
+        "ref": "core:NoticeActivateAction"
+      },
+      {
+        "ref": "core:NoticePermissionAction"
+      }
+    ],
+    "discriminator": {
+      "field": "kind",
+      "variants": {
+        "reply": "core:NoticeReplyAction",
+        "activate": "core:NoticeActivateAction",
+        "permission": "core:NoticePermissionAction"
+      }
+    }
+  },
+  "core:NoticeActionInput": {
+    "oneOf": [
+      {
+        "ref": "core:NoticeReplyInput"
+      },
+      {
+        "ref": "core:NoticeActivateInput"
+      },
+      {
+        "ref": "core:NoticePermissionInput"
+      }
+    ],
+    "discriminator": {
+      "field": "kind",
+      "variants": {
+        "reply": "core:NoticeReplyInput",
+        "activate": "core:NoticeActivateInput",
+        "permission": "core:NoticePermissionInput"
+      }
+    }
+  },
+  "core:NoticeActionResult": {
+    "type": "object",
+    "properties": {
+      "executionId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "status": {
+        "ref": "core:NoticeActionResultStatus"
+      },
+      "message": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "executionId",
+      "status"
+    ],
+    "additionalProperties": true
+  },
+  "core:Notice": {
+    "type": "object",
+    "properties": {
+      "noticeId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "pluginId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "sourceId": {
+        "type": "string",
+        "minLength": 1
+      },
+      "status": {
+        "ref": "core:NoticeStatus"
+      },
+      "content": {
+        "ref": "core:NoticeContent"
+      },
+      "actions": {
+        "type": "array",
+        "items": {
+          "ref": "core:NoticeAction"
+        }
+      },
+      "revision": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "finished": {
+        "type": "boolean"
+      },
+      "createdAt": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "updatedAt": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "required": [
+      "noticeId",
+      "pluginId",
+      "sourceId",
+      "status",
+      "content",
+      "actions",
+      "revision",
+      "finished",
+      "createdAt",
+      "updatedAt"
+    ],
+    "additionalProperties": true
+  },
+  "core:NoticeSource": {
+    "type": "object",
+    "properties": {
+      "pluginId": {
+        "type": "string"
+      },
+      "displayName": {
+        "type": "string"
+      },
+      "icon": {
+        "type": "string"
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "connected": {
+        "type": "boolean"
+      },
+      "message": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "pluginId",
+      "displayName",
+      "enabled",
+      "connected",
+      "message"
+    ],
+    "additionalProperties": true
+  },
+  "core:NoticeApplicationTarget": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "ref": "core:NoticeApplicationTargetKind"
+      },
+      "applicationId": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required": [
+      "kind",
+      "applicationId"
+    ],
+    "additionalProperties": true
+  },
+  "core:NoticeUriTarget": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "ref": "core:NoticeUriTargetKind"
+      },
+      "uri": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required": [
+      "kind",
+      "uri"
+    ],
+    "additionalProperties": true
+  },
+  "core:NoticeReplyAction": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "ref": "core:NoticeReplyActionKind"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "placeholder": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "kind",
+      "id",
+      "label",
+      "enabled"
+    ],
+    "additionalProperties": true
+  },
+  "core:NoticeActivateAction": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "ref": "core:NoticeActivateActionKind"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "target": {
+        "ref": "core:NoticeActivationTarget"
+      }
+    },
+    "required": [
+      "kind",
+      "id",
+      "label",
+      "enabled"
+    ],
+    "additionalProperties": true
+  },
+  "core:NoticePermissionAction": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "ref": "core:NoticePermissionActionKind"
+      },
+      "id": {
+        "type": "string",
+        "minLength": 1
+      },
+      "label": {
+        "type": "string",
+        "minLength": 1
+      },
+      "enabled": {
+        "type": "boolean"
+      },
+      "options": {
+        "type": "array",
+        "items": {
+          "ref": "core:NoticePermissionOption"
+        },
+        "minItems": 1
+      }
+    },
+    "required": [
+      "kind",
+      "id",
+      "label",
+      "enabled"
+    ],
+    "additionalProperties": true
+  },
+  "core:NoticeReplyInput": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "ref": "core:NoticeReplyInputKind"
+      },
+      "text": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required": [
+      "kind",
+      "text"
+    ],
+    "additionalProperties": true
+  },
+  "core:NoticeActivateInput": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "ref": "core:NoticeActivateInputKind"
+      }
+    },
+    "required": [
+      "kind"
+    ],
+    "additionalProperties": true
+  },
+  "core:NoticePermissionInput": {
+    "type": "object",
+    "properties": {
+      "kind": {
+        "ref": "core:NoticePermissionInputKind"
+      },
+      "optionId": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required": [
+      "kind",
+      "optionId"
+    ],
+    "additionalProperties": true
+  },
+  "core:NoticeActionResultStatus": {
+    "type": "string",
+    "enum": [
+      "accepted",
+      "succeeded",
+      "failed",
+      "unknown"
+    ]
+  },
+  "core:NoticeApplicationTargetKind": {
+    "type": "string",
+    "enum": [
+      "application"
+    ]
+  },
+  "core:NoticeUriTargetKind": {
+    "type": "string",
+    "enum": [
+      "uri"
+    ]
+  },
+  "core:NoticeReplyActionKind": {
+    "type": "string",
+    "enum": [
+      "reply"
+    ]
+  },
+  "core:NoticeActivateActionKind": {
+    "type": "string",
+    "enum": [
+      "activate"
+    ]
+  },
+  "core:NoticePermissionActionKind": {
+    "type": "string",
+    "enum": [
+      "permission"
+    ]
+  },
+  "core:NoticeReplyInputKind": {
+    "type": "string",
+    "enum": [
+      "reply"
+    ]
+  },
+  "core:NoticeActivateInputKind": {
+    "type": "string",
+    "enum": [
+      "activate"
+    ]
+  },
+  "core:NoticePermissionInputKind": {
+    "type": "string",
+    "enum": [
+      "permission"
     ]
   },
   "core:ProviderTransportLimits": {
@@ -5827,10 +6404,10 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
     codepet_core_sdk::validate_protocol_value(schemas, name, value, allow_unknown)
 }
 fn validate_request_params(method: &str, value: &serde_json::Value) -> Result<(), ProtocolError> {
-    match method { "provider.ping" => validate_payload("provider:ProviderPingRequest",value,false), "provider.initialize" => validate_payload("provider:ProviderInitializeRequest",value,false), "provider.describe" => validate_payload("provider:ProviderDescribeRequest",value,false), "provider.shutdown" => validate_payload("provider:ProviderShutdownRequest",value,false), "instance.releaseControl" => validate_payload("provider:InstanceReleaseControlRequest",value,false), "instance.create" => validate_payload("provider:InstanceCreateRequest",value,false), "instance.start" => validate_payload("provider:InstanceStartRequest",value,false), "instance.stop" => validate_payload("provider:InstanceStopRequest",value,false), "instance.destroy" => validate_payload("provider:InstanceDestroyRequest",value,false), "instance.capabilities" => validate_payload("provider:InstanceCapabilitiesRequest",value,false), "runtime.getInstalled" => validate_payload("provider:RuntimeGetInstalledRequest",value,false), "runtime.select" => validate_payload("provider:RuntimeSelectRequest",value,false), "conversation.releaseInteraction" => validate_payload("provider:ConversationReleaseInteractionRequest",value,false), "conversation.active.list" => validate_payload("provider:ConversationActiveListRequest",value,false), "conversation.unread.list" => validate_payload("provider:ConversationUnreadListRequest",value,false), "conversation.markRead" => validate_payload("provider:ConversationMarkReadRequest",value,false), "conversation.list" => validate_payload("provider:ConversationListRequest",value,false), "conversation.search" => validate_payload("provider:ConversationSearchRequest",value,false), "conversation.get" => validate_payload("provider:ConversationGetRequest",value,false), "conversation.acquireInteraction" => validate_payload("provider:ConversationAcquireInteractionRequest",value,false), "conversation.create" => validate_payload("provider:ConversationCreateRequest",value,false), "project.list" => validate_payload("provider:ProjectListRequest",value,false), "project.get" => validate_payload("provider:ProjectGetRequest",value,false), "project.create" => validate_payload("provider:ProjectCreateRequest",value,false), "project.update" => validate_payload("provider:ProjectUpdateRequest",value,false), "project.delete" => validate_payload("provider:ProjectDeleteRequest",value,false), "turn.start" => validate_payload("provider:TurnStartRequest",value,false), "turn.steer" => validate_payload("provider:TurnSteerRequest",value,false), "turn.interrupt" => validate_payload("provider:TurnInterruptRequest",value,false), "approval.resolve" => validate_payload("provider:ApprovalResolveRequest",value,false), "event.subscribe" => validate_payload("provider:EventSubscribeRequest",value,false), "event.unsubscribe" => validate_payload("provider:EventUnsubscribeRequest",value,false), "usage.query" => validate_payload("provider:UsageQueryRequest",value,false), _ => Ok(()) }
+    match method { "provider.ping" => validate_payload("provider:ProviderPingRequest",value,false), "provider.initialize" => validate_payload("provider:ProviderInitializeRequest",value,false), "provider.describe" => validate_payload("provider:ProviderDescribeRequest",value,false), "provider.shutdown" => validate_payload("provider:ProviderShutdownRequest",value,false), "instance.releaseControl" => validate_payload("provider:InstanceReleaseControlRequest",value,false), "instance.create" => validate_payload("provider:InstanceCreateRequest",value,false), "instance.start" => validate_payload("provider:InstanceStartRequest",value,false), "instance.stop" => validate_payload("provider:InstanceStopRequest",value,false), "instance.destroy" => validate_payload("provider:InstanceDestroyRequest",value,false), "instance.capabilities" => validate_payload("provider:InstanceCapabilitiesRequest",value,false), "runtime.getInstalled" => validate_payload("provider:RuntimeGetInstalledRequest",value,false), "runtime.select" => validate_payload("provider:RuntimeSelectRequest",value,false), "conversation.releaseInteraction" => validate_payload("provider:ConversationReleaseInteractionRequest",value,false), "conversation.active.list" => validate_payload("provider:ConversationActiveListRequest",value,false), "conversation.unread.list" => validate_payload("provider:ConversationUnreadListRequest",value,false), "conversation.markRead" => validate_payload("provider:ConversationMarkReadRequest",value,false), "conversation.list" => validate_payload("provider:ConversationListRequest",value,false), "conversation.search" => validate_payload("provider:ConversationSearchRequest",value,false), "conversation.get" => validate_payload("provider:ConversationGetRequest",value,false), "conversation.acquireInteraction" => validate_payload("provider:ConversationAcquireInteractionRequest",value,false), "conversation.create" => validate_payload("provider:ConversationCreateRequest",value,false), "project.list" => validate_payload("provider:ProjectListRequest",value,false), "project.get" => validate_payload("provider:ProjectGetRequest",value,false), "project.create" => validate_payload("provider:ProjectCreateRequest",value,false), "project.update" => validate_payload("provider:ProjectUpdateRequest",value,false), "project.delete" => validate_payload("provider:ProjectDeleteRequest",value,false), "turn.start" => validate_payload("provider:TurnStartRequest",value,false), "turn.steer" => validate_payload("provider:TurnSteerRequest",value,false), "turn.interrupt" => validate_payload("provider:TurnInterruptRequest",value,false), "approval.resolve" => validate_payload("provider:ApprovalResolveRequest",value,false), "usage.query" => validate_payload("provider:UsageQueryRequest",value,false), "notice.create" => validate_payload("provider:NoticeCreateRequest",value,false), "notice.update" => validate_payload("provider:NoticeUpdateRequest",value,false), "notice.finish" => validate_payload("provider:NoticeFinishRequest",value,false), "notice.action.execute" => validate_payload("provider:NoticeActionExecuteRequest",value,false), "notice.observe" => validate_payload("provider:NoticeObserveRequest",value,false), _ => Ok(()) }
 }
 fn validate_event_params(method: &str, value: &serde_json::Value) -> Result<(), ProtocolError> {
-    match method { "event.instanceStatusChanged" => validate_payload("provider:InstanceStatusChangedEvent",value,true), "runtime.inventoryChanged" => validate_payload("provider:RuntimeGetInstalledResponse",value,true), "event.conversationActiveChanged" => validate_payload("provider:ConversationActiveChangedEvent",value,true), "event.conversationUnreadChanged" => validate_payload("provider:ConversationUnreadChangedEvent",value,true), "event.conversationDeleted" => validate_payload("provider:ConversationDeletedEvent",value,true), "event.conversationUpserted" => validate_payload("provider:ConversationUpsertedEvent",value,true), "event.conversationItemUpserted" => validate_payload("provider:ConversationItemUpsertedEvent",value,true), "event.projectChanged" => validate_payload("provider:ProjectChangedEvent",value,true), "event.turnUpserted" => validate_payload("provider:TurnUpsertedEvent",value,true), "event.turnOutputDelta" => validate_payload("provider:TurnOutputDeltaEvent",value,true), "event.approvalRequested" => validate_payload("provider:ApprovalRequestedEvent",value,true), "event.approvalResolved" => validate_payload("provider:ApprovalResolvedEvent",value,true), "event.notification" => validate_payload("provider:ProviderNotificationEvent",value,true), _ => Ok(()) }
+    match method { "event.instanceStatusChanged" => validate_payload("provider:InstanceStatusChangedEvent",value,true), "runtime.inventoryChanged" => validate_payload("provider:RuntimeGetInstalledResponse",value,true), "event.conversationActiveChanged" => validate_payload("provider:ConversationActiveChangedEvent",value,true), "event.conversationUnreadChanged" => validate_payload("provider:ConversationUnreadChangedEvent",value,true), "event.conversationDeleted" => validate_payload("provider:ConversationDeletedEvent",value,true), "event.conversationUpserted" => validate_payload("provider:ConversationUpsertedEvent",value,true), "event.conversationItemUpserted" => validate_payload("provider:ConversationItemUpsertedEvent",value,true), "event.projectChanged" => validate_payload("provider:ProjectChangedEvent",value,true), "event.turnUpserted" => validate_payload("provider:TurnUpsertedEvent",value,true), "event.turnOutputDelta" => validate_payload("provider:TurnOutputDeltaEvent",value,true), "event.approvalRequested" => validate_payload("provider:ApprovalRequestedEvent",value,true), "event.approvalResolved" => validate_payload("provider:ApprovalResolvedEvent",value,true), _ => Ok(()) }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -5901,12 +6478,18 @@ pub enum ProtocolMethod {
     TurnInterrupt,
     #[serde(rename = "approval.resolve")]
     ApprovalResolve,
-    #[serde(rename = "event.subscribe")]
-    EventSubscribe,
-    #[serde(rename = "event.unsubscribe")]
-    EventUnsubscribe,
     #[serde(rename = "usage.query")]
     UsageQuery,
+    #[serde(rename = "notice.create")]
+    NoticeCreate,
+    #[serde(rename = "notice.update")]
+    NoticeUpdate,
+    #[serde(rename = "notice.finish")]
+    NoticeFinish,
+    #[serde(rename = "notice.action.execute")]
+    NoticeActionExecute,
+    #[serde(rename = "notice.observe")]
+    NoticeObserve,
 }
 
 impl ProtocolMethod {
@@ -5942,9 +6525,12 @@ impl ProtocolMethod {
             Self::TurnSteer => "turn.steer",
             Self::TurnInterrupt => "turn.interrupt",
             Self::ApprovalResolve => "approval.resolve",
-            Self::EventSubscribe => "event.subscribe",
-            Self::EventUnsubscribe => "event.unsubscribe",
             Self::UsageQuery => "usage.query",
+            Self::NoticeCreate => "notice.create",
+            Self::NoticeUpdate => "notice.update",
+            Self::NoticeFinish => "notice.finish",
+            Self::NoticeActionExecute => "notice.action.execute",
+            Self::NoticeObserve => "notice.observe",
         }
     }
 
@@ -5980,9 +6566,12 @@ impl ProtocolMethod {
             Self::TurnSteer => ProtocolDispatchLane::Normal,
             Self::TurnInterrupt => ProtocolDispatchLane::Normal,
             Self::ApprovalResolve => ProtocolDispatchLane::Normal,
-            Self::EventSubscribe => ProtocolDispatchLane::Normal,
-            Self::EventUnsubscribe => ProtocolDispatchLane::Normal,
             Self::UsageQuery => ProtocolDispatchLane::Normal,
+            Self::NoticeCreate => ProtocolDispatchLane::Normal,
+            Self::NoticeUpdate => ProtocolDispatchLane::Normal,
+            Self::NoticeFinish => ProtocolDispatchLane::Normal,
+            Self::NoticeActionExecute => ProtocolDispatchLane::Normal,
+            Self::NoticeObserve => ProtocolDispatchLane::Normal,
         }
     }
 
@@ -6018,9 +6607,53 @@ impl ProtocolMethod {
             Self::TurnSteer => Some(ProviderCapability::TurnSteer),
             Self::TurnInterrupt => Some(ProviderCapability::TurnInterrupt),
             Self::ApprovalResolve => Some(ProviderCapability::ApprovalResolve),
-            Self::EventSubscribe => None,
-            Self::EventUnsubscribe => None,
             Self::UsageQuery => Some(ProviderCapability::UsageQuery),
+            Self::NoticeCreate => None,
+            Self::NoticeUpdate => None,
+            Self::NoticeFinish => None,
+            Self::NoticeActionExecute => None,
+            Self::NoticeObserve => None,
+        }
+    }
+
+    pub const fn direction(self) -> &'static str {
+        match self {
+            Self::ProviderPing => "hostToPlugin",
+            Self::ProviderInitialize => "hostToPlugin",
+            Self::ProviderDescribe => "hostToPlugin",
+            Self::ProviderShutdown => "hostToPlugin",
+            Self::InstanceReleaseControl => "hostToPlugin",
+            Self::InstanceCreate => "hostToPlugin",
+            Self::InstanceStart => "hostToPlugin",
+            Self::InstanceStop => "hostToPlugin",
+            Self::InstanceDestroy => "hostToPlugin",
+            Self::InstanceCapabilities => "hostToPlugin",
+            Self::RuntimeGetInstalled => "hostToPlugin",
+            Self::RuntimeSelect => "hostToPlugin",
+            Self::ConversationReleaseInteraction => "hostToPlugin",
+            Self::ConversationActiveList => "hostToPlugin",
+            Self::ConversationUnreadList => "hostToPlugin",
+            Self::ConversationMarkRead => "hostToPlugin",
+            Self::ConversationList => "hostToPlugin",
+            Self::ConversationSearch => "hostToPlugin",
+            Self::ConversationGet => "hostToPlugin",
+            Self::ConversationAcquireInteraction => "hostToPlugin",
+            Self::ConversationCreate => "hostToPlugin",
+            Self::ProjectList => "hostToPlugin",
+            Self::ProjectGet => "hostToPlugin",
+            Self::ProjectCreate => "hostToPlugin",
+            Self::ProjectUpdate => "hostToPlugin",
+            Self::ProjectDelete => "hostToPlugin",
+            Self::TurnStart => "hostToPlugin",
+            Self::TurnSteer => "hostToPlugin",
+            Self::TurnInterrupt => "hostToPlugin",
+            Self::ApprovalResolve => "hostToPlugin",
+            Self::UsageQuery => "hostToPlugin",
+            Self::NoticeCreate => "pluginToHost",
+            Self::NoticeUpdate => "pluginToHost",
+            Self::NoticeFinish => "pluginToHost",
+            Self::NoticeActionExecute => "hostToPlugin",
+            Self::NoticeObserve => "hostToPlugin",
         }
     }
 }
@@ -6060,9 +6693,12 @@ impl std::str::FromStr for ProtocolMethod {
             "turn.steer" => Ok(Self::TurnSteer),
             "turn.interrupt" => Ok(Self::TurnInterrupt),
             "approval.resolve" => Ok(Self::ApprovalResolve),
-            "event.subscribe" => Ok(Self::EventSubscribe),
-            "event.unsubscribe" => Ok(Self::EventUnsubscribe),
             "usage.query" => Ok(Self::UsageQuery),
+            "notice.create" => Ok(Self::NoticeCreate),
+            "notice.update" => Ok(Self::NoticeUpdate),
+            "notice.finish" => Ok(Self::NoticeFinish),
+            "notice.action.execute" => Ok(Self::NoticeActionExecute),
+            "notice.observe" => Ok(Self::NoticeObserve),
             _ => Err(()),
         }
     }
@@ -6094,8 +6730,6 @@ pub enum ProtocolEventName {
     EventApprovalRequested,
     #[serde(rename = "event.approvalResolved")]
     EventApprovalResolved,
-    #[serde(rename = "event.notification")]
-    EventNotification,
 }
 
 impl ProtocolEventName {
@@ -6113,7 +6747,6 @@ impl ProtocolEventName {
             Self::EventTurnOutputDelta => "event.turnOutputDelta",
             Self::EventApprovalRequested => "event.approvalRequested",
             Self::EventApprovalResolved => "event.approvalResolved",
-            Self::EventNotification => "event.notification",
         }
     }
 }
@@ -6135,7 +6768,6 @@ impl std::str::FromStr for ProtocolEventName {
             "event.turnOutputDelta" => Ok(Self::EventTurnOutputDelta),
             "event.approvalRequested" => Ok(Self::EventApprovalRequested),
             "event.approvalResolved" => Ok(Self::EventApprovalResolved),
-            "event.notification" => Ok(Self::EventNotification),
             _ => Err(()),
         }
     }
@@ -6331,23 +6963,41 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: ApprovalResolveRequest,
     },
-    #[serde(rename = "event.subscribe")]
-    EventSubscribe {
-        jsonrpc: String,
-        id: RequestId,
-        params: EventSubscribeRequest,
-    },
-    #[serde(rename = "event.unsubscribe")]
-    EventUnsubscribe {
-        jsonrpc: String,
-        id: RequestId,
-        params: EventUnsubscribeRequest,
-    },
     #[serde(rename = "usage.query")]
     UsageQuery {
         jsonrpc: String,
         id: RequestId,
         params: UsageQueryRequest,
+    },
+    #[serde(rename = "notice.create")]
+    NoticeCreate {
+        jsonrpc: String,
+        id: RequestId,
+        params: NoticeCreateRequest,
+    },
+    #[serde(rename = "notice.update")]
+    NoticeUpdate {
+        jsonrpc: String,
+        id: RequestId,
+        params: NoticeUpdateRequest,
+    },
+    #[serde(rename = "notice.finish")]
+    NoticeFinish {
+        jsonrpc: String,
+        id: RequestId,
+        params: NoticeFinishRequest,
+    },
+    #[serde(rename = "notice.action.execute")]
+    NoticeActionExecute {
+        jsonrpc: String,
+        id: RequestId,
+        params: NoticeActionExecuteRequest,
+    },
+    #[serde(rename = "notice.observe")]
+    NoticeObserve {
+        jsonrpc: String,
+        id: RequestId,
+        params: NoticeObserveRequest,
     },
 }
 
@@ -6510,20 +7160,35 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode approval.resolve request params", error))?,
             }),
-            ProtocolMethod::EventSubscribe => Ok(Self::EventSubscribe {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode event.subscribe request params", error))?,
-            }),
-            ProtocolMethod::EventUnsubscribe => Ok(Self::EventUnsubscribe {
-                jsonrpc,
-                id,
-                params: serde_json::from_value(params).map_err(|error| codec_error("decode event.unsubscribe request params", error))?,
-            }),
             ProtocolMethod::UsageQuery => Ok(Self::UsageQuery {
                 jsonrpc,
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode usage.query request params", error))?,
+            }),
+            ProtocolMethod::NoticeCreate => Ok(Self::NoticeCreate {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode notice.create request params", error))?,
+            }),
+            ProtocolMethod::NoticeUpdate => Ok(Self::NoticeUpdate {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode notice.update request params", error))?,
+            }),
+            ProtocolMethod::NoticeFinish => Ok(Self::NoticeFinish {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode notice.finish request params", error))?,
+            }),
+            ProtocolMethod::NoticeActionExecute => Ok(Self::NoticeActionExecute {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode notice.action.execute request params", error))?,
+            }),
+            ProtocolMethod::NoticeObserve => Ok(Self::NoticeObserve {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode notice.observe request params", error))?,
             }),
         }
     }
@@ -6560,9 +7225,12 @@ impl ProtocolRequest {
             Self::TurnSteer { jsonrpc, .. } => jsonrpc,
             Self::TurnInterrupt { jsonrpc, .. } => jsonrpc,
             Self::ApprovalResolve { jsonrpc, .. } => jsonrpc,
-            Self::EventSubscribe { jsonrpc, .. } => jsonrpc,
-            Self::EventUnsubscribe { jsonrpc, .. } => jsonrpc,
             Self::UsageQuery { jsonrpc, .. } => jsonrpc,
+            Self::NoticeCreate { jsonrpc, .. } => jsonrpc,
+            Self::NoticeUpdate { jsonrpc, .. } => jsonrpc,
+            Self::NoticeFinish { jsonrpc, .. } => jsonrpc,
+            Self::NoticeActionExecute { jsonrpc, .. } => jsonrpc,
+            Self::NoticeObserve { jsonrpc, .. } => jsonrpc,
         }
     }
 
@@ -6598,9 +7266,12 @@ impl ProtocolRequest {
             Self::TurnSteer { id, .. } => id,
             Self::TurnInterrupt { id, .. } => id,
             Self::ApprovalResolve { id, .. } => id,
-            Self::EventSubscribe { id, .. } => id,
-            Self::EventUnsubscribe { id, .. } => id,
             Self::UsageQuery { id, .. } => id,
+            Self::NoticeCreate { id, .. } => id,
+            Self::NoticeUpdate { id, .. } => id,
+            Self::NoticeFinish { id, .. } => id,
+            Self::NoticeActionExecute { id, .. } => id,
+            Self::NoticeObserve { id, .. } => id,
         }
     }
 
@@ -6636,9 +7307,12 @@ impl ProtocolRequest {
             Self::TurnSteer { .. } => ProtocolMethod::TurnSteer,
             Self::TurnInterrupt { .. } => ProtocolMethod::TurnInterrupt,
             Self::ApprovalResolve { .. } => ProtocolMethod::ApprovalResolve,
-            Self::EventSubscribe { .. } => ProtocolMethod::EventSubscribe,
-            Self::EventUnsubscribe { .. } => ProtocolMethod::EventUnsubscribe,
             Self::UsageQuery { .. } => ProtocolMethod::UsageQuery,
+            Self::NoticeCreate { .. } => ProtocolMethod::NoticeCreate,
+            Self::NoticeUpdate { .. } => ProtocolMethod::NoticeUpdate,
+            Self::NoticeFinish { .. } => ProtocolMethod::NoticeFinish,
+            Self::NoticeActionExecute { .. } => ProtocolMethod::NoticeActionExecute,
+            Self::NoticeObserve { .. } => ProtocolMethod::NoticeObserve,
         }
     }
 }
@@ -6706,11 +7380,6 @@ pub enum ProtocolEvent {
         jsonrpc: String,
         params: ApprovalResolvedEvent,
     },
-    #[serde(rename = "event.notification")]
-    EventNotification {
-        jsonrpc: String,
-        params: ProviderNotificationEvent,
-    },
 }
 
 impl ProtocolEvent {
@@ -6728,7 +7397,6 @@ impl ProtocolEvent {
             Self::EventTurnOutputDelta { jsonrpc, .. } => jsonrpc,
             Self::EventApprovalRequested { jsonrpc, .. } => jsonrpc,
             Self::EventApprovalResolved { jsonrpc, .. } => jsonrpc,
-            Self::EventNotification { jsonrpc, .. } => jsonrpc,
         }
     }
 }
@@ -6947,16 +7615,28 @@ pub trait ProtocolServer: Send + Sync {
         Box::pin(async { Err(method_not_implemented("approval.resolve")) })
     }
 
-    fn event_subscribe<'a>(&'a self, _request: EventSubscribeRequest) -> ProtocolFuture<'a, EventSubscribeResponse> {
-        Box::pin(async { Err(method_not_implemented("event.subscribe")) })
-    }
-
-    fn event_unsubscribe<'a>(&'a self, _request: EventUnsubscribeRequest) -> ProtocolFuture<'a, EventUnsubscribeResponse> {
-        Box::pin(async { Err(method_not_implemented("event.unsubscribe")) })
-    }
-
     fn usage_query<'a>(&'a self, _request: UsageQueryRequest) -> ProtocolFuture<'a, UsageQueryResponse> {
         Box::pin(async { Err(method_not_implemented("usage.query")) })
+    }
+
+    fn notice_create<'a>(&'a self, _request: NoticeCreateRequest) -> ProtocolFuture<'a, NoticePublishResponse> {
+        Box::pin(async { Err(method_not_implemented("notice.create")) })
+    }
+
+    fn notice_update<'a>(&'a self, _request: NoticeUpdateRequest) -> ProtocolFuture<'a, NoticePublishResponse> {
+        Box::pin(async { Err(method_not_implemented("notice.update")) })
+    }
+
+    fn notice_finish<'a>(&'a self, _request: NoticeFinishRequest) -> ProtocolFuture<'a, NoticePublishResponse> {
+        Box::pin(async { Err(method_not_implemented("notice.finish")) })
+    }
+
+    fn notice_action_execute<'a>(&'a self, _request: NoticeActionExecuteRequest) -> ProtocolFuture<'a, NoticeActionResult> {
+        Box::pin(async { Err(method_not_implemented("notice.action.execute")) })
+    }
+
+    fn notice_observe<'a>(&'a self, _request: NoticeObserveRequest) -> ProtocolFuture<'a, NoticeObserveResponse> {
+        Box::pin(async { Err(method_not_implemented("notice.observe")) })
     }
 }
 
@@ -7271,28 +7951,58 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
             };
             JsonRpcResponse { jsonrpc, id: Some(id), response }
         },
-        ProtocolRequest::EventSubscribe { jsonrpc, id, params } => {
-            let response = match server.event_subscribe(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
-        ProtocolRequest::EventUnsubscribe { jsonrpc, id, params } => {
-            let response = match server.event_unsubscribe(params).await {
-                Ok(result) => match serde_json::to_value(result) {
-                    Ok(result) => JsonRpcResponsePayload::Ok { result },
-                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
-                },
-                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
-            };
-            JsonRpcResponse { jsonrpc, id: Some(id), response }
-        },
         ProtocolRequest::UsageQuery { jsonrpc, id, params } => {
             let response = match server.usage_query(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::NoticeCreate { jsonrpc, id, params } => {
+            let response = match server.notice_create(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::NoticeUpdate { jsonrpc, id, params } => {
+            let response = match server.notice_update(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::NoticeFinish { jsonrpc, id, params } => {
+            let response = match server.notice_finish(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::NoticeActionExecute { jsonrpc, id, params } => {
+            let response = match server.notice_action_execute(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::NoticeObserve { jsonrpc, id, params } => {
+            let response = match server.notice_observe(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -7648,32 +8358,62 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
         })
     }
 
-    pub fn event_subscribe<'a>(&'a self, request: EventSubscribeRequest) -> ProtocolFuture<'a, EventSubscribeResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            validate_request_params("event.subscribe", &params)?;
-            let result = self.transport.request(ProtocolMethod::EventSubscribe, params).await?;
-            validate_payload("provider:EventSubscribeResponse", &result, true)?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
-    pub fn event_unsubscribe<'a>(&'a self, request: EventUnsubscribeRequest) -> ProtocolFuture<'a, EventUnsubscribeResponse> {
-        Box::pin(async move {
-            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
-            validate_request_params("event.unsubscribe", &params)?;
-            let result = self.transport.request(ProtocolMethod::EventUnsubscribe, params).await?;
-            validate_payload("provider:EventUnsubscribeResponse", &result, true)?;
-            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
-        })
-    }
-
     pub fn usage_query<'a>(&'a self, request: UsageQueryRequest) -> ProtocolFuture<'a, UsageQueryResponse> {
         Box::pin(async move {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             validate_request_params("usage.query", &params)?;
             let result = self.transport.request(ProtocolMethod::UsageQuery, params).await?;
             validate_payload("provider:UsageQueryResponse", &result, true)?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn notice_create<'a>(&'a self, request: NoticeCreateRequest) -> ProtocolFuture<'a, NoticePublishResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            validate_request_params("notice.create", &params)?;
+            let result = self.transport.request(ProtocolMethod::NoticeCreate, params).await?;
+            validate_payload("provider:NoticePublishResponse", &result, true)?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn notice_update<'a>(&'a self, request: NoticeUpdateRequest) -> ProtocolFuture<'a, NoticePublishResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            validate_request_params("notice.update", &params)?;
+            let result = self.transport.request(ProtocolMethod::NoticeUpdate, params).await?;
+            validate_payload("provider:NoticePublishResponse", &result, true)?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn notice_finish<'a>(&'a self, request: NoticeFinishRequest) -> ProtocolFuture<'a, NoticePublishResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            validate_request_params("notice.finish", &params)?;
+            let result = self.transport.request(ProtocolMethod::NoticeFinish, params).await?;
+            validate_payload("provider:NoticePublishResponse", &result, true)?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn notice_action_execute<'a>(&'a self, request: NoticeActionExecuteRequest) -> ProtocolFuture<'a, NoticeActionResult> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            validate_request_params("notice.action.execute", &params)?;
+            let result = self.transport.request(ProtocolMethod::NoticeActionExecute, params).await?;
+            validate_payload("core:NoticeActionResult", &result, true)?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn notice_observe<'a>(&'a self, request: NoticeObserveRequest) -> ProtocolFuture<'a, NoticeObserveResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            validate_request_params("notice.observe", &params)?;
+            let result = self.transport.request(ProtocolMethod::NoticeObserve, params).await?;
+            validate_payload("provider:NoticeObserveResponse", &result, true)?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

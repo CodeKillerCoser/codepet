@@ -10,6 +10,7 @@ try {
   }
   const payload = JSON.parse(input);
   payload.codepet_observed_at = Date.now();
+  if (process.env.__CFBundleIdentifier) payload.codepet_application_id = process.env.__CFBundleIdentifier;
   const endpoint = JSON.parse(await readFile(process.argv[2], 'utf8'));
   await fetch(endpoint.url, { method: 'POST', headers: { 'content-type': 'application/json', authorization: endpoint.token },
     body: JSON.stringify({ eventId: randomUUID(), payload }), signal: AbortSignal.timeout(1000) });

@@ -15,7 +15,7 @@ async fn native_inventory_completes_through_host_with_duplicate_path_entries() {
         let repeated = (0..10).flat_map(|_| paths.iter().cloned()).collect::<Vec<_>>();
         env.insert("PATH".into(), std::env::join_paths(repeated).unwrap().to_string_lossy().into_owned());
         let descriptor = PluginDescriptor {
-            plugin_id: format!("dev.codepet.{name}"), display_name: name.into(), icon: None,
+            plugin_id: format!("dev.codepet.{name}"), display_name: name.into(), icon: "https://example.com/provider.png".into(),
             executable: binaries.join(format!("codepet-provider-{name}{}", std::env::consts::EXE_SUFFIX)),
             args: vec![], env, enabled: true, instances: vec![],
         };

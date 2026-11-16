@@ -6,14 +6,10 @@ pub mod platform;
 pub mod runtime_gateway;
 mod task_lineage;
 
-pub use activity::collector;
 pub use activity::events;
 pub use activity::title_resolver;
-pub use agent::actions as activity_actions;
 pub use agent::claude_transcript;
 pub use agent::codex_desktop_ipc;
-pub use agent::control as agent_control;
-pub use agent::hooks;
 pub use agent::registry as agents;
 pub use agent::runtime as agent_runtime;
 pub use app::autostart;
@@ -40,7 +36,7 @@ use settings::{
     load_app_settings, save_app_settings,
     AppSettings,
 };
-use state::{ApprovalBehavior, ApprovalDecision, SharedState};
+use state::SharedState;
 use subject_cutout::SubjectCutoutResult;
 use updates::PendingAppUpdate;
 use runtime_gateway::tauri_bridge::{
@@ -305,46 +301,6 @@ fn record_perf_event(event: app_log::PerfEvent) {
 }
 
 #[tauri::command]
-fn activate_activity(state: tauri::State<'_, SharedState>, event_id: String) -> Result<(), String> {
-    let event = state
-        .event_by_id(&event_id)
-        .ok_or_else(|| format!("activity not found: {event_id}"))?;
-    activity_actions::activate_event(&event)
-}
-
-#[tauri::command]
-async fn send_activity_reply(
-    state: tauri::State<'_, SharedState>,
-    event_id: String,
-    message: String,
-) -> Result<(), String> {
-    let message = message.trim().to_string();
-    if message.is_empty() {
-        return Err("reply message is empty".to_string());
-    }
-    let event = state
-        .event_by_id(&event_id)
-        .ok_or_else(|| format!("activity not found: {event_id}"))?;
-    tauri::async_runtime::spawn_blocking(move || activity_actions::send_reply_to_event(&event, &message))
-        .await
-        .map_err(|error| format!("reply task failed: {error}"))?
-}
-
-#[tauri::command]
-fn resolve_activity_approval(
-    state: tauri::State<'_, SharedState>,
-    event_id: String,
-    behavior: ApprovalBehavior,
-    message: Option<String>,
-) -> Result<(), String> {
-    let event = state
-        .event_by_id(&event_id)
-        .or_else(|| state.approval_event_by_id(&event_id))
-        .ok_or_else(|| format!("approval not found: {event_id}"))?;
-    activity_actions::resolve_approval_for_event(&state, &event, ApprovalDecision { behavior, message })
-}
-
-#[tauri::command]
 fn open_main_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         window.show().map_err(|error| error.to_string())?;
@@ -495,7 +451,7 @@ pub fn run() {
             }
             provider_host_state.start_in_background();
             task_lineage::start_background(handle.clone());
-            provider_host_state.start_pet();
+            provider_host_state.start_notice_observation();
             remote_access_runtime.start_in_background();
             if let Err(error) = install_tray_icon(&handle) {
                 app_log::error("startup", &format!("failed to create tray icon error={error}"));
@@ -551,10 +507,6 @@ pub fn run() {
             recent_events,
             app::event_journal::query_event_journal,
             record_perf_event,
-            activate_activity,
-            send_activity_reply,
-            resolve_activity_approval,
-            runtime_gateway::tauri_bridge::pet_gateway_request,
             open_main_window,
             pet_asset_data_url,
             pet::surface::pet_surface_state,

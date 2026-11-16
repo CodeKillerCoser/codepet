@@ -2,8 +2,10 @@ import fs from "node:fs";
 import zlib from "node:zlib";
 import { promisify } from "node:util";
 import { PiSession } from "./pi.mjs";
+import { NoticeFixture } from "./notices.mjs";
 import { normalizeSelection } from "./selection.mjs";
 import {
+  methods,
   requestValidators,
   responseValidators,
   eventValidators,
@@ -24,11 +26,14 @@ const numeric = (name, fallback) =>
         fallback,
     ),
   );
-// Business revision is independent of software, SDK and transport versions.
-// Keep a declared 2/2 mode for standalone legacy-peer acceptance.
-const protocolVersion = numeric("protocol-version", 3);
-if (![2, 3].includes(protocolVersion))
-  throw Error("unsupported business protocol fixture version");
+// This fixture only implements the unified Notice business protocol.
+if (
+  process.env.ECHO_PROTOCOL_VERSION !== undefined &&
+  process.env.ECHO_PROTOCOL_VERSION !== "4"
+)
+  throw Error("business protocol must be 4/4");
+if (arg("protocol-version", "4") !== "4")
+  throw Error("business protocol must be 4/4");
 const controls = {
   describeDelayMs: numeric("describe-delay-ms", 0),
   turnDelayMs: numeric("turn-delay-ms", 30),
@@ -108,6 +113,87 @@ async function unframe(buf, decodedLength) {
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(raw));
 }
 let send;
+const methodDirections = new Map(
+  methods.map((method) => [method.name, method.direction]),
+);
+const pendingRpc = new Map();
+let outboundSequence = 0;
+const receiveResponse = (message) => {
+  const waiting = pendingRpc.get(message.id);
+  if (!waiting) return;
+  pendingRpc.delete(message.id);
+  clearTimeout(waiting.timer);
+  if (
+    message.jsonrpc !== "2.0" ||
+    (!Object.hasOwn(message, "result") && !message.error)
+  ) {
+    waiting.reject(
+      Object.assign(Error("invalid Host response"), {
+        protocolCode: "invalid_notice_response",
+      }),
+    );
+    return;
+  }
+  if (message.error) {
+    waiting.reject(
+      Object.assign(Error(message.error.message || "Host rejected request"), {
+        protocolCode: message.error.data?.code || "host_rpc_error",
+      }),
+    );
+    return;
+  }
+  const validate = responseValidators.get(waiting.method);
+  if (!validate(message.result)) {
+    waiting.reject(
+      Object.assign(Error("invalid Host result"), {
+        protocolCode: "invalid_notice_response",
+      }),
+    );
+    return;
+  }
+  waiting.resolve(message.result);
+};
+function callHost(method, params) {
+  if (
+    methodDirections.get(method) !== "pluginToHost" ||
+    !requestValidators.get(method)?.(params)
+  )
+    return Promise.reject(
+      Object.assign(Error("invalid outgoing request"), {
+        protocolCode: "invalid_request",
+      }),
+    );
+  if (pendingRpc.size >= 64)
+    return Promise.reject(Error("outgoing request capacity exceeded"));
+  const id = `provider-${++outboundSequence}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(
+      () => {
+        pendingRpc.delete(id);
+        reject(
+          Object.assign(Error("Host request result unknown; no retry"), {
+            protocolCode: "rpc_result_unknown",
+          }),
+        );
+      },
+      Number(process.env.NOTICE_RPC_TIMEOUT_MS || 3000),
+    );
+    pendingRpc.set(id, { method, resolve, reject, timer });
+    Promise.resolve(send({ jsonrpc: "2.0", id, method, params })).catch(
+      (error) => {
+        if (!pendingRpc.delete(id)) return;
+        clearTimeout(timer);
+        reject(
+          Object.assign(Error("Host request result unknown; no retry"), {
+            protocolCode: "rpc_result_unknown",
+          }),
+        );
+      },
+    );
+  });
+}
+const noticeFixture =
+  backend === "notice" ? new NoticeFixture({ call: callHost, pluginId }) : null;
 const capabilities = {
   revision: backend === "pi" ? "independent-pi-v2" : "independent-echo-v2",
   methods: [
@@ -145,11 +231,15 @@ capabilities.conversationCreate.selection = capabilities.turnSend;
 const plugin = {
   pluginId,
   displayName:
-    backend === "pi" ? "Independent Pi RPC" : "Independent JavaScript Echo",
-  version: "3.0.0",
-  protocol: { version: protocolVersion, minVersion: 2 },
-  ...(protocolVersion >= 3 ? { features: ["agent"] } : {}),
-  instanceKinds: [kind],
+    backend === "notice"
+      ? "Independent Notice fixture"
+      : backend === "pi"
+        ? "Independent Pi RPC"
+        : "Independent JavaScript Echo",
+  version: "4.0.0",
+  protocol: { version: 4, minVersion: 4 },
+  features: backend === "notice" ? ["observation"] : ["agent"],
+  instanceKinds: backend === "notice" ? [] : [kind],
 };
 let initialized = false,
   pingState,
@@ -308,6 +398,10 @@ async function business(method, p) {
     return { protocol: { ...plugin.protocol, selectedVersion }, plugin };
   }
   if (!initialized) fail("initialize required", "not_initialized");
+  if (method === "notice.observe" && noticeFixture)
+    return noticeFixture.observe(p);
+  if (method === "notice.action.execute" && noticeFixture)
+    return noticeFixture.execute(p);
   switch (method) {
     case "provider.describe":
       await sleep(controls.describeDelayMs);
@@ -337,6 +431,8 @@ async function business(method, p) {
       return { sequence: p.sequence, clientsRevision: p.clients.revision };
     }
     case "instance.create": {
+      if (noticeFixture)
+        fail("observation fixture has no Agent instances", "unsupported");
       if (p.instanceKind !== kind) fail("unsupported instance kind");
       if (p.route.providerPluginId !== pluginId) fail("plugin route mismatch");
       let old = instances.get(p.route.providerInstanceId);
@@ -631,15 +727,9 @@ async function business(method, p) {
       }
       return { turn };
     }
-    case "event.subscribe":
-      return {
-        subscriptionId: p.subscriptionId,
-        message: "ordered events enabled",
-      };
-    case "event.unsubscribe":
-      return { subscriptionId: p.subscriptionId };
     case "provider.shutdown":
       for (const entry of conversations.values()) entry.pi?.close();
+      noticeFixture?.close();
       closing = true;
       return { accepted: true };
     default:
@@ -647,6 +737,10 @@ async function business(method, p) {
   }
 }
 async function handle(req, reply = send) {
+  if (req && typeof req.id === "string" && req.method === undefined) {
+    receiveResponse(req);
+    return;
+  }
   let response;
   try {
     if (
@@ -656,7 +750,8 @@ async function handle(req, reply = send) {
     )
       fail("invalid JSON-RPC request");
     const validate = requestValidators.get(req.method);
-    if (!validate) fail("method not found", "method_not_found");
+    if (!validate || methodDirections.get(req.method) === "pluginToHost")
+      fail("method not found", "method_not_found");
     if (!validate(req.params ?? {}))
       fail(`invalid params: ${JSON.stringify(validate.errors)}`);
     const result = await business(req.method, req.params ?? {});
@@ -680,6 +775,8 @@ async function handle(req, reply = send) {
     };
   }
   await reply(response);
+  if (req?.method === "provider.initialize" && !response.error)
+    noticeFixture?.start();
   if (req?.method === "provider.shutdown" && !response.error) {
     await writeChain;
     process.exit(0);
@@ -739,6 +836,7 @@ async function serial() {
   if (buf.length) throw Error("truncated EOF record");
   await Promise.all(decodes);
   closing = true;
+  noticeFixture?.close();
   for (const entry of conversations.values()) entry.pi?.close();
   await writeChain;
   process.exit(0);

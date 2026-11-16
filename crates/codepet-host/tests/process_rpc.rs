@@ -12,7 +12,7 @@ fn descriptor(plugin_id: &str) -> PluginDescriptor {
     PluginDescriptor {
         plugin_id: plugin_id.to_string(),
         display_name: "Fake Provider".to_string(),
-        icon: None,
+        icon: "https://example.com/provider.png".into(),
         executable: env!("CARGO_BIN_EXE_codepet-host-fake-provider").into(),
         args: Vec::new(),
         env: BTreeMap::from([(
@@ -43,8 +43,8 @@ async fn ready_process(plugin_id: &str, instance_id: &str) -> PluginProcess {
             host_device_id: "device-test".to_string(),
             host_version: "test".to_string(),
             protocol: ProtocolVersionOffer {
-                min_version: 2,
-                version: 2,
+                min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION,
+                version: codepet_provider_sdk::PROTOCOL_VERSION,
             },
         })
         .await
@@ -207,8 +207,8 @@ async fn shutdown_waits_for_a_provider_that_closes_stdout_before_delayed_clean_e
             host_device_id: "device-test".to_string(),
             host_version: "test".to_string(),
             protocol: ProtocolVersionOffer {
-                min_version: 2,
-                version: 2,
+                min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION,
+                version: codepet_provider_sdk::PROTOCOL_VERSION,
             },
         })
         .await
@@ -253,8 +253,8 @@ async fn shutdown_discards_late_events_without_closing_provider_stdout() {
             host_device_id: "device-test".to_string(),
             host_version: "test".to_string(),
             protocol: ProtocolVersionOffer {
-                min_version: 2,
-                version: 2,
+                min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION,
+                version: codepet_provider_sdk::PROTOCOL_VERSION,
             },
         })
         .await
@@ -396,7 +396,7 @@ async fn mux_handshake_cancel_and_shutdown_use_the_production_sdk_runtime() {
     let process = Arc::new(PluginProcess::spawn(&plugin, options()).unwrap());
     let p = process.clone();
     let pending = tokio::spawn(async move {
-        p.client().provider_initialize(ProviderInitializeRequest { directories: None, host_client_id: "test".into(), host_device_id: "test".into(), host_version: "test".into(), protocol: ProtocolVersionOffer { min_version: 2, version: 2 } }).await
+        p.client().provider_initialize(ProviderInitializeRequest { directories: None, host_client_id: "test".into(), host_device_id: "test".into(), host_version: "test".into(), protocol: ProtocolVersionOffer { min_version: codepet_provider_sdk::MIN_PROTOCOL_VERSION, version: codepet_provider_sdk::PROTOCOL_VERSION } }).await
     });
     tokio::time::sleep(Duration::from_millis(100)).await;
     pending.abort(); let _ = pending.await;

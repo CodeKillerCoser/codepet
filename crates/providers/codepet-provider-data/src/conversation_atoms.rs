@@ -51,6 +51,8 @@ struct TrackedEvents {
     mirror_summary_activity: bool,
 }
 impl ProviderEventSink for TrackedEvents {
+    fn request_host<'a>(&'a self, method: codepet_provider_sdk::ProtocolMethod, params: serde_json::Value) -> codepet_provider_sdk::ProtocolFuture<'a, serde_json::Value> { self.sink.request_host(method,params) }
+
     fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError> {
         let _guard = self.gate.lock().map_err(|_| query_error("conversation_state_unavailable", "fact commit lock poisoned"))?;
         self.publish_locked(event, None)

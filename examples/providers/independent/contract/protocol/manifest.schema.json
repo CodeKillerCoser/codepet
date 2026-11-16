@@ -7,6 +7,7 @@
     "manifestVersion",
     "pluginId",
     "displayName",
+    "icon",
     "command",
     "transport"
   ],
@@ -32,7 +33,8 @@
     "icon": {
       "type": "string",
       "minLength": 1,
-      "description": "不含认证信息的绝对 HTTPS 图标 URL。"
+      "description": "必填插件图标：不含认证信息、空白字符的绝对 HTTPS 图像 URL。Host 在发现、加载或导入时使用本 Schema 校验，校验失败禁止加载。",
+      "pattern": "^https://[^/@\\s?#]+(?:[/?#][^\\s]*)?$"
     },
     "command": {
       "type": "string",

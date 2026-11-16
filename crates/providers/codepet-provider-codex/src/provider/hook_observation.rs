@@ -1,5 +1,6 @@
+use codepet_observation::HookEvent;
 use super::*;
-use codepet_provider_sdk::{ConversationActiveChangedEvent, ConversationItemUpsertedEvent, ConversationStatus, ProviderNotificationEvent, RoutedResourceId};
+use codepet_provider_sdk::{ConversationActiveChangedEvent, ConversationItemUpsertedEvent, ConversationStatus,  RoutedResourceId};
 use std::collections::VecDeque;
 
 pub(super) const INTERNAL_SUBSCRIPTION: &str = "codepet-codex-activity-observation";
@@ -50,10 +51,10 @@ impl ActivityProjection {
         }).collect()
     }
 
-    fn apply(&mut self, route: &ProviderInstanceRoute, event: &ProviderNotificationEvent) -> Result<Vec<ProtocolEvent>, ProtocolError> {
-        let Some(raw) = event.payload.get("codepet_observation").and_then(|value| value.get("raw")) else { return Ok(vec![]); };
+    fn apply(&mut self, route: &ProviderInstanceRoute, event: &HookEvent) -> Result<Vec<ProtocolEvent>, ProtocolError> {
+        let raw=serde_json::Value::Object(event.payload.clone());
         let Some(id) = raw.get("session_id").or_else(|| raw.get("thread_id")).and_then(Value::as_str).filter(|id| !id.is_empty()) else { return Ok(vec![]); };
-        let Some(signal) = hook_signal(raw) else { return Ok(vec![]); };
+        let Some(signal) = hook_signal(&raw) else { return Ok(vec![]); };
         if self.event_ids.contains(&event.event_id) { return Ok(vec![]); }
         let facts = self.sessions.entry(id.into()).or_default();
         let lifecycle = matches!(&signal, HookSignal::Start | HookSignal::Stop);
@@ -108,6 +109,8 @@ pub(super) struct SummaryEvents {
     pub sink: Arc<dyn ProviderEventSink>,
 }
 impl ProviderEventSink for SummaryEvents {
+    fn request_host<'a>(&'a self, method: codepet_provider_sdk::ProtocolMethod, params: serde_json::Value) -> codepet_provider_sdk::ProtocolFuture<'a, serde_json::Value> { self.sink.request_host(method,params) }
+
     fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError> { self.publish_batch(vec![event]) }
     fn publish_batch(&self, mut events: Vec<ProtocolEvent>) -> Result<(), ProtocolError> {
         for event in &mut events {
@@ -121,22 +124,14 @@ impl ProviderEventSink for SummaryEvents {
 
 pub(super) struct HookEvents {
     pub state: std::sync::Weak<Mutex<ProviderState>>,
-    pub sink: Arc<dyn ProviderEventSink>,
 }
-impl ProviderEventSink for HookEvents {
-    fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError> {
-        if let ProtocolEvent::EventNotification { params, .. } = &event {
-            if let Some(state) = self.state.upgrade() {
-                let runtimes = lock(&state).instances.values().cloned().collect::<Vec<_>>();
-                for runtime in runtimes {
-                    if let Err(error) = runtime.observe_hook(params) {
-                        eprintln!("Codex Hook projection failed: {}", error.message);
-                    }
-                }
-            }
-            if params.subscription_id == INTERNAL_SUBSCRIPTION { return Ok(()); }
+impl codepet_observation::HookObserver for HookEvents {
+    fn observe(&self,params:&HookEvent)->Result<(),ProtocolError>{
+        if let Some(state)=self.state.upgrade(){
+            let runtimes=lock(&state).instances.values().cloned().collect::<Vec<_>>();
+            for runtime in runtimes {runtime.observe_hook(params)?;}
         }
-        self.sink.publish(event)
+        Ok(())
     }
 }
 
@@ -145,7 +140,7 @@ impl CodexInstanceRuntime {
         lock(&self.hook_activity).project(conversation);
     }
 
-    fn observe_hook(&self, event: &ProviderNotificationEvent) -> Result<(), ProtocolError> {
+    fn observe_hook(&self, event: &HookEvent) -> Result<(), ProtocolError> {
         // Server stop/start and writer acquisition are not session activity facts.
         let state = lock(&self.mutable);
         if state.destroyed { return Ok(()); }
@@ -190,12 +185,10 @@ mod tests {
         (runtime, sink)
     }
 
-    fn notification(id: &str, name: &str, time: u64) -> ProviderNotificationEvent {
-        ProviderNotificationEvent {
-            subscription_id: INTERNAL_SUBSCRIPTION.into(), event_id: id.into(), received_at: time,
-            payload: serde_json::from_value(json!({"codepet_observation":{"raw":{
-                "hook_event_name":name, "session_id":"thread"
-            }}})).unwrap(),
+    fn notification(id: &str, name: &str, time: u64) -> HookEvent {
+        HookEvent {
+             event_id: id.into(), received_at: time, gap:false,
+            payload: serde_json::from_value(json!({"hook_event_name":name,"session_id":"thread"})).unwrap(),
         }
     }
 

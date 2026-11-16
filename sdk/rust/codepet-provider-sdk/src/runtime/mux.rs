@@ -11,8 +11,26 @@ use tokio::sync::Semaphore;
 struct ObservedEvents {
     activity: Arc<super::activity::Activity>,
     sink: Arc<dyn ProviderEventSink>,
+    host: ProviderMux,
+    next_request: std::sync::atomic::AtomicU64,
 }
 impl ProviderEventSink for ObservedEvents {
+    fn request_host<'a>(&'a self, method: ProtocolMethod, params: serde_json::Value) -> crate::ProtocolFuture<'a, serde_json::Value> {
+        Box::pin(async move {
+            if method.direction() != "pluginToHost" { return Err(error("Cannot invoke a hostToPlugin method on Host")); }
+            let id=format!("plugin-{}", self.next_request.fetch_add(1,Ordering::Relaxed));
+            let request=crate::ProtocolRequest::from_method_params(method,id.clone(),params)?;
+            let reply=tokio::time::timeout(self.host.stream_timeout(),self.host.exchange(ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request)))).await.map_err(error)??;
+            match reply.message {
+                ProviderWireMessage::Response(reply) if reply.id.as_deref()==Some(id.as_str()) => match reply.response {
+                    JsonRpcResponsePayload::Ok{result}=>Ok(result),
+                    JsonRpcResponsePayload::Error{error:rpc}=>Err(rpc.data.and_then(|v|serde_json::from_value(serde_json::json!(v)).ok()).unwrap_or_else(||error(rpc.message))),
+                },
+                _=>Err(error("Host response does not match Provider request")),
+            }
+        })
+    }
+
     fn publish(&self, event: crate::generated::ProtocolEvent) -> Result<(), ProtocolError> {
         self.activity.event(&event);
         self.sink.publish(event)
@@ -48,7 +66,7 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
     let output_closed = Arc::new(AtomicBool::new(false));
     let (sink, mut event_rx) = super::events::queued_events(output_closed.clone());
     let activity = Arc::new(super::activity::Activity::default());
-    let observed_sink: Arc<dyn ProviderEventSink> = Arc::new(ObservedEvents { activity: activity.clone(), sink });
+    let observed_sink: Arc<dyn ProviderEventSink> = Arc::new(ObservedEvents { activity: activity.clone(), sink, host: peer.clone(), next_request: std::sync::atomic::AtomicU64::new(1) });
     let provider = Arc::new(factory(observed_sink.clone()));
     let event_peer = peer.clone();
     let mut event_task = tokio::spawn(async move {
@@ -115,6 +133,11 @@ where R: Read + Send + 'static, W: Write + Send + 'static, P: ProtocolServer + '
                         match received.message {
                             ProviderWireMessage::Request(JsonRpcInboundRequest::Typed(request)) => {
                                 let method = request.method(); let id = request.id().clone();
+                                if method.direction() != "hostToPlugin" {
+                                    stream.respond_with_fallback(ProviderWireMessage::Response(JsonRpcResponse { jsonrpc:"2.0".into(),id:Some(id.clone()),response:JsonRpcResponsePayload::Error{error:RpcError{code:-32601,message:"Method belongs to Host".into(),data:None}} }),Some(id)).await?;
+                                    return Ok(false);
+                                }
+
                                 let lane = if method.dispatch_lane() == ProtocolDispatchLane::Control { control } else { normal };
                                 // Heartbeats retain their runtime fast path even if control handlers are busy.
                                 let reply = if let crate::generated::ProtocolRequest::ProviderPing { params, .. } = request {

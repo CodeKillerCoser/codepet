@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "pet-input",
+  "description": "Allow the pet window to request keyboard focus when a user opens a Notice reply or permission action.",
+  "windows": ["pet"],
+  "permissions": ["core:window:allow-set-focus"]
+}

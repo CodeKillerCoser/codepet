@@ -5,6 +5,11 @@ use tokio::sync::{mpsc, Semaphore, OwnedSemaphorePermit};
 
 /// Publishes typed Provider notifications without exposing stdout or JSON-RPC framing.
 pub trait ProviderEventSink: Send + Sync + 'static {
+    /// Invoke a pluginToHost method over this same process connection.
+    fn request_host<'a>(&'a self, _method: crate::ProtocolMethod, _params: serde_json::Value) -> crate::ProtocolFuture<'a, serde_json::Value> {
+        Box::pin(async { Err(error("Host RPC is unavailable in this event sink")) })
+    }
+
     fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError>;
 
     /// Ordered batch. The stdio sink admits the complete batch or none of it.

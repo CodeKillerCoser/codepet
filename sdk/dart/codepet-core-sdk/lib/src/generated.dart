@@ -310,6 +310,986 @@ Object? encodeNativeResourceId(NativeResourceId value, {String path = 'NativeRes
   return checked;
 }
 
+final class Notice {
+  factory Notice({
+    required String noticeId,
+    required String pluginId,
+    required String sourceId,
+    required NoticeStatus status,
+    required NoticeContent content,
+    required List<NoticeAction> actions,
+    required int revision,
+    required bool finished,
+    required int createdAt,
+    required int updatedAt,
+  }) {
+    final validatedNoticeId = _string(noticeId, 'Notice.noticeId', minLength: 1);
+    final validatedPluginId = _string(pluginId, 'Notice.pluginId', minLength: 1);
+    final validatedSourceId = _string(sourceId, 'Notice.sourceId', minLength: 1);
+    final validatedStatus = status;
+    final validatedContent = content;
+    final validatedActions = _freezeList<NoticeAction>(actions, 'Notice.actions', (item, itemPath) => item, encodeItem: (item) => item.toJson());
+    final validatedRevision = _integer(revision, 'Notice.revision', minimum: 1);
+    final validatedFinished = finished;
+    final validatedCreatedAt = _integer(createdAt, 'Notice.createdAt', minimum: 0);
+    final validatedUpdatedAt = _integer(updatedAt, 'Notice.updatedAt', minimum: 0);
+    return Notice._(
+      noticeId: validatedNoticeId,
+      pluginId: validatedPluginId,
+      sourceId: validatedSourceId,
+      status: validatedStatus,
+      content: validatedContent,
+      actions: validatedActions,
+      revision: validatedRevision,
+      finished: validatedFinished,
+      createdAt: validatedCreatedAt,
+      updatedAt: validatedUpdatedAt,
+    );
+  }
+
+  Notice._({
+    required this.noticeId,
+    required this.pluginId,
+    required this.sourceId,
+    required this.status,
+    required this.content,
+    required this.actions,
+    required this.revision,
+    required this.finished,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  final String noticeId;
+  final String pluginId;
+  final String sourceId;
+  final NoticeStatus status;
+  final NoticeContent content;
+  final List<NoticeAction> actions;
+  final int revision;
+  final bool finished;
+  final int createdAt;
+  final int updatedAt;
+
+  factory Notice.fromJson(Object? value, {String path = 'Notice'}) {
+    final json = _object(value, path);
+    return Notice(
+      noticeId: _string(_required(json, 'noticeId', path), '$path.noticeId', minLength: 1),
+      pluginId: _string(_required(json, 'pluginId', path), '$path.pluginId', minLength: 1),
+      sourceId: _string(_required(json, 'sourceId', path), '$path.sourceId', minLength: 1),
+      status: NoticeStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
+      content: NoticeContent.fromJson(_required(json, 'content', path), path: '$path.content'),
+      actions: _decodeList<NoticeAction>(_required(json, 'actions', path), '$path.actions', (item, itemPath) => NoticeAction.fromJson(item, path: itemPath), encodeItem: (item) => item.toJson()),
+      revision: _integer(_required(json, 'revision', path), '$path.revision', minimum: 1),
+      finished: _boolean(_required(json, 'finished', path), '$path.finished'),
+      createdAt: _integer(_required(json, 'createdAt', path), '$path.createdAt', minimum: 0),
+      updatedAt: _integer(_required(json, 'updatedAt', path), '$path.updatedAt', minimum: 0),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'noticeId': noticeId,
+    'pluginId': pluginId,
+    'sourceId': sourceId,
+    'status': status.toJson(),
+    'content': content.toJson(),
+    'actions': actions.map((item) => item.toJson()).toList(growable: false),
+    'revision': revision,
+    'finished': finished,
+    'createdAt': createdAt,
+    'updatedAt': updatedAt,
+  };
+
+  @override
+  String toString() => 'Notice(noticeId: $noticeId, pluginId: $pluginId, sourceId: $sourceId, status: $status, content: $content, actions: $actions, revision: $revision, finished: $finished, createdAt: $createdAt, updatedAt: $updatedAt)';
+}
+
+sealed class NoticeAction {
+  const NoticeAction();
+
+  factory NoticeAction.fromJson(Object? value, {String path = 'NoticeAction'}) {
+    final json = _object(value, path);
+    final discriminator = _required(json, 'kind', path);
+    switch (discriminator) {
+      case 'reply':
+        return NoticeReplyAction.fromJson(json, path: path);
+      case 'activate':
+        return NoticeActivateAction.fromJson(json, path: path);
+      case 'permission':
+        return NoticePermissionAction.fromJson(json, path: path);
+      default:
+        return UnrecognizedNoticeAction(Map.unmodifiable(json), _string(discriminator, '$path.kind'));
+    }
+  }
+
+  Map<String, Object?> toJson();
+}
+final class UnrecognizedNoticeAction extends NoticeAction {
+  const UnrecognizedNoticeAction(this.raw, this.kind);
+  final Map<String, Object?> raw;
+  final String kind;
+  @override Map<String, Object?> toJson() => Map.of(raw);
+}
+
+sealed class NoticeActionInput {
+  const NoticeActionInput();
+
+  factory NoticeActionInput.fromJson(Object? value, {String path = 'NoticeActionInput'}) {
+    final json = _object(value, path);
+    final discriminator = _required(json, 'kind', path);
+    switch (discriminator) {
+      case 'reply':
+        return NoticeReplyInput.fromJson(json, path: path);
+      case 'activate':
+        return NoticeActivateInput.fromJson(json, path: path);
+      case 'permission':
+        return NoticePermissionInput.fromJson(json, path: path);
+      default:
+        return UnrecognizedNoticeActionInput(Map.unmodifiable(json), _string(discriminator, '$path.kind'));
+    }
+  }
+
+  Map<String, Object?> toJson();
+}
+final class UnrecognizedNoticeActionInput extends NoticeActionInput {
+  const UnrecognizedNoticeActionInput(this.raw, this.kind);
+  final Map<String, Object?> raw;
+  final String kind;
+  @override Map<String, Object?> toJson() => Map.of(raw);
+}
+
+final class NoticeActionResult {
+  factory NoticeActionResult({
+    required String executionId,
+    required NoticeActionResultStatus status,
+    String? message,
+  }) {
+    final validatedExecutionId = _string(executionId, 'NoticeActionResult.executionId', minLength: 1);
+    final validatedStatus = status;
+    final validatedMessage = message == null ? null : _string(message, 'NoticeActionResult.message');
+    return NoticeActionResult._(
+      executionId: validatedExecutionId,
+      status: validatedStatus,
+      message: validatedMessage,
+    );
+  }
+
+  NoticeActionResult._({
+    required this.executionId,
+    required this.status,
+    required this.message,
+  });
+
+  final String executionId;
+  final NoticeActionResultStatus status;
+  final String? message;
+
+  factory NoticeActionResult.fromJson(Object? value, {String path = 'NoticeActionResult'}) {
+    final json = _object(value, path);
+    return NoticeActionResult(
+      executionId: _string(_required(json, 'executionId', path), '$path.executionId', minLength: 1),
+      status: NoticeActionResultStatus.fromJson(_required(json, 'status', path), path: '$path.status'),
+      message: json.containsKey('message') && json['message'] != null ? _string(json['message'], '$path.message') : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'executionId': executionId,
+    'status': status.toJson(),
+    if (message != null) 'message': message!,
+  };
+
+  @override
+  String toString() => 'NoticeActionResult(executionId: $executionId, status: $status, message: $message)';
+}
+
+final class NoticeActionResultStatus {
+  static const accepted = NoticeActionResultStatus._('accepted');
+  static const succeeded = NoticeActionResultStatus._('succeeded');
+  static const failed = NoticeActionResultStatus._('failed');
+  static const unknown = NoticeActionResultStatus._('unknown');
+
+  const NoticeActionResultStatus._(this.wireValue);
+  static const values = [accepted, succeeded, failed, unknown];
+  bool get isKnown => values.any((v) => v.wireValue == wireValue);
+  @override bool operator ==(Object other) => other is NoticeActionResultStatus && other.wireValue == wireValue;
+  @override int get hashCode => wireValue.hashCode;
+
+  final String wireValue;
+
+  static NoticeActionResultStatus fromJson(Object? value, {String path = 'NoticeActionResultStatus'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    return NoticeActionResultStatus._(wireValue);
+  }
+
+  String toJson() => wireValue;
+}
+
+final class NoticeActivateAction extends NoticeAction {
+  factory NoticeActivateAction({
+    required NoticeActivateActionKind kind,
+    required String id,
+    required String label,
+    required bool enabled,
+    NoticeActivationTarget? target,
+  }) {
+    final validatedKind = kind;
+    final validatedId = _string(id, 'NoticeActivateAction.id', minLength: 1);
+    final validatedLabel = _string(label, 'NoticeActivateAction.label', minLength: 1);
+    final validatedEnabled = enabled;
+    final validatedTarget = target == null ? null : target;
+    return NoticeActivateAction._(
+      kind: validatedKind,
+      id: validatedId,
+      label: validatedLabel,
+      enabled: validatedEnabled,
+      target: validatedTarget,
+    );
+  }
+
+  NoticeActivateAction._({
+    required this.kind,
+    required this.id,
+    required this.label,
+    required this.enabled,
+    required this.target,
+  });
+
+  final NoticeActivateActionKind kind;
+  final String id;
+  final String label;
+  final bool enabled;
+  final NoticeActivationTarget? target;
+
+  factory NoticeActivateAction.fromJson(Object? value, {String path = 'NoticeActivateAction'}) {
+    final json = _object(value, path);
+    return NoticeActivateAction(
+      kind: NoticeActivateActionKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      id: _string(_required(json, 'id', path), '$path.id', minLength: 1),
+      label: _string(_required(json, 'label', path), '$path.label', minLength: 1),
+      enabled: _boolean(_required(json, 'enabled', path), '$path.enabled'),
+      target: json.containsKey('target') && json['target'] != null ? NoticeActivationTarget.fromJson(json['target'], path: '$path.target') : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+    'id': id,
+    'label': label,
+    'enabled': enabled,
+    if (target != null) 'target': target!.toJson(),
+  };
+
+  @override
+  String toString() => 'NoticeActivateAction(kind: $kind, id: $id, label: $label, enabled: $enabled, target: $target)';
+}
+
+enum NoticeActivateActionKind {
+  activate('activate');
+
+  const NoticeActivateActionKind(this.wireValue);
+
+  final String wireValue;
+
+  static NoticeActivateActionKind fromJson(Object? value, {String path = 'NoticeActivateActionKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: activate');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class NoticeActivateInput extends NoticeActionInput {
+  factory NoticeActivateInput({
+    required NoticeActivateInputKind kind,
+  }) {
+    final validatedKind = kind;
+    return NoticeActivateInput._(
+      kind: validatedKind,
+    );
+  }
+
+  NoticeActivateInput._({
+    required this.kind,
+  });
+
+  final NoticeActivateInputKind kind;
+
+  factory NoticeActivateInput.fromJson(Object? value, {String path = 'NoticeActivateInput'}) {
+    final json = _object(value, path);
+    return NoticeActivateInput(
+      kind: NoticeActivateInputKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+  };
+
+  @override
+  String toString() => 'NoticeActivateInput(kind: $kind)';
+}
+
+enum NoticeActivateInputKind {
+  activate('activate');
+
+  const NoticeActivateInputKind(this.wireValue);
+
+  final String wireValue;
+
+  static NoticeActivateInputKind fromJson(Object? value, {String path = 'NoticeActivateInputKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: activate');
+  }
+
+  String toJson() => wireValue;
+}
+
+sealed class NoticeActivationTarget {
+  const NoticeActivationTarget();
+
+  factory NoticeActivationTarget.fromJson(Object? value, {String path = 'NoticeActivationTarget'}) {
+    final json = _object(value, path);
+    final discriminator = _required(json, 'kind', path);
+    switch (discriminator) {
+      case 'application':
+        return NoticeApplicationTarget.fromJson(json, path: path);
+      case 'uri':
+        return NoticeUriTarget.fromJson(json, path: path);
+      default:
+        return UnrecognizedNoticeActivationTarget(Map.unmodifiable(json), _string(discriminator, '$path.kind'));
+    }
+  }
+
+  Map<String, Object?> toJson();
+}
+final class UnrecognizedNoticeActivationTarget extends NoticeActivationTarget {
+  const UnrecognizedNoticeActivationTarget(this.raw, this.kind);
+  final Map<String, Object?> raw;
+  final String kind;
+  @override Map<String, Object?> toJson() => Map.of(raw);
+}
+
+final class NoticeApplicationTarget extends NoticeActivationTarget {
+  factory NoticeApplicationTarget({
+    required NoticeApplicationTargetKind kind,
+    required String applicationId,
+  }) {
+    final validatedKind = kind;
+    final validatedApplicationId = _string(applicationId, 'NoticeApplicationTarget.applicationId', minLength: 1);
+    return NoticeApplicationTarget._(
+      kind: validatedKind,
+      applicationId: validatedApplicationId,
+    );
+  }
+
+  NoticeApplicationTarget._({
+    required this.kind,
+    required this.applicationId,
+  });
+
+  final NoticeApplicationTargetKind kind;
+  final String applicationId;
+
+  factory NoticeApplicationTarget.fromJson(Object? value, {String path = 'NoticeApplicationTarget'}) {
+    final json = _object(value, path);
+    return NoticeApplicationTarget(
+      kind: NoticeApplicationTargetKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      applicationId: _string(_required(json, 'applicationId', path), '$path.applicationId', minLength: 1),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+    'applicationId': applicationId,
+  };
+
+  @override
+  String toString() => 'NoticeApplicationTarget(kind: $kind, applicationId: $applicationId)';
+}
+
+enum NoticeApplicationTargetKind {
+  application('application');
+
+  const NoticeApplicationTargetKind(this.wireValue);
+
+  final String wireValue;
+
+  static NoticeApplicationTargetKind fromJson(Object? value, {String path = 'NoticeApplicationTargetKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: application');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class NoticeContent {
+  factory NoticeContent({
+    required String title,
+    NoticeProgress? progress,
+  }) {
+    final validatedTitle = _string(title, 'NoticeContent.title', minLength: 1, maxLength: 1024);
+    final validatedProgress = progress == null ? null : progress;
+    return NoticeContent._(
+      title: validatedTitle,
+      progress: validatedProgress,
+    );
+  }
+
+  NoticeContent._({
+    required this.title,
+    required this.progress,
+  });
+
+  final String title;
+  final NoticeProgress? progress;
+
+  factory NoticeContent.fromJson(Object? value, {String path = 'NoticeContent'}) {
+    final json = _object(value, path);
+    return NoticeContent(
+      title: _string(_required(json, 'title', path), '$path.title', minLength: 1, maxLength: 1024),
+      progress: json.containsKey('progress') && json['progress'] != null ? NoticeProgress.fromJson(json['progress'], path: '$path.progress') : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'title': title,
+    if (progress != null) 'progress': progress!.toJson(),
+  };
+
+  @override
+  String toString() => 'NoticeContent(title: $title, progress: $progress)';
+}
+
+final class NoticePermissionAction extends NoticeAction {
+  factory NoticePermissionAction({
+    required NoticePermissionActionKind kind,
+    required String id,
+    required String label,
+    required bool enabled,
+    String? description,
+    List<NoticePermissionOption>? options,
+  }) {
+    final validatedKind = kind;
+    final validatedId = _string(id, 'NoticePermissionAction.id', minLength: 1);
+    final validatedLabel = _string(label, 'NoticePermissionAction.label', minLength: 1);
+    final validatedEnabled = enabled;
+    final validatedDescription = description == null ? null : _string(description, 'NoticePermissionAction.description');
+    final validatedOptions = options == null ? null : _freezeList<NoticePermissionOption>(options, 'NoticePermissionAction.options', (item, itemPath) => item, minItems: 1, encodeItem: (item) => item.toJson());
+    return NoticePermissionAction._(
+      kind: validatedKind,
+      id: validatedId,
+      label: validatedLabel,
+      enabled: validatedEnabled,
+      description: validatedDescription,
+      options: validatedOptions,
+    );
+  }
+
+  NoticePermissionAction._({
+    required this.kind,
+    required this.id,
+    required this.label,
+    required this.enabled,
+    required this.description,
+    required this.options,
+  });
+
+  final NoticePermissionActionKind kind;
+  final String id;
+  final String label;
+  final bool enabled;
+  final String? description;
+  final List<NoticePermissionOption>? options;
+
+  factory NoticePermissionAction.fromJson(Object? value, {String path = 'NoticePermissionAction'}) {
+    final json = _object(value, path);
+    return NoticePermissionAction(
+      kind: NoticePermissionActionKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      id: _string(_required(json, 'id', path), '$path.id', minLength: 1),
+      label: _string(_required(json, 'label', path), '$path.label', minLength: 1),
+      enabled: _boolean(_required(json, 'enabled', path), '$path.enabled'),
+      description: json.containsKey('description') && json['description'] != null ? _string(json['description'], '$path.description') : null,
+      options: json.containsKey('options') && json['options'] != null ? _decodeList<NoticePermissionOption>(json['options'], '$path.options', (item, itemPath) => NoticePermissionOption.fromJson(item, path: itemPath), minItems: 1, encodeItem: (item) => item.toJson()) : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+    'id': id,
+    'label': label,
+    'enabled': enabled,
+    if (description != null) 'description': description!,
+    if (options != null) 'options': options!.map((item) => item.toJson()).toList(growable: false),
+  };
+
+  @override
+  String toString() => 'NoticePermissionAction(kind: $kind, id: $id, label: $label, enabled: $enabled, description: $description, options: $options)';
+}
+
+enum NoticePermissionActionKind {
+  permission('permission');
+
+  const NoticePermissionActionKind(this.wireValue);
+
+  final String wireValue;
+
+  static NoticePermissionActionKind fromJson(Object? value, {String path = 'NoticePermissionActionKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: permission');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class NoticePermissionInput extends NoticeActionInput {
+  factory NoticePermissionInput({
+    required NoticePermissionInputKind kind,
+    required String optionId,
+  }) {
+    final validatedKind = kind;
+    final validatedOptionId = _string(optionId, 'NoticePermissionInput.optionId', minLength: 1);
+    return NoticePermissionInput._(
+      kind: validatedKind,
+      optionId: validatedOptionId,
+    );
+  }
+
+  NoticePermissionInput._({
+    required this.kind,
+    required this.optionId,
+  });
+
+  final NoticePermissionInputKind kind;
+  final String optionId;
+
+  factory NoticePermissionInput.fromJson(Object? value, {String path = 'NoticePermissionInput'}) {
+    final json = _object(value, path);
+    return NoticePermissionInput(
+      kind: NoticePermissionInputKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      optionId: _string(_required(json, 'optionId', path), '$path.optionId', minLength: 1),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+    'optionId': optionId,
+  };
+
+  @override
+  String toString() => 'NoticePermissionInput(kind: $kind, optionId: $optionId)';
+}
+
+enum NoticePermissionInputKind {
+  permission('permission');
+
+  const NoticePermissionInputKind(this.wireValue);
+
+  final String wireValue;
+
+  static NoticePermissionInputKind fromJson(Object? value, {String path = 'NoticePermissionInputKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: permission');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class NoticePermissionOption {
+  factory NoticePermissionOption({
+    required String id,
+    required String label,
+  }) {
+    final validatedId = _string(id, 'NoticePermissionOption.id', minLength: 1);
+    final validatedLabel = _string(label, 'NoticePermissionOption.label', minLength: 1);
+    return NoticePermissionOption._(
+      id: validatedId,
+      label: validatedLabel,
+    );
+  }
+
+  NoticePermissionOption._({
+    required this.id,
+    required this.label,
+  });
+
+  final String id;
+  final String label;
+
+  factory NoticePermissionOption.fromJson(Object? value, {String path = 'NoticePermissionOption'}) {
+    final json = _object(value, path);
+    return NoticePermissionOption(
+      id: _string(_required(json, 'id', path), '$path.id', minLength: 1),
+      label: _string(_required(json, 'label', path), '$path.label', minLength: 1),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'label': label,
+  };
+
+  @override
+  String toString() => 'NoticePermissionOption(id: $id, label: $label)';
+}
+
+final class NoticeProgress {
+  factory NoticeProgress({
+    String? text,
+    int? percent,
+  }) {
+    final validatedText = text == null ? null : _string(text, 'NoticeProgress.text');
+    final validatedPercent = percent == null ? null : _integer(percent, 'NoticeProgress.percent', minimum: 0, maximum: 100);
+    return NoticeProgress._(
+      text: validatedText,
+      percent: validatedPercent,
+    );
+  }
+
+  NoticeProgress._({
+    required this.text,
+    required this.percent,
+  });
+
+  final String? text;
+  final int? percent;
+
+  factory NoticeProgress.fromJson(Object? value, {String path = 'NoticeProgress'}) {
+    final json = _object(value, path);
+    return NoticeProgress(
+      text: json.containsKey('text') && json['text'] != null ? _string(json['text'], '$path.text') : null,
+      percent: json.containsKey('percent') && json['percent'] != null ? _integer(json['percent'], '$path.percent', minimum: 0, maximum: 100) : null,
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    if (text != null) 'text': text!,
+    if (percent != null) 'percent': percent!,
+  };
+
+  @override
+  String toString() => 'NoticeProgress(text: $text, percent: $percent)';
+}
+
+final class NoticeReplyAction extends NoticeAction {
+  factory NoticeReplyAction({
+    required NoticeReplyActionKind kind,
+    required String id,
+    required String label,
+    required bool enabled,
+    String? placeholder,
+  }) {
+    final validatedKind = kind;
+    final validatedId = _string(id, 'NoticeReplyAction.id', minLength: 1);
+    final validatedLabel = _string(label, 'NoticeReplyAction.label', minLength: 1);
+    final validatedEnabled = enabled;
+    final validatedPlaceholder = placeholder == null ? null : _string(placeholder, 'NoticeReplyAction.placeholder');
+    return NoticeReplyAction._(
+      kind: validatedKind,
+      id: validatedId,
+      label: validatedLabel,
+      enabled: validatedEnabled,
+      placeholder: validatedPlaceholder,
+    );
+  }
+
+  NoticeReplyAction._({
+    required this.kind,
+    required this.id,
+    required this.label,
+    required this.enabled,
+    required this.placeholder,
+  });
+
+  final NoticeReplyActionKind kind;
+  final String id;
+  final String label;
+  final bool enabled;
+  final String? placeholder;
+
+  factory NoticeReplyAction.fromJson(Object? value, {String path = 'NoticeReplyAction'}) {
+    final json = _object(value, path);
+    return NoticeReplyAction(
+      kind: NoticeReplyActionKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      id: _string(_required(json, 'id', path), '$path.id', minLength: 1),
+      label: _string(_required(json, 'label', path), '$path.label', minLength: 1),
+      enabled: _boolean(_required(json, 'enabled', path), '$path.enabled'),
+      placeholder: json.containsKey('placeholder') && json['placeholder'] != null ? _string(json['placeholder'], '$path.placeholder') : null,
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+    'id': id,
+    'label': label,
+    'enabled': enabled,
+    if (placeholder != null) 'placeholder': placeholder!,
+  };
+
+  @override
+  String toString() => 'NoticeReplyAction(kind: $kind, id: $id, label: $label, enabled: $enabled, placeholder: $placeholder)';
+}
+
+enum NoticeReplyActionKind {
+  reply('reply');
+
+  const NoticeReplyActionKind(this.wireValue);
+
+  final String wireValue;
+
+  static NoticeReplyActionKind fromJson(Object? value, {String path = 'NoticeReplyActionKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: reply');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class NoticeReplyInput extends NoticeActionInput {
+  factory NoticeReplyInput({
+    required NoticeReplyInputKind kind,
+    required String text,
+  }) {
+    final validatedKind = kind;
+    final validatedText = _string(text, 'NoticeReplyInput.text', minLength: 1);
+    return NoticeReplyInput._(
+      kind: validatedKind,
+      text: validatedText,
+    );
+  }
+
+  NoticeReplyInput._({
+    required this.kind,
+    required this.text,
+  });
+
+  final NoticeReplyInputKind kind;
+  final String text;
+
+  factory NoticeReplyInput.fromJson(Object? value, {String path = 'NoticeReplyInput'}) {
+    final json = _object(value, path);
+    return NoticeReplyInput(
+      kind: NoticeReplyInputKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      text: _string(_required(json, 'text', path), '$path.text', minLength: 1),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+    'text': text,
+  };
+
+  @override
+  String toString() => 'NoticeReplyInput(kind: $kind, text: $text)';
+}
+
+enum NoticeReplyInputKind {
+  reply('reply');
+
+  const NoticeReplyInputKind(this.wireValue);
+
+  final String wireValue;
+
+  static NoticeReplyInputKind fromJson(Object? value, {String path = 'NoticeReplyInputKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: reply');
+  }
+
+  String toJson() => wireValue;
+}
+
+final class NoticeSource {
+  factory NoticeSource({
+    required String pluginId,
+    required String displayName,
+    String? icon,
+    required bool enabled,
+    required bool connected,
+    required String message,
+  }) {
+    final validatedPluginId = _string(pluginId, 'NoticeSource.pluginId');
+    final validatedDisplayName = _string(displayName, 'NoticeSource.displayName');
+    final validatedIcon = icon == null ? null : _string(icon, 'NoticeSource.icon');
+    final validatedEnabled = enabled;
+    final validatedConnected = connected;
+    final validatedMessage = _string(message, 'NoticeSource.message');
+    return NoticeSource._(
+      pluginId: validatedPluginId,
+      displayName: validatedDisplayName,
+      icon: validatedIcon,
+      enabled: validatedEnabled,
+      connected: validatedConnected,
+      message: validatedMessage,
+    );
+  }
+
+  NoticeSource._({
+    required this.pluginId,
+    required this.displayName,
+    required this.icon,
+    required this.enabled,
+    required this.connected,
+    required this.message,
+  });
+
+  final String pluginId;
+  final String displayName;
+  final String? icon;
+  final bool enabled;
+  final bool connected;
+  final String message;
+
+  factory NoticeSource.fromJson(Object? value, {String path = 'NoticeSource'}) {
+    final json = _object(value, path);
+    return NoticeSource(
+      pluginId: _string(_required(json, 'pluginId', path), '$path.pluginId'),
+      displayName: _string(_required(json, 'displayName', path), '$path.displayName'),
+      icon: json.containsKey('icon') && json['icon'] != null ? _string(json['icon'], '$path.icon') : null,
+      enabled: _boolean(_required(json, 'enabled', path), '$path.enabled'),
+      connected: _boolean(_required(json, 'connected', path), '$path.connected'),
+      message: _string(_required(json, 'message', path), '$path.message'),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'pluginId': pluginId,
+    'displayName': displayName,
+    if (icon != null) 'icon': icon!,
+    'enabled': enabled,
+    'connected': connected,
+    'message': message,
+  };
+
+  @override
+  String toString() => 'NoticeSource(pluginId: $pluginId, displayName: $displayName, icon: $icon, enabled: $enabled, connected: $connected, message: $message)';
+}
+
+final class NoticeStatus {
+  factory NoticeStatus({
+    required String value,
+    required String label,
+  }) {
+    final validatedValue = _string(value, 'NoticeStatus.value', minLength: 1, maxLength: 1024);
+    final validatedLabel = _string(label, 'NoticeStatus.label', minLength: 1, maxLength: 1024);
+    return NoticeStatus._(
+      value: validatedValue,
+      label: validatedLabel,
+    );
+  }
+
+  NoticeStatus._({
+    required this.value,
+    required this.label,
+  });
+
+  final String value;
+  final String label;
+
+  factory NoticeStatus.fromJson(Object? value, {String path = 'NoticeStatus'}) {
+    final json = _object(value, path);
+    return NoticeStatus(
+      value: _string(_required(json, 'value', path), '$path.value', minLength: 1, maxLength: 1024),
+      label: _string(_required(json, 'label', path), '$path.label', minLength: 1, maxLength: 1024),
+    );
+  }
+
+  Map<String, Object?> toJson() => {
+    'value': value,
+    'label': label,
+  };
+
+  @override
+  String toString() => 'NoticeStatus(value: $value, label: $label)';
+}
+
+final class NoticeUriTarget extends NoticeActivationTarget {
+  factory NoticeUriTarget({
+    required NoticeUriTargetKind kind,
+    required String uri,
+  }) {
+    final validatedKind = kind;
+    final validatedUri = _string(uri, 'NoticeUriTarget.uri', minLength: 1);
+    return NoticeUriTarget._(
+      kind: validatedKind,
+      uri: validatedUri,
+    );
+  }
+
+  NoticeUriTarget._({
+    required this.kind,
+    required this.uri,
+  });
+
+  final NoticeUriTargetKind kind;
+  final String uri;
+
+  factory NoticeUriTarget.fromJson(Object? value, {String path = 'NoticeUriTarget'}) {
+    final json = _object(value, path);
+    return NoticeUriTarget(
+      kind: NoticeUriTargetKind.fromJson(_required(json, 'kind', path), path: '$path.kind'),
+      uri: _string(_required(json, 'uri', path), '$path.uri', minLength: 1),
+    );
+  }
+
+  @override
+  Map<String, Object?> toJson() => {
+    'kind': kind.toJson(),
+    'uri': uri,
+  };
+
+  @override
+  String toString() => 'NoticeUriTarget(kind: $kind, uri: $uri)';
+}
+
+enum NoticeUriTargetKind {
+  uri('uri');
+
+  const NoticeUriTargetKind(this.wireValue);
+
+  final String wireValue;
+
+  static NoticeUriTargetKind fromJson(Object? value, {String path = 'NoticeUriTargetKind'}) {
+    final wireValue = _string(value, path);
+    for (final candidate in values) {
+      if (candidate.wireValue == wireValue) return candidate;
+    }
+    throw ProtocolCodecException(path, 'expected one of: uri');
+  }
+
+  String toJson() => wireValue;
+}
+
 final class PageInfo {
   factory PageInfo({
     Cursor? nextCursor,

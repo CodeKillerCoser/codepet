@@ -11,14 +11,14 @@
         "codex"
       ],
       "protocol": {
-        "version": 2,
-        "minVersion": 2
+        "version": 4,
+        "minVersion": 4
       }
     },
     "protocol": {
-      "version": 2,
-      "minVersion": 2,
-      "selectedVersion": 2
+      "version": 4,
+      "minVersion": 4,
+      "selectedVersion": 4
     }
   }
 }

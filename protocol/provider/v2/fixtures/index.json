@@ -90,21 +90,6 @@
     "name": "turn.start"
   },
   {
-    "file": "event-subscribe-request.json",
-    "kind": "request",
-    "name": "event.subscribe"
-  },
-  {
-    "file": "event-subscribe-response.json",
-    "kind": "response",
-    "name": "event.subscribe"
-  },
-  {
-    "file": "notification-event.json",
-    "kind": "event",
-    "name": "event.notification"
-  },
-  {
     "file": "conversation-list-legacy-request.json",
     "kind": "request",
     "name": "conversation.list"

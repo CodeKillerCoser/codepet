@@ -1,0 +1,15 @@
+{
+  "description": "仅本机投递 Notice 变更。",
+  "events": [
+    {
+      "name": "notice.changed",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "local",
+      "payload": {
+        "$ref": "messages.schema.json#/$defs/NoticeChangedEvent"
+      },
+      "description": "条目已提交，使用最新修订替换本地对象；仅本机可消费。"
+    }
+  ]
+}

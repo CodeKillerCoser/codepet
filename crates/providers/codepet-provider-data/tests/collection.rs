@@ -23,22 +23,9 @@ fn setup() -> (tempfile::TempDir, Arc<ProviderData>) {
     .unwrap();
     (dir, data)
 }
-fn event(raw: Value, id: &str) -> ProtocolEvent {
-    ProtocolEvent::EventNotification {
-        jsonrpc: "2.0".into(),
-        params: ProviderNotificationEvent {
-            subscription_id: "pet".into(),
-            event_id: id.into(),
-            received_at: 1000,
-            payload: json!({"codepet_observation":{"raw":raw}})
-                .as_object()
-                .unwrap()
-                .clone()
-                .into_iter()
-                .collect(),
-        },
-    }
-}
+fn event(raw:Value,id:&str)->(Value,String){(raw,id.into())}
+trait HookTest{fn collect(&self,event:(Value,String))->Result<(),ProtocolError>;}
+impl HookTest for UsageSink{fn collect(&self,(raw,id):(Value,String))->Result<(),ProtocolError>{self.collect_hook(&id,1000,&raw);Ok(())}}
 fn total(data: &ProviderData) -> Value {
     let q=serde_json::from_value(json!({"datasetId":HOOK_DATASET,"filter":{"time":{"kind":"all"}},"aggregation":{"timeBucket":"halfHour","timeZone":"UTC","groupBy":["model"]},"metrics":["totalTokens","inputTokens","outputTokens","cacheReadTokens","cacheWriteTokens"],"summaries":["totals"]})).unwrap();
     serde_json::to_value(data.query_observed("instance", q).unwrap()).unwrap()
@@ -59,9 +46,7 @@ fn usage_sink_preserves_batch_admission_and_retry() {
                 return Err(ProtocolError { code: "busy".into(), message: "queue full".into(), retryable: true, details: None });
             }
             for event in events {
-                if let ProtocolEvent::EventNotification { params, .. } = event {
-                    self.admitted.lock().unwrap().push(params.event_id);
-                }
+                self.admitted.lock().unwrap().push(serde_json::to_value(event).unwrap()["params"]["scanError"].as_str().unwrap().into());
             }
             Ok(())
         }
@@ -72,7 +57,7 @@ fn usage_sink_preserves_batch_admission_and_retry() {
             admitted: std::sync::Mutex::new(Vec::new()),
         });
         let sink = UsageSink { data: Arc::new(ProviderData::default()), downstream: downstream.clone(), provider };
-        let batch = || (0..600).map(|id| event(json!({}), &id.to_string())).collect();
+        let batch = || (0..600).map(|id| serde_json::from_value(json!({"jsonrpc":"2.0","method":"runtime.inventoryChanged","params":{"harnessList":[],"selected":null,"scanError":id.to_string()}})).unwrap()).collect();
         assert!(sink.publish_batch(batch()).is_err());
         assert!(downstream.admitted.lock().unwrap().is_empty());
         downstream.reject.store(false, Ordering::SeqCst);
@@ -95,14 +80,14 @@ fn stop_registers_transcript_and_incremental_reads_are_replay_safe() {
         downstream: downstream.clone(),
         provider: "claude",
     };
-    sink.publish(event(
+    sink.collect(event(
         json!({"hook_event_name":"PreToolUse","transcript_path":path}),
         "tool",
     ))
     .unwrap();
     data.collect().unwrap();
     assert!(total(&data)["rows"].as_array().unwrap().is_empty());
-    sink.publish(event(
+    sink.collect(event(
         json!({"hook_event_name":"Stop","transcript_path":path}),
         "stop",
     ))
@@ -125,7 +110,7 @@ fn stop_registers_transcript_and_incremental_reads_are_replay_safe() {
         total(&data)["summaries"]["totals"]["totalTokens"]["value"],
         50
     );
-    assert_eq!(downstream.0.load(Ordering::SeqCst), 2);
+    assert_eq!(downstream.0.load(Ordering::SeqCst), 0);
 }
 
 #[test]
@@ -139,7 +124,7 @@ fn incomplete_tail_is_retried_after_append_without_losing_or_duplicating_usage()
         downstream: Arc::new(Sink(AtomicUsize::new(0))),
         provider: "claude",
     };
-    sink.publish(event(
+    sink.collect(event(
         json!({"hook_event_name":"Stop","transcript_path":path}),
         "stop",
     ))
@@ -164,7 +149,7 @@ fn opencode_completed_message_survives_restart_and_duplicate_delivery() {
         downstream: Arc::new(Sink(AtomicUsize::new(0))),
         provider: "opencode",
     };
-    sink.publish_batch(vec![event(raw.clone(), "first"), event(raw.clone(), "first")]).unwrap();
+    sink.collect(event(raw.clone(),"first")).unwrap();sink.collect(event(raw.clone(),"first")).unwrap();
     drop(sink);
     drop(data);
     let data = Arc::new(ProviderData::default());
@@ -180,7 +165,7 @@ fn opencode_completed_message_survives_restart_and_duplicate_delivery() {
         downstream: Arc::new(Sink(AtomicUsize::new(0))),
         provider: "opencode",
     }
-    .publish(event(raw, "duplicate-delivery"))
+    .collect(event(raw, "duplicate-delivery"))
     .unwrap();
     data.collect().unwrap();
     let result = total(&data);
@@ -208,7 +193,7 @@ fn collection_wakes_immediately_and_uses_clock_aligned_half_hours() {
             json!({"timestamp":timestamp,"sessionId":"s","message":{"id":id,"role":"assistant","model":"m","usage":{"input_tokens":1,"output_tokens":2,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}).to_string()+"\n"
         }).concat();
         std::fs::write(&path,lines).unwrap();
-        UsageSink{data:data.clone(),downstream:Arc::new(Sink(AtomicUsize::new(0))),provider:"claude"}.publish(event(json!({"hook_event_name":"SessionEnd","transcript_path":path}),"end")).unwrap();
+        UsageSink{data:data.clone(),downstream:Arc::new(Sink(AtomicUsize::new(0))),provider:"claude"}.collect(event(json!({"hook_event_name":"SessionEnd","transcript_path":path}),"end")).unwrap();
         let result=tokio::time::timeout(std::time::Duration::from_secs(5),async {
             loop {let result=total(&data);if result["rows"].as_array().unwrap().len()==2{break result;}tokio::time::sleep(std::time::Duration::from_millis(20)).await;}
         }).await.expect("Hook should wake collection without a polling interval");

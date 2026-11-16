@@ -307,8 +307,30 @@ export async function start({ handle, frame, unframe, writeBuffer, setSend }) {
       }
     })();
   });
+  async function outgoingRequest(message) {
+    const stream = session.openStream();
+    const reader = new Reader(stream);
+    stream.on("error", () => {});
+    let release;
+    try {
+      await sendMessage(
+        stream,
+        reader,
+        message,
+        controlMethods.has(message.method) ? 2 : undefined,
+      );
+      const received = await receive(reader, stream);
+      release = received.release;
+      await handle(received.message);
+      stream.end();
+    } finally {
+      release?.();
+      reader.detach();
+    }
+  }
   let eventsChain = Promise.resolve();
   setSend((message) => {
+    if (message.id && message.method) return outgoingRequest(message);
     eventsChain = eventsChain.then(async () => {
       const stream = session.openStream();
       const reader = new Reader(stream);

@@ -28,3 +28,5 @@ pub use codepet_core_sdk::{ClientConnectionInfo, ConnectionStatus};
 pub mod conversation_query;
 
 pub use codepet_core_sdk::ProviderTransportLimits;
+
+pub use codepet_core_sdk as common;

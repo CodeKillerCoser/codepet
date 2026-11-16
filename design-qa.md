@@ -1,4 +1,24 @@
-# 顶部任务面板截图验收
+# Provider 卡片与标准 Manifest 校验 QA（2026-11-15）
+
+final result: passed
+
+依据用户 f3df104a 标注截图及后续“两类文案、标准 validator、不兼容旧测试插件”的修正完成。原图和当前原生 App 截图已拼接对照，证据位于 `/Users/wangxin/Documents/CodePet-builds/provider-cards-standard-20261115/artifacts/comparison.png`。
+
+- 正常卡片按两行标题/状态和四项详情自然撑高，无固定高度制造的空白。标题单行省略，标签留在首行，删除为右下角图标，保留可访问名称和禁用/焦点样式。
+- 仅有“智能体”“通知助手”标签，分别来自 features.agent / features.observation；同时声明显示两个，没有声明不推测第三类。内置插件实际展示两者，四个独立测试插件显示智能体、图标及在线状态。
+- Host 使用 jsonschema 0.61.2 标准库编译内嵌协议 Manifest Schema，发现/加载/导入共用同一缓存 validator；生成链路只嵌入 Schema 并生成 DTO，不生成手写字段 validator。
+- 原生文件选择入口实测缺 icon 返回 `/icon (required)`，禁止导入且错误提示获得焦点。校验错误只报告 JSON Pointer 和关键字，不回显字段值。
+- 不保留 Manifest v1、executable 别名、缺省 transport 或缺图标豁免。三个内置清单、打包脚本、Host/桌面 fixture、四个独立包均更新为当前 Manifest。当前四个已安装的已知测试包已刷新且正常在线，数据库保留；旧包在同级 test-plugin-backup 中备份。
+
+验证：前端 25/25，协议 40/40，发布/分发 5/5，SDK 生成 6/6，Host 177 项通过（模型和公网探针共 3 项未运行），桌面桥接 7/7、Gateway 集成 9/9。独立作者源码及四包各 28/28。原生 App 构建、三 profile 黑盒导入及并发回归通过。Remote 仅同步三个生成摘要锁文件，未重建手机 App。
+
+已观察 980×700 原生窗口的双列排布、滚动、动作可见性、错误焦点；保留 320px 最小卡宽网格。上一轮 CUA 缩放拖动返回 windowNotFoundAtPosition，未把最小宽度的手动缩放记为验收完成。
+
+当前运行 `/Users/wangxin/Documents/CodePet-builds/provider-cards-standard-20261115/Code Pet.app`，使用个人原有数据目录及设置；Webcontent v16。没有真实模型调用，没有改业务 version/minVersion 协商。
+
+---
+
+ 顶部任务面板截图验收
 
 ## 2026-11-10 原生画面交接（当前验收）
 

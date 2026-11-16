@@ -8,14 +8,6 @@ pub fn journal() -> Result<&'static Arc<EventJournal>, String> {
         .map_err(|error| error.to_string())).as_ref().map_err(Clone::clone)
 }
 
-pub fn record_hook(provider: &str, payload: serde_json::Value) {
-    let Some(journal) = JOURNAL.get() else { return; };
-    match journal {
-        Ok(journal) => journal.hook(provider, payload),
-        Err(error) => crate::app_log::error("event-journal", &error),
-    }
-}
-
 #[tauri::command]
 pub async fn query_event_journal(query: JournalQuery) -> Result<JournalPage, String> {
     let journal = journal()?.clone();

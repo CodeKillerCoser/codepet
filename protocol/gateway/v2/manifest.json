@@ -42,8 +42,8 @@
   },
   "forwardCompatible": true,
   "description": "Generated compatibility view of protocol/v2; do not edit.",
-  "version": 3,
-  "minVersion": 2,
+  "version": 4,
+  "minVersion": 4,
   "methods": [
     {
       "name": "protocol.ping",
@@ -438,6 +438,54 @@
         "$ref": "schema.json#/$defs/UsageQueryResponse"
       },
       "description": "codepet.usage.query 的调用定义；请求、结果与幂等性以本条目为准。"
+    },
+    {
+      "name": "notice.list",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "schema.json#/$defs/NoticeListRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/NoticeListResponse"
+      },
+      "description": "notice.list：仅真实本机会话可调用，远程拒绝。"
+    },
+    {
+      "name": "notice.get",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "schema.json#/$defs/NoticeGetRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/NoticeGetResponse"
+      },
+      "description": "notice.get：仅真实本机会话可调用，远程拒绝。"
+    },
+    {
+      "name": "notice.action.execute",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/NoticeActionRequest"
+      },
+      "response": {
+        "$ref": "../../core/v2/schema.json#/$defs/NoticeActionResult"
+      },
+      "description": "notice.action.execute：仅真实本机会话可调用，远程拒绝。"
+    },
+    {
+      "name": "notice.source.setEnabled",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/NoticeSourceSetEnabledRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/NoticeSourceSetEnabledResponse"
+      },
+      "description": "notice.source.setEnabled：仅真实本机会话可调用，远程拒绝。"
     }
   ],
   "events": [
@@ -560,6 +608,16 @@
         "$ref": "schema.json#/$defs/ApprovalResolvedEvent"
       },
       "description": "approval.resolved 的事件定义；载荷、作用域与投递语义以本条目为准。"
+    },
+    {
+      "name": "notice.changed",
+      "direction": "gatewayToClient",
+      "delivery": "replayable",
+      "scope": "local",
+      "payload": {
+        "$ref": "schema.json#/$defs/NoticeChangedEvent"
+      },
+      "description": "条目已提交，使用最新修订替换本地对象；仅本机可消费。"
     }
   ],
   "fixtures": "fixtures/index.json"

@@ -1,0 +1,22 @@
+{
+  "description": "Provider SDK v2 发布清单，描述此版本的 SDK 入口、业务协议版本和包内相对文件位置。",
+  "formatVersion": 3,
+  "package": "provider",
+  "protocolVersion": 4,
+  "guide": "README.md",
+  "manifestSchema": "protocol/manifest.schema.json",
+  "profiles": "protocol/sdk/transport/profiles.json",
+  "transportHandshakeSchema": "protocol/sdk/transport/handshake.schema.json",
+  "rpcEnvelopeSchema": "protocol/sdk/rpc/envelope.schema.json",
+  "commonSchema": "protocol/sdk/common/types.schema.json",
+  "agentDomainSchema": "protocol/sdk/agent-domain/domain.schema.json",
+  "providerLifecycleSchema": "protocol/sdk/provider/lifecycle.schema.json",
+  "providerMessagesSchema": "protocol/sdk/provider/messages.schema.json",
+  "methods": "protocol/sdk/provider/methods.json",
+  "events": "protocol/sdk/provider/events.json",
+  "sdkVersion": 2,
+  "sdkSchemaRoot": "protocol/sdk/",
+  "pluginManifestFileName": "codepet-provider.json",
+  "minProtocolVersion": 4,
+  "sourceDigest": "sha256:6a433d336c1eee0b995482423d5bdf48022b3e74d25bc0c05af0753fe2f48ea0"
+}

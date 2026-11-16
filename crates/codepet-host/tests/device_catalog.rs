@@ -37,11 +37,11 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
     fs::write(
         &manifest_path,
         serde_json::to_vec_pretty(&json!({
-            "manifestVersion": 1,
+            "manifestVersion": 2, "transport":"stdio-codepet-mux-v1",
             "pluginId": "dev.codepet.fake",
             "displayName": "Fake",
             "icon": "https://example.com/fake.png",
-            "executable": "bin/codepet-provider-fake",
+            "command": "bin/codepet-provider-fake",
             "enabled": true,
             "instances": [{
                 "instanceKind": "fake",
@@ -82,7 +82,7 @@ async fn catalog_discovers_only_explicit_manifests_and_instance_ids_remain_stabl
         plugin_directory.canonicalize().unwrap().join("bin/codepet-provider-fake")
     );
     assert_eq!(
-        discovered.catalog.icon.as_deref(),
+        Some(discovered.catalog.icon.as_str()),
         Some("https://example.com/fake.png")
     );
 
@@ -143,11 +143,11 @@ fn catalog_rejects_unsafe_provider_icons() {
         fs::write(
             directory.path().join(format!("{name}.codepet-provider.json")),
             serde_json::to_vec(&json!({
-                "manifestVersion": 1,
+                "manifestVersion": 2, "transport":"stdio-codepet-mux-v1",
                 "pluginId": format!("dev.codepet.invalid-icon-{name}"),
                 "displayName": "Invalid icon",
                 "icon": icon,
-                "executable": "provider",
+                "command": "provider",
                 "instances": []
             }))
             .unwrap(),
@@ -162,8 +162,8 @@ fn catalog_rejects_unsafe_provider_icons() {
     assert!(catalog
         .diagnostics()
         .iter()
-        .all(|diagnostic| diagnostic.code == "invalid_plugin_descriptor"
-            && diagnostic.message.contains("HTTPS URL without credentials")));
+        .all(|diagnostic| diagnostic.code == "invalid_plugin_manifest"
+            && diagnostic.message.contains("/icon")));
 }
 
 #[test]

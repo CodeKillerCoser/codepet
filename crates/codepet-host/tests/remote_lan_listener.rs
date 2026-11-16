@@ -52,7 +52,8 @@ impl TestHost {
         manifest
             .as_object_mut()
             .unwrap()
-            .insert("manifestVersion".to_string(), serde_json::json!(1));
+            .insert("manifestVersion".to_string(), serde_json::json!(2));
+        manifest["transport"] = manifest["env"].get("CODEPET_PROVIDER_TRANSPORT").cloned().unwrap_or(serde_json::json!("stdio-codepet-mux-v1"));
         std::fs::write(
             plugin_directory.join("codepet-provider.json"),
             serde_json::to_vec(&manifest).unwrap(),
@@ -124,7 +125,7 @@ fn fake_plugin() -> PluginDescriptor {
     PluginDescriptor {
         plugin_id: "dev.codepet.lan-listener".to_string(),
         display_name: "LAN Listener Provider".to_string(),
-        icon: None,
+        icon: "https://example.com/provider.png".into(),
         executable: env!("CARGO_BIN_EXE_codepet-host-fake-provider").into(),
         args: Vec::new(),
         env: BTreeMap::from([(

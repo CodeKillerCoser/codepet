@@ -1,25 +1,27 @@
 <script lang="ts">
+  import { noticeStatusLabel, noticeNeedsInput } from '../noticePresentation';
+
   import { onDestroy, tick } from 'svelte';
-  import PetActivityGroups from '../PetActivityGroups.svelte';
+  import NoticeGroups from '../NoticeGroups.svelte';
   import PetAvatar from './PetAvatar.svelte';
   import { playWhipSound } from '../sound';
   import { defaultRunningBubbleSettings } from '../theme';
   import type { AppSettings, TaskStatus } from '../types';
-  import type { PetTask, PetSource } from '../petGateway';
+  import type { Notice, NoticeSource } from '../noticeGateway';
   import type { ActivityGroupId } from '../activityGroups';
   import type { SurfaceView } from './surface';
   import type { petSizing } from './sizing';
   export let sizing: ReturnType<typeof petSizing>;
   export let settings: AppSettings | null;
-  export let activities: PetTask[];
-  export let sources: PetSource[];
+  export let activities: Notice[];
+  export let sources: NoticeSource[];
   export let gatewayError: string;
   export let surface: SurfaceView;
   export let avatarStatus: TaskStatus;
   export let tasksCollapsed: boolean;
   export let actionNotice: string;
   export let expandedGroups: Set<ActivityGroupId>;
-  export let dismissActivity: (event: MouseEvent, task: PetTask) => void;
+  export let dismissActivity: (event: MouseEvent, task: Notice) => void;
   export let clearCompletedActivities: (event: MouseEvent) => void;
   export let dragWindow: () => Promise<void>;
   export let toggleSurface: (event: MouseEvent) => void;
@@ -32,7 +34,7 @@
   let whipTimer: number | null = null;
   const whipVisibleMs = 760;
   $: hasActivities = activities.length > 0;
-  $: hasCompletedActivities = activities.some(a => a.status === 'completed');
+  $: hasCompletedActivities = activities.some(a => a.finished);
   $: runningBubble = settings?.appearance.runningBubble ?? defaultRunningBubbleSettings;
   $: activityStackHeightLimit = sizing.desktopListHeight;
   $: topActivityId = activities[0]?.id ?? null;
@@ -68,7 +70,7 @@
           <span class="status-message">{gatewayError}</span>
         </div></article>
       {/if}
-      <PetActivityGroups {activities} {sources} {runningBubble} bind:expanded={expandedGroups} dismiss={dismissActivity} />
+      <NoticeGroups {activities} {sources} {runningBubble} bind:expanded={expandedGroups} dismiss={dismissActivity} />
     </section>
   {/if}
   <section class="pet-stage" aria-label="拖动移动桌宠" style={`--pet-actor-width: ${sizing.petWidth}px`}>
@@ -114,8 +116,8 @@
         <button
           class="pet-action-button clear-completed-button"
           type="button"
-          aria-label="移除全部已完成任务"
-          title="移除全部已完成任务"
+          aria-label="移除全部已结束条目"
+          title="移除全部已结束条目"
           on:mousedown={(event) => event.stopPropagation()}
           on:click={clearCompletedActivities}
         >

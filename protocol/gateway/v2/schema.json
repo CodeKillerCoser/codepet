@@ -1864,6 +1864,162 @@
       ],
       "additionalProperties": true,
       "description": "UsageQueryResponse 的成功返回结果。"
+    },
+    "NoticeListRequest": {
+      "type": "object",
+      "description": "本机 Notice 列表，按更新时间倒序分页。",
+      "properties": {
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "从零开始的分页偏移。"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200,
+          "description": "本页最多条数。"
+        }
+      },
+      "required": [],
+      "additionalProperties": true
+    },
+    "NoticeListResponse": {
+      "type": "object",
+      "description": "Notice 和动态来源快照。",
+      "properties": {
+        "notices": {
+          "type": "array",
+          "description": "本页条目。",
+          "items": {
+            "$ref": "../../core/v2/schema.json#/$defs/Notice"
+          }
+        },
+        "sources": {
+          "type": "array",
+          "description": "全部已声明 observation 的插件。",
+          "items": {
+            "$ref": "../../core/v2/schema.json#/$defs/NoticeSource"
+          }
+        },
+        "hasMore": {
+          "type": "boolean",
+          "description": "是否还有下一页。"
+        }
+      },
+      "required": [
+        "notices",
+        "sources",
+        "hasMore"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeGetRequest": {
+      "type": "object",
+      "description": "读取本机条目。",
+      "properties": {
+        "noticeId": {
+          "type": "string",
+          "description": "条目身份。"
+        }
+      },
+      "required": [
+        "noticeId"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeGetResponse": {
+      "type": "object",
+      "description": "最新条目。",
+      "properties": {
+        "notice": {
+          "$ref": "../../core/v2/schema.json#/$defs/Notice"
+        }
+      },
+      "required": [
+        "notice"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeActionRequest": {
+      "type": "object",
+      "description": "执行已登记、当前启用的条目动作。",
+      "properties": {
+        "noticeId": {
+          "type": "string",
+          "description": "所属条目。"
+        },
+        "actionId": {
+          "type": "string",
+          "description": "动作身份。"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "有效条目修订。"
+        },
+        "executionId": {
+          "type": "string",
+          "description": "稳定执行 ID。",
+          "minLength": 1
+        },
+        "input": {
+          "$ref": "../../core/v2/schema.json#/$defs/NoticeActionInput"
+        }
+      },
+      "required": [
+        "noticeId",
+        "actionId",
+        "expectedRevision",
+        "executionId",
+        "input"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeSourceSetEnabledRequest": {
+      "type": "object",
+      "description": "修改本机来源观察偏好。",
+      "properties": {
+        "pluginId": {
+          "type": "string",
+          "description": "插件身份。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "是否启用。"
+        }
+      },
+      "required": [
+        "pluginId",
+        "enabled"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeSourceSetEnabledResponse": {
+      "type": "object",
+      "description": "修改后的来源。",
+      "properties": {
+        "source": {
+          "$ref": "../../core/v2/schema.json#/$defs/NoticeSource"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeChangedEvent": {
+      "type": "object",
+      "description": "Host 已提交的最新 Notice。",
+      "properties": {
+        "notice": {
+          "$ref": "../../core/v2/schema.json#/$defs/Notice"
+        }
+      },
+      "required": [
+        "notice"
+      ],
+      "additionalProperties": true
     }
   }
 }

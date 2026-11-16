@@ -37,6 +37,127 @@ export type JsonObject = Record<string, JsonValue>;
 
 export type NativeResourceId = string;
 
+export interface Notice {
+  noticeId: string;
+  pluginId: string;
+  sourceId: string;
+  status: NoticeStatus;
+  content: NoticeContent;
+  actions: Array<NoticeAction>;
+  revision: number;
+  finished: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type NoticeAction = NoticeReplyAction | NoticeActivateAction | NoticePermissionAction;
+
+export type NoticeActionInput = NoticeReplyInput | NoticeActivateInput | NoticePermissionInput;
+
+export interface NoticeActionResult {
+  executionId: string;
+  status: NoticeActionResultStatus;
+  message?: string;
+}
+
+export type NoticeActionResultStatus = "accepted" | "succeeded" | "failed" | "unknown";
+
+export interface NoticeActivateAction {
+  kind: NoticeActivateActionKind;
+  id: string;
+  label: string;
+  enabled: boolean;
+  target?: NoticeActivationTarget;
+}
+
+export type NoticeActivateActionKind = "activate";
+
+export interface NoticeActivateInput {
+  kind: NoticeActivateInputKind;
+}
+
+export type NoticeActivateInputKind = "activate";
+
+export type NoticeActivationTarget = NoticeApplicationTarget | NoticeUriTarget;
+
+export interface NoticeApplicationTarget {
+  kind: NoticeApplicationTargetKind;
+  applicationId: string;
+}
+
+export type NoticeApplicationTargetKind = "application";
+
+export interface NoticeContent {
+  title: string;
+  progress?: NoticeProgress;
+}
+
+export interface NoticePermissionAction {
+  kind: NoticePermissionActionKind;
+  id: string;
+  label: string;
+  enabled: boolean;
+  description?: string;
+  options?: Array<NoticePermissionOption>;
+}
+
+export type NoticePermissionActionKind = "permission";
+
+export interface NoticePermissionInput {
+  kind: NoticePermissionInputKind;
+  optionId: string;
+}
+
+export type NoticePermissionInputKind = "permission";
+
+export interface NoticePermissionOption {
+  id: string;
+  label: string;
+}
+
+export interface NoticeProgress {
+  text?: string;
+  percent?: number;
+}
+
+export interface NoticeReplyAction {
+  kind: NoticeReplyActionKind;
+  id: string;
+  label: string;
+  enabled: boolean;
+  placeholder?: string;
+}
+
+export type NoticeReplyActionKind = "reply";
+
+export interface NoticeReplyInput {
+  kind: NoticeReplyInputKind;
+  text: string;
+}
+
+export type NoticeReplyInputKind = "reply";
+
+export interface NoticeSource {
+  pluginId: string;
+  displayName: string;
+  icon?: string;
+  enabled: boolean;
+  connected: boolean;
+  message: string;
+}
+
+export interface NoticeStatus {
+  value: string;
+  label: string;
+}
+
+export interface NoticeUriTarget {
+  kind: NoticeUriTargetKind;
+  uri: string;
+}
+
+export type NoticeUriTargetKind = "uri";
+
 export interface PageInfo {
   nextCursor?: Cursor;
 }
@@ -125,7 +246,7 @@ export interface VersionRange {
   minVersion: ProtocolVersion;
   maxVersion: ProtocolVersion;
 }
-const protocolSchemas: Record<string, any> = {"core:ConnectionStatus":{"type":"string","enum":["connecting","online","offline"]},"core:ClientConnectionInfo":{"type":"object","properties":{"connectionId":{"type":"string","minLength":1},"clientId":{"ref":"core:ClientId"}},"required":["connectionId","clientId"],"additionalProperties":true},"core:ClientConnectionsSnapshot":{"type":"object","properties":{"revision":{"type":"integer","minimum":0},"connections":{"type":"array","items":{"ref":"core:ClientConnectionInfo"}}},"required":["revision","connections"],"additionalProperties":true},"core:ClientId":{"type":"string","minLength":1},"core:Cursor":{"type":"string","minLength":1},"core:DeviceId":{"type":"string","minLength":1},"core:DeviceDescriptor":{"type":"object","properties":{"deviceName":{"type":"string","minLength":1},"operatingSystem":{"type":"string","minLength":1},"systemVersion":{"type":"string","minLength":1}},"required":["deviceName","operatingSystem","systemVersion"],"additionalProperties":true},"core:EventCursor":{"type":"string","minLength":1},"core:EventSequence":{"type":"integer","minimum":0,"maximum":9007199254740991},"core:TraceContext":{"type":"object","properties":{"traceparent":{"type":"string","pattern":"^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"},"tracestate":{"type":"string","minLength":1}},"required":["traceparent"],"additionalProperties":true},"core:JsonObject":{"type":"object","additionalProperties":true},"core:NativeResourceId":{"type":"string","minLength":1},"core:PageInfo":{"type":"object","properties":{"nextCursor":{"ref":"core:Cursor"}},"additionalProperties":true},"core:PageRequest":{"type":"object","properties":{"cursor":{"ref":"core:Cursor"},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":true},"core:ProtocolError":{"type":"object","properties":{"code":{"type":"string","minLength":1},"message":{"type":"string","minLength":1},"retryable":{"type":"boolean"},"details":{"ref":"core:JsonObject"}},"required":["code","message","retryable"],"additionalProperties":true},"core:ProtocolVersion":{"type":"integer","minimum":0,"maximum":4294967295},"core:ProviderInstanceId":{"type":"string","minLength":1},"core:ProviderPluginId":{"type":"string","minLength":1},"core:RequestId":{"type":"string","minLength":1},"core:RoutedResourceId":{"type":"object","properties":{"providerId":{"type":"string","minLength":1},"nativeResourceId":{"ref":"core:NativeResourceId"}},"required":["providerId","nativeResourceId"],"additionalProperties":true},"core:RpcError":{"type":"object","properties":{"code":{"type":"integer"},"message":{"type":"string","minLength":1},"data":{"ref":"core:JsonObject"}},"required":["code","message"],"additionalProperties":true},"core:TimestampMs":{"type":"integer","minimum":0,"maximum":9007199254740991},"core:VersionRange":{"type":"object","properties":{"minVersion":{"ref":"core:ProtocolVersion"},"maxVersion":{"ref":"core:ProtocolVersion"}},"required":["minVersion","maxVersion"],"additionalProperties":true},"core:ProtocolVersionOffer":{"type":"object","properties":{"version":{"ref":"core:BusinessProtocolVersion"},"minVersion":{"ref":"core:BusinessProtocolVersion"}},"required":["version","minVersion"],"additionalProperties":true},"core:ProtocolVersionSelection":{"type":"object","properties":{"version":{"ref":"core:BusinessProtocolVersion"},"minVersion":{"ref":"core:BusinessProtocolVersion"},"selectedVersion":{"ref":"core:BusinessProtocolVersion"}},"required":["version","minVersion","selectedVersion"],"additionalProperties":true},"core:BusinessProtocolVersion":{"type":"integer","minimum":1,"maximum":4294967295},"core:ProviderFeature":{"type":"string","enum":["agent","observation","runtimeInventory"]},"core:ProviderTransportLimits":{"type":"object","properties":{"maxFramePayloadBytes":{"type":"integer","minimum":1024,"maximum":65536},"maxEncodedMessageBytes":{"type":"integer","minimum":1024,"maximum":16777216},"maxDecodedMessageBytes":{"type":"integer","minimum":1024,"maximum":134217728},"receiveBudgetBytes":{"type":"integer","minimum":2048,"maximum":1073741824},"normalStreams":{"type":"integer","minimum":1,"maximum":32},"smallStreams":{"type":"integer","minimum":1,"maximum":16},"controlStreams":{"type":"integer","minimum":1,"maximum":8},"smallMessageBytes":{"type":"integer","minimum":1024,"maximum":65536},"smallReceiveBudgetBytes":{"type":"integer","minimum":2048,"maximum":16777216},"controlMessageBytes":{"type":"integer","minimum":1024,"maximum":16384},"controlReceiveBudgetBytes":{"type":"integer","minimum":2048,"maximum":1048576},"connectionWindowBytes":{"type":"integer","minimum":33554432,"maximum":268435456},"idleTimeoutMs":{"type":"integer","minimum":100,"maximum":120000},"streamTimeoutMs":{"type":"integer","minimum":100,"maximum":300000}},"required":["maxFramePayloadBytes","maxEncodedMessageBytes","maxDecodedMessageBytes","receiveBudgetBytes","normalStreams","smallStreams","controlStreams","smallMessageBytes","smallReceiveBudgetBytes","controlMessageBytes","controlReceiveBudgetBytes","connectionWindowBytes","idleTimeoutMs","streamTimeoutMs"],"additionalProperties":false},"core:ProviderTransportHello":{"type":"object","properties":{"supportedVersions":{"type":"array","items":{"type":"integer","minimum":1},"minItems":1},"features":{"type":"array","items":{"type":"string","minLength":1}},"receive":{"ref":"core:ProviderTransportLimits"}},"required":["supportedVersions","features","receive"],"additionalProperties":false},"core:ProviderTransportSelection":{"type":"object","properties":{"selectedVersion":{"type":"integer","minimum":1},"features":{"type":"array","items":{"type":"string","minLength":1}},"receive":{"ref":"core:ProviderTransportLimits"}},"required":["selectedVersion","features","receive"],"additionalProperties":false}};
+const protocolSchemas: Record<string, any> = {"core:ConnectionStatus":{"type":"string","enum":["connecting","online","offline"]},"core:ClientConnectionInfo":{"type":"object","properties":{"connectionId":{"type":"string","minLength":1},"clientId":{"ref":"core:ClientId"}},"required":["connectionId","clientId"],"additionalProperties":true},"core:ClientConnectionsSnapshot":{"type":"object","properties":{"revision":{"type":"integer","minimum":0},"connections":{"type":"array","items":{"ref":"core:ClientConnectionInfo"}}},"required":["revision","connections"],"additionalProperties":true},"core:ClientId":{"type":"string","minLength":1},"core:Cursor":{"type":"string","minLength":1},"core:DeviceId":{"type":"string","minLength":1},"core:DeviceDescriptor":{"type":"object","properties":{"deviceName":{"type":"string","minLength":1},"operatingSystem":{"type":"string","minLength":1},"systemVersion":{"type":"string","minLength":1}},"required":["deviceName","operatingSystem","systemVersion"],"additionalProperties":true},"core:EventCursor":{"type":"string","minLength":1},"core:EventSequence":{"type":"integer","minimum":0,"maximum":9007199254740991},"core:TraceContext":{"type":"object","properties":{"traceparent":{"type":"string","pattern":"^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"},"tracestate":{"type":"string","minLength":1}},"required":["traceparent"],"additionalProperties":true},"core:JsonObject":{"type":"object","additionalProperties":true},"core:NativeResourceId":{"type":"string","minLength":1},"core:PageInfo":{"type":"object","properties":{"nextCursor":{"ref":"core:Cursor"}},"additionalProperties":true},"core:PageRequest":{"type":"object","properties":{"cursor":{"ref":"core:Cursor"},"limit":{"type":"integer","minimum":1,"maximum":100}},"additionalProperties":true},"core:ProtocolError":{"type":"object","properties":{"code":{"type":"string","minLength":1},"message":{"type":"string","minLength":1},"retryable":{"type":"boolean"},"details":{"ref":"core:JsonObject"}},"required":["code","message","retryable"],"additionalProperties":true},"core:ProtocolVersion":{"type":"integer","minimum":0,"maximum":4294967295},"core:ProviderInstanceId":{"type":"string","minLength":1},"core:ProviderPluginId":{"type":"string","minLength":1},"core:RequestId":{"type":"string","minLength":1},"core:RoutedResourceId":{"type":"object","properties":{"providerId":{"type":"string","minLength":1},"nativeResourceId":{"ref":"core:NativeResourceId"}},"required":["providerId","nativeResourceId"],"additionalProperties":true},"core:RpcError":{"type":"object","properties":{"code":{"type":"integer"},"message":{"type":"string","minLength":1},"data":{"ref":"core:JsonObject"}},"required":["code","message"],"additionalProperties":true},"core:TimestampMs":{"type":"integer","minimum":0,"maximum":9007199254740991},"core:VersionRange":{"type":"object","properties":{"minVersion":{"ref":"core:ProtocolVersion"},"maxVersion":{"ref":"core:ProtocolVersion"}},"required":["minVersion","maxVersion"],"additionalProperties":true},"core:ProtocolVersionOffer":{"type":"object","properties":{"version":{"ref":"core:BusinessProtocolVersion"},"minVersion":{"ref":"core:BusinessProtocolVersion"}},"required":["version","minVersion"],"additionalProperties":true},"core:ProtocolVersionSelection":{"type":"object","properties":{"version":{"ref":"core:BusinessProtocolVersion"},"minVersion":{"ref":"core:BusinessProtocolVersion"},"selectedVersion":{"ref":"core:BusinessProtocolVersion"}},"required":["version","minVersion","selectedVersion"],"additionalProperties":true},"core:BusinessProtocolVersion":{"type":"integer","minimum":1,"maximum":4294967295},"core:ProviderFeature":{"type":"string","enum":["agent","observation","runtimeInventory"]},"core:NoticeStatus":{"type":"object","properties":{"value":{"type":"string","minLength":1,"maxLength":1024},"label":{"type":"string","minLength":1,"maxLength":1024}},"required":["value","label"],"additionalProperties":true},"core:NoticeProgress":{"type":"object","properties":{"text":{"type":"string"},"percent":{"type":"integer","minimum":0,"maximum":100}},"required":[],"additionalProperties":true},"core:NoticeContent":{"type":"object","properties":{"progress":{"ref":"core:NoticeProgress"}},"required":["title"],"additionalProperties":true},"core:NoticeActivationTarget":{"oneOf":[{"ref":"core:NoticeApplicationTarget"},{"ref":"core:NoticeUriTarget"}],"discriminator":{"field":"kind","variants":{"application":"core:NoticeApplicationTarget","uri":"core:NoticeUriTarget"}}},"core:NoticePermissionOption":{"type":"object","properties":{"id":{"type":"string","minLength":1},"label":{"type":"string","minLength":1}},"required":["id","label"],"additionalProperties":true},"core:NoticeAction":{"oneOf":[{"ref":"core:NoticeReplyAction"},{"ref":"core:NoticeActivateAction"},{"ref":"core:NoticePermissionAction"}],"discriminator":{"field":"kind","variants":{"reply":"core:NoticeReplyAction","activate":"core:NoticeActivateAction","permission":"core:NoticePermissionAction"}}},"core:NoticeActionInput":{"oneOf":[{"ref":"core:NoticeReplyInput"},{"ref":"core:NoticeActivateInput"},{"ref":"core:NoticePermissionInput"}],"discriminator":{"field":"kind","variants":{"reply":"core:NoticeReplyInput","activate":"core:NoticeActivateInput","permission":"core:NoticePermissionInput"}}},"core:NoticeActionResult":{"type":"object","properties":{"executionId":{"type":"string","minLength":1},"status":{"ref":"core:NoticeActionResultStatus"},"message":{"type":"string"}},"required":["executionId","status"],"additionalProperties":true},"core:Notice":{"type":"object","properties":{"noticeId":{"type":"string","minLength":1},"pluginId":{"type":"string","minLength":1},"sourceId":{"type":"string","minLength":1},"status":{"ref":"core:NoticeStatus"},"content":{"ref":"core:NoticeContent"},"actions":{"type":"array","items":{"ref":"core:NoticeAction"}},"revision":{"type":"integer","minimum":1},"finished":{"type":"boolean"},"createdAt":{"type":"integer","minimum":0},"updatedAt":{"type":"integer","minimum":0}},"required":["noticeId","pluginId","sourceId","status","content","actions","revision","finished","createdAt","updatedAt"],"additionalProperties":true},"core:NoticeSource":{"type":"object","properties":{"pluginId":{"type":"string"},"displayName":{"type":"string"},"icon":{"type":"string"},"enabled":{"type":"boolean"},"connected":{"type":"boolean"},"message":{"type":"string"}},"required":["pluginId","displayName","enabled","connected","message"],"additionalProperties":true},"core:NoticeApplicationTarget":{"type":"object","properties":{"kind":{"ref":"core:NoticeApplicationTargetKind"},"applicationId":{"type":"string","minLength":1}},"required":["kind","applicationId"],"additionalProperties":true},"core:NoticeUriTarget":{"type":"object","properties":{"kind":{"ref":"core:NoticeUriTargetKind"},"uri":{"type":"string","minLength":1}},"required":["kind","uri"],"additionalProperties":true},"core:NoticeReplyAction":{"type":"object","properties":{"kind":{"ref":"core:NoticeReplyActionKind"},"id":{"type":"string","minLength":1},"label":{"type":"string","minLength":1},"enabled":{"type":"boolean"},"placeholder":{"type":"string"}},"required":["kind","id","label","enabled"],"additionalProperties":true},"core:NoticeActivateAction":{"type":"object","properties":{"kind":{"ref":"core:NoticeActivateActionKind"},"id":{"type":"string","minLength":1},"label":{"type":"string","minLength":1},"enabled":{"type":"boolean"},"target":{"ref":"core:NoticeActivationTarget"}},"required":["kind","id","label","enabled"],"additionalProperties":true},"core:NoticePermissionAction":{"type":"object","properties":{"kind":{"ref":"core:NoticePermissionActionKind"},"id":{"type":"string","minLength":1},"label":{"type":"string","minLength":1},"enabled":{"type":"boolean"},"options":{"type":"array","items":{"ref":"core:NoticePermissionOption"},"minItems":1}},"required":["kind","id","label","enabled"],"additionalProperties":true},"core:NoticeReplyInput":{"type":"object","properties":{"kind":{"ref":"core:NoticeReplyInputKind"},"text":{"type":"string","minLength":1}},"required":["kind","text"],"additionalProperties":true},"core:NoticeActivateInput":{"type":"object","properties":{"kind":{"ref":"core:NoticeActivateInputKind"}},"required":["kind"],"additionalProperties":true},"core:NoticePermissionInput":{"type":"object","properties":{"kind":{"ref":"core:NoticePermissionInputKind"},"optionId":{"type":"string","minLength":1}},"required":["kind","optionId"],"additionalProperties":true},"core:NoticeActionResultStatus":{"type":"string","enum":["accepted","succeeded","failed","unknown"]},"core:NoticeApplicationTargetKind":{"type":"string","enum":["application"]},"core:NoticeUriTargetKind":{"type":"string","enum":["uri"]},"core:NoticeReplyActionKind":{"type":"string","enum":["reply"]},"core:NoticeActivateActionKind":{"type":"string","enum":["activate"]},"core:NoticePermissionActionKind":{"type":"string","enum":["permission"]},"core:NoticeReplyInputKind":{"type":"string","enum":["reply"]},"core:NoticeActivateInputKind":{"type":"string","enum":["activate"]},"core:NoticePermissionInputKind":{"type":"string","enum":["permission"]},"core:ProviderTransportLimits":{"type":"object","properties":{"maxFramePayloadBytes":{"type":"integer","minimum":1024,"maximum":65536},"maxEncodedMessageBytes":{"type":"integer","minimum":1024,"maximum":16777216},"maxDecodedMessageBytes":{"type":"integer","minimum":1024,"maximum":134217728},"receiveBudgetBytes":{"type":"integer","minimum":2048,"maximum":1073741824},"normalStreams":{"type":"integer","minimum":1,"maximum":32},"smallStreams":{"type":"integer","minimum":1,"maximum":16},"controlStreams":{"type":"integer","minimum":1,"maximum":8},"smallMessageBytes":{"type":"integer","minimum":1024,"maximum":65536},"smallReceiveBudgetBytes":{"type":"integer","minimum":2048,"maximum":16777216},"controlMessageBytes":{"type":"integer","minimum":1024,"maximum":16384},"controlReceiveBudgetBytes":{"type":"integer","minimum":2048,"maximum":1048576},"connectionWindowBytes":{"type":"integer","minimum":33554432,"maximum":268435456},"idleTimeoutMs":{"type":"integer","minimum":100,"maximum":120000},"streamTimeoutMs":{"type":"integer","minimum":100,"maximum":300000}},"required":["maxFramePayloadBytes","maxEncodedMessageBytes","maxDecodedMessageBytes","receiveBudgetBytes","normalStreams","smallStreams","controlStreams","smallMessageBytes","smallReceiveBudgetBytes","controlMessageBytes","controlReceiveBudgetBytes","connectionWindowBytes","idleTimeoutMs","streamTimeoutMs"],"additionalProperties":false},"core:ProviderTransportHello":{"type":"object","properties":{"supportedVersions":{"type":"array","items":{"type":"integer","minimum":1},"minItems":1},"features":{"type":"array","items":{"type":"string","minLength":1}},"receive":{"ref":"core:ProviderTransportLimits"}},"required":["supportedVersions","features","receive"],"additionalProperties":false},"core:ProviderTransportSelection":{"type":"object","properties":{"selectedVersion":{"type":"integer","minimum":1},"features":{"type":"array","items":{"type":"string","minLength":1}},"receive":{"ref":"core:ProviderTransportLimits"}},"required":["selectedVersion","features","receive"],"additionalProperties":false}};
 /** Validate known fields; unknown fields are ignored and future receive values retained. */
 export function validateProtocolValue(type: string, value: unknown, allowUnknown = true): void {
   function visit(n: any, v: any, path: string): void {

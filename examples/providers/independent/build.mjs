@@ -1,6 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { build } from "esbuild";
-import { mkdir, cp, writeFile, rm } from "node:fs/promises";
+import { packageIcons } from "./package-icons.mjs";
+import { validatePluginManifest } from "./contracts.mjs";
+import { mkdir, cp, writeFile, rm, readFile } from "node:fs/promises";
 await build({
   entryPoints: ["provider.mjs"],
   bundle: true,
@@ -27,6 +29,7 @@ for (const [suffix, transport] of [
         manifestVersion: 2,
         pluginId: `independent.echo.${suffix}`,
         displayName: `Independent Echo (${suffix})`,
+        icon: packageIcons.echo,
         command: "node",
         args: ["provider.mjs"],
         env: { ECHO_PLUGIN_ID: `independent.echo.${suffix}` },
@@ -63,3 +66,35 @@ execFileSync(
   ],
   { stdio: "inherit" },
 );
+
+for (const suffix of ["jsonl", "zstd", "mux", "pi-jsonl"]) {
+  const manifest = JSON.parse(
+    await readFile(`packages/${suffix}/codepet-provider.json`),
+  );
+  if (!validatePluginManifest(manifest))
+    throw Error(
+      `Invalid generated ${suffix} manifest: ${JSON.stringify(validatePluginManifest.errors)}`,
+    );
+}
+
+for (const [suffix, transport] of [
+  ["jsonl", "stdio-jsonrpc-v1"],
+  ["zstd", "stdio-codepet-zstd-v1"],
+  ["mux", "stdio-codepet-mux-v1"],
+]) {
+  execFileSync(
+    process.execPath,
+    [
+      "make-package.mjs",
+      "--out",
+      `packages/notice-${suffix}`,
+      "--plugin-id",
+      `independent.notice.${suffix}`,
+      "--backend",
+      "notice",
+      "--transport",
+      transport,
+    ],
+    { stdio: "inherit" },
+  );
+}

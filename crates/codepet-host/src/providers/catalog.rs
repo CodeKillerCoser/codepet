@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use url::Url;
+#[path="manifest_validation.rs"]
+mod manifest_validation;
 
 #[path="manifest_generated.rs"]
 mod manifest_contract;
@@ -244,7 +246,7 @@ fn read_manifest(
         .and_then(|payload| {
             let value: serde_json::Value =
                 serde_json::from_slice(&payload).map_err(|error| error.to_string())?;
-            if value["manifestVersion"] == manifest_contract::PLUGIN_MANIFEST_VERSION { manifest_contract::validate_v2_manifest(&value)?; }
+            manifest_validation::validate(&value)?;
             for key in [
                 "CODEPET_PROVIDER_PACKAGE_DIRECTORY",
                 "CODEPET_PROVIDER_EXTERNAL_COMMAND",
@@ -256,11 +258,9 @@ fn read_manifest(
             serde_json::from_value::<PluginManifest>(value).map_err(|error| error.to_string())
         });
     match result {
-        Ok(mut manifest) if manifest.manifest_version == 1 || manifest.manifest_version == manifest_contract::PLUGIN_MANIFEST_VERSION => {
+        Ok(mut manifest) if manifest.manifest_version == manifest_contract::PLUGIN_MANIFEST_VERSION => {
             {
-                let profile = manifest
-                    .transport
-                    .unwrap_or_else(|| codepet_provider_sdk::MUX_PROFILE.into());
+                let profile = manifest.transport;
                 let key = codepet_provider_sdk::TRANSPORT_ENV;
                 if codepet_transport::Profile::parse(&profile).is_err()
                     || manifest
@@ -344,7 +344,8 @@ fn validate_descriptor(descriptor: &PluginDescriptor) -> HostResult<()> {
             ),
         ));
     }
-    if let Some(icon) = descriptor.icon.as_ref() {
+    {
+        let icon = &descriptor.icon;
         let valid_icon = Url::parse(icon).ok().is_some_and(|url| {
             url.scheme() == "https"
                 && url.host_str().is_some()
@@ -394,7 +395,7 @@ mod transport_tests {
     fn manifest_selects_transport_explicitly_and_rejects_conflicting_env() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("codepet-provider.json");
-        let mut value = serde_json::json!({"manifestVersion":1,"pluginId":"test.mux","displayName":"Mux","executable":"provider","transport":codepet_provider_sdk::MUX_PROFILE});
+        let mut value = serde_json::json!({"manifestVersion":2,"icon":"https://example.com/provider.png","pluginId":"test.mux","displayName":"Mux","command":"provider","transport":codepet_provider_sdk::MUX_PROFILE});
         fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         let mut candidates = vec![]; let mut diagnostics = vec![];
         read_manifest(&path, &mut candidates, &mut diagnostics);
@@ -404,8 +405,9 @@ mod transport_tests {
         fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         candidates.clear();
         read_manifest(&path, &mut candidates, &mut diagnostics);
-        assert!(diagnostics.is_empty());
-        assert_eq!(candidates[0].1.env[codepet_provider_sdk::TRANSPORT_ENV], codepet_provider_sdk::MUX_PROFILE);
+        assert_eq!(diagnostics[0].code, "invalid_plugin_manifest");
+        diagnostics.clear();
+        value["transport"] = serde_json::json!(codepet_provider_sdk::MUX_PROFILE);
         value["env"] = serde_json::json!({codepet_provider_sdk::TRANSPORT_ENV:"stdio-codepet-frame-v1"});
         fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         candidates.clear();
@@ -426,7 +428,7 @@ mod manifest_v2_tests {
             "stdio-codepet-zstd-v1",
             "stdio-codepet-mux-v1",
         ] {
-            let mut value = serde_json::json!({"$schema":"plugin-manifest.schema.json","manifestVersion":2,"pluginId":"test.contract","displayName":"Contract",
+            let mut value = serde_json::json!({"$schema":"plugin-manifest.schema.json","manifestVersion":2,"icon":"https://example.com/provider.png","pluginId":"test.contract","displayName":"Contract",
                 "command":"node","args":["entry with space.mjs","$literal","--value=a b"],"env":{"CUSTOM":"$NO_EXPANSION"},"transport":profile});
             fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
             let descriptor = PluginCatalog::read_one(&path).unwrap();
@@ -450,7 +452,7 @@ mod manifest_v2_tests {
     fn packaged_command_is_resolved_against_manifest_and_reserved_context_is_rejected() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(PLUGIN_MANIFEST_FILE_NAME);
-        let mut value = serde_json::json!({"manifestVersion":2,"pluginId":"test.pkg","displayName":"Package","command":"./bin/provider","transport":"stdio-jsonrpc-v1"});
+        let mut value = serde_json::json!({"manifestVersion":2,"icon":"https://example.com/provider.png","pluginId":"test.pkg","displayName":"Package","command":"./bin/provider","transport":"stdio-jsonrpc-v1"});
         fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
         let descriptor = PluginCatalog::read_one(&path).unwrap();
         assert_eq!(

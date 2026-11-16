@@ -62,7 +62,8 @@ impl CompatProviderGateway {
         event: gateway::ProtocolEvent,
     ) -> Result<Option<compat::ProtocolEvent>, compat::ProtocolError> {
         let mapped = match event {
-            gateway::ProtocolEvent::ConversationInputQueueChanged { .. }
+            gateway::ProtocolEvent::NoticeChanged { .. }
+            | gateway::ProtocolEvent::ConversationInputQueueChanged { .. }
             | gateway::ProtocolEvent::ProjectChanged { .. }
             | gateway::ProtocolEvent::ConversationRecentChanged { .. }
             | gateway::ProtocolEvent::ProviderChanged { .. }

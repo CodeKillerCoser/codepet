@@ -1,4 +1,4 @@
-// Generated from protocol/v1/provider; do not edit.
+// Generated from protocol/v2/provider; do not edit.
 
 use crate::generated::ProviderTransportLimits;
 use crate::TransportError;

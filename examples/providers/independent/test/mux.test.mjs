@@ -5,8 +5,8 @@ import { Duplex } from "node:stream";
 import { zstdDecompressSync } from "node:zlib";
 import { Client } from "@bbk47/yamux";
 import { Reader, write, bootstrapFrame, limits, features } from "../mux.mjs";
-for (const businessVersion of [2, 3])
-  test(`mux business ${businessVersion}/2 public Yamux interoperability, grant, FIN, ordered event ACK`, async (t) => {
+for (const businessVersion of [4])
+  test(`mux business ${businessVersion}/4 public Yamux interoperability, grant, FIN, ordered event ACK`, async (t) => {
     const child = spawn(process.execPath, ["provider.mjs"], {
       cwd: process.env.PROVIDER_TEST_DIRECTORY || process.cwd(),
       env: {
@@ -126,7 +126,7 @@ for (const businessVersion of [2, 3])
     const baseInit = { hostClientId: "c", hostDeviceId: "d", hostVersion: "t" };
     for (const protocol of [
       { version: 1, minVersion: 1 },
-      { version: 4, minVersion: 4 },
+      { version: 5, minVersion: 5 },
     ])
       await rpc(
         "provider.initialize",
@@ -151,25 +151,30 @@ for (const businessVersion of [2, 3])
       hostClientId: "c",
       hostDeviceId: "d",
       hostVersion: "t",
-      protocol: { version: 4, minVersion: 2, futureOffer: true },
+      protocol: { version: 6, minVersion: 4, futureOffer: true },
       futureInitialize: true,
     });
     assert.deepEqual(initialized.protocol, {
       version: businessVersion,
-      minVersion: 2,
+      minVersion: 4,
       selectedVersion: businessVersion,
     });
     assert.deepEqual(initialized.plugin.protocol, {
       version: businessVersion,
-      minVersion: 2,
+      minVersion: 4,
     });
-    if (businessVersion === 3)
+    if (businessVersion === 4)
       assert.deepEqual(initialized.plugin.features, ["agent"]);
     else assert.equal(Object.hasOwn(initialized.plugin, "features"), false);
-    assert.equal(
-      (await rpc("future.unknown", {}, undefined, "method_not_found")).code,
-      -32601,
-    );
+    for (const method of [
+      "future.unknown",
+      "event.subscribe",
+      "event.unsubscribe",
+    ])
+      assert.equal(
+        (await rpc(method, {}, undefined, "method_not_found")).code,
+        -32601,
+      );
     await rpc("provider.describe", { futureDescribe: true });
     assert.deepEqual(await rpc("runtime.getInstalled", { refresh: true }), {
       selectionRequired: false,

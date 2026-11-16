@@ -5,7 +5,6 @@ members = [
     "codepet-core-sdk",
     "codepet-agent-sdk",
     "codepet-desktop-sdk",
-    "codepet-pet-sdk",
     "codepet-provider-sdk",
     "codepet-gateway-sdk",
     "codepet-lan-channel-sdk",

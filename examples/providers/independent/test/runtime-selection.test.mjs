@@ -61,18 +61,18 @@ for (const backend of ["echo", "pi"]) {
       hostClientId: "test",
       hostDeviceId: "test",
       hostVersion: "test",
-      protocol: { version: 4, minVersion: 2, futureOffer: true },
+      protocol: { version: 6, minVersion: 4, futureOffer: true },
       futureField: true,
     });
     assert.equal(initialized.error, undefined);
     assert.deepEqual(initialized.result.protocol, {
-      version: 3,
-      minVersion: 2,
-      selectedVersion: 3,
+      version: 4,
+      minVersion: 4,
+      selectedVersion: 4,
     });
     assert.deepEqual(initialized.result.plugin.protocol, {
-      version: 3,
-      minVersion: 2,
+      version: 4,
+      minVersion: 4,
     });
     assert.deepEqual(initialized.result.plugin.features, ["agent"]);
     const unknown = await rpc("future.method", {});

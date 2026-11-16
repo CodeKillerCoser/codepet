@@ -1,0 +1,578 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://code-pet.dev/protocol/v2/common/notice.schema.json",
+  "description": "Notice 标准条目、发布和动作合同。",
+  "$defs": {
+    "NoticeStatus": {
+      "type": "object",
+      "description": "接入方定义的业务状态；Host 不根据 value 推断生命周期。",
+      "properties": {
+        "value": {
+          "type": "string",
+          "description": "接入方的状态标识。",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "label": {
+          "type": "string",
+          "description": "面向用户的状态文案。",
+          "minLength": 1,
+          "maxLength": 1024
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeProgress": {
+      "type": "object",
+      "description": "进度文字及已知时的百分比；不确定时省略 percent。",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "消息摘要或进度文字。"
+        },
+        "percent": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "可准确计算的百分比。"
+        }
+      },
+      "required": [],
+      "additionalProperties": true
+    },
+    "NoticeContent": {
+      "type": "object",
+      "description": "条目的完整内容组；替换时未携带的旧进度清除。",
+      "properties": {
+        "title": {
+          "type": "string",
+          "description": "条目标题。",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "progress": {
+          "$ref": "#/$defs/NoticeProgress",
+          "description": "可选进度或消息摘要。"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeActivationTarget": {
+      "description": "平台 adapter 执行的结构化激活目标。",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/NoticeApplicationTarget",
+          "description": "激活一个已安装应用。"
+        },
+        {
+          "$ref": "#/$defs/NoticeUriTarget",
+          "description": "交给平台打开一个应用深链或网页。"
+        }
+      ]
+    },
+    "NoticePermissionOption": {
+      "type": "object",
+      "description": "接入方提供的授权选项。",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "稳定选项 ID。",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "description": "选项展示文案。",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "label"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeAction": {
+      "description": "只支持明确的动作类型；状态自由枚举，动作类型受协议约束。",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/NoticeReplyAction",
+          "description": "回复动作描述。"
+        },
+        {
+          "$ref": "#/$defs/NoticeActivateAction",
+          "description": "激活应用动作描述。"
+        },
+        {
+          "$ref": "#/$defs/NoticePermissionAction",
+          "description": "授权动作描述。"
+        }
+      ]
+    },
+    "NoticeActionInput": {
+      "description": "用户的动作输入；不得用输入覆盖已登记目标或账号。",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/NoticeReplyInput",
+          "description": "回复输入。"
+        },
+        {
+          "$ref": "#/$defs/NoticeActivateInput",
+          "description": "激活输入，不携带用户改写目标。"
+        },
+        {
+          "$ref": "#/$defs/NoticePermissionInput",
+          "description": "授权输入。"
+        }
+      ]
+    },
+    "NoticeActionResult": {
+      "type": "object",
+      "description": "动作真实执行结果；accepted 不等于成功，unknown 不自动重发。",
+      "properties": {
+        "executionId": {
+          "type": "string",
+          "description": "稳定执行 ID。",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/NoticeActionResultStatus",
+          "description": "动作执行状态。"
+        },
+        "message": {
+          "type": "string",
+          "description": "结果说明。"
+        }
+      },
+      "required": [
+        "executionId",
+        "status"
+      ],
+      "additionalProperties": true
+    },
+    "Notice": {
+      "type": "object",
+      "description": "Host 持有的 Notice；finished 独立于接入方自定义业务状态。",
+      "properties": {
+        "noticeId": {
+          "type": "string",
+          "description": "Host 分配的条目身份。",
+          "minLength": 1
+        },
+        "pluginId": {
+          "type": "string",
+          "description": "Host 从进程连接确认的所属插件。",
+          "minLength": 1
+        },
+        "sourceId": {
+          "type": "string",
+          "description": "插件内稳定来源/账号身份。",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "#/$defs/NoticeStatus",
+          "description": "当前或最终状态。"
+        },
+        "content": {
+          "$ref": "#/$defs/NoticeContent",
+          "description": "标题和进度。"
+        },
+        "actions": {
+          "type": "array",
+          "description": "当前动作；未声明、禁用或未知类型不展示。",
+          "items": {
+            "$ref": "#/$defs/NoticeAction",
+            "description": "动作描述。"
+          }
+        },
+        "revision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Host 提交后递增的修订号。"
+        },
+        "finished": {
+          "type": "boolean",
+          "description": "finish 成功后为 true，后续更正不得回退。"
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Host 创建时间，毫秒。"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "最近提交时间，毫秒。"
+        }
+      },
+      "required": [
+        "noticeId",
+        "pluginId",
+        "sourceId",
+        "status",
+        "content",
+        "actions",
+        "revision",
+        "finished",
+        "createdAt",
+        "updatedAt"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeSource": {
+      "type": "object",
+      "description": "插件级观察来源和 Host 接入状态，不要求 Agent 实例。",
+      "properties": {
+        "pluginId": {
+          "type": "string",
+          "description": "插件身份。"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "来源名称。"
+        },
+        "icon": {
+          "type": "string",
+          "description": "来源图标 URL。"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "用户是否启用观察发布。"
+        },
+        "connected": {
+          "type": "boolean",
+          "description": "Provider 及观察接入是否可用。"
+        },
+        "message": {
+          "type": "string",
+          "description": "来源接入状态说明。"
+        }
+      },
+      "required": [
+        "pluginId",
+        "displayName",
+        "enabled",
+        "connected",
+        "message"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeApplicationTarget": {
+      "type": "object",
+      "description": "激活一个已安装应用。",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NoticeApplicationTargetKind",
+          "description": "应用激活。"
+        },
+        "applicationId": {
+          "type": "string",
+          "description": "平台应用身份；macOS 使用 bundle ID。",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kind",
+        "applicationId"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeUriTarget": {
+      "type": "object",
+      "description": "交给平台打开一个应用深链或网页。",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NoticeUriTargetKind",
+          "description": "URI 激活。"
+        },
+        "uri": {
+          "type": "string",
+          "description": "应用深链或 HTTPS URL，不能是系统命令。",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kind",
+        "uri"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeReplyAction": {
+      "type": "object",
+      "description": "回复动作描述。",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NoticeReplyActionKind",
+          "description": "回复动作。"
+        },
+        "id": {
+          "type": "string",
+          "description": "条目内部稳定动作 ID。",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "description": "入口展示文案。",
+          "minLength": 1
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "只有 true 才展示和允许执行。"
+        },
+        "placeholder": {
+          "type": "string",
+          "description": "输入提示。"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "label",
+        "enabled"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeActivateAction": {
+      "type": "object",
+      "description": "激活应用动作描述。",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NoticeActivateActionKind",
+          "description": "激活应用动作。"
+        },
+        "id": {
+          "type": "string",
+          "description": "条目内部稳定动作 ID。",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "description": "入口展示文案。",
+          "minLength": 1
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "只有 true 才展示和允许执行。"
+        },
+        "target": {
+          "$ref": "#/$defs/NoticeActivationTarget",
+          "description": "激活目标；启用动作时必填。"
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "label",
+        "enabled"
+      ],
+      "additionalProperties": true,
+      "if": {
+        "description": "动作启用时需要完整配置。",
+        "properties": {
+          "enabled": {
+            "const": true,
+            "description": "动作已启用。"
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "then": {
+        "description": "启用动作的必填配置。",
+        "required": [
+          "target"
+        ]
+      }
+    },
+    "NoticePermissionAction": {
+      "type": "object",
+      "description": "授权动作描述。",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NoticePermissionActionKind",
+          "description": "授权动作。"
+        },
+        "id": {
+          "type": "string",
+          "description": "条目内部稳定动作 ID。",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string",
+          "description": "入口展示文案。",
+          "minLength": 1
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "只有 true 才展示和允许执行。"
+        },
+        "description": {
+          "type": "string",
+          "description": "授权说明。"
+        },
+        "options": {
+          "type": "array",
+          "description": "可供用户选择的授权项。",
+          "items": {
+            "$ref": "#/$defs/NoticePermissionOption",
+            "description": "授权选项。"
+          },
+          "minItems": 1
+        }
+      },
+      "required": [
+        "kind",
+        "id",
+        "label",
+        "enabled"
+      ],
+      "additionalProperties": true,
+      "if": {
+        "description": "动作启用时需要完整配置。",
+        "properties": {
+          "enabled": {
+            "const": true,
+            "description": "动作已启用。"
+          }
+        },
+        "required": [
+          "enabled"
+        ]
+      },
+      "then": {
+        "description": "启用动作的必填配置。",
+        "required": [
+          "description",
+          "options"
+        ]
+      }
+    },
+    "NoticeReplyInput": {
+      "type": "object",
+      "description": "回复输入。",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NoticeReplyInputKind",
+          "description": "回复。"
+        },
+        "text": {
+          "type": "string",
+          "description": "用户输入的回复文本。",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kind",
+        "text"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeActivateInput": {
+      "type": "object",
+      "description": "激活输入，不携带用户改写目标。",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NoticeActivateInputKind",
+          "description": "激活。"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": true
+    },
+    "NoticePermissionInput": {
+      "type": "object",
+      "description": "授权输入。",
+      "properties": {
+        "kind": {
+          "$ref": "#/$defs/NoticePermissionInputKind",
+          "description": "授权。"
+        },
+        "optionId": {
+          "type": "string",
+          "description": "当前有效选项 ID。",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "kind",
+        "optionId"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeActionResultStatus": {
+      "type": "string",
+      "description": "动作执行状态。",
+      "enum": [
+        "accepted",
+        "succeeded",
+        "failed",
+        "unknown"
+      ]
+    },
+    "NoticeApplicationTargetKind": {
+      "description": "应用激活。",
+      "type": "string",
+      "enum": [
+        "application"
+      ]
+    },
+    "NoticeUriTargetKind": {
+      "description": "URI 激活。",
+      "type": "string",
+      "enum": [
+        "uri"
+      ]
+    },
+    "NoticeReplyActionKind": {
+      "description": "回复动作。",
+      "type": "string",
+      "enum": [
+        "reply"
+      ]
+    },
+    "NoticeActivateActionKind": {
+      "description": "激活应用动作。",
+      "type": "string",
+      "enum": [
+        "activate"
+      ]
+    },
+    "NoticePermissionActionKind": {
+      "description": "授权动作。",
+      "type": "string",
+      "enum": [
+        "permission"
+      ]
+    },
+    "NoticeReplyInputKind": {
+      "description": "回复。",
+      "type": "string",
+      "enum": [
+        "reply"
+      ]
+    },
+    "NoticeActivateInputKind": {
+      "description": "激活。",
+      "type": "string",
+      "enum": [
+        "activate"
+      ]
+    },
+    "NoticePermissionInputKind": {
+      "description": "授权。",
+      "type": "string",
+      "enum": [
+        "permission"
+      ]
+    }
+  }
+}

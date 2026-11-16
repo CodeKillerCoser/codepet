@@ -252,7 +252,7 @@ function validateProviderInstanceKinds(record, model) {
     assert(target.record === record && target.name === "ProviderInstanceKind", `${record.packageConfig.id} ${definitionName}.${fieldName} must use ProviderInstanceKind`);
   };
 
-  assertKindField("ProviderPluginDescriptor", "instanceKinds", { array: true, nonEmpty: true });
+  assertKindField("ProviderPluginDescriptor", "instanceKinds", { array: true });
   assertKindField("InstanceCreateRequest", "instanceKind");
   assertKindField("ProviderInstance", "instanceKind");
 }
@@ -1144,6 +1144,12 @@ impl ProtocolMethod {
 ${methodAsStr}
         }
     }${dispatchLaneMethod}${capabilityMethod}
+
+    pub const fn direction(self) -> &'static str {
+        match self {
+${record.manifest.methods.map(method => `            Self::${pascalCase(method.name)} => ${JSON.stringify(method.direction ?? "unknown")},`).join("\n")}
+        }
+    }
 }
 
 impl std::str::FromStr for ProtocolMethod {
@@ -1211,7 +1217,7 @@ function clientSupport(record, model) {
             let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
             ${record.packageConfig.forwardCompatible ? `validate_request_params(${JSON.stringify(method.name)}, &params)?;` : ""}
             let result = self.transport.request(ProtocolMethod::${pascalCase(method.name)}, params).await?;
-            ${record.packageConfig.forwardCompatible ? `validate_payload(${JSON.stringify(compatibilityGraph(record,model).key(definitionName(method.response,record.manifestPath,model)))}, &result, true)?;` : ""}
+            ${record.packageConfig.forwardCompatible ? `validate_payload(${JSON.stringify(compatibilityGraph(record,model).key(response,referenceTarget(method.response,record.manifestPath,model,"response validation").record))}, &result, true)?;` : ""}
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }`;
@@ -2047,14 +2053,14 @@ function providerInstanceKindSupport(record) {
   if (record.packageConfig.layer !== "provider") return "";
   return `impl ProviderPluginDescriptor {
     pub fn validate_instance_kinds(&self) -> Result<(), ProtocolError> {
-        if self.instance_kinds.is_empty() {
+${(record.schema.$defs.ProviderPluginDescriptor.properties.instanceKinds.minItems ?? 0) > 0 ? `        if self.instance_kinds.is_empty() {
             return Err(ProtocolError {
                 code: "invalid_provider_descriptor".to_string(),
                 message: "provider descriptor must declare at least one instance kind".to_string(),
                 retryable: false,
                 details: None,
             });
-        }
+        }` : ""}
         for (index, instance_kind) in self.instance_kinds.iter().enumerate() {
             if instance_kind.is_empty() {
                 return Err(ProtocolError {
@@ -2122,10 +2128,10 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
     codepet_core_sdk::validate_protocol_value(schemas, name, value, allow_unknown)
 }
 fn validate_request_params(method: &str, value: &serde_json::Value) -> Result<(), ProtocolError> {
-    match method { ${record.manifest.methods.map(m=>`${JSON.stringify(m.name)} => validate_payload(${JSON.stringify(graph.key(definitionName(m.request,record.manifestPath,model)))},value,false),`).join(' ')} _ => Ok(()) }
+    match method { ${record.manifest.methods.map(m=>`${JSON.stringify(m.name)} => validate_payload(${JSON.stringify(graph.key(definitionName(m.request,record.manifestPath,model),referenceTarget(m.request,record.manifestPath,model,"request validation").record))},value,false),`).join(' ')} _ => Ok(()) }
 }
 fn validate_event_params(method: &str, value: &serde_json::Value) -> Result<(), ProtocolError> {
-    match method { ${record.manifest.events.map(e=>`${JSON.stringify(e.name)} => validate_payload(${JSON.stringify(graph.key(definitionName(e.payload,record.manifestPath,model)))},${record.manifest.transport.eventCursorField ? '&value["payload"]' : 'value'},true),`).join(' ')} _ => Ok(()) }
+    match method { ${record.manifest.events.map(e=>`${JSON.stringify(e.name)} => validate_payload(${JSON.stringify(graph.key(definitionName(e.payload,record.manifestPath,model),referenceTarget(e.payload,record.manifestPath,model,"event validation").record))},${record.manifest.transport.eventCursorField ? '&value["payload"]' : 'value'},true),`).join(' ')} _ => Ok(()) }
 }
 ` : "";
   const service = record.manifest.transport.kind === "json-rpc-2.0"

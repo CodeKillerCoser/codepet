@@ -22,7 +22,7 @@ async fn main() -> Result<(), String> {
     }
     let root = PathBuf::from(&args[3]);
     std::fs::create_dir_all(root.join("plugins/claude")).map_err(|e| e.to_string())?;
-    let manifest = serde_json::json!({"manifestVersion":1,"pluginId":"dev.codepet.claude","displayName":"Claude extraction probe","executable":args[1],"enabled":true,"args":[],"env":{},
+    let manifest = serde_json::json!({"manifestVersion":2,"transport":"stdio-codepet-mux-v1","icon":"https://claude.ai/favicon.ico","pluginId":"dev.codepet.claude","displayName":"Claude extraction probe","command":args[1],"enabled":true,"args":[],"env":{},
         "instances":[{"instanceId":"extraction-probe","instanceKind":"claude","displayName":"Extraction probe","enabled":true,"settings":{"claudeExecutable":args[2]}}]});
     std::fs::write(
         root.join("plugins/claude/codepet-provider.json"),

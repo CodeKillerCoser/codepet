@@ -1,10 +1,9 @@
 {
-  "manifestVersion": 1,
+  "manifestVersion": 2,
   "transport": "stdio-codepet-mux-v1",
   "pluginId": "dev.codepet.opencode",
   "displayName": "OpenCode",
   "icon": "https://opencode.ai/favicon-96x96-v3.png",
-  "executable": "codepet-provider-opencode",
   "args": [],
   "env": {},
   "enabled": true,
@@ -14,9 +13,12 @@
       "instanceKind": "opencode",
       "displayName": "OpenCode",
       "settings": {
-        "serverArgs": ["serve"]
+        "serverArgs": [
+          "serve"
+        ]
       },
       "enabled": true
     }
-  ]
+  ],
+  "command": "codepet-provider-opencode"
 }

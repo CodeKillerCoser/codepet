@@ -1,0 +1,54 @@
+{
+  "description": "本机 Notice 查询和操作。",
+  "methods": [
+    {
+      "name": "notice.list",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/NoticeListRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/NoticeListResponse"
+      },
+      "description": "notice.list：仅真实本机会话可调用，远程拒绝。"
+    },
+    {
+      "name": "notice.get",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/NoticeGetRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/NoticeGetResponse"
+      },
+      "description": "notice.get：仅真实本机会话可调用，远程拒绝。"
+    },
+    {
+      "name": "notice.action.execute",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/NoticeActionRequest"
+      },
+      "response": {
+        "$ref": "../../common/notice.schema.json#/$defs/NoticeActionResult",
+        "description": "动作结果。"
+      },
+      "description": "notice.action.execute：仅真实本机会话可调用，远程拒绝。"
+    },
+    {
+      "name": "notice.source.setEnabled",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/NoticeSourceSetEnabledRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/NoticeSourceSetEnabledResponse"
+      },
+      "description": "notice.source.setEnabled：仅真实本机会话可调用，远程拒绝。"
+    }
+  ]
+}

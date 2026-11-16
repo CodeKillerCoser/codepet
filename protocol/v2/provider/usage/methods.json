@@ -3,7 +3,7 @@
   "methods": [
     {
       "name": "usage.query",
-      "direction": "hostToProvider",
+      "direction": "hostToPlugin",
       "idempotency": "safe",
       "capability": "usage.query",
       "request": {

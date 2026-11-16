@@ -15,7 +15,7 @@ Schema 说明字段与约束，服务元数据说明 RPC 扩展，注册表说�
 
 ## 版本与前向兼容
 
-握手请求在 protocol 中发送本端 version/minVersion；响应发送 Host 区间及双方最高共同 selectedVersion。客户端必须复核选择结果。当前范围 3/2，兼容既有 2/2 操作端，断线重连重新协商，心跳不更改已选版本。SDK 提供统一范围校验辅助函数，业务版本和 WSS 路径、RTC 帧、配对格式各自独立。
+握手请求在 protocol 中发送本端 version/minVersion；响应发送 Host 区间及双方最高共同 selectedVersion。客户端必须复核选择结果。当前范围 4/4，桌面和手机随本轮统一升级，断线重连重新协商，心跳不更改已选版本。SDK 提供统一范围校验辅助函数，业务版本和 WSS 路径、RTC 帧、配对格式各自独立。
 
 未知字段忽略，未知枚举/联合保留原值，已知非法数据拒绝。未知事件验证 JSON-RPC 信封和 cursor 后跳过并推进游标；未知状态保持不可操作，未知能力不调用。请求编码不得复用收到的未知选项。没有共同版本时不进入订阅/业务阶段，也不自动重放写入。完整规则见上层 v2 README。
 
@@ -28,3 +28,10 @@ handshake、provider.list 和 protocol.ping 返回当前全量实例清单及 in
 客户端忽略不高于已应用 revision 的事件、低于已应用 revision 的全量响应；游标仍推进。相同 revision 的完整快照可重新校正集合。移除时清理实例和能力缓存、停止对应观察，迟到的 describe 响应不能写回。心跳期间收到更晚事件，旧心跳不得恢复已删除条目。新安装复用旧实例 ID 时允许新的清单 revision，不能用旧 generation 阻挡新实例。来自不同非空 epoch 的事件不能用于局部更新，应重新握手并建立完整快照；不能只把 revision 归零。
 
 inventoryEpoch 标识当前 Gateway 生命期，重启后改变；revision 仅在相同 epoch 中比较。重连以 handshake 全量快照重建 epoch/revision 基线，再订阅其 eventCursor 后的事件；缓存游标超出重放范围时重新取快照。revision 缺失表示旧 Host，保留旧 changed 合并与心跳全量校正路径；旧操作端忽略未知 removed 事件，下一次心跳完成移除。不要在已经收到修订号的新连接上接受无修订号的迟到更新。通道只负责有序交付同一事件流，不自行分配清单版本。自动切换通道时，Gateway 会话适配器检查新握手的 epoch；同 epoch 按现有游标续传，不同 epoch 必须重建业务快照，即使旧数字游标在新 Host 上恰好有效，也不能复用，更不能重放写请求。
+
+
+## Notice 本地交互
+
+notice 模块服务于本机桌宠等可信 UI：通过 notice.list/get 读取条目和来源，notice.source.setEnabled 启停观察发布，notice.action.execute 提交明确的用户动作，notice.changed 推送新修订。数据对象引用 common/notice.schema.json；不重复解释或转换 Provider 的业务状态。结束由 finished 表达，状态文案仍来自 Provider。
+
+这些方法与事件的 local scope 是访问边界。远程 LAN/WebRTC 会话不能通过普通 dispatcher、历史重放或实时订阅取得 Notice 内容；其握手、心跳和 Agent 会话功能仍使用同一版本的 Gateway。UI 先注册现有事件监听再取快照，按 noticeId/revision 合并，旧快照不得覆盖新事件。动作使用稳定 executionId 和当前 expectedRevision；未知结果不自动发送第二次。

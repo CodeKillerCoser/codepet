@@ -7,8 +7,8 @@
     "hostDeviceId": "device-macbook-1",
     "hostVersion": "0.1.4",
     "protocol": {
-      "version": 2,
-      "minVersion": 2
+      "version": 4,
+      "minVersion": 4
     }
   }
 }

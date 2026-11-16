@@ -140,3 +140,9 @@ test('Provider and Gateway revisions evolve independently inside the source dire
   assert.equal(JSON.parse(views.get('gateway/v2/manifest.json')).version,4);
   assert.equal(JSON.parse(views.get('gateway/v2/manifest.json')).minVersion,2);
 });
+
+test('current Provider method directions reject inconsistent aliases',async()=>{
+  const root=await fixture();
+  await edit(root,'provider/usage/methods.json',d=>{d.methods[0].direction='hostToProvider';});
+  await assert.rejects(loadModularContract(root),/invalid Provider method direction usage.query/);
+});

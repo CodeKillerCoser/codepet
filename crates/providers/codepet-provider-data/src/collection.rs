@@ -1,7 +1,7 @@
 //! Event-driven durable Hook intake. Thirty minutes is the bucket width, not a timer.
 use crate::*;
 use rusqlite::params;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 
@@ -11,13 +11,13 @@ pub struct UsageSink {
     pub provider: &'static str,
 }
 impl ProviderEventSink for UsageSink {
+    fn request_host<'a>(&'a self, method: codepet_provider_sdk::ProtocolMethod, params: serde_json::Value) -> codepet_provider_sdk::ProtocolFuture<'a, serde_json::Value> { self.downstream.request_host(method,params) }
+
     fn publish(&self, event: ProtocolEvent) -> Result<(), ProtocolError> {
-        self.collect_event(&event);
         self.downstream.publish(event)
     }
 
     fn publish_batch(&self, events: Vec<ProtocolEvent>) -> Result<(), ProtocolError> {
-        for event in &events { self.collect_event(event); }
         // Preserve downstream all-or-none admission, including readiness events
         // at the end of a complete summary scan. Intake is replay-safe on retry.
         self.downstream.publish_batch(events)
@@ -25,17 +25,10 @@ impl ProviderEventSink for UsageSink {
 }
 
 impl UsageSink {
-    fn collect_event(&self, event: &ProtocolEvent) {
-        if self.provider != "codex" && self.data.configured() {
-            if let ProtocolEvent::EventNotification { params, .. } = event {
+    pub fn collect_hook(&self,event_id:&str,received_at:u64,raw:&Value){
+        if self.provider=="codex"||!self.data.configured(){return;}
                 let result = (|| {
                     let db = self.data.connection()?;
-                    let raw = params
-                        .payload
-                        .get("codepet_observation")
-                        .and_then(|v| v.get("raw"))
-                        .cloned()
-                        .unwrap_or_else(|| json!(params.payload));
                     if self.provider == "claude" {
                         let name = raw["hook_event_name"].as_str().unwrap_or("");
                         if !["Stop", "SessionEnd", "SubagentStop", "StopFailure"].contains(&name) {
@@ -59,16 +52,13 @@ impl UsageSink {
                     }
                     let Some(input) = observed_opencode_message(&raw) else { return Ok(()) };
                     db.execute("INSERT OR IGNORE INTO usage_inbox VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-                        params![params.event_id,input.record_id,input.at,input.model,input.values[0],input.values[1],input.values[2],input.values[3],input.values[4],params.received_at]).map_err(db_error)?;
+                        params![event_id,input.record_id,input.at,input.model,input.values[0],input.values[1],input.values[2],input.values[3],input.values[4],received_at]).map_err(db_error)?;
                     self.data.wake.notify_one();
                     Ok::<_, ProtocolError>(())
                 })();
-                if let Err(e) = result {
-                    eprintln!("usage.intake failed: {}", e.message);
-                }
-            }
-        }
+        if let Err(e)=result{eprintln!("usage.intake failed: {}",e.message);}
     }
+
 }
 
 impl ProviderData {

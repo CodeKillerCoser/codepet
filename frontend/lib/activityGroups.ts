@@ -8,19 +8,8 @@ export interface ActivityGroup<T> {
   activities: T[];
 }
 
-export function groupActivities<T extends { status: string }>(activities: T[]): ActivityGroup<T>[] {
-  const groups: ActivityGroup<T>[] = [
-    { id: "attention", label: "等待交互", activities: [] },
-    { id: "active", label: "进行中", activities: [] },
-    { id: "completed", label: "已完成", activities: [] },
-  ];
-  for (const activity of activities) {
-    const group = activity.status === "waiting-approval" || activity.status === "waiting-input" || activity.status === "unknown" || activity.status === "failed"
-      ? groups[0]
-      : activity.status === "running"
-        ? groups[1]
-        : (activity.status === "completed" || activity.status === "interrupted") ? groups[2] : null;
-    group?.activities.push(activity);
-  }
-  return groups.filter((group) => group.activities.length > 0);
+export function groupActivities<T extends { finished: boolean; actions: readonly { kind: string; enabled: boolean }[] }>(activities: T[]): ActivityGroup<T>[] {
+  const groups: ActivityGroup<T>[] = [{ id: "attention", label: "等待交互", activities: [] },{ id: "active", label: "进行中", activities: [] },{ id: "completed", label: "已结束", activities: [] }];
+  for (const activity of activities) { const group = activity.finished ? groups[2] : activity.actions.some(action => action.enabled && ['reply','permission'].includes(action.kind)) ? groups[0] : groups[1]; group.activities.push(activity); }
+  return groups.filter(group => group.activities.length);
 }

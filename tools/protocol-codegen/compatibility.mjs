@@ -34,7 +34,7 @@ export function compatibilityGraph(record, model) {
     if(field) node.discriminator={field,variants:Object.fromEntries(variants.map(([ref,v])=>[definitions[v.properties[field].ref].enum[0],ref]))};
     delete node.unionRefs;
   }
-  return {definitions,key:(name)=>key(record,name)};
+  return {definitions,key:(name,target=record)=>key(target,name)};
 }
 
 export function typescriptValidation(graph) {

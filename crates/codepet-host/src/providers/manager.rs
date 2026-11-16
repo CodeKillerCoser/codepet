@@ -166,6 +166,9 @@ impl PluginEntry {
 }
 
 struct PluginManagerInner {
+    notices: Arc<crate::notices::NoticeStore>,
+    notice_observation_started: AtomicBool,
+    notice_sources: StdMutex<BTreeMap<String, notices::SourceState>>,
     conversation_state_path: StdMutex<Option<std::path::PathBuf>>,
     event_journal: StdMutex<Option<Arc<crate::event_journal::EventJournal>>>,
     device: Arc<DeviceRegistry>,
@@ -173,7 +176,6 @@ struct PluginManagerInner {
     plugins: RwLock<BTreeMap<String, PluginEntry>>,
     plugin_operations: StdMutex<BTreeMap<String, Arc<Mutex<()>>>>,
     registry_operation: Mutex<()>,
-    subscriptions: StdMutex<BTreeMap<String, subscriptions::SubscriptionHub>>,
     updates: mpsc::Sender<HostUpdate>,
     update_receiver: StdMutex<Option<mpsc::Receiver<HostUpdate>>>,
     shutting_down: AtomicBool,
@@ -191,12 +193,11 @@ pub struct PluginManager {
 }
 
 mod heartbeat;
+mod notices;
 mod registry;
 mod release_control;
 mod runtime_inventory;
 pub use registry::ProviderImportResult;
-mod subscriptions;
-pub use subscriptions::ProviderEventSubscription;
 
 impl PluginManager {
     pub fn new(
@@ -278,6 +279,9 @@ impl PluginManager {
         let (updates, update_receiver) = mpsc::channel(config.event_capacity.max(1));
         Ok(Self {
             inner: Arc::new(PluginManagerInner {
+                notices: crate::notices::NoticeStore::open(instances.database_path())?,
+                notice_observation_started: AtomicBool::new(false),
+                notice_sources: StdMutex::new(BTreeMap::new()),
                 conversation_state_path: StdMutex::new(None),
                 event_journal: StdMutex::new(None),
                 device,
@@ -285,7 +289,6 @@ impl PluginManager {
                 plugins: RwLock::new(plugins),
                 plugin_operations: StdMutex::new(plugin_operations),
                 registry_operation: Mutex::new(()),
-                subscriptions: StdMutex::new(BTreeMap::new()),
                 updates,
                 update_receiver: StdMutex::new(Some(update_receiver)),
                 shutting_down: AtomicBool::new(false),
@@ -1569,9 +1572,6 @@ impl PluginManager {
             self.inventory_updated(plugin_id, generation, start);
             return Ok(());
         }
-        if let ProtocolEvent::EventNotification { params, .. } = event {
-            return self.deliver_notification(plugin_id, params).await;
-        }
         let record = match &event {
             ProtocolEvent::EventInstanceStatusChanged { params, .. } => self
                 .inner
@@ -1958,12 +1958,31 @@ impl PluginManager {
     ) {
         let manager = Arc::downgrade(&self.inner);
         let event_plugin_id = plugin_id.clone();
+        let reverse_requests=Arc::new(tokio::sync::Semaphore::new(16));
         tokio::spawn(async move {
             while let Some(inbound) = inbound.recv().await {
-                let crate::providers::process::ProviderInboundMessage { message, permit } = inbound;
-                let ProviderWireMessage::Event(event) = message else {
+                let crate::providers::process::ProviderInboundMessage { message, permit, reply } = inbound;
+                if let Some(reply)=reply {
+                    let Some(inner)=manager.upgrade() else{return;};
+                    let manager=PluginManager{inner};let plugin=event_plugin_id.clone();
+                    if let ProviderWireMessage::Request(request)=message {
+                        match request {
+                            codepet_provider_sdk::JsonRpcInboundRequest::Typed(request)=>{
+                                if let Ok(slot)=reverse_requests.clone().try_acquire_owned(){tokio::spawn(async move {
+                                    let response=manager.notice_request(&plugin,generation,process_identity,request).await;
+                                    let _=reply.send(response);drop((slot,permit));
+                                });}else{
+                                    let _=reply.send(notices::rpc_error(Some(request.id().clone()),-32000,"Provider request concurrency limit reached"));
+                                }
+                            },
+                            codepet_provider_sdk::JsonRpcInboundRequest::Rejected(rejection)=>{
+                                let _=reply.send(codepet_provider_sdk::JsonRpcResponse{jsonrpc:"2.0".into(),id:Some(rejection.id),response:codepet_provider_sdk::JsonRpcResponsePayload::Error{error:rejection.error}});
+                            }
+                        }
+                    }
                     continue;
-                };
+                }
+                let ProviderWireMessage::Event(event) = message else {continue;};
                 let Some(manager) = manager.upgrade() else {
                     return;
                 };
@@ -2150,7 +2169,7 @@ fn event_provider_id(event: &ProtocolEvent) -> HostResult<&str> {
         ProtocolEvent::EventConversationActiveChanged { params, .. } => params.conversation.provider_instance_id.as_str(),
         ProtocolEvent::EventConversationUnreadChanged { params, .. } => params.conversation.provider_instance_id.as_str(),
         ProtocolEvent::EventConversationDeleted { params, .. } => params.conversation.provider_instance_id.as_str(),
-        ProtocolEvent::EventNotification { .. } | ProtocolEvent::RuntimeInventoryChanged { .. } => return Err(HostError::new("invalid_provider_event", "Notification uses a subscription")),
+        ProtocolEvent::RuntimeInventoryChanged { .. } => return Err(HostError::new("invalid_provider_event", "Notification uses a subscription")),
         ProtocolEvent::EventInstanceStatusChanged { .. } => {
             return Err(HostError::new(
                 "invalid_provider_event",
@@ -2217,7 +2236,7 @@ fn validate_event_routes(
         ProtocolEvent::EventConversationDeleted { params, .. } => {
             validate_provider_resource_route(&params.conversation, route)
         }
-        ProtocolEvent::EventNotification { .. } | ProtocolEvent::RuntimeInventoryChanged { .. } => Err(HostError::new("invalid_provider_event", "Notification uses a subscription")),
+        ProtocolEvent::RuntimeInventoryChanged { .. } => Err(HostError::new("invalid_provider_event", "Notification uses a subscription")),
         ProtocolEvent::EventInstanceStatusChanged { params, .. } => {
             validate_instance_response(record, &params.instance)
         }

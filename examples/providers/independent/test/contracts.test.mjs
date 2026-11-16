@@ -15,8 +15,18 @@ import {
 
 test("canonical SDK manifest resolves every registry reference across schema modules", () => {
   assert.equal(sdkManifest.formatVersion, 3);
-  assert.equal(sdkManifest.protocolVersion, 3);
+  assert.equal(sdkManifest.protocolVersion, 4);
   assert.equal(sdkManifest.sdkVersion, 2);
+  assert.equal(
+    methods.find((method) => method.name === "usage.query").direction,
+    "hostToPlugin",
+  );
+  for (const retired of ["event.subscribe", "event.unsubscribe"]) {
+    assert.equal(requestValidators.has(retired), false);
+    assert.equal(responseValidators.has(retired), false);
+  }
+  assert.equal(eventValidators.has("event.notification"), false);
+
   assert.equal(requestValidators.size, methods.length);
   assert.equal(responseValidators.size, methods.length);
   assert.equal(eventValidators.size, events.length);
@@ -38,7 +48,7 @@ test("canonical SDK manifest resolves every registry reference across schema mod
       hostClientId: "client",
       hostDeviceId: "device",
       hostVersion: "test",
-      protocol: { version: 2, minVersion: 2 },
+      protocol: { version: 4, minVersion: 4 },
     }),
     true,
   );
@@ -63,13 +73,108 @@ test("plugin installation manifests validate independently from communication sc
   const base = process.env.PROVIDER_TEST_DIRECTORY || process.cwd();
   const dirs = process.env.PROVIDER_TEST_DIRECTORY
     ? [base]
-    : ["jsonl", "zstd", "mux", "pi-jsonl"].map((name) =>
-        path.join(base, "packages", name),
-      );
+    : [
+        "jsonl",
+        "zstd",
+        "mux",
+        "pi-jsonl",
+        "notice-jsonl",
+        "notice-zstd",
+        "notice-mux",
+      ].map((name) => path.join(base, "packages", name));
   for (const dir of dirs) {
     const manifest = JSON.parse(
       fs.readFileSync(path.join(dir, "codepet-provider.json")),
     );
+    const icon = new URL(manifest.icon);
+    assert.equal(icon.protocol, "https:");
+    assert.equal(icon.username, "");
+    assert.equal(icon.password, "");
+    assert.equal(icon.search, "");
+    const withoutIcon = { ...manifest };
+    delete withoutIcon.icon;
+    assert.equal(
+      validatePluginManifest(withoutIcon),
+      false,
+      "full schema rejects missing icon for discovery, loading and import",
+    );
+    assert.ok(
+      validatePluginManifest.errors.some(
+        (e) => e.keyword === "required" && e.params.missingProperty === "icon",
+      ),
+    );
+    const withoutTransport = { ...manifest };
+    delete withoutTransport.transport;
+    assert.equal(
+      validatePluginManifest(withoutTransport),
+      false,
+      "missing transport is not synthesized",
+    );
+    assert.ok(
+      validatePluginManifest.errors.some(
+        (e) =>
+          e.keyword === "required" && e.params.missingProperty === "transport",
+      ),
+    );
+    assert.equal(
+      validatePluginManifest({ ...manifest, manifestVersion: 1 }),
+      false,
+      "manifest v1 is not accepted",
+    );
+    assert.ok(
+      validatePluginManifest.errors.some(
+        (e) => e.instancePath === "/manifestVersion" && e.keyword === "const",
+      ),
+    );
+    assert.equal(
+      validatePluginManifest({ ...manifest, executable: "./legacy-provider" }),
+      false,
+      "legacy executable field is not accepted even with a valid command",
+    );
+    assert.ok(
+      validatePluginManifest.errors.some(
+        (e) =>
+          e.keyword === "additionalProperties" &&
+          e.params.additionalProperty === "executable",
+      ),
+    );
+    const legacy = {
+      ...manifest,
+      manifestVersion: 1,
+      executable: "./legacy-provider",
+    };
+    delete legacy.command;
+    assert.equal(
+      validatePluginManifest(legacy),
+      false,
+      "old executable-only manifest cannot bypass required command",
+    );
+    assert.ok(
+      validatePluginManifest.errors.some(
+        (e) =>
+          e.keyword === "required" && e.params.missingProperty === "command",
+      ),
+    );
+    for (const invalid of [
+      "",
+      null,
+      42,
+      "http://example.com/icon.png",
+      "/icon.png",
+      "data:image/png;base64,AAAA",
+      "https://user:password@example.com/icon.png",
+      "https://example.com/a b.png",
+      "https:// example.com/icon.png",
+    ]) {
+      assert.equal(
+        validatePluginManifest({ ...manifest, icon: invalid }),
+        false,
+        `invalid icon ${invalid}`,
+      );
+      assert.ok(
+        validatePluginManifest.errors.some((e) => e.instancePath === "/icon"),
+      );
+    }
     assert.equal(
       validatePluginManifest(manifest),
       true,
@@ -84,7 +189,7 @@ test("descriptor feature collection remains optional, combinable and unique", ()
     pluginId: "fixture.agent",
     displayName: "Fixture",
     version: "3.0.0",
-    protocol: { version: 3, minVersion: 2 },
+    protocol: { version: 4, minVersion: 4 },
     instanceKinds: ["fixture"],
   };
   const validate = responseValidators.get("provider.describe");

@@ -1,0 +1,17 @@
+{
+  "manifestVersion": 2,
+  "pluginId": "independent.notice.zstd",
+  "displayName": "Independent Notice fixture",
+  "icon": "https://nodejs.org/static/images/favicons/favicon.png",
+  "command": "node",
+  "args": [
+    "provider.mjs"
+  ],
+  "env": {
+    "ECHO_PLUGIN_ID": "independent.notice.zstd",
+    "ECHO_BACKEND": "notice"
+  },
+  "transport": "stdio-codepet-zstd-v1",
+  "enabled": true,
+  "instances": []
+}

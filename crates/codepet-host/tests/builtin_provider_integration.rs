@@ -25,7 +25,7 @@ async fn gateway_idle_restart_keeps_provider_visible_and_ready_without_phone() {
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("plugins/codex"); std::fs::create_dir_all(&root).unwrap();
     let mut manifest: Value = serde_json::from_slice(&std::fs::read(workspace.join("providers/codepet-provider-codex/codepet-provider.json")).unwrap()).unwrap();
-    manifest["executable"] = serde_json::json!(executable("codepet-provider-codex"));
+    manifest["command"] = serde_json::json!(executable("codepet-provider-codex"));
     manifest["instances"][0]["settings"]["appServerExecutable"] = serde_json::json!(executable("codex-app-server-fixture"));
     manifest["instances"][0]["settings"]["appServerArgs"] = serde_json::json!(["--approval-mode", "none"]);
     manifest["instances"][0]["settings"]["dataDirectory"] = serde_json::json!(directory.path().join("codex-home"));
@@ -75,7 +75,7 @@ async fn gateway_release_interaction_restarts_codex_and_keeps_history_available(
     let directory = tempfile::tempdir().unwrap();
     let root = directory.path().join("plugins/codex"); std::fs::create_dir_all(&root).unwrap();
     let mut manifest: Value = serde_json::from_slice(&std::fs::read(workspace.join("providers/codepet-provider-codex/codepet-provider.json")).unwrap()).unwrap();
-    manifest["executable"] = serde_json::json!(executable("codepet-provider-codex"));
+    manifest["command"] = serde_json::json!(executable("codepet-provider-codex"));
     manifest["instances"][0]["settings"]["appServerExecutable"] = serde_json::json!(executable("codex-app-server-fixture"));
     manifest["instances"][0]["settings"]["appServerArgs"] = serde_json::json!(["--approval-mode", "none"]);
     manifest["instances"][0]["settings"]["dataDirectory"] = serde_json::json!(directory.path().join("codex-home"));
@@ -170,7 +170,7 @@ async fn exercise_builtins(recycle_only: bool) {
             .join("codepet-provider.json");
         let mut manifest: Value =
             serde_json::from_slice(&std::fs::read(manifest_path).unwrap()).unwrap();
-        manifest["executable"] =
+        manifest["command"] =
             Value::String(executable(provider_package).to_string_lossy().into_owned());
         manifest["instances"][0]["settings"][executable_setting] =
             Value::String(fixture.to_string_lossy().into_owned());
@@ -522,4 +522,34 @@ async fn select_fixture_runtime(manager: &PluginManager, plugin: &str, path: &Pa
         assert!(tokio::time::Instant::now() < deadline, "fixture inventory was not reported: {:?}", snapshot.runtime_inventory);
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
+}
+
+#[tokio::test]
+async fn all_builtin_hook_sources_publish_standard_notices_without_agent_instances(){
+    use serde_json::json;
+    let workspace=crates_workspace();build_builtin_provider_fixtures(&workspace);
+    let target=std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().parent().unwrap().to_owned();
+    let directory=tempfile::tempdir().unwrap();let root=directory.path();let plugins=root.join("plugins");
+    for name in ["codex","claude","opencode"]{
+        let package=format!("codepet-provider-{name}");let plugin_dir=plugins.join(name);std::fs::create_dir_all(&plugin_dir).unwrap();
+        let mut manifest:Value=serde_json::from_slice(&std::fs::read(workspace.join("providers").join(&package).join("codepet-provider.json")).unwrap()).unwrap();
+        manifest["command"]=json!(target.join("debug").join(format!("{package}{}",std::env::consts::EXE_SUFFIX)));
+        manifest["instances"]=json!([]);manifest["env"]=json!({"CODEX_HOME":root.join("codex"),"CLAUDE_CONFIG_DIR":root.join("claude"),"XDG_CONFIG_HOME":root.join("xdg")});
+        std::fs::write(plugin_dir.join("codepet-provider.json"),serde_json::to_vec(&manifest).unwrap()).unwrap();
+    }
+    let device=DeviceRegistry::open(root.join("device.json"),"Notice Hook QA").unwrap();let instances=ProviderInstanceRegistry::open(root.join("instances.json"),device.identity().device_id.clone()).unwrap();
+    let manager=Arc::new(PluginManager::new(device,PluginCatalog::discover(PluginCatalogConfig::default().with_directory(&plugins)),instances,PluginManagerConfig{provider_data_root:Some(root.join("data")),provider_logs_root:Some(root.join("logs")),..Default::default()}).unwrap());
+    assert!(manager.start_enabled().await.iter().all(|(_,result)|result.is_ok()));
+    for(name,parent)in [("codex",root.join("codex")),("claude",root.join("claude")),("opencode",root.join("xdg/opencode"))]{
+        manager.set_notice_source_enabled(&format!("dev.codepet.{name}"),true).await.unwrap();
+        let endpoint:Value=serde_json::from_slice(&std::fs::read(parent.join("codepet-observation/endpoint.json")).unwrap()).unwrap();
+        let client=reqwest::Client::builder().no_proxy().build().unwrap();
+        for (sequence,kind) in [(1,"start"),(2,"finish")]{
+            let payload=if name=="opencode"{json!({"type":"session.status","properties":{"sessionID":"notice-native-session","status":{"type":if kind=="start"{"busy"}else{"idle"}}}})}else{json!({"hook_event_name":if kind=="start"{"UserPromptSubmit"}else{"Stop"},"session_id":"notice-native-session","turn_id":"round-1","prompt":"Hook → Notice 联调","last_assistant_message":"最终完成"})};
+            let response=client.post(endpoint["url"].as_str().unwrap()).header("authorization",endpoint["token"].as_str().unwrap()).json(&json!({"eventId":format!("{name}-{sequence}"),"payload":payload})).send().await.unwrap();assert_eq!(response.status(),reqwest::StatusCode::NO_CONTENT);
+        }
+    }
+    tokio::time::timeout(Duration::from_secs(8),async{loop{let notices=manager.notice_store().list(0,20).unwrap();if notices.len()==3&&notices.iter().all(|n|n.finished){assert!(notices.iter().all(|n|n.actions.is_empty()));break;}tokio::time::sleep(Duration::from_millis(30)).await;}}).await.expect("all three Rust Providers must publish over their real stdio connection");
+    for snapshot in manager.snapshots().await{assert!(snapshot.instances.is_empty());assert_eq!(snapshot.state,PluginRuntimeState::Ready);}
+    manager.shutdown().await;
 }

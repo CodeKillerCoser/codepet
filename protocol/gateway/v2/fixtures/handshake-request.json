@@ -12,8 +12,8 @@
     "clientVersion": "1.0.0",
     "lastEventCursor": "event-40",
     "protocol": {
-      "version": 2,
-      "minVersion": 2
+      "version": 4,
+      "minVersion": 4
     }
   }
 }

@@ -1,6 +1,6 @@
 {
   "description": "provider 协议模块入口；只登记模块文件，方法与事件在所属模块定义。",
-  "version": 3,
+  "version": 4,
   "service": {
     "name": "codepet-provider",
     "layer": "provider",
@@ -62,15 +62,14 @@
       "events": "approval/events.json"
     },
     {
-      "id": "subscription",
-      "schema": "subscription/messages.schema.json",
-      "methods": "subscription/methods.json",
-      "events": "subscription/events.json"
-    },
-    {
       "id": "usage",
       "schema": "usage/messages.schema.json",
       "methods": "usage/methods.json"
+    },
+    {
+      "id": "notice",
+      "schema": "notice/messages.schema.json",
+      "methods": "notice/methods.json"
     }
   ],
   "manifestSchema": "manifest.schema.json",
@@ -78,5 +77,5 @@
   "transportHandshakeSchema": "transport/handshake.schema.json",
   "sdkManifest": "sdk-manifest.json",
   "guide": "README.md",
-  "minVersion": 2
+  "minVersion": 4
 }

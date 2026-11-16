@@ -72,7 +72,6 @@ impl RuntimeGatewayState {
 #[derive(Clone)]
 pub(crate) struct ProviderHostState {
     manager: Option<Arc<PluginManager>>,
-    pet: Option<Arc<codepet_host::PetGateway>>,
     gateway: Option<Arc<ProviderGatewayService>>,
     started: Arc<AtomicBool>,
     shutdown_started: Arc<AtomicBool>,
@@ -125,8 +124,8 @@ impl ProviderHostState {
         manager: Arc<PluginManager>,
         gateway: Arc<ProviderGatewayService>,
     ) -> Self {
+        gateway.set_notice_activator(Arc::new(crate::platform::notice_activation::SystemNoticeActivator));
         Self {
-            pet: Some(codepet_host::PetGateway::new(manager.clone(), crate::paths::data(&crate::settings::load_app_settings().unwrap_or_default()).join("config/pet-sources.json"))),
             manager: Some(manager),
             gateway: Some(gateway),
             started: Arc::new(AtomicBool::new(false)),
@@ -139,7 +138,6 @@ impl ProviderHostState {
     pub(crate) fn unavailable() -> Self {
         Self {
             manager: None,
-            pet: None,
             gateway: None,
             started: Arc::new(AtomicBool::new(false)),
             shutdown_started: Arc::new(AtomicBool::new(false)),
@@ -148,8 +146,8 @@ impl ProviderHostState {
         }
     }
 
-    pub(crate) fn start_pet(&self) {
-        if let Some(pet) = self.pet.clone() { tauri::async_runtime::spawn(async move { pet.start(); }); }
+    pub(crate) fn start_notice_observation(&self) {
+        if let Some(manager)=self.manager.clone(){tauri::async_runtime::spawn(async move{manager.start_notice_observation();});}
     }
 
     pub(crate) fn gateway(&self) -> Option<Arc<ProviderGatewayService>> {
@@ -160,7 +158,7 @@ impl ProviderHostState {
         let Some(manager) = self.manager.as_ref() else { return vec![]; };
         manager.snapshots().await.into_iter().map(|snapshot| ProviderConnectionView {
             display_name: snapshot.reported.as_ref().map(|p| p.display_name.clone()).unwrap_or(snapshot.catalog.display_name),
-            icon: snapshot.catalog.icon,
+            icon: Some(snapshot.catalog.icon),
             version: snapshot.reported.as_ref().map(|p| p.version.clone()),
             default_workspace_root: snapshot.reported.as_ref().and_then(|p| p.default_workspace_root.clone()),
             plugin_id: snapshot.catalog.plugin_id.clone(),
@@ -409,7 +407,6 @@ impl ProviderHostState {
             return true;
         }
 
-        if let Some(pet) = self.pet.as_ref() { pet.stop(); }
         if let Some(manager) = self.manager.as_ref() {
             let shutdown_timeout = manager.shutdown_timeout();
             let force_kill = match tokio::time::timeout(shutdown_timeout, manager.shutdown()).await {
@@ -793,7 +790,7 @@ pub fn start_runtime_gateway_event_bridge<R: Runtime>(
     if let Some(host) = app.try_state::<ProviderHostState>() {
         let host = host.inner().clone();
         if let Some(gateway) = host.gateway.as_ref() {
-            if let Ok(mut events) = gateway.subscribe_events(Some(&gateway.current_event_cursor())) {
+            if let Ok(mut events) = gateway.subscribe_local_events(Some(&gateway.current_event_cursor())) {
                 let event_app = app.clone();
                 tauri::async_runtime::spawn(async move {
                     while let Ok(event) = events.next_event().await {
@@ -903,6 +900,16 @@ mod tests {
     use tokio::sync::Barrier;
 
     #[test]
+    fn notice_observation_can_start_from_the_native_setup_thread(){
+        assert!(tokio::runtime::Handle::try_current().is_err());
+        let dir=tempfile::tempdir().unwrap();let device=DeviceRegistry::open(dir.path().join("device.json"),"Notice startup test").unwrap();
+        let registry=ProviderInstanceRegistry::open(dir.path().join("instances.json"),device.identity().device_id.clone()).unwrap();
+        let manager=Arc::new(PluginManager::new(device,PluginCatalog::discover(PluginCatalogConfig::default()),registry,PluginManagerConfig::default()).unwrap());
+        let gateway=Arc::new(ProviderGatewayService::new(manager.clone()).unwrap());let host=ProviderHostState::new(manager.clone(),gateway);
+        host.start_notice_observation();tauri::async_runtime::block_on(manager.shutdown());
+    }
+
+    #[test]
     fn local_device_descriptor_has_stable_name_and_non_empty_system_fields() {
         let descriptor = local_device_descriptor("Test Device");
         assert_eq!(descriptor.device_name, "Test Device");
@@ -966,10 +973,11 @@ mod tests {
             std::fs::write(
                 provider_directory.join("codepet-provider.json"),
                 serde_json::to_vec(&serde_json::json!({
-                    "manifestVersion": 1,
+                    "manifestVersion": 2, "transport":"stdio-codepet-mux-v1",
                     "pluginId": plugin_id,
                     "displayName": name,
-                    "executable": format!("codepet-provider-{name}"),
+                    "icon":"https://example.com/provider.png",
+                    "command": format!("codepet-provider-{name}"),
                     "enabled": true,
                     "instances": [{
                         "instanceId": name,
@@ -1021,7 +1029,7 @@ mod tests {
             PluginDescriptor {
                 plugin_id: "dev.codepet.codex".to_string(),
                 display_name: "Codex".to_string(),
-                icon: Some("https://avatars.githubusercontent.com/u/14957082?s=200&v=4".to_string()),
+                icon: "https://avatars.githubusercontent.com/u/14957082?s=200&v=4".to_string(),
                 executable: directory.path().join("codepet-provider-codex"),
                 args: Vec::new(),
                 env: Default::default(),
@@ -1045,7 +1053,7 @@ mod tests {
             PluginDescriptor {
                 plugin_id: "dev.codepet.opencode".to_string(),
                 display_name: "OpenCode".to_string(),
-                icon: Some("https://opencode.ai/favicon-96x96-v3.png".to_string()),
+                icon: "https://opencode.ai/favicon-96x96-v3.png".to_string(),
                 executable: directory.path().join("codepet-provider-opencode"),
                 args: Vec::new(),
                 env: Default::default(),
@@ -1073,7 +1081,7 @@ mod tests {
             PluginDescriptor {
                 plugin_id: "dev.codepet.claude".to_string(),
                 display_name: "Claude".to_string(),
-                icon: Some("https://claude.ai/favicon.ico".to_string()),
+                icon: "https://claude.ai/favicon.ico".to_string(),
                 executable: directory.path().join("codepet-provider-claude"),
                 args: Vec::new(),
                 env: Default::default(),
@@ -1102,7 +1110,8 @@ mod tests {
             manifest
                 .as_object_mut()
                 .unwrap()
-                .insert("manifestVersion".to_string(), serde_json::json!(1));
+                .insert("manifestVersion".to_string(), serde_json::json!(2));
+        manifest["transport"] = manifest["env"].get("CODEPET_PROVIDER_TRANSPORT").cloned().unwrap_or(serde_json::json!("stdio-codepet-mux-v1"));
             std::fs::write(
                 directory.join("codepet-provider.json"),
                 serde_json::to_vec(&manifest).unwrap(),
@@ -1238,7 +1247,7 @@ mod tests {
             let id = format!("dev.codepet.{name}");
             let binary = if name == "claude" { directory.path().join("missing") } else { executable.clone() };
             std::fs::write(root.join("codepet-provider.json"), serde_json::to_vec(&serde_json::json!({
-                "manifestVersion":1, "pluginId":id, "displayName":name, "executable":binary,
+                "manifestVersion":2,"transport":"stdio-codepet-mux-v1","icon":"https://example.com/provider.png", "pluginId":id, "displayName":name, "command":binary,
                 "env":{"CODEPET_FAKE_PLUGIN_ID":id,"CODEPET_FAKE_RUNTIME_CONTROL":control},
                 "instances":[{"instanceId":name,"instanceKind":"fake","displayName":name,"settings":{}}]
             })).unwrap()).unwrap();
@@ -1289,7 +1298,7 @@ mod tests {
         let binary = std::env::current_exe().unwrap().parent().unwrap().parent().unwrap().join(format!("codepet-host-fake-provider{}",std::env::consts::EXE_SUFFIX));
         let root = directory.path().join("plugins/self-managed"); std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("codepet-provider.json"),serde_json::to_vec(&serde_json::json!({
-            "manifestVersion":1,"pluginId":"test.self-managed","displayName":"Self managed","executable":binary,
+            "manifestVersion":2,"transport":"stdio-codepet-mux-v1","icon":"https://example.com/provider.png","pluginId":"test.self-managed","displayName":"Self managed","command":binary,
             "env":{"CODEPET_FAKE_PLUGIN_ID":"test.self-managed","CODEPET_FAKE_RUNTIME_CONTROL":control},"instances":[]
         })).unwrap()).unwrap();
         let device = DeviceRegistry::open(directory.path().join("device.json"),"Self managed test").unwrap();
@@ -1323,7 +1332,7 @@ mod tests {
         let descriptor = PluginDescriptor {
             plugin_id: "dev.codepet.shutdown-race".to_string(),
             display_name: "Shutdown Race Fixture".to_string(),
-            icon: None,
+            icon: "https://example.com/provider.png".into(),
             executable: fake_provider_executable(&fixture_manifest),
             args: Vec::new(),
             env: [
@@ -1369,7 +1378,8 @@ mod tests {
         manifest
             .as_object_mut()
             .unwrap()
-            .insert("manifestVersion".to_string(), serde_json::json!(1));
+            .insert("manifestVersion".to_string(), serde_json::json!(2));
+        manifest["transport"] = manifest["env"].get("CODEPET_PROVIDER_TRANSPORT").cloned().unwrap_or(serde_json::json!("stdio-codepet-mux-v1"));
         std::fs::write(
             plugin_directory.join("codepet-provider.json"),
             serde_json::to_vec(&manifest).unwrap(),
@@ -1517,10 +1527,4 @@ mod tests {
             .unwrap();
         unsafe { kill(pid, 0) == 0 }
     }
-}
-
-#[tauri::command]
-pub(crate) async fn pet_gateway_request(state: tauri::State<'_, ProviderHostState>, request: codepet_host::pet_gateway::protocol::ProtocolRequest) -> Result<codepet_host::pet_gateway::protocol::ProtocolResponse, String> {
-    let pet = state.pet.clone().ok_or("Pet Gateway unavailable")?;
-    Ok(codepet_host::pet_gateway::protocol::dispatch(pet.as_ref(), request).await)
 }

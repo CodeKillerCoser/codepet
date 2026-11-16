@@ -41,7 +41,6 @@ struct FakeProvider {
     recent: recent::RecentFixture,
     events: Option<Arc<dyn codepet_provider_sdk::ProviderEventSink>>,
     plugin_id: String,
-    observation: Mutex<Option<(String, Arc<std::sync::atomic::AtomicBool>)>>,
     instances: Mutex<BTreeMap<String, ProviderInstance>>,
     instance_settings: Mutex<BTreeMap<String, JsonObject>>,
 }
@@ -55,8 +54,8 @@ impl FakeProvider {
             version: "1.0.0-test".to_string(),
             default_workspace_root: Some("/workspace/fake".to_string()),
             protocol: ProtocolVersionOffer {
-                min_version: env_u32("CODEPET_FAKE_SUPPORTED_MIN_VERSION", 2),
-                version: env_u32("CODEPET_FAKE_SUPPORTED_MAX_VERSION", 2),
+                min_version: env_u32("CODEPET_FAKE_SUPPORTED_MIN_VERSION", codepet_provider_sdk::MIN_PROTOCOL_VERSION),
+                version: env_u32("CODEPET_FAKE_SUPPORTED_MAX_VERSION", codepet_provider_sdk::PROTOCOL_VERSION),
             },
             instance_kinds: vec!["fake".to_string()],
         }
@@ -116,7 +115,7 @@ impl ProtocolServer for FakeProvider {
                 tokio::time::sleep(Duration::from_millis(delay)).await;
             }
             Ok(ProviderInitializeResponse {
-                protocol: codepet_provider_sdk::ProtocolVersionSelection { version: descriptor.protocol.version, min_version: descriptor.protocol.min_version, selected_version: env_u32("CODEPET_FAKE_SELECTED_VERSION", 2) },
+                protocol: codepet_provider_sdk::ProtocolVersionSelection { version: descriptor.protocol.version, min_version: descriptor.protocol.min_version, selected_version: env_u32("CODEPET_FAKE_SELECTED_VERSION", codepet_provider_sdk::PROTOCOL_VERSION) },
                 plugin: descriptor,
             })
         })
@@ -149,38 +148,7 @@ impl ProtocolServer for FakeProvider {
         })
     }
 
-    fn event_subscribe<'a>(&'a self, request: codepet_provider_sdk::EventSubscribeRequest) -> ProtocolFuture<'a, codepet_provider_sdk::EventSubscribeResponse> {
-        Box::pin(async move {
-            let mut observation = self.observation.lock().unwrap();
-            if observation.is_some() { return Err(protocol_error("duplicate_wire_subscription", "Host must fan out locally")); }
-            let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
-            *observation = Some((request.subscription_id.clone(), active.clone()));
-            let events = self.events.clone().unwrap();
-            let id = request.subscription_id.clone();
-            tokio::spawn(async move {
-                let mut sequence = 0u64;
-                while active.load(std::sync::atomic::Ordering::SeqCst) {
-                    tokio::time::sleep(Duration::from_millis(30)).await;
-                    sequence += 1;
-                    let event = codepet_provider_sdk::ProviderNotificationEvent {
-                        subscription_id: id.clone(), event_id: sequence.to_string(), received_at: sequence,
-                        payload: serde_json::json!({"hook_event_name":"UserPromptSubmit", "session_id":"global-session", "prompt":"Observed outside Remote"}).as_object().unwrap().clone().into_iter().collect(),
-                    };
-                    if events.publish(ProtocolEvent::EventNotification { jsonrpc: "2.0".into(), params: event }).is_err() { break; }
-                }
-            });
-            Ok(codepet_provider_sdk::EventSubscribeResponse { subscription_id: request.subscription_id, message: "fixture installed".into() })
-        })
-    }
-    fn event_unsubscribe<'a>(&'a self, request: codepet_provider_sdk::EventUnsubscribeRequest) -> ProtocolFuture<'a, codepet_provider_sdk::EventUnsubscribeResponse> {
-        Box::pin(async move {
-            let mut observation = self.observation.lock().unwrap();
-            if observation.as_ref().is_some_and(|(id, _)| id == &request.subscription_id) {
-                observation.take().unwrap().1.store(false, std::sync::atomic::Ordering::SeqCst);
-            }
-            Ok(codepet_provider_sdk::EventUnsubscribeResponse { subscription_id: request.subscription_id })
-        })
-    }
+    fn notice_observe<'a>(&'a self,request:codepet_provider_sdk::NoticeObserveRequest)->ProtocolFuture<'a,codepet_provider_sdk::NoticeObserveResponse>{Box::pin(async move{Ok(codepet_provider_sdk::NoticeObserveResponse{enabled:request.enabled,message:"fixture observation configured".into()})})}
 
     fn instance_create<'a>(
         &'a self,
@@ -759,7 +727,7 @@ async fn main() {
         queue_turns:Arc::new(Mutex::new(BTreeMap::new())),
         data: codepet_provider_data::ProviderData::default(),
         recent: recent::RecentFixture::default(),
-        events: Some(events), plugin_id, observation: Mutex::new(None), instances: Mutex::new(BTreeMap::new()), instance_settings: Mutex::new(BTreeMap::new()),
+        events:Some(events),plugin_id,instances:Mutex::new(BTreeMap::new()),instance_settings:Mutex::new(BTreeMap::new()),
     }).await.unwrap();
     close_stdout_pipe();
     if let Ok(path) = std::env::var("CODEPET_FAKE_STDOUT_CLOSED_MARKER") {

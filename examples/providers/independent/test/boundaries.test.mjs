@@ -15,7 +15,7 @@ const init = {
   hostClientId: "c",
   hostDeviceId: "d",
   hostVersion: "test",
-  protocol: { version: 2, minVersion: 2 },
+  protocol: { version: 4, minVersion: 4 },
 };
 function connect(child) {
   let next = 0,
@@ -67,7 +67,7 @@ test("failed initialization does not commit; heartbeat invariants; concurrent re
   );
   assert.equal(
     (await rpc("provider.initialize", init)).result.protocol.selectedVersion,
-    2,
+    4,
   );
   const slow = rpc("provider.describe", {});
   const ping = {
@@ -210,7 +210,7 @@ test("one partial/stalled provider leaves independent provider responsive", asyn
   const { rpc } = connect(healthy);
   assert.equal(
     (await rpc("provider.initialize", init)).result.protocol.selectedVersion,
-    2,
+    4,
   );
   assert.equal(
     (

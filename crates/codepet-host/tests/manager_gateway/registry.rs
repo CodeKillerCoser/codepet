@@ -10,7 +10,8 @@ fn package(root: &Path, id: &str) -> PathBuf {
     let mut descriptor = plugin(id, &[&format!("{id}-instance")]);
     descriptor.executable = executable.into();
     let mut value = serde_json::to_value(descriptor).unwrap();
-    value["manifestVersion"] = serde_json::json!(1);
+    value["manifestVersion"] = serde_json::json!(2);
+    value["transport"] = serde_json::json!("stdio-codepet-mux-v1");
     let manifest = root.join("codepet-provider.json");
     std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
     manifest
@@ -73,7 +74,7 @@ async fn import_plugin_rejects_invalid_packages_without_registering_or_publishin
     assert!(manager.import_plugin(manifest.clone(), root.clone()).await.is_err());
     let mut value: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
     value["pluginId"] = serde_json::json!("external");
-    value["executable"] = serde_json::json!(env!("CARGO_BIN_EXE_codepet-host-fake-provider"));
+    value["command"] = serde_json::json!(42);
     std::fs::write(&manifest, serde_json::to_vec(&value).unwrap()).unwrap();
     assert!(manager.import_plugin(manifest.clone(), root.clone()).await.is_err());
     std::fs::write(&manifest, "{}").unwrap();
@@ -159,7 +160,7 @@ async fn removal_unregisters_imported_plugin_even_if_package_was_archived_extern
 }
 
 #[tokio::test]
-async fn registry_uninstall_closes_live_process_and_subscriptions_and_updates_next_heartbeat() {
+async fn registry_uninstall_closes_live_process_and_notice_source_and_updates_next_heartbeat() {
     let directory = tempfile::tempdir().unwrap();
     let manager = build_manager("device-registry-uninstall", vec![plugin("existing", &["existing-instance"])]);
     manager.enable_connection_heartbeats();
@@ -172,12 +173,13 @@ async fn registry_uninstall_closes_live_process_and_subscriptions_and_updates_ne
     let manifest = package(&directory.path().join("source"), "custom");
     let marker = directory.path().join("custom.pid");
     let mut payload: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
+    payload["env"]["CODEPET_FAKE_FEATURES"] = serde_json::json!("[\"agent\",\"observation\"]");
     payload["env"]["CODEPET_FAKE_PID_MARKER"] = serde_json::json!(marker);
     std::fs::write(&manifest, serde_json::to_vec(&payload).unwrap()).unwrap();
-    manager.unsubscribe_events("not-installed", "local-observer").await.unwrap();
     let imported = manager.import_plugin(manifest.clone(), root.clone()).await.unwrap();
     assert!(imported.loaded, "{:?}", imported.diagnostic);
-    let mut subscription = manager.subscribe_events("custom", "local-observer").await.unwrap();
+    manager.set_notice_source_enabled("custom",true).await.unwrap();
+    assert!(manager.notice_sources().await.unwrap().iter().any(|s|s.plugin_id=="custom"));
     let first = gateway.protocol_ping(codepet_gateway_sdk::PingRequest { sequence: 41 }).await.unwrap();
     assert!(first.providers.iter().any(|p| p.id == "custom-instance"));
     #[cfg(unix)]
@@ -190,20 +192,18 @@ async fn registry_uninstall_closes_live_process_and_subscriptions_and_updates_ne
     assert!(manager.snapshot("custom").await.is_err());
     #[cfg(unix)]
     assert!(!pid_is_alive(&marker), "uninstall must await actual child termination");
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while subscription.receiver.recv().await.is_some() {}
-    }).await.expect("all local subscription senders must close on uninstall");
+    assert!(!manager.notice_sources().await.unwrap().iter().any(|s|s.plugin_id=="custom"));
     let next = gateway.protocol_ping(codepet_gateway_sdk::PingRequest { sequence: 42 }).await.unwrap();
     assert_eq!(next.sequence, 42);
     assert!(!next.providers.iter().any(|p| p.id == "custom-instance"));
     assert!(next.providers.iter().any(|p| p.id == "existing-instance"));
     assert_eq!(manager.snapshot("existing").await.unwrap().generation, before.generation);
     assert_eq!(manager.remote_connections().snapshot().connections.len(), 1);
-    assert!(manager.subscribe_events("custom", "late-observer").await.is_err());
+    assert!(manager.set_notice_source_enabled("custom",true).await.is_err());
     assert!(gateway.provider_describe(ProviderDescribeRequest { provider_id: "custom-instance".into() }).await.is_err());
-    // A clean reinstall must not attach to an old connection/subscription hub.
+    // A clean reinstall must not attach to an old connection/observation state.
     assert!(manager.import_plugin(manifest, root).await.unwrap().loaded);
-    let _new_subscription = manager.subscribe_events("custom", "local-observer").await.unwrap();
+    manager.set_notice_source_enabled("custom",true).await.unwrap();
     manager.shutdown().await;
 }
 
@@ -324,4 +324,33 @@ async fn inventory_epoch_is_shared_by_snapshots_and_changes_across_gateway_lifet
     assert_ne!(list.inventory_epoch, next.inventory_epoch);
     manager.shutdown().await;
     next_manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn import_validates_manifest_before_copying_or_registering_without_legacy_exceptions() {
+    let directory = tempfile::tempdir().unwrap();
+    let manager = build_manager("manifest-validation", vec![]);
+    let path = package(&directory.path().join("source"), "custom");
+    let valid: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let root = directory.path().join("installed");
+    for icon in [None, Some(serde_json::json!("")), Some(serde_json::json!("http://example.com/icon.png")), Some(serde_json::json!("https://user:secret@example.com/icon.png")), Some(serde_json::json!(42))] {
+        let mut value = valid.clone();
+        value.as_object_mut().unwrap().remove("icon");
+        if let Some(icon) = icon { value["icon"] = icon; }
+        std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+        let error = manager.import_plugin(path.clone(), root.clone()).await.unwrap_err();
+        assert!(error.to_string().contains("icon"), "{error}");
+        assert!(!error.to_string().contains("secret"));
+        assert!(!root.exists(), "invalid manifests must not create installation state");
+        assert!(manager.snapshots().await.is_empty());
+    }
+    assert!(PluginCatalog::read_one(&path).is_err(), "discovery uses the same strict Schema");
+    let mut legacy = valid.clone();
+    legacy["manifestVersion"] = serde_json::json!(1);
+    std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    assert!(PluginCatalog::read_one(&path).is_err(), "old manifest versions are rejected, not normalized");
+    assert!(manager.import_plugin(path.clone(), root.clone()).await.is_err());
+    std::fs::write(&path, serde_json::to_vec(&valid).unwrap()).unwrap();
+    assert!(manager.import_plugin(path, root).await.unwrap().loaded);
+    manager.shutdown().await;
 }

@@ -4005,7 +4005,7 @@ fn provider_real_codex_app_server_smoke() {
             "hostClientId": "provider-real-codex-smoke",
             "hostDeviceId": "device-provider-binary",
             "hostVersion": "test",
-            "protocol": {"version": 2, "minVersion": 2}
+            "protocol": {"version": codepet_provider_sdk::PROTOCOL_VERSION, "minVersion": codepet_provider_sdk::MIN_PROTOCOL_VERSION}
         }),
     );
     provider.request(
@@ -4403,7 +4403,7 @@ impl ProviderBinary {
                 "hostClientId": "provider-binary-test",
                 "hostDeviceId": "device-provider-binary",
                 "hostVersion": "test",
-                "protocol": {"version": 2, "minVersion": 2}
+                "protocol": {"version": codepet_provider_sdk::PROTOCOL_VERSION, "minVersion": codepet_provider_sdk::MIN_PROTOCOL_VERSION}
             }),
         );
         self.request(

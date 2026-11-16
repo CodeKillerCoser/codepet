@@ -28,13 +28,13 @@ fn gateway_handshake_uses_json_rpc_and_business_identity_only() {
         panic!("expected protocol.handshake request");
     };
     assert_eq!(jsonrpc, "2.0");
-    assert_eq!(params.protocol.min_version, 2);
+    assert_eq!(params.protocol.min_version, codepet_gateway_sdk::MIN_PROTOCOL_VERSION);
     assert_eq!(params.device.device_name, "Alice's Pixel");
 
     let result: HandshakeResponse = decode_success(include_bytes!(
         "../../../../protocol/gateway/v2/fixtures/handshake-response.json"
     ));
-    assert_eq!(result.protocol.version, 2);
+    assert_eq!(result.protocol.version, codepet_gateway_sdk::PROTOCOL_VERSION);
     assert_eq!(result.device.name, "MacBook");
     assert_eq!(result.device.operating_system, "macOS");
     let identity = serde_json::to_value(&result.device).unwrap();

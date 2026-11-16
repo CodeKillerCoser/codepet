@@ -16,8 +16,8 @@
   },
   "forwardCompatible": true,
   "description": "Generated compatibility view of protocol/v2; do not edit.",
-  "version": 3,
-  "minVersion": 2,
+  "version": 4,
+  "minVersion": 4,
   "transport": {
     "kind": "json-rpc-2.0",
     "framing": "stdio-codepet-mux-v1",
@@ -423,32 +423,8 @@
       "description": "审批处理方法；由 Host 发起，具体幂等性与调度通道见本条目。"
     },
     {
-      "name": "event.subscribe",
-      "direction": "hostToPlugin",
-      "idempotency": "idempotent",
-      "request": {
-        "$ref": "schema.json#/$defs/EventSubscribeRequest"
-      },
-      "response": {
-        "$ref": "schema.json#/$defs/EventSubscribeResponse"
-      },
-      "description": "事件订阅方法；由 Host 发起，具体幂等性与调度通道见本条目。"
-    },
-    {
-      "name": "event.unsubscribe",
-      "direction": "hostToPlugin",
-      "idempotency": "idempotent",
-      "request": {
-        "$ref": "schema.json#/$defs/EventUnsubscribeRequest"
-      },
-      "response": {
-        "$ref": "schema.json#/$defs/EventUnsubscribeResponse"
-      },
-      "description": "事件取消订阅方法；由 Host 发起，具体幂等性与调度通道见本条目。"
-    },
-    {
       "name": "usage.query",
-      "direction": "hostToProvider",
+      "direction": "hostToPlugin",
       "idempotency": "safe",
       "capability": "usage.query",
       "request": {
@@ -458,6 +434,66 @@
         "$ref": "schema.json#/$defs/UsageQueryResponse"
       },
       "description": "用量查询方法；由 Host 发起，具体幂等性与调度通道见本条目。"
+    },
+    {
+      "name": "notice.create",
+      "direction": "pluginToHost",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/NoticeCreateRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/NoticePublishResponse"
+      },
+      "description": "notice.create：按条目归属和修订处理；重复操作不重复产生副作用。"
+    },
+    {
+      "name": "notice.update",
+      "direction": "pluginToHost",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/NoticeUpdateRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/NoticePublishResponse"
+      },
+      "description": "notice.update：按条目归属和修订处理；重复操作不重复产生副作用。"
+    },
+    {
+      "name": "notice.finish",
+      "direction": "pluginToHost",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/NoticeFinishRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/NoticePublishResponse"
+      },
+      "description": "notice.finish：按条目归属和修订处理；重复操作不重复产生副作用。"
+    },
+    {
+      "name": "notice.action.execute",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/NoticeActionExecuteRequest"
+      },
+      "response": {
+        "$ref": "../../core/v2/schema.json#/$defs/NoticeActionResult"
+      },
+      "description": "notice.action.execute：按条目归属和修订处理；重复操作不重复产生副作用。"
+    },
+    {
+      "name": "notice.observe",
+      "direction": "hostToPlugin",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/NoticeObserveRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/NoticeObserveResponse"
+      },
+      "description": "notice.observe：按条目归属和修订处理；重复操作不重复产生副作用。"
     }
   ],
   "events": [
@@ -580,16 +616,6 @@
         "$ref": "schema.json#/$defs/ApprovalResolvedEvent"
       },
       "description": "审批已处理事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
-    },
-    {
-      "name": "event.notification",
-      "direction": "pluginToHost",
-      "delivery": "ordered",
-      "scope": "subscription",
-      "payload": {
-        "$ref": "schema.json#/$defs/ProviderNotificationEvent"
-      },
-      "description": "Provider通知事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
     }
   ],
   "fixtures": "fixtures/index.json"

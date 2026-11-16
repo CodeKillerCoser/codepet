@@ -36,13 +36,13 @@ provider-sdk/
 | [sdk/transport/profiles.json](protocol/sdk/transport/profiles.json) | 解释三个 profile ID 各自采用的定界、压缩、多路复用和尺寸限制 |
 | [sdk/transport/handshake.schema.json](protocol/sdk/transport/handshake.schema.json) | 定义 mux 传输握手的 HELLO、SELECT 载荷及接收资源限制 |
 | [sdk/rpc/envelope.schema.json](protocol/sdk/rpc/envelope.schema.json) | 定义 JSON-RPC 请求、成功响应、错误响应和事件的外层结构 |
-| [sdk/common/types.schema.json](protocol/sdk/common/types.schema.json) | 公共身份、路由、版本、分页、错误和连接快照 |
+| [sdk/common/types.schema.json](protocol/sdk/common/types.schema.json) | 公共身份、路由、版本、分页、错误、连接快照，以及 Notice、状态、内容和动作对象 |
 | [sdk/agent-domain/domain.schema.json](protocol/sdk/agent-domain/domain.schema.json) | 会话、消息内容、项目、任务、审批、模型和用量等领域对象 |
 | [sdk/provider/lifecycle.schema.json](protocol/sdk/provider/lifecycle.schema.json) | Initialize、Describe、Ping、Shutdown 的参数与结果，以及插件描述和初始化目录 |
-| [sdk/provider/messages.schema.json](protocol/sdk/provider/messages.schema.json) | 其余 IPC 方法的参数、结果、事件载荷及实例能力对象 |
+| [sdk/provider/messages.schema.json](protocol/sdk/provider/messages.schema.json) | 其余 IPC 方法的参数、结果、事件载荷及实例能力对象，包含 Notice 发布和动作方法 |
 | [sdk/provider/methods.json](protocol/sdk/provider/methods.json)、[events.json](protocol/sdk/provider/events.json) | 注册可调用的方法和可发布的事件，关联对应 Schema，并声明方向、幂等性、调度或交付规则 |
 
-先从 SDK 清单读取入口。类型、接口和校验器可使用标准 JSON Schema 工具生成；方法和事件从注册表读取。相对 `$ref` 按所在文件位置解析，因此使用和分发时应保留整个版本目录。SDK 的目录版本、插件 Manifest 格式版本、传输版本和业务协议版本分别解释，不要求数字相同。
+先从 SDK 清单读取入口。类型、接口和校验器可使用标准 JSON Schema 工具生成；方法和事件从注册表读取。相对 `$ref` 按所在文件位置解析，因此使用和分发时应保留整个版本目录。SDK 的目录版本、插件 Manifest 格式版本、传输版本和业务协议版本分别解释，不要求数字相同。SDK 发布清单中，sdkVersion 对应版本目录，formatVersion 描述清单自身格式，protocolVersion/minProtocolVersion 描述当前业务协议区间，sourceDigest 标识导出内容的来源指纹。
 
 ## 自动代码生成的范围
 
@@ -64,7 +64,9 @@ provider-sdk/
 
 `pluginId` 是安装包的稳定身份，一个插件进程可管理多个实例；`instanceId` 是 Host 配置并分配的独立实例身份。消息、会话和任务使用实例路由，不能把插件 ID 当实例 ID。纯通知观测插件可以不配置任何实例；`instanceKinds` 声明可支持的实例种类，不要求实际创建对应实例。
 
-Initialize 返回的插件描述通过 `features` 显式声明可组合的功能：`agent` 提供会话与任务执行，`observation` 提供通知观测订阅，`runtimeInventory` 提供由 Host 检测和选择的外部执行环境。一个插件可以同时提供前两种功能；使用自有运行时的智能体无需声明 runtimeInventory。未声明 runtimeInventory 的新插件，Host 不探测或展示外部运行时选择。缺失 features 表示旧插件未声明，不能靠名称、方法前缀或实例数量猜测功能；旧插件的运行时查询保持已有兼容入口。未知功能名不启用。此处声明只描述插件职责，具体实例操作仍须检查该实例的 methods 与业务选项能力。
+Initialize 返回的插件描述通过 `features` 显式声明可组合的功能：`agent` 提供会话与任务执行，`observation` 提供 Notice 通知发布，`runtimeInventory` 提供由 Host 检测和选择的外部执行环境。插件应显式声明所实现的功能；一个插件可以同时提供智能体和通知助手，使用自有运行时的智能体无需声明 runtimeInventory。声明 features 但不包含 runtimeInventory 时，Host 不探测或展示外部运行时选择。缺失 features 只表示职责未声明，不能靠名称、方法前缀或实例数量猜测类型；未知功能名不启用。具体实例操作仍须检查该实例的 methods 与业务选项能力。
+
+纯通知助手在安装清单中配置 `instances: []`，在插件描述中声明 `features: ["observation"]` 和 `instanceKinds: []`，不需要虚构 Agent 实例、会话或外部执行环境。它实现通用生命周期和 `notice.observe`，再按来源信息主动发布 Notice；只有声明了启用的回复或权限动作，才需要实现对应的 `notice.action.execute` 行为。
 
 features 属于运行时通信描述，Initialize 与 Describe 必须一致；不在安装 Manifest 重复维护第二份功能声明。字段完整约束见生命周期与 common Schema。
 
@@ -87,6 +89,7 @@ my-provider/
   "manifestVersion": 2,
   "pluginId": "example.my-provider",
   "displayName": "示例 Provider",
+  "icon": "https://example.com/my-provider.png",
   "command": "./bin/my-provider",
   "args": [],
   "env": {},
@@ -110,13 +113,15 @@ my-provider/
 
 发布时可以将整个 my-provider 目录压缩分发；使用者先解压，再选择其中的 codepet-provider.json。若清单只引用目标机器上已经安装好的外部程序且不依赖包内资源，交付目录可以只有这份 JSON；这是依赖本机环境的接入配置，不是可独立迁移的完整运行包。Host 不会根据 Manifest 自动下载程序、编译源码或安装依赖。
 
+每个清单必须提供可展示的绝对 HTTPS 图标地址，不能包含认证信息或空白字符。Host 使用开源 `jsonschema` 库，直接加载随构建嵌入的协议 Manifest Schema 执行标准校验；发现、加载和导入共用同一校验入口，校验失败显示字段路径并拒绝加载。导入在复制安装包、注册插件或启动进程之前完成校验，不兼容旧的测试插件清单。
+
 包中只允许普通文件和目录，不允许符号链接或特殊文件；重复插件 ID 不覆盖已有安装。SDK 的 sdk-manifest.json 不是插件启动清单。
 
 Host 按插件 Manifest 的 `command`、`args`、`env` 直接启动进程，不隐式经过 shell，也不展开变量、管道或重定向。参数保持原样。包内相对程序路径相对于安装目录解析；没有路径的程序名优先匹配包内文件，否则通过 PATH 查找。包外绝对程序是环境依赖，不随导入复制。
 
 进程启动工作目录为安装包根目录，会话工作区与它独立。
 
-Host 根据 Manifest 的 `transport` 选择通信方式，并注入 `CODEPET_PROVIDER_TRANSPORT` 和 `CODEPET_PROVIDER_PACKAGE_DIRECTORY`。插件应读取所选 profile，遇到不支持的值即启动失败，不自动探测或降级。环境项不得覆盖这些 Host 保留键，也不得声明内部键 `CODEPET_PROVIDER_EXTERNAL_COMMAND`。新插件使用 Manifest v2 的 command/transport；旧 v1/executable 的兼容行为保持，缺省传输为 mux。
+Host 根据 Manifest 的 `transport` 选择通信方式，并注入 `CODEPET_PROVIDER_TRANSPORT` 和 `CODEPET_PROVIDER_PACKAGE_DIRECTORY`。插件应读取所选 profile，遇到不支持的值即启动失败，不自动探测或降级。环境项不得覆盖这些 Host 保留键，也不得声明内部键 `CODEPET_PROVIDER_EXTERNAL_COMMAND`。插件必须使用 Manifest v2，显式提供 command 和 transport；不接受旧 v1/executable，也不补全缺省 transport。
 
 ## Host 与 Provider 的交互生命周期
 
@@ -124,8 +129,8 @@ Host 管理插件进程的启动、路由、请求关联、超时和退出。Pro
 
 ```text
 Host                                        Provider 子进程
-持有子进程 stdin 写端  ── 请求字节 ────────→ stdin
-持有子进程 stdout 读端 ←─ 响应和事件字节 ─── stdout
+持有子进程 stdin 写端  ── Host 请求 / Host 响应 ─────→ stdin
+持有子进程 stdout 读端 ←─ Provider 请求 / 响应 / 事件 ─ stdout
 日志采集              ←─ 日志文本 ──────── stderr
 ```
 
@@ -133,8 +138,8 @@ Host                                        Provider 子进程
 
 1. **启动进程、准备传输。** Host 解析插件 Manifest 并启动程序。JSONL/zstd 直接进入业务通信；mux 先完成传输握手，再建立 Yamux 通道。
 2. **Initialize。** Host 发送 `provider.initialize`，交换身份和业务版本范围，并按配置传入 Provider 数据、日志和数据库路径。Provider 校验并准备资源，成功后返回选定业务版本和插件描述；Host 校验版本及插件 ID。失败不能留下半初始化状态。
-3. **描述与实例准备。** Host 调用 `provider.describe` 核对描述，并按配置创建、启动实例、读取能力。实例路由由 Host 指定，Provider 使用收到的身份。进程启动成功或 Initialize 成功，不等于所有实例已经可用。
-4. **业务通信与心跳。** Host 可以并发发请求，Provider 按请求 ID 回应并主动发布事件；心跳在此期间独立进行。不同 Provider 使用独立连接和处理状态，一个插件的慢操作不应阻塞其他插件。
+3. **描述与能力准备。** Host 调用 `provider.describe` 核对描述；存在 Agent 实例配置时，创建、启动实例并读取能力。实例路由由 Host 指定，Provider 使用收到的身份。声明 observation 的插件还会收到 `notice.observe`，用于启停观察发布；纯通知助手跳过实例准备。进程或 Initialize 成功，不等于原生来源已经产生通知。
+4. **业务通信与心跳。** 双方可以按 methods.json 声明的方向发请求、按请求 ID 回应；Provider 还可主动发布注册事件。Notice 发布是需要 Host 回应的请求，不是原始事件订阅；心跳在此期间独立进行。不同 Provider 使用独立连接和处理状态，一个插件的慢操作不应阻塞其他插件。
 5. **退出与清理。** Host 发 `provider.shutdown`；Provider 清理自己拥有的工作，响应并将输出 flush 后退出。EOF 或传输失败也需清理自建子进程。Host 管理退出时限。
 
 ### 传输握手与业务初始化
@@ -142,8 +147,8 @@ Host                                        Provider 子进程
 **transport handshake 解决字节通道如何建立；provider lifecycle 管理插件的初始化、存活和退出。** 当前只有 mux 有显式 CPMX 传输握手，用于协商传输版本、必选能力和资源限制。Initialize、Describe、Ping、Shutdown 则是三种 profile 共用的 JSON-RPC 生命周期方法。
 
 ```text
-JSONL / zstd：进程启动 → 按固定 profile 收发 → Initialize → Describe → 业务/心跳 → Shutdown
-mux         ：进程启动 → CPMX 握手 → Yamux → Initialize → Describe → 业务/心跳 → Shutdown
+JSONL / zstd：进程启动 → 按固定 profile 收发 → Initialize → Describe → 能力准备 → 双向业务/心跳 → Shutdown
+mux         ：进程启动 → CPMX 握手 → Yamux → Initialize → Describe → 能力准备 → 双向业务/心跳 → Shutdown
 ```
 
 Initialize 选择的是业务协议版本，CPMX 选择的是传输版本。传输握手成功后，Initialize 仍可能因业务版本不兼容或资源初始化失败而拒绝。心跳不是重复握手，也不是 Yamux 自身的传输 Ping。
@@ -244,10 +249,34 @@ Provider 通过实例能力声明可用业务方法；对象、输入、选择�
 
 ## 业务协议版本与前向兼容
 
-Initialize 请求携带 `protocol: {version, minVersion}`，表示本端连续支持区间 `[minVersion, version]`，两者均为正整数。响应携带 Provider 自己的区间和 `selectedVersion`；选择 `min(host.version, provider.version)`，并要求不低于两端 minVersion 的较大值。Host 复核选择结果及插件描述中的区间；无交集即拒绝业务连接，不自动重试写入或降级传输。当前实现区间为 3/2，兼容既有 2/2 插件；SDK 目录仍为 v2，旧版 v1 严格 codec 不在此兼容承诺内。
+Initialize 请求携带 `protocol: {version, minVersion}`，表示本端连续支持区间 `[minVersion, version]`，两者均为正整数。响应携带 Provider 自己的区间和 `selectedVersion`；选择 `min(host.version, provider.version)`，并要求不低于两端 minVersion 的较大值。Host 复核选择结果及插件描述中的区间；无交集即拒绝业务连接，不自动重试写入或降级传输。当前 Host 的业务区间为 {{index.protocolVersion}}/{{index.minProtocolVersion}}；插件必须与该区间有交集才能连接。SDK 目录版本仍为 v2，与协商的业务版本分开解释。
 
 新增可忽略字段、枚举、联合分支或方法时提高 version，保持 minVersion 的前提是保留既有语义并通过兼容测试。接收方忽略未知对象字段，保存未知枚举/联合原值；未知能力不调用，未知事件在验证信封后跳过。已知分支字段损坏仍拒绝。未知状态不能视为空闲、完成或授权，未知请求方法返回 -32601，未知请求选项应明确报错。新功能需通过相应能力声明门控，不能仅以版本号推断能力。
 
 破坏结构或语义且无法维持旧行为时提高 minVersion。仅实现已有方法更新能力声明；模型/选项目录变化使用 capabilityRevision。业务区间独立于 SDK 发行号、Manifest 格式以及三个仍为 v1 的传输 profile。
 
 Schema 的 enum/oneOf 列举本版认识的值和分支。普通 Schema 校验器默认是已知结构校验器；接收 codec 需要先识别判别字段，对未知值按上述兼容规则保留，对已知值继续按对应 Schema 校验。不能将整个 schema 校验失败统一视为未知内容。插件接收命令时，应明确拒绝不支持的选择。
+
+## Notice 发布与动作
+
+声明 observation 的插件通过现有 STDIO JSON-RPC 主动调用 Host 的 notice.create/update/finish，Host 持久化后返回 Notice。三种 profile 均复用现有双向通道，不额外连接 Host。create 的 creationKey 在插件和 sourceId 内稳定，重复创建返回同一条目；update/finish 使用 operationId 和 expectedRevision，成功响应携带新的 revision。JSON-RPC id 只关联本次交换，不承担幂等。finish 必填最终 status，结束后可再次 finish 更正最终状态，但不能 update 重新打开。
+
+Notice 的完整流程如下，复用同一组 stdin/stdout：
+
+```text
+Host                                    Provider
+     ── notice.observe(enabled) ───────→ 启停来源发布
+     ←─ notice.create ───────────────── 收到一条来源通知
+     ── Notice（含 noticeId/revision）─→ 保存关联
+     ←─ notice.update ───────────────── 进度、状态或动作变化
+     ── 新修订 Notice ─────────────────→ 更新关联
+     ←─ notice.finish（含最终状态）───── 来源确认结束
+     ── 已结束 Notice ─────────────────→ 保留最终关联
+用户选择动作（进行中或结束后，以 enabled 为准）
+     ── notice.action.execute ────────→ 执行回复或权限选择
+     ←─ 执行回执 ───────────────────── 返回结果；未知不重试
+```
+
+状态 value/label 由来源定义，Host 不识别 running 等枚举。content 包含标题及可选文字/百分比进度；actions 只支持协议定义的 reply/activate/permission，未声明或 enabled=false 不展示。Host 调用 notice.observe 启停观察发布，不影响同插件的 Agent 实例。reply/permission 由所属插件通过 notice.action.execute 执行，activate 的结构化目标由 Host 平台 adapter 执行，不会发送给 Provider；执行 ID 稳定，结果未知不自动重发。
+
+发布请求是 pluginToHost；其余 Provider 控制请求是 hostToPlugin。发送请求后必须继续处理对端请求和响应，不能把 reader 锁在某个业务回调中。插件初始化成功后才能发布，按源序列化同条目的更新，不同条目和插件互不等待。卸载或断开不伪造业务最终状态。

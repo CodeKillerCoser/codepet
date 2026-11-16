@@ -10,7 +10,6 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 codepet-channel-control-sdk = { path = "../../sdk/rust/codepet-channel-control-sdk" }
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 codepet-provider-data = { path = "../providers/codepet-provider-data" }
-codepet-pet-sdk = { path = "../../sdk/rust/codepet-pet-sdk" }
 axum = { version = "0.7", default-features = false, features = ["http1", "json", "tokio"] }
 axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
 codepet-gateway-sdk = { path = "../../sdk/rust/codepet-gateway-sdk", version = "0.1.0" }
@@ -34,6 +33,7 @@ tempfile = "3"
 tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"
+jsonschema = { version = "0.61.2", default-features = false }
 x509-parser = { version = "0.18", features = ["verify"] }
 yawc = { version = "=0.2.0", default-features = false, features = ["axum"] }
 

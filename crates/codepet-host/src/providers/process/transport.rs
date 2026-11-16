@@ -141,7 +141,15 @@ async fn run_mux(
                         }
                         if let Err(error)=stream.acknowledge().await { if !shared.is_shutting_down() { return Err(error); } }
                     },
-                    _=>return Err(protocol_error("unexpected_provider_request","Provider may only open event streams",false)),
+                    ProviderWireMessage::Request(request)=>{
+                        let (reply, response)=oneshot::channel();
+                        shared.send_request(ProviderWireMessage::Request(request),_budget,reply)?;
+                        let lifetime=peer.stream_timeout();
+                        tokio::spawn(async move {
+                            if let Ok(Ok(response))=tokio::time::timeout(lifetime,response).await { let _=stream.respond(ProviderWireMessage::Response(response)).await; }
+                        });
+                    },
+                    _=>return Err(protocol_error("unexpected_provider_message","Provider opened a response-only stream",false)),
                 }
             }
         }
@@ -184,7 +192,13 @@ async fn run_serial(
                                 }
                             }
                         },
-                        _=>return Err(protocol_error("unexpected_provider_request","Provider may only send responses and events",false)),
+                        ProviderWireMessage::Request(request)=>{
+                            let (reply,response)=oneshot::channel();
+                            shared.send_request(ProviderWireMessage::Request(request),_budget,reply)?;
+                            let sender=client.sender.clone();
+                            tokio::spawn(async move { if let Ok(Ok(response))=tokio::time::timeout(std::time::Duration::from_secs(30),response).await { let _=sender.send(ProviderWireMessage::Response(response)).await; } });
+                        },
+                        _=>return Err(protocol_error("unexpected_provider_message","Unexpected Provider message",false)),
                     }
                 }
             }

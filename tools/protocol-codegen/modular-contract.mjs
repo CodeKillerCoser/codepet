@@ -38,6 +38,7 @@ export async function loadModularContract(protocolRoot, { version } = {}) {
   const index = await read('protocol.json', 'index');
   assert([1, 2].includes(index.version), 'unsupported source version');
   for (const key of ['commonSchema', 'rpcEnvelopeSchema']) await read(index[key], 'common');
+  for (const file of index.commonSchemas ?? []) await read(file, 'common');
   await read(index.agentDomainSchema, 'agent');
   async function service(file, layer) {
     const entry = await read(file, layer), modules = [], moduleIds = new Set();
@@ -60,6 +61,7 @@ export async function loadModularContract(protocolRoot, { version } = {}) {
       for (const module of modules) for (const item of module[kind]?.[kind] ?? []) {
         assert(item.description?.trim(), `${module[`${kind}File`]}: missing description for ${item.name}`);
         assert(!seen.has(item.name), `${layer}: duplicate ${kind} name ${item.name}`);
+        if(index.version>=2&&layer==='provider'&&kind==='methods')assert(['hostToPlugin','pluginToHost'].includes(item.direction),`${module.methodsFile}: invalid Provider method direction ${item.name}`);
         seen.add(item.name);
       }
     }
@@ -124,7 +126,7 @@ function rewrite(value, source, destination, mapping, { legacy = false } = {}) {
   }
   if (legacy && value.type === 'null') return { type: 'null' };
   return Object.fromEntries(Object.entries(value)
-    .filter(([key]) => !legacy || ((!key.startsWith('x-codepet-') || key === 'x-codepet-sensitive') && key !== 'default'))
+    .filter(([key]) => !legacy || ((!key.startsWith('x-codepet-') || key === 'x-codepet-sensitive') && key !== 'default' && !['if','then','else','allOf'].includes(key)))
     .map(([key, child]) => [key, rewrite(child, source, destination, mapping, { legacy })]));
 }
 function mergedSchema(canonical, mapping, destination, { legacy = false } = {}) {
@@ -150,16 +152,17 @@ function registry(canonical, service, kind, destination, mapping, options) {
 
 export function providerPublicationInputs(canonical) {
   const { provider, index } = canonical;
-  const sdk = provider.sdkManifest, mapping = new Map([
+  const sdk = { ...provider.sdkManifest, ...(index.version >= 2 ? {minProtocolVersion: provider.entry.minVersion ?? provider.entry.version} : {}) }, mapping = new Map([
     [index.commonSchema, sdk.commonSchema], [index.agentDomainSchema, sdk.agentDomainSchema],
     [index.rpcEnvelopeSchema, sdk.rpcEnvelopeSchema], [provider.manifestSchemaFile, sdk.manifestSchema],
     [provider.profilesFile, sdk.profiles], [provider.transportHandshakeSchemaFile, sdk.transportHandshakeSchema],
   ]);
+  for (const file of canonical.index.commonSchemas ?? []) mapping.set(file, sdk.commonSchema);
   for (const module of provider.modules) mapping.set(module.schemaFile, module.id === 'lifecycle' ? sdk.providerLifecycleSchema : sdk.providerMessagesSchema);
   const files = new Map([['sdk-manifest.json', structuredClone(sdk)]]);
   for (const key of ['commonSchema', 'agentDomainSchema', 'rpcEnvelopeSchema', 'manifestSchema', 'profiles', 'transportHandshakeSchema']) {
     const source = [...mapping].find(([, target]) => target === sdk[key])[0];
-    const value = rewrite(canonical.files.get(source), source, sdk[key], mapping);
+    const value = key === 'commonSchema' ? mergedSchema(canonical, mapping, sdk[key]) : rewrite(canonical.files.get(source), source, sdk[key], mapping);
     if (value.$id) value.$id = `https://code-pet.dev/provider-sdk/v${sdk.sdkVersion}/${sdk[key]}`;
     files.set(sdk[key], value);
   }

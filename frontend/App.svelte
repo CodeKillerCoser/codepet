@@ -12,7 +12,7 @@
   import WindowToolbar from "./lib/WindowToolbar.svelte";
   import { basename, extname, join } from "@tauri-apps/api/path";
   import PetSources from "./lib/PetSources.svelte";
-  import type { PetSource } from "./lib/petGateway";
+  import type { NoticeSource } from "./lib/noticeGateway";
   import { confirm as confirmDialog, open } from "@tauri-apps/plugin-dialog";
   import { LogicalPosition } from "@tauri-apps/api/dpi";
   import { listen } from "@tauri-apps/api/event";
@@ -86,7 +86,7 @@
       if (!document.activeElement?.closest('[role="tablist"]')) pageHeading?.focus({ preventScroll: true });
     });
   }
-  let petSources: PetSource[] = [];
+  let petSources: NoticeSource[] = [];
   let agentRuntimes: AgentRuntime[] = [];
   let providerConnections: ProviderConnectionState[] = [];
   let providerConnectionsLoaded = false;
@@ -498,9 +498,11 @@
       providerImportNotice = imported.loaded ? `${imported.displayName} 已导入并加载。`
         : `${imported.displayName} 已导入。${imported.diagnostic ?? "此 Provider 在 manifest 中被禁用。"}`;
     } catch (currentError) {
-      error = String(currentError);
+      providerOperationError = `导入 Provider 失败：${String(currentError)}`;
     } finally {
       providerImportBusy = false;
+      await tick();
+      if (providerOperationError) providerErrorElement?.focus();
     }
   }
 
@@ -1704,7 +1706,7 @@
   $: latest = events.at(-1);
   $: recentVisibleEvents = events.slice(-5).reverse();
   $: enabledSources = petSources.filter(source => source.enabled);
-  $: receivingSources = petSources.filter(source => source.status === "receiving");
+  $: receivingSources = petSources.filter(source => source.connected);
   let taskProviderId = "";
   let taskLineage: TaskLineage | undefined;
   $: pageTitle = routeTitle(tab);
@@ -1745,27 +1747,27 @@
           <article class="overview-card pixel-panel">
             <span><PlugZap size={17} /> 活动来源</span>
             <strong>{enabledSources.length}/{petSources.length}</strong>
-            <p>已启用的任务活动来源</p>
+            <p>已启用的通知来源</p>
           </article>
           <article class="overview-card pixel-panel">
             <span><Activity size={17} /> 接收状态</span>
             <strong>{receivingSources.length}</strong>
-            <p>已收到活动的来源</p>
+            <p>已连接的通知来源</p>
           </article>
           <article class="overview-card pixel-panel">
             <span><ShieldAlert size={17} /> 桌宠任务列表</span>
-            <strong>只读</strong>
-            <p>回复与授权请在原应用处理</p>
+            <strong>按来源提供</strong>
+            <p>支持来源启用的回复、激活与授权动作</p>
           </article>
         </section>
 
         <section class="agent-section pixel-panel">
           <header class="section-head">
             <div>
-              <span class="agent-kicker">CONNECTED AGENTS</span>
+              <span class="agent-kicker">NOTICE SOURCES</span>
               <h3>接入状态</h3>
             </div>
-            <span>Codex · Claude · OpenCode</span>
+            <span>智能体与通知助手</span>
           </header>
 
           <PetSources bind:sources={petSources} />

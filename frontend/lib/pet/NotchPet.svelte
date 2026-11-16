@@ -1,10 +1,13 @@
 <script lang="ts">
+  import NoticeActions from '../NoticeActions.svelte';
+  import { noticeStatusLabel, noticeNeedsInput } from '../noticePresentation';
+
   import { Bell, ExternalLink, PanelTop, Plug, X } from '@lucide/svelte';
   import PetAvatar from './PetAvatar.svelte';
   import MarkdownMessage from '../MarkdownMessage.svelte';
   import DockPanel from './DockPanel.svelte';
   import type { PetSurfaceController } from './surface';
-  import { petStatusLabel, type PetTask } from '../petGateway';
+  import { type Notice } from '../noticeGateway';
   import type { AppSettings, TaskStatus } from '../types';
   import type { PetData } from './model';
   import type { SurfaceView } from './surface';
@@ -21,45 +24,45 @@
   export let dragWindow: () => Promise<void>;
   export let toggleSurface: (event: MouseEvent) => void;
   export let openMain: (event: MouseEvent) => void;
-  export let dismissActivity: (event: MouseEvent, task: PetTask) => void;
+  export let dismissActivity: (event: MouseEvent, task: Notice) => void;
   let failedIcons = new Set<string>();
   let expandedCompleted = new Set<string>();
   let stackSelection = new Map<string, string>();
   const wheelProgress = new Map<string, { delta: number; at: number; flippedAt: number }>();
 
-  const attention = (task: PetTask) => ['waiting-approval', 'waiting-input'].includes(task.status);
-  const live = (task: PetTask) => task.status === 'running' || attention(task);
-  const completedOrCancelled = (task: PetTask) => task.status === 'completed' || task.status === 'interrupted';
-  function completedByProvider(tasks: PetTask[]) {
-    const groups = new Map<string, { id: string; providerId: string; completed: boolean; tasks: PetTask[] }>();
+  const attention = (task: Notice) => noticeNeedsInput(task);
+  const live = (task: Notice) => !task.finished || attention(task);
+  const completedOrCancelled = (task: Notice) => task.finished;
+  function completedByProvider(tasks: Notice[]) {
+    const groups = new Map<string, { id: string; providerId: string; completed: boolean; tasks: Notice[] }>();
     for (const task of tasks) {
       if (!completedOrCancelled(task)) continue;
-      const providerId = task.providerId || '';
+      const providerId = task.pluginId || '';
       const id = `completed-${encodeURIComponent(providerId)}`;
       if (!groups.has(id)) groups.set(id, { id, providerId, completed: true, tasks: [] });
       groups.get(id)!.tasks.push(task);
     }
     return [...groups.values()];
   }
-  $: completedGroups = completedByProvider(data.tasks);
+  $: completedGroups = completedByProvider(data.notices);
   $: taskGroups = [
-    { id: 'active', providerId: '', completed: false, tasks: data.tasks.filter(task => !completedOrCancelled(task)).sort((a, b) => Number(live(b)) - Number(live(a))) },
+    { id: 'active', providerId: '', completed: false, tasks: data.notices.filter(task => !completedOrCancelled(task)).sort((a, b) => Number(live(b)) - Number(live(a))) },
     ...completedGroups,
   ].filter(group => group.tasks.length > 0);
   $: if ([...expandedCompleted].some(id => !completedGroups.some(group => group.id === id))) {
     expandedCompleted = new Set([...expandedCompleted].filter(id => completedGroups.some(group => group.id === id)));
   }
-  $: if ([...stackSelection].some(([id, taskId]) => !completedGroups.some(group => group.id === id && group.tasks.some(task => task.id === taskId)))) {
-    stackSelection = new Map([...stackSelection].filter(([id, taskId]) => completedGroups.some(group => group.id === id && group.tasks.some(task => task.id === taskId))));
+  $: if ([...stackSelection].some(([id, taskId]) => !completedGroups.some(group => group.id === id && group.tasks.some(task => task.noticeId === taskId)))) {
+    stackSelection = new Map([...stackSelection].filter(([id, taskId]) => completedGroups.some(group => group.id === id && group.tasks.some(task => task.noticeId === taskId))));
   }
   $: for (const id of wheelProgress.keys()) {
     if (!completedGroups.some(group => group.id === id)) wheelProgress.delete(id);
   }
-  function stackTasks(tasks: PetTask[], selectedId: string | undefined) {
-    const start = Math.max(0, tasks.findIndex(task => task.id === selectedId));
+  function stackTasks(tasks: Notice[], selectedId: string | undefined) {
+    const start = Math.max(0, tasks.findIndex(task => task.noticeId === selectedId));
     return Array.from({ length: Math.min(tasks.length, 3) }, (_, index) => tasks[(start + index) % tasks.length]);
   }
-  function rotateStack(event: WheelEvent, id: string, tasks: PetTask[]) {
+  function rotateStack(event: WheelEvent, id: string, tasks: Notice[]) {
     // Preserve pinch zoom and horizontal gestures. Expanded/single rows never call this.
     if (event.ctrlKey || !event.deltaY || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
     event.preventDefault();
@@ -75,7 +78,7 @@
       wheelProgress.set(id, { delta: accumulated, at: now, flippedAt: previous?.flippedAt ?? -Infinity });
       return;
     }
-    const current = Math.max(0, tasks.findIndex(task => task.id === stackSelection.get(id)));
+    const current = Math.max(0, tasks.findIndex(task => task.noticeId === stackSelection.get(id)));
     const next = (current + Math.sign(accumulated) + tasks.length) % tasks.length;
     stackSelection = new Map(stackSelection).set(id, tasks[next].id);
     wheelProgress.set(id, { delta: 0, at: now, flippedAt: now });
@@ -86,23 +89,23 @@
     if (next.has(id)) next.delete(id); else next.add(id);
     expandedCompleted = next;
   }
-  $: latest = data.tasks[0];
+  $: latest = data.notices[0];
   function expandCompleted(event: MouseEvent, id: string) {
-    if (!expandedCompleted.has(id) && !(event.target as Element).closest('button, a')) toggleCompleted(id);
+    if (!expandedCompleted.has(id) && !(event.target as Element).closest('button, a, .notice-actions')) toggleCompleted(id);
   }
 </script>
 
 <DockPanel {controller} {surface} {pointer} {sizing} {dragWindow} {failed}
-  title={data.error || (latest ? `${petStatusLabel(latest.status)} · ${latest.title}` : '就绪')}>
+  title={data.error || (latest ? `${noticeStatusLabel(latest)} · ${latest.content.title}` : '就绪')}>
   <svelte:fragment slot="leading">
     <PetAvatar petId={settings?.pet.selectedPetId ?? 'default'} kind={settings?.pet.kind} imagePath={settings?.pet.imagePath}
       portrait width={sizing.portraitWidth} interactive label="桌宠头像" status={avatarStatus} dragging={surface.dragging} />
   </svelte:fragment>
-  <span slot="indicator" class="status-dot" class:busy={latest?.status === 'running'} class:attention={latest && attention(latest)} class:error={Boolean(data.error) || latest?.status === 'failed'}></span>
-  <span slot="status" class="latest-status">{data.error ? '连接中断' : latest ? petStatusLabel(latest.status) : '就绪'}</span>
+  <span slot="indicator" class="status-dot" class:busy={latest && !latest.finished} class:attention={latest && attention(latest)} class:error={Boolean(data.error)}></span>
+  <span slot="status" class="latest-status">{data.error ? '连接中断' : latest ? noticeStatusLabel(latest) : '就绪'}</span>
   <span slot="summary" class="latest-title">{data.error ? '连接中断' : latest?.title || '就绪'}</span>
   <svelte:fragment slot="trailing">
-    {#if data.tasks.length > 1}<span class="task-count" aria-label={`${data.tasks.length} 项任务`}>{data.tasks.length}</span>{/if}
+    {#if data.notices.length > 1}<span class="task-count" aria-label={`${data.notices.length} 条通知`}>{data.notices.length}</span>{/if}
   </svelte:fragment>
   <svelte:fragment slot="actions">
     <button class="panel-action" type="button" aria-label="切换为悬浮" title="切换为悬浮" on:click={toggleSurface}><PanelTop size={14} /></button>
@@ -119,18 +122,18 @@
           {/if}
           <!-- The first provider icon toggles its group with pointer or keyboard. -->
           <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_noninteractive_element_interactions -->
-          <div class="task-group" class:stacked class:completed={group.completed} role="group" aria-label={group.completed ? `${group.providerId || 'Agent'} 已完成任务` : '当前任务'}
+          <div class="task-group" class:stacked class:completed={group.completed} role="group" aria-label={group.completed ? `${group.providerId || 'Agent'} 已结束条目` : '当前任务'}
             id={`notch-${group.id}`}
             style={`--stack-count: ${Math.min(group.tasks.length - 1, 2)}`}
             on:click={event => { if (group.completed) expandCompleted(event, group.id); }}
             on:wheel|nonpassive={event => { if (stacked) rotateStack(event, group.id, group.tasks); }}>
             {#if group.completed}
               {@const provider = data.providers.find(item => item.providerId === group.providerId)}
-              {@const providerName = provider?.displayName || data.sources.find(source => source.id === group.providerId)?.displayName || group.providerId || 'Agent'}
+              {@const providerName = provider?.displayName || data.sources.find(source => source.pluginId === group.providerId)?.displayName || group.providerId || 'Agent'}
               <div class="provider-icon group-icon" title={providerName}>
                 <button class="completed-toggle" type="button" aria-expanded={completedExpanded}
-                  aria-label={`${providerName} 已完成任务（${group.tasks.length}）`}
-                  title={`${completedExpanded ? '收起' : '展开'} ${providerName} 的已完成任务`}
+                  aria-label={`${providerName} 已结束条目（${group.tasks.length}）`}
+                  title={`${completedExpanded ? '收起' : '展开'} ${providerName} 的已结束条目`}
                   aria-controls={`notch-${group.id}-tasks`} on:click={() => toggleCompleted(group.id)}>
                   {#if provider?.icon && !failedIcons.has(provider.icon)}
                     <img src={provider.icon} alt={providerName} referrerpolicy="no-referrer" on:error={() => { failedIcons = new Set([...failedIcons, provider.icon!]); }} />
@@ -139,13 +142,13 @@
               </div>
             {/if}
             <div class="task-group-items" id={`notch-${group.id}-tasks`}>
-              {#each stacked ? stackTasks(group.tasks, stackSelection.get(group.id)) : group.tasks as task, index (task.id)}
-                {@const provider = data.providers.find(item => item.providerId === task.providerId)}
-                {@const providerName = provider?.displayName || data.sources.find(source => source.id === task.providerId)?.displayName || task.providerId || 'Agent'}
+              {#each stacked ? stackTasks(group.tasks, stackSelection.get(group.id)) : group.tasks as task, index (task.noticeId)}
+                {@const provider = data.providers.find(item => item.providerId === task.pluginId)}
+                {@const providerName = provider?.displayName || data.sources.find(source => source.pluginId === task.pluginId)?.displayName || task.pluginId || 'Agent'}
                 <article class="notch-task" class:stack-back={stacked && index > 0}
                   inert={stacked && index > 0} aria-hidden={stacked && index > 0 ? 'true' : undefined}
                   style={stacked ? `--stack-depth: ${index}; z-index: ${3 - index}` : undefined}
-                  aria-label={`${task.title}，${petStatusLabel(task.status)}`}>
+                  aria-label={`${task.content.title}，${noticeStatusLabel(task)}`}>
                   {#if !group.completed}
                     <div class="provider-icon" title={providerName}>
                       {#if provider?.icon && !failedIcons.has(provider.icon)}
@@ -155,20 +158,22 @@
                   {/if}
                   <div class="task-content">
                     <div class="task-topline">
-                      <h3 title={task.title}>{task.title}</h3>
-                      <span class="task-state" class:running={task.status === 'running'} class:attention={attention(task)} class:failed={task.status === 'failed'}>{petStatusLabel(task.status)}</span>
+                      <h3 title={task.content.title}>{task.content.title}</h3>
+                      <span class="task-state" class:running={!task.finished} class:attention={attention(task)}>{noticeStatusLabel(task)}</span>
                       <time class="task-time" datetime={new Date(task.updatedAt).toISOString()} title={`最近更新：${new Date(task.updatedAt).toLocaleString()}`} aria-label={`最近更新 ${new Date(task.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}>{new Date(task.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time>
-                      {#if attention(task)}<span class="task-attention" title={petStatusLabel(task.status)}><Bell size={13} aria-label={petStatusLabel(task.status)} /></span>{/if}
+                      {#if attention(task)}<span class="task-attention" title={noticeStatusLabel(task)}><Bell size={13} aria-label={noticeStatusLabel(task)} /></span>{/if}
                     </div>
-                    <div class="task-progress"><MarkdownMessage compact message={task.summary?.trim() || '尚未收到回复内容'} /></div>
-                    <button class="dismiss-task" type="button" aria-label={`隐藏 ${task.title}`} title="隐藏任务" on:click={event => dismissActivity(event, task)}><X size={13} /></button>
+                    <div class="task-progress"><MarkdownMessage compact message={task.content.progress?.text?.trim() || '暂无进度说明'} /></div>
+                    {#if task.content.progress?.percent !== undefined}<progress max="100" value={task.content.progress.percent} aria-label="通知进度"></progress>{/if}
+                    <NoticeActions notice={task} available={data.sources.some(source => source.pluginId === task.pluginId && source.enabled && source.connected)} />
+                    <button class="dismiss-task" type="button" aria-label={`隐藏 ${task.content.title}`} title="隐藏条目" on:click={event => dismissActivity(event, task)}><X size={13} /></button>
                   </div>
                 </article>
               {/each}
             </div>
           </div>
         {:else}
-          <div class="empty-state"><strong>暂时没有任务</strong><span>开始编码后，最新进展会显示在这里</span></div>
+          <div class="empty-state"><strong>暂时没有通知</strong><span>收到来源消息后，最新进展会显示在这里</span></div>
         {/each}
       </div>
       {#if actionNotice}<p class="action-notice" role="status">{actionNotice}</p>{/if}
@@ -178,6 +183,7 @@
   button { color: inherit; border: 0; background: transparent; }
   button:focus-visible, .notch-task-list:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; border-radius: 6px; }
   .panel-action { display: grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 6px; color: var(--gray-10); }
+  progress { width:100%; height:4px; accent-color:var(--app-accent); }
   .status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green-9); flex: none; }
   .status-dot.busy { background: var(--blue-9); animation: pulse 1.6s ease-in-out infinite; }
   .status-dot.attention { background: var(--amber-9); }

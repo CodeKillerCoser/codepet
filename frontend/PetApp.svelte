@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { noticeStatusLabel, noticeNeedsInput } from './lib/noticePresentation';
+
   import { listen } from '@tauri-apps/api/event';
   import { invoke } from '@tauri-apps/api/core';
   import { getCurrentWindow } from '@tauri-apps/api/window';
@@ -11,11 +13,11 @@
   import { initialPresentation, present, type PresentationEvent } from './lib/pet/presentation';
   import type { ActivityGroupId } from './lib/activityGroups';
 
-  import { type PetTask } from './lib/petGateway';
+  import { type Notice } from './lib/noticeGateway';
 
   import { rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from './lib/petHitTest';
   import { isPointOnOpaquePetImage } from './lib/pet/hitTest';
-  import { taskStatusForPet } from './lib/pet/animation';
+  import { noticeStatusForPet } from './lib/pet/animation';
   import { PetSurfaceController } from './lib/pet/surface';
   import { petSizing } from './lib/pet/sizing';
   import { themeClassNames } from './lib/theme';
@@ -44,11 +46,11 @@
   const defaultPetOpacity = 1;
   const minPetOpacity = 0.25;
   $: themeClass = themeClassNames(settings?.appearance.theme === 'dark' || (settings?.appearance.theme === 'system' && systemDark) ? 'dark' : 'light');
-  $: activities = $petData.tasks;
-  $: avatarStatus = taskStatusForPet(activities);
+  $: activities = $petData.notices;
+  $: avatarStatus = noticeStatusForPet(activities);
   $: petWindowOpacity = clampPetOpacity(settings?.pet.opacity);
   $: petDragging = surface.dragging;
-  $: railHeight = (2 + Number(activities.length > 0) + Number(activities.some(a => a.status === 'completed')) + Number(surface.canDock)) * 28;
+  $: railHeight = (2 + Number(activities.length > 0) + Number(activities.some(a => a.finished)) + Number(surface.canDock)) * 28;
   $: sizing = petSizing(surface, settings?.pet.scale, railHeight);
   $: if (ready) surfaceController?.schedule();
   function dispatch(event: PresentationEvent) { presentation = present(presentation, event); }
@@ -62,7 +64,7 @@
     let providerRevision = 0;
     register(listen<ProviderConnectionState[]>('provider-connection-status', event => {
       providerRevision++;
-      if (!disposed) petData.setProviders(event.payload);
+      if (!disposed) { petData.setProviders(event.payload); void petData.refresh(); }
     }).then(async unlisten => {
       const revision = providerRevision;
       try {
@@ -70,6 +72,10 @@
         if (!disposed && revision === providerRevision) petData.setProviders(providers);
       } catch (error) { console.warn('Pet provider identities unavailable', error); }
       return unlisten;
+    }));
+    register(listen<import('../sdk/typescript/codepet-gateway-sdk/src/generated').ProtocolEvent>('codepet-gateway-event', event => {
+      const value = event.payload;
+      if(value.method === 'notice.changed') petData.apply(value.params.payload.notice);
     }));
     register(listen<AppSettings>('settings-updated', event => { settings = event.payload; }));
     const windowHandle = getCurrentWindow();
@@ -82,13 +88,13 @@
     cursorPassthroughTimer = window.setInterval(() => void syncCursorPassthrough(), cursorPassthroughPollMs);
     void getAppSettings().then(value => { if (!disposed) { settings = value; ready = true; surfaceController?.schedule(); } }).catch(error => { if (!disposed) showNotice(String(error)); });
     void petData.refresh();
-    const poll = window.setInterval(() => void petData.refresh(), 1000);
+    const poll = window.setInterval(() => void petData.refresh(), 10000);
     return () => {
       disposed = true; window.clearInterval(poll); cleanup.forEach(fn => fn()); media.removeEventListener('change', syncTheme);
       petData.dispose(); clearNoticeTimer(); clearCursorPassthroughTimer(); void setPetWindowCursorEventsIgnored(false);
     };
   });
-  function dismissActivity(event: MouseEvent, task: PetTask) { event.stopPropagation(); petData.dismiss(task); }
+  function dismissActivity(event: MouseEvent, task: Notice) { event.stopPropagation(); petData.dismiss(task); }
   function clearCompletedActivities(event: MouseEvent) { event.stopPropagation(); petData.clearCompleted(); }
   function showNotice(message: string) {
     actionNotice = message;

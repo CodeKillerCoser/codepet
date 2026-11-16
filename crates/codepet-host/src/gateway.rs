@@ -24,6 +24,8 @@ const MAX_USAGE_DETAILS_BYTES: usize = 32 * 1024;
 mod input_queue;
 mod provider_updates;
 mod provider_inventory;
+mod notices;
+pub use notices::NoticeActivator;
 mod recent;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -206,6 +208,7 @@ impl GatewayEventBus {
         let replay = self.replay_shared(after_cursor)?;
         Ok(GatewayEventSubscription {
             replay: replay.into(),
+            local: false,
             receiver,
             last_sequence: after_cursor
                 .map(event_cursor_sequence)
@@ -216,6 +219,7 @@ impl GatewayEventBus {
 }
 
 pub struct GatewayEventSubscription {
+    local: bool,
     replay: VecDeque<Arc<gateway::ProtocolEvent>>,
     receiver: broadcast::Receiver<Arc<gateway::ProtocolEvent>>,
     last_sequence: u64,
@@ -249,6 +253,7 @@ impl GatewayEventSubscription {
             let sequence = protocol_event_sequence(&event)?;
             if sequence > self.last_sequence {
                 self.last_sequence = sequence;
+                if !self.local && matches!(event.as_ref(),gateway::ProtocolEvent::NoticeChanged{..}) {continue;}
                 return Ok((*event).clone());
             }
         }
@@ -256,6 +261,7 @@ impl GatewayEventSubscription {
 }
 
 pub struct ProviderGatewayService {
+    notice_activator: Mutex<Option<Arc<dyn NoticeActivator>>>,
     manager: Arc<PluginManager>,
     events: Arc<GatewayEventBus>,
     provider_inventory: AsyncMutex<provider_inventory::Inventory>,
@@ -329,6 +335,7 @@ impl ProviderGatewayService {
         let input_queue = conversation_state.path().map(crate::input_queue::InputQueueStore::open).transpose()?;
         let updates = manager.take_updates()?;
         Ok(Self {
+            notice_activator: Mutex::new(None),
             manager,
             events: Arc::new(GatewayEventBus::new(event_capacity)),
             provider_inventory: AsyncMutex::new(provider_inventory::Inventory::default()),
@@ -450,7 +457,7 @@ impl ProviderGatewayService {
         &self,
         after_cursor: Option<&str>,
     ) -> Result<Vec<gateway::ProtocolEvent>, gateway::ProtocolError> {
-        self.events.replay(after_cursor)
+        self.events.replay(after_cursor).map(|events|events.into_iter().filter(|event|!matches!(event,gateway::ProtocolEvent::NoticeChanged{..})).collect())
     }
 
     pub fn subscribe_events(
@@ -459,6 +466,8 @@ impl ProviderGatewayService {
     ) -> Result<GatewayEventSubscription, gateway::ProtocolError> {
         self.events.subscribe(after_cursor)
     }
+    pub fn subscribe_local_events(&self,after_cursor:Option<&str>)->Result<GatewayEventSubscription,gateway::ProtocolError>{let mut stream=self.events.subscribe(after_cursor)?;stream.local=true;Ok(stream)}
+
 
     /// Dispatch from the trusted in-process desktop channel. Presence is scoped
     /// to the request (including cancellation), and shared with Provider pings.
@@ -468,6 +477,7 @@ impl ProviderGatewayService {
         client_id: &str,
         request: gateway::ProtocolRequest,
     ) -> gateway::JsonRpcResponse {
+        if let Some(response)=self.local_notice_request(&request).await {return response;}
         let _connection = self.manager.remote_connections().register(client_id.to_owned());
         self.dispatch_for_caller_scope(client_id, request).await
     }
@@ -478,6 +488,7 @@ impl ProviderGatewayService {
         request: gateway::ProtocolRequest,
     ) -> gateway::JsonRpcResponse {
         match request {
+            gateway::ProtocolRequest::NoticeList {id,..}|gateway::ProtocolRequest::NoticeGet{id,..}|gateway::ProtocolRequest::NoticeActionExecute{id,..}|gateway::ProtocolRequest::NoticeSourceSetEnabled{id,..} => json_rpc_response("2.0".into(),id,Err::<serde_json::Value,_>(gateway::ProtocolError{code:"local_only".into(),message:"Notice methods require the trusted local channel".into(),retryable:false,details:None})),
             gateway::ProtocolRequest::TurnSteer { jsonrpc,id,params } => json_rpc_response(jsonrpc,id,self.turn_steer_for_caller_scope(caller_scope,params).await),
             gateway::ProtocolRequest::ConversationInputQueueGet { jsonrpc,id,params } => json_rpc_response(jsonrpc,id,self.input_queue_get(caller_scope,params).await),
             gateway::ProtocolRequest::ConversationInputQueueEnqueue { jsonrpc,id,params } => json_rpc_response(jsonrpc,id,self.input_queue_enqueue(caller_scope,params).await),
@@ -582,6 +593,7 @@ impl ProviderGatewayService {
         {
             return false;
         }
+        self.start_notice_forwarding();
         let mut updates = match self.updates.lock() {
             Ok(mut updates) => match updates.take() {
                 Some(updates) => updates,
@@ -758,7 +770,7 @@ impl ProviderGatewayService {
             provider::ProtocolEvent::EventConversationActiveChanged { .. }
             | provider::ProtocolEvent::EventConversationUnreadChanged { .. }
             | provider::ProtocolEvent::EventConversationDeleted { .. } => unreachable!("recent facts become broad invalidations"),
-            provider::ProtocolEvent::EventNotification { .. } | provider::ProtocolEvent::RuntimeInventoryChanged { .. } => unreachable!("subscription notifications are delivered only to their subscriber"),
+            provider::ProtocolEvent::RuntimeInventoryChanged { .. } => unreachable!("subscription notifications are delivered only to their subscriber"),
             provider::ProtocolEvent::EventInstanceStatusChanged { .. } => {
                 unreachable!("instance status events are converted to one Host state update")
             }
@@ -1648,7 +1660,7 @@ fn gateway_provider(
             id: runtime.record.instance_id.clone(),
             identity: gateway::ProviderIdentity {
                 display_name: runtime.record.display_name.clone(),
-                icon: plugin.catalog.icon.clone(),
+                icon: Some(plugin.catalog.icon.clone()),
                 default_workspace_root: plugin
                     .reported
                     .as_ref()
@@ -2207,7 +2219,7 @@ mod visibility_tests {
         let mut plugin = PluginRuntimeSnapshot {
             runtime_inventory_diagnostic: None,
             catalog: serde_json::from_value(serde_json::json!({
-                "pluginId":"dev.codepet.codex", "displayName":"Codex", "executable":"provider"
+                "pluginId":"dev.codepet.codex", "displayName":"Codex", "command":"provider", "icon":"https://example.com/codex.png"
             })).unwrap(),
             runtime_inventory: None, reported: None, state: PluginRuntimeState::Ready,
             diagnostic: None, generation: 1, connection_status: codepet_provider_sdk::ConnectionStatus::Online,

@@ -66,6 +66,269 @@ pub type NativeResourceId = String;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct Notice {
+    pub notice_id: String,
+    pub plugin_id: String,
+    pub source_id: String,
+    pub status: NoticeStatus,
+    pub content: NoticeContent,
+    pub actions: Vec<NoticeAction>,
+    pub revision: u64,
+    pub finished: bool,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum NoticeAction {
+    NoticeReplyAction(NoticeReplyAction),
+    NoticeActivateAction(NoticeActivateAction),
+    NoticePermissionAction(NoticePermissionAction),
+    Unrecognized(serde_json::Value),
+}
+impl Serialize for NoticeAction {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self { Self::NoticeReplyAction(value) => value.serialize(serializer), Self::NoticeActivateAction(value) => value.serialize(serializer), Self::NoticePermissionAction(value) => value.serialize(serializer), Self::Unrecognized(raw) => raw.serialize(serializer) }
+    }
+}
+impl<'de> Deserialize<'de> for NoticeAction {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let tag = raw.get("kind").and_then(serde_json::Value::as_str).ok_or_else(|| serde::de::Error::custom("required string discriminator"))?;
+        match tag { "reply" => serde_json::from_value(raw).map(Self::NoticeReplyAction).map_err(serde::de::Error::custom), "activate" => serde_json::from_value(raw).map(Self::NoticeActivateAction).map_err(serde::de::Error::custom), "permission" => serde_json::from_value(raw).map(Self::NoticePermissionAction).map_err(serde::de::Error::custom), _ => Ok(Self::Unrecognized(raw)) }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum NoticeActionInput {
+    NoticeReplyInput(NoticeReplyInput),
+    NoticeActivateInput(NoticeActivateInput),
+    NoticePermissionInput(NoticePermissionInput),
+    Unrecognized(serde_json::Value),
+}
+impl Serialize for NoticeActionInput {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self { Self::NoticeReplyInput(value) => value.serialize(serializer), Self::NoticeActivateInput(value) => value.serialize(serializer), Self::NoticePermissionInput(value) => value.serialize(serializer), Self::Unrecognized(raw) => raw.serialize(serializer) }
+    }
+}
+impl<'de> Deserialize<'de> for NoticeActionInput {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let tag = raw.get("kind").and_then(serde_json::Value::as_str).ok_or_else(|| serde::de::Error::custom("required string discriminator"))?;
+        match tag { "reply" => serde_json::from_value(raw).map(Self::NoticeReplyInput).map_err(serde::de::Error::custom), "activate" => serde_json::from_value(raw).map(Self::NoticeActivateInput).map_err(serde::de::Error::custom), "permission" => serde_json::from_value(raw).map(Self::NoticePermissionInput).map_err(serde::de::Error::custom), _ => Ok(Self::Unrecognized(raw)) }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeActionResult {
+    pub execution_id: String,
+    pub status: NoticeActionResultStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum NoticeActionResultStatus {
+    Accepted,
+    Succeeded,
+    Failed,
+    Unknown,
+    Unrecognized(String),
+}
+impl Serialize for NoticeActionResultStatus {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self { Self::Accepted => "accepted", Self::Succeeded => "succeeded", Self::Failed => "failed", Self::Unknown => "unknown", Self::Unrecognized(raw) => raw })
+    }
+}
+impl<'de> Deserialize<'de> for NoticeActionResultStatus {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Ok(match raw.as_str() { "accepted" => Self::Accepted, "succeeded" => Self::Succeeded, "failed" => Self::Failed, "unknown" => Self::Unknown, _ => Self::Unrecognized(raw) })
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeActivateAction {
+    pub kind: NoticeActivateActionKind,
+    pub id: String,
+    pub label: String,
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<NoticeActivationTarget>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NoticeActivateActionKind {
+    #[serde(rename = "activate")]
+    Activate,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeActivateInput {
+    pub kind: NoticeActivateInputKind,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NoticeActivateInputKind {
+    #[serde(rename = "activate")]
+    Activate,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum NoticeActivationTarget {
+    NoticeApplicationTarget(NoticeApplicationTarget),
+    NoticeUriTarget(NoticeUriTarget),
+    Unrecognized(serde_json::Value),
+}
+impl Serialize for NoticeActivationTarget {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self { Self::NoticeApplicationTarget(value) => value.serialize(serializer), Self::NoticeUriTarget(value) => value.serialize(serializer), Self::Unrecognized(raw) => raw.serialize(serializer) }
+    }
+}
+impl<'de> Deserialize<'de> for NoticeActivationTarget {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = serde_json::Value::deserialize(deserializer)?;
+        let tag = raw.get("kind").and_then(serde_json::Value::as_str).ok_or_else(|| serde::de::Error::custom("required string discriminator"))?;
+        match tag { "application" => serde_json::from_value(raw).map(Self::NoticeApplicationTarget).map_err(serde::de::Error::custom), "uri" => serde_json::from_value(raw).map(Self::NoticeUriTarget).map_err(serde::de::Error::custom), _ => Ok(Self::Unrecognized(raw)) }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeApplicationTarget {
+    pub kind: NoticeApplicationTargetKind,
+    pub application_id: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NoticeApplicationTargetKind {
+    #[serde(rename = "application")]
+    Application,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeContent {
+    pub title: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<NoticeProgress>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticePermissionAction {
+    pub kind: NoticePermissionActionKind,
+    pub id: String,
+    pub label: String,
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<NoticePermissionOption>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NoticePermissionActionKind {
+    #[serde(rename = "permission")]
+    Permission,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticePermissionInput {
+    pub kind: NoticePermissionInputKind,
+    pub option_id: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NoticePermissionInputKind {
+    #[serde(rename = "permission")]
+    Permission,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticePermissionOption {
+    pub id: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeProgress {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub percent: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeReplyAction {
+    pub kind: NoticeReplyActionKind,
+    pub id: String,
+    pub label: String,
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placeholder: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NoticeReplyActionKind {
+    #[serde(rename = "reply")]
+    Reply,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeReplyInput {
+    pub kind: NoticeReplyInputKind,
+    pub text: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NoticeReplyInputKind {
+    #[serde(rename = "reply")]
+    Reply,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeSource {
+    pub plugin_id: String,
+    pub display_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    pub enabled: bool,
+    pub connected: bool,
+    pub message: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeStatus {
+    pub value: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoticeUriTarget {
+    pub kind: NoticeUriTargetKind,
+    pub uri: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NoticeUriTargetKind {
+    #[serde(rename = "uri")]
+    Uri,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct PageInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<Cursor>,

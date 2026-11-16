@@ -434,6 +434,19 @@ impl ProtocolMethod {
             Self::ApprovalResolve => "approval.resolve",
         }
     }
+
+    pub const fn direction(self) -> &'static str {
+        match self {
+            Self::ProtocolHandshake => "clientToDesktop",
+            Self::ProviderList => "clientToDesktop",
+            Self::ConversationList => "clientToDesktop",
+            Self::ConversationGet => "clientToDesktop",
+            Self::ConversationCreate => "clientToDesktop",
+            Self::TurnSend => "clientToDesktop",
+            Self::TurnInterrupt => "clientToDesktop",
+            Self::ApprovalResolve => "clientToDesktop",
+        }
+    }
 }
 
 impl std::str::FromStr for ProtocolMethod {

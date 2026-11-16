@@ -63,8 +63,8 @@ test('legacy DTO refs and validation graph resolve from a checkout containing sp
     configureProtocolGenerator({ sourceRoot: root });
     const model = await loadProtocolModel();
     const core = model.recordsById.get('core-v1');
-    const pet = model.recordsById.get('pet-v1');
-    assert.equal(model.schemasByPath.get(resolveSchemaPath(pet.schemaPath, '../../core/v1/schema.json')), core);
+    const provider = model.recordsById.get('provider-v1');
+    assert.equal(model.schemasByPath.get(resolveSchemaPath(provider.schemaPath, '../../core/v2/schema.json')), core);
     const graph = compatibilityGraph(model.recordsById.get('gateway-v1'), model);
     assert.ok(graph.definitions['core:ProtocolVersionOffer']);
   } finally {

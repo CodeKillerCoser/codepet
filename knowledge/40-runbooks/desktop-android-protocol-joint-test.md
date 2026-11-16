@@ -110,3 +110,19 @@ ECHO_CHUNK_SIZE=4096、ECHO_TURN_DELAY_MS=1 可控制大文本的 delta 数量�
 最终普通 macOS App 已打包为 artifacts/CodePet-macOS-arm64.zip（本地签名，未公证）；普通 main.dart debug APK 为 artifacts/CodePet-Remote-debug.apk，已在验收结束后重新安装。测试入口 APK 仅保存在 build-history，不随交付物分发。artifacts 同时保存最终公开 SDK、独立插件归档、设备结果、四张 UI 截图和本轮 PID 的 milestones。原 bootstrap 逐字节恢复，原 Code Pet App 已重新打开；个人 Provider 安装与数据未参与 QA。
 
 最终业务提交 dd24204 的协议 CI 43624669336 已在 Windows 和 Ubuntu 全部成功，包含新增完整 manager_gateway 检查。Remote 实现 d687924、测试空白整理 9667949 位于 codex/provider-inventory-revisions，Android release 构建 43624738397 已成功；本机交付和模拟器复验使用的仍是单独构建的普通 debug APK，不能将两者混称。桌面改动在 codex/protocol-sdk-consolidation，本轮没有推进主干。
+
+## Notice 链路统一升级（2026-11-16）
+
+业务 Provider/Gateway 当前区间为 4/4。安装 Manifest v2、SDK 目录 v2 和三种 STDIO profile v1 不变；旧原始通知/Pet Gateway 已移除，本轮不运行旧插件兼容分支。公开 SDK 见本轮 App 内的 provider-sdk，唯一来源仍为 protocol/v2。
+
+本轮隔离数据 `/tmp/codepet-notice-qa-20261116`，本地签名 QA App 位于 `/Users/wangxin/Documents/CodePet-builds/notice-protocol-20261116/Code Pet.app`。QA 禁用真实内置 Agent，仅加载独立 Echo 三 profile 与 Notice 三 profile；额外覆盖了从 App 原生导入入口导入零 Agent 实例通知助手。原 settings.json 以 0600 备份，结束后按原字节恢复。普通 App 与 QA 包须分开放置，不能分发禁用内置 Provider 的 QA 资源。
+
+独立源码只依据公开 SDK 编写，源码及七包各 34 项通过。Host 的 NoticeStore 测试覆盖持久化、归属、修订、幂等与未知动作回执；真实子进程覆盖三 profile 的主动发布、正向观察控制与动作 RPC；三内置 Rust Provider 另在隔离 HOME/config 下通过真实 Hook HTTP 和 STDIO 发布，无需 Agent 实例。UI 验证悬浮/顶部停靠、进度、未知回复禁用、权限拒绝回执、原生输入焦点和平台激活 accepted。未对外发送消息或授予真实权限。
+
+Android 实际 App 联调使用新编译的测试 APK，04:23—04:24 的 PID 32691 覆盖生产配对、LAN/WSS、原生 WebRTC、两个实际 App 心跳，三种 Provider profile 的发送/历史/队列及生产 UI 的更早消息、中文输入和切会话隔离。设备结果 `passed: true, failures: []`。结果保存在本轮 artifacts/protocol-qa-result.json；测试后必须安装普通 lib/main.dart APK。
+
+第一次联调停在 mux 大消息测试，原因是 QA 直接复制了默认每 16 字符分块的 Echo 包，超出原生测试 25 秒的观察窗口。与已有 Host 回归一致，将隔离 QA Echo 的 ECHO_CHUNK_SIZE 设为 65536 后重跑通过。不能据此增大产品超时，或把无终态的 `.last` 异常算作成功。mux 的反向 Notice 响应也曾出现 stream reset，必须调用 respond 正常关闭流；新增的三 profile Notice 子进程测试用于持续覆盖这条路径。
+
+Native setup 在非 Tokio 主线程调用后台任务时，必须通过 Tauri async runtime 进入；新增同步启动回归测试防止 App 启动 panic。生成的跨包响应校验须解析 common 的实际 $ref；usage.query 的方向也统一为 hostToPlugin，当前模块加载器拒绝别名拼写。旧 v1 冻结快照不随当前规则改写。
+
+本次仍不覆盖真实钉钉/飞书账号、实体手机、蜂窝、公共信令或 TURN；Windows/Linux 激活 adapter 也未作原生验收。macOS 包仅本地签名，不是公证发布包。

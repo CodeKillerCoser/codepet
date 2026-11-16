@@ -1,5 +1,8 @@
 # Provider IDL 统一生成与分发
 
+> 历史实施记录（v1 阶段）。当前权威输入为 `protocol/v2/`，Provider SDK 目录为 `provider-sdk/v2/`，业务协议范围为 4/4；当前链路见 [Notice 发布、状态和动作](notice-publication-and-actions.md)。下文 v1 路径和兼容结论只记录当时状态。
+
+
 > 后续整理：权威输入已迁至 `protocol/v1/`，Provider/Gateway 按功能分组，共享对象中立维护。下文保留前一轮迁入与验收记录；最新组织见 [模块化协议 IDL](modular-provider-and-gateway-idl.md)。对外 SDK 布局保持 provider-sdk/v1。
 
 状态：2026-11-12，已迁入仓库；验收记录见下文。本轮沿用已确认的 SDK 版本目录、模块划分及精简 README，不改变现有业务报文、profile ID 或内置 Provider 的进程边界。

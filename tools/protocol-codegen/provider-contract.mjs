@@ -51,7 +51,7 @@ export async function loadProviderContract(protocolRoot) {
 export function publishProviderContract(model) {
   const {index}=model;const files=new Map([...model.files].map(([name,value])=>[name,clone(value)]));
   files.get('sdk-manifest.json').sourceDigest=model.sourceDigest;
-  for(const registry of [index.methods,index.events])files.get(registry).version=index.protocolVersion;
+  for(const registry of [index.methods,index.events]){files.get(registry).version=index.protocolVersion;if(index.minProtocolVersion!==undefined)files.get(registry).minVersion=index.minProtocolVersion;}
   files.get(index.manifestSchema).properties.transport.enum=model.profiles.map(v=>v.id);
   delete files.get(index.manifestSchema).properties.transport['x-codepet-profile-enum'];
   const envelope=files.get(index.rpcEnvelopeSchema);

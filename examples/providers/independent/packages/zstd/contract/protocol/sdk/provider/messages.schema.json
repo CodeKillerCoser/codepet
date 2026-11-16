@@ -1922,102 +1922,6 @@
       "additionalProperties": true,
       "description": "审批已处理事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
     },
-    "EventSubscribeRequest": {
-      "type": "object",
-      "properties": {
-        "subscriptionId": {
-          "type": "string",
-          "minLength": 1,
-          "description": "订阅身份，用于匹配事件和取消订阅。"
-        }
-      },
-      "required": [
-        "subscriptionId"
-      ],
-      "additionalProperties": true,
-      "description": "事件订阅的请求参数；具体调用方向与幂等性见 methods.json。"
-    },
-    "EventSubscribeResponse": {
-      "type": "object",
-      "properties": {
-        "subscriptionId": {
-          "type": "string",
-          "minLength": 1,
-          "description": "订阅身份，用于匹配事件和取消订阅。"
-        },
-        "message": {
-          "type": "string",
-          "description": "供调用者理解的错误或提示文字。"
-        }
-      },
-      "required": [
-        "subscriptionId",
-        "message"
-      ],
-      "additionalProperties": true,
-      "description": "事件订阅响应，作为对应方法成功响应的 result。"
-    },
-    "EventUnsubscribeRequest": {
-      "type": "object",
-      "properties": {
-        "subscriptionId": {
-          "type": "string",
-          "minLength": 1,
-          "description": "订阅身份，用于匹配事件和取消订阅。"
-        }
-      },
-      "required": [
-        "subscriptionId"
-      ],
-      "additionalProperties": true,
-      "description": "事件取消订阅的请求参数；具体调用方向与幂等性见 methods.json。"
-    },
-    "EventUnsubscribeResponse": {
-      "type": "object",
-      "properties": {
-        "subscriptionId": {
-          "type": "string",
-          "minLength": 1,
-          "description": "订阅身份，用于匹配事件和取消订阅。"
-        }
-      },
-      "required": [
-        "subscriptionId"
-      ],
-      "additionalProperties": true,
-      "description": "事件取消订阅响应，作为对应方法成功响应的 result。"
-    },
-    "ProviderNotificationEvent": {
-      "type": "object",
-      "properties": {
-        "subscriptionId": {
-          "type": "string",
-          "minLength": 1,
-          "description": "订阅身份，用于匹配事件和取消订阅。"
-        },
-        "eventId": {
-          "type": "string",
-          "minLength": 1,
-          "description": "通知事件的稳定身份。"
-        },
-        "receivedAt": {
-          "$ref": "../common/types.schema.json#/$defs/TimestampMs",
-          "description": "收到该事件的时间戳，毫秒。"
-        },
-        "payload": {
-          "$ref": "../common/types.schema.json#/$defs/JsonObject",
-          "description": "事件或扩展携带的结构化数据。"
-        }
-      },
-      "required": [
-        "subscriptionId",
-        "eventId",
-        "receivedAt",
-        "payload"
-      ],
-      "additionalProperties": true,
-      "description": "Provider通知事件的载荷；由 Provider 向 Host 发布，事件名和交付规则见 events.json。"
-    },
     "UsageQueryRequest": {
       "type": "object",
       "properties": {
@@ -2050,6 +1954,240 @@
       ],
       "additionalProperties": true,
       "description": "用量查询响应，作为对应方法成功响应的 result。"
+    },
+    "NoticeCreateRequest": {
+      "type": "object",
+      "description": "Provider 创建条目；稳定创建键重试返回同一条目。",
+      "properties": {
+        "creationKey": {
+          "type": "string",
+          "description": "来源内稳定创建键，与 JSON-RPC id 无关。",
+          "minLength": 1
+        },
+        "sourceId": {
+          "type": "string",
+          "description": "来源/账号身份。",
+          "minLength": 1
+        },
+        "status": {
+          "$ref": "../common/types.schema.json#/$defs/NoticeStatus",
+          "description": "初始状态。"
+        },
+        "content": {
+          "$ref": "../common/types.schema.json#/$defs/NoticeContent",
+          "description": "初始内容。"
+        },
+        "actions": {
+          "type": "array",
+          "description": "初始动作，缺失时为空。",
+          "items": {
+            "$ref": "../common/types.schema.json#/$defs/NoticeAction",
+            "description": "动作描述。"
+          }
+        }
+      },
+      "required": [
+        "creationKey",
+        "sourceId",
+        "status",
+        "content"
+      ],
+      "additionalProperties": true
+    },
+    "NoticePublishResponse": {
+      "type": "object",
+      "description": "成功持久化后的完整条目。",
+      "properties": {
+        "notice": {
+          "$ref": "../common/types.schema.json#/$defs/Notice",
+          "description": "最新条目。"
+        }
+      },
+      "required": [
+        "notice"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeUpdateRequest": {
+      "type": "object",
+      "description": "更新未结束条目；至少提供一个变化组。",
+      "properties": {
+        "noticeId": {
+          "type": "string",
+          "description": "被修改的条目。",
+          "minLength": 1
+        },
+        "operationId": {
+          "type": "string",
+          "description": "一次变更的稳定幂等身份。",
+          "minLength": 1
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "调用方已知修订，冲突时不能覆盖。"
+        },
+        "status": {
+          "$ref": "../common/types.schema.json#/$defs/NoticeStatus",
+          "description": "新的业务状态；finish 必须提供最终状态。"
+        },
+        "content": {
+          "$ref": "../common/types.schema.json#/$defs/NoticeContent",
+          "description": "提供时完整替换内容组。"
+        },
+        "actions": {
+          "type": "array",
+          "description": "提供时完整替换动作组；空数组明确清空。",
+          "items": {
+            "$ref": "../common/types.schema.json#/$defs/NoticeAction",
+            "description": "动作描述。"
+          }
+        }
+      },
+      "required": [
+        "noticeId",
+        "operationId",
+        "expectedRevision"
+      ],
+      "additionalProperties": true,
+      "allOf": [
+        {
+          "description": "至少修改状态、内容或动作之一。",
+          "anyOf": [
+            {
+              "description": "修改status",
+              "required": [
+                "status"
+              ]
+            },
+            {
+              "description": "修改content",
+              "required": [
+                "content"
+              ]
+            },
+            {
+              "description": "修改actions",
+              "required": [
+                "actions"
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "NoticeFinishRequest": {
+      "type": "object",
+      "description": "必填最终状态；允许更正已结束条目，但不能重新打开。",
+      "properties": {
+        "noticeId": {
+          "type": "string",
+          "description": "被修改的条目。",
+          "minLength": 1
+        },
+        "operationId": {
+          "type": "string",
+          "description": "一次变更的稳定幂等身份。",
+          "minLength": 1
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "调用方已知修订，冲突时不能覆盖。"
+        },
+        "status": {
+          "$ref": "../common/types.schema.json#/$defs/NoticeStatus",
+          "description": "新的业务状态；finish 必须提供最终状态。"
+        },
+        "content": {
+          "$ref": "../common/types.schema.json#/$defs/NoticeContent",
+          "description": "提供时完整替换内容组。"
+        },
+        "actions": {
+          "type": "array",
+          "description": "提供时完整替换动作组；空数组明确清空。",
+          "items": {
+            "$ref": "../common/types.schema.json#/$defs/NoticeAction",
+            "description": "动作描述。"
+          }
+        }
+      },
+      "required": [
+        "noticeId",
+        "operationId",
+        "expectedRevision",
+        "status"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeActionExecuteRequest": {
+      "type": "object",
+      "description": "执行已登记、当前启用的条目动作。",
+      "properties": {
+        "noticeId": {
+          "type": "string",
+          "description": "所属条目。"
+        },
+        "actionId": {
+          "type": "string",
+          "description": "动作身份。"
+        },
+        "expectedRevision": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "有效条目修订。"
+        },
+        "executionId": {
+          "type": "string",
+          "description": "稳定执行 ID。",
+          "minLength": 1
+        },
+        "input": {
+          "$ref": "../common/types.schema.json#/$defs/NoticeActionInput",
+          "description": "动作输入。"
+        }
+      },
+      "required": [
+        "noticeId",
+        "actionId",
+        "expectedRevision",
+        "executionId",
+        "input"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeObserveRequest": {
+      "type": "object",
+      "description": "启停 Hook 等观察接入；不启动/停止 Agent 实例。",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "是否开启观察发布。"
+        }
+      },
+      "required": [
+        "enabled"
+      ],
+      "additionalProperties": true
+    },
+    "NoticeObserveResponse": {
+      "type": "object",
+      "description": "观察接入已启停，不代表已收到首次来源活动。",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "当前启用状态。"
+        },
+        "message": {
+          "type": "string",
+          "description": "接入说明。"
+        }
+      },
+      "required": [
+        "enabled",
+        "message"
+      ],
+      "additionalProperties": true
     }
   }
 }

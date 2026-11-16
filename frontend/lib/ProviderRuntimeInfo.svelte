@@ -14,9 +14,10 @@
   export let onRemove: ((runtime: AgentRuntime) => void) | undefined = undefined;
   export let kind: ProviderKind | undefined = undefined;
   $: displayKinds = kind ? [kind] : providerKindsFromFeatures(connection?.features);
-  $: displayKind = displayKinds.includes('agent') ? 'agent' : displayKinds.includes('observation') ? 'observation' : 'extension';
-  // Legacy plugins can still expose a validated installed-runtime inventory without features.
-  $: showRuntime = connection?.features == null ? !!runtime.installed?.length : connection.features.includes('runtimeInventory');
+  $: displayKind = displayKinds.includes('agent') ? 'agent' : displayKinds.includes('observation') ? 'observation' : undefined;
+  $: showRuntime = connection?.features?.includes('runtimeInventory') ?? false;
+  $: observerOnly = displayKind === 'observation' && !displayKinds.includes('agent');
+  $: runtimePath = runtime.resolvedExecutable || runtime.configuredExecutable || (runtime.status === 'loading' ? '检测中…' : observerOnly ? '不需要' : '未提供');
   let failedIcon: string | null = null;
   $: name = connection?.displayName || runtime.displayName;
 </script>
@@ -29,19 +30,19 @@
       {:else}<Plug size={24} />{/if}
     </div>
     <div class="provider-identity">
-      <div class="name-line"><h3>{name}</h3>{#each displayKinds as feature}<span class="kind">{providerKindLabel(feature)}</span>{/each}</div>
-      <ProviderConnectionStatus current={connection} available={connectionsLoaded} kind={displayKind} />
+      <div class="name-line"><h3 title={name}>{name}</h3>{#each displayKinds as feature}<span class="kind">{providerKindLabel(feature)}</span>{/each}</div>
+      <ProviderConnectionStatus current={connection} available={connectionsLoaded} kind={displayKind} compact />
     </div>
-    {#if onRemove}<button class="remove-provider" disabled={busy} aria-label={`移除 ${name}`} on:click={() => onRemove?.(runtime)}><Trash2 size={16} />移除</button>{/if}
   </header>
+  <div class="provider-details" class:removable={!!onRemove}>
   <dl>
-    {#if connection?.version}<div><dt>插件版本</dt><dd>{connection.version}</dd></div>{/if}
-    {#if showRuntime && runtime.status !== "not-required"}
+    <div><dt>插件版本</dt><dd>{connection?.version || '未提供'}</dd></div>
     <div>
-      <dt><label for={`runtime-path-${runtime.providerId}`}>运行时路径</label></dt>
+      <dt>{#if showRuntime && runtime.status !== "not-required"}<label for={`runtime-path-${runtime.providerId}`}>运行时路径</label>{:else}运行时路径{/if}</dt>
       <dd>
+        {#if showRuntime && runtime.status !== "not-required"}
         <div class="path-select">
-          <div class="path-display" aria-hidden="true"><PathLabel value={runtime.resolvedExecutable || (runtime.status === "loading" ? "检测中…" : "未选择运行时")} /></div>
+          <div class="path-display" aria-hidden="true"><PathLabel value={runtimePath} /></div>
           <select id={`runtime-path-${runtime.providerId}`} title={runtime.resolvedExecutable ?? ""} value={runtime.resolvedExecutable ?? ""}
             disabled={busy || runtime.status === "loading" || !runtime.installed?.length}
             on:change={(event) => onSelect(runtime, event.currentTarget.value)}>
@@ -53,29 +54,34 @@
           </select>
           <ChevronDown size={14} aria-hidden="true" />
         </div>
+        {:else}<PathLabel value={runtimePath} />{/if}
       </dd>
     </div>
-    <div><dt>运行时版本</dt><dd>{runtime.version ?? "—"}</dd></div>
-    {/if}
-    {#if connection?.defaultWorkspaceRoot}<div><dt>默认工作目录</dt><dd class="path-value"><PathLabel value={connection.defaultWorkspaceRoot} /></dd></div>{/if}
+    <div><dt>运行时版本</dt><dd>{runtime.version || (observerOnly ? '不需要' : '未提供')}</dd></div>
+    <div><dt>默认工作目录</dt><dd class="path-value"><PathLabel value={connection?.defaultWorkspaceRoot || '未提供'} /></dd></div>
   </dl>
+  {#if onRemove}<button type="button" class="remove-provider" disabled={busy} aria-label={`移除 ${name}`} title={`移除 ${name}`} on:click={() => onRemove?.(runtime)}><Trash2 size={16} aria-hidden="true" /></button>{/if}
+  </div>
   {#if runtime.diagnostic}
     <div class="diagnostic" role="status"><ShieldAlert size={16} /><p>{runtime.diagnostic.message}</p></div>
   {/if}
 </article>
 
 <style>
-  .provider-info { display: grid; align-content: start; box-sizing: border-box; height: 280px; grid-template-columns: minmax(0, 1fr); overflow-x: hidden; overflow-y: auto; gap: 16px; min-width: 0; padding: 18px; border: 1px solid var(--app-border); border-radius: 12px; background: var(--app-surface); }
+  .provider-info { display: grid; align-content: start; box-sizing: border-box; min-height: 220px; grid-template-columns: minmax(0, 1fr); overflow-x: hidden; overflow-y: auto; gap: 14px; min-width: 0; padding: 18px; border: 1px solid var(--app-border); border-radius: 12px; background: var(--app-surface); }
   header { display: flex; align-items: center; gap: 12px; }
   .provider-icon { width: 40px; height: 40px; flex: 0 0 40px; display: grid; place-items: center; color: var(--app-muted); }
   .provider-icon img { width: 32px; height: 32px; object-fit: contain; }
-  .remove-provider { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; color: var(--app-danger); background: var(--app-surface); border: 1px solid var(--app-border); border-radius: 6px; padding: 6px 10px; cursor: pointer; }
+  .provider-details { position: relative; min-width: 0; }
+  .provider-details.removable dl > div:last-child dd { padding-right: 34px; }
+  .remove-provider { position: absolute; right: 0; bottom: 2px; display: grid; place-items: center; width: 28px; height: 28px; color: var(--app-danger); background: transparent; border: 0; border-radius: 5px; padding: 0; cursor: pointer; }
+  .remove-provider:hover { background: color-mix(in srgb, var(--app-danger) 8%, var(--app-surface)); }
   .remove-provider:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
   .remove-provider:disabled { opacity: .5; cursor: default; }
-  .provider-identity { min-width: 0; display: grid; gap: 5px; }
-  .name-line { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
-  .kind { font-size: 11px; color: var(--app-muted); padding: 2px 6px; border-radius: 4px; background: var(--app-surface-soft); white-space: nowrap; }
-  h3 { margin: 0; font-size: var(--font-size-md); overflow-wrap: anywhere; }
+  .provider-identity { flex: 1; min-width: 0; display: grid; gap: 5px; }
+  .name-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .kind { font-size: 11px; color: var(--app-muted); padding: 2px 6px; border-radius: 4px; background: var(--app-surface-soft); white-space: nowrap; flex-shrink: 0; }
+  h3 { margin: 0; min-width: 0; font-size: var(--font-size-md); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .provider-identity :global(.provider-connection) { margin: 0; }
   dl { display: grid; gap: 2px; margin: 0; }
   dl > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 32px; }
