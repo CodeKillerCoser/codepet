@@ -135,7 +135,7 @@ try {
   await page.waitForTimeout(200);
   assert.ok(await page.locator('.notch-task-list').evaluate(el => el.scrollHeight > el.clientHeight));
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && innerHeight <= 340));
-  assert.ok(await page.locator('.task-progress').first().innerText() === '尚未收到回复内容');
+  assert.ok(await page.locator('.task-progress').first().innerText() === '暂无进度说明');
   await page.waitForFunction(() => !document.querySelector('[data-morphing]'));
   const headerTop = await page.locator('.notch-header').evaluate(el => el.getBoundingClientRect().top);
   await page.locator('.notch-task-list').evaluate(el => { el.scrollTop = el.scrollHeight; });
@@ -226,26 +226,26 @@ try {
   await page.waitForFunction(() => innerWidth === 440);
   const completedToggle = page.locator('.completed-toggle');
   assert.equal(await completedToggle.getAttribute('aria-expanded'), 'false');
-  assert.deepEqual(await page.locator('.notch-task:not([aria-hidden="true"]) h3').allTextContents(), ['当前进行中的任务', '需要授权的任务', '需要检查的失败任务', '已完成任务 1']);
-  assert.equal(await page.locator('#notch-completed-codex .notch-task[inert]').count(), 2);
+  assert.deepEqual(await page.locator('.notch-task:not([aria-hidden="true"]) h3').allTextContents(), ['需要检查的失败任务', '当前进行中的任务', '需要授权的任务', '已完成任务 1']);
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.codex"] .notch-task[inert]').count(), 2);
   assert.deepEqual(await checkAlignment(), { padding: ['0px', '0px', '0px', '0px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
   await page.waitForTimeout(200);
   await page.screenshot({ path: resolve(output, 'completed-stacked.png') });
   // Collapsed groups consume vertical wheel input and cycle through every task,
   // not just the three rendered layers. Expanded lists keep native scrolling.
-  const stack = page.locator('#notch-completed-codex');
+  const stack = page.locator('[id="notch-completed-dev.codepet.codex"]');
   const topTitle = () => stack.locator('.notch-task:not([inert]) h3').innerText();
   await stack.locator('.notch-task:not([inert])').hover();
   const scrollBeforeWheel = await page.locator('.notch-task-list').evaluate(el => el.scrollTop);
   await page.mouse.wheel(0, 100);
-  await page.waitForFunction(() => document.querySelector('#notch-completed-codex .notch-task:not([inert]) h3')?.textContent === '已完成任务 2');
+  await page.waitForFunction(() => document.querySelector('[id="notch-completed-dev.codepet.codex"] .notch-task:not([inert]) h3')?.textContent === '已完成任务 2');
   assert.equal(await completedToggle.getAttribute('aria-expanded'), 'false');
   assert.equal(await page.locator('.notch-task-list').evaluate(el => el.scrollTop), scrollBeforeWheel);
   await page.waitForTimeout(200);
   await page.mouse.wheel(0, 100);
   await page.waitForTimeout(200);
   await page.mouse.wheel(0, 100);
-  await page.waitForFunction(() => document.querySelector('#notch-completed-codex .notch-task:not([inert]) h3')?.textContent === '已完成任务 4');
+  await page.waitForFunction(() => document.querySelector('[id="notch-completed-dev.codepet.codex"] .notch-task:not([inert]) h3')?.textContent === '已完成任务 4');
   await page.waitForTimeout(200);
   await page.screenshot({ path: resolve(output, 'completed-wheel-next.png') });
   // Returning backwards wraps from first to last; tiny trackpad deltas accumulate.
@@ -254,17 +254,17 @@ try {
   await page.mouse.wheel(0, 10); await page.waitForTimeout(25);
   assert.equal(await topTitle(), '已完成任务 18');
   for (let i = 0; i < 3; i++) { await page.mouse.wheel(0, 10); await page.waitForTimeout(25); }
-  await page.waitForFunction(() => document.querySelector('#notch-completed-codex .notch-task:not([inert]) h3')?.textContent === '已完成任务 1');
+  await page.waitForFunction(() => document.querySelector('[id="notch-completed-dev.codepet.codex"] .notch-task:not([inert]) h3')?.textContent === '已完成任务 1');
   await page.evaluate(() => { window.__petQa.surface.availableWidth = 280; window.__petQa.finishDrag(true); });
   await page.waitForFunction(() => innerWidth === 280);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  assert.ok(await page.locator('#notch-completed-codex').evaluate(el => el.getBoundingClientRect().right <= innerWidth));
+  assert.ok(await page.locator('[id="notch-completed-dev.codepet.codex"]').evaluate(el => el.getBoundingClientRect().right <= innerWidth));
   await page.evaluate(() => { window.__petQa.surface.availableWidth = 1440; window.__petQa.finishDrag(true); });
   await page.waitForFunction(() => innerWidth === 440);
-  await page.locator('#notch-completed-codex h3').first().click();
+  await page.locator('[id="notch-completed-dev.codepet.codex"] h3').first().click();
   assert.equal(await completedToggle.getAttribute('aria-expanded'), 'true');
-  assert.equal(await page.locator('#notch-completed-codex .notch-task').count(), 18);
-  assert.equal(await page.locator('#notch-completed-codex [inert]').count(), 0);
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.codex"] .notch-task').count(), 18);
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.codex"] [inert]').count(), 0);
   await page.waitForFunction(() => innerHeight === 340);
   assert.ok(await page.locator('.notch-task-list').evaluate(el => el.scrollHeight > el.clientHeight));
   await page.screenshot({ path: resolve(output, 'completed-expanded.png') });
@@ -279,13 +279,13 @@ try {
   assert.equal(await completedToggle.getAttribute('aria-expanded'), 'false');
   assert.equal(await completedToggle.evaluate(el => el === document.activeElement), true);
   // A completed task that resumes must leave the pile immediately.
-  await page.evaluate(() => { window.__petQa.tasks[0].status = 'running'; });
+  await page.evaluate(() => { window.__petQa.tasks = window.__petQa.tasks.map((t, i) => i === 0 ? {...t, status:'running'} : t); });
   await page.waitForFunction(() => document.querySelector('.completed-count')?.textContent === '17');
   assert.equal(await page.locator('[aria-label="当前任务"] .notch-task').count(), 4);
   // Dismissing the top card must not accidentally expand the group.
   await page.getByRole('button', { name: '隐藏 已完成任务 2', exact: true }).click();
   assert.equal(await completedToggle.getAttribute('aria-expanded'), 'false');
-  assert.equal(await page.locator('#notch-completed-codex h3').first().innerText(), '已完成任务 3');
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.codex"] h3').first().innerText(), '已完成任务 3');
   // Completed histories are isolated by agent; expanding one must not expand another.
   await page.evaluate(() => {
     const now = Date.now();
@@ -298,15 +298,15 @@ try {
     ];
   });
   await page.waitForFunction(() => document.querySelectorAll('.completed-toggle').length === 2);
-  const codexToggle = page.getByRole('button', { name: 'Codex 已完成任务（3）', exact: true });
-  const claudeToggle = page.getByRole('button', { name: 'Claude Code 已完成任务（3）', exact: true });
+  const codexToggle = page.getByRole('button', { name: 'Codex 已结束条目（3）', exact: true });
+  const claudeToggle = page.getByRole('button', { name: 'Claude Code 已结束条目（3）', exact: true });
   assert.equal(await codexToggle.getAttribute('aria-expanded'), 'false');
   assert.equal(await claudeToggle.getAttribute('aria-expanded'), 'false');
   assert.equal(await page.locator('.completed-heading').count(), 1);
   assert.equal(await page.locator('.completed-count').innerText(), '6');
   assert.equal(await page.locator('.completed .notch-task:not([inert])').count(), 2);
   assert.equal(await page.locator('#notch-active .notch-task').count(), 1);
-  assert.equal(await page.locator('#notch-completed-codex .task-state').first().innerText(), '已取消');
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.codex"] .task-state').first().innerText(), '已取消');
   assert.equal(await page.locator('.completed .provider-icon').count(), 2);
   assert.equal(await page.locator('.completed .provider-badge').count(), 0);
   await page.locator('.notch-task-list').evaluate(el => el.scrollTop = 0);
@@ -317,20 +317,20 @@ try {
   await page.screenshot({ path: resolve(output, 'agent-stacks.png') });
   await stack.locator('.notch-task:not([inert])').hover();
   await page.mouse.wheel(0, 100);
-  await page.waitForFunction(() => document.querySelector('#notch-completed-codex .notch-task:not([inert]) h3')?.textContent === '完成角色导入检查');
-  assert.equal(await page.locator('#notch-completed-claude .notch-task:not([inert]) h3').innerText(), '完成窗口布局检查');
+  await page.waitForFunction(() => document.querySelector('[id="notch-completed-dev.codepet.codex"] .notch-task:not([inert]) h3')?.textContent === '完成角色导入检查');
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.claude"] .notch-task:not([inert]) h3').innerText(), '完成窗口布局检查');
   await page.waitForTimeout(200);
   await page.mouse.wheel(0, -100);
-  await page.waitForFunction(() => document.querySelector('#notch-completed-codex .notch-task:not([inert]) h3')?.textContent === '已取消的窗口布局检查');
+  await page.waitForFunction(() => document.querySelector('[id="notch-completed-dev.codepet.codex"] .notch-task:not([inert]) h3')?.textContent === '已取消的窗口布局检查');
   await codexToggle.click();
   assert.equal(await codexToggle.getAttribute('aria-expanded'), 'true');
   assert.equal(await claudeToggle.getAttribute('aria-expanded'), 'false');
-  assert.equal(await page.locator('#notch-completed-codex .notch-task:not([inert])').count(), 3);
-  assert.equal(await page.locator('#notch-completed-claude .notch-task:not([inert])').count(), 1);
-  assert.equal(await page.locator('#notch-completed-codex .provider-icon').count(), 1);
-  assert.equal(await page.locator('#notch-completed-codex .completed-toggle').count(), 1);
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.codex"] .notch-task:not([inert])').count(), 3);
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.claude"] .notch-task:not([inert])').count(), 1);
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.codex"] .provider-icon').count(), 1);
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.codex"] .completed-toggle').count(), 1);
   assert.equal(await page.locator('.completed .provider-badge').count(), 0);
-  assert.ok(await page.locator('#notch-completed-codex').evaluate(group => {
+  assert.ok(await page.locator('[id="notch-completed-dev.codepet.codex"]').evaluate(group => {
     const column = group.querySelector('.task-group-items').getBoundingClientRect();
     return [...group.querySelectorAll('.task-content')].every(content => {
       const box = content.getBoundingClientRect();
@@ -338,7 +338,7 @@ try {
     });
   }), 'expanded task content must fill the whole shared right column');
   assert.deepEqual(await checkAlignment(), { padding: ['0px', '0px', '0px', '0px'], headerAligned: true, rowsAligned: true, sameIconSize: true, sameTextEdge: true, spacing: true, noHorizontalOverflow: true, actionsInside: true });
-  assert.ok(await page.locator('#notch-completed-codex').evaluate(group => {
+  assert.ok(await page.locator('[id="notch-completed-dev.codepet.codex"]').evaluate(group => {
     const icon = group.querySelector('.group-icon').getBoundingClientRect();
     const heading = group.querySelector('h3').getBoundingClientRect();
     return Math.abs(icon.top + icon.height / 2 - heading.top - heading.height / 2) < 1;
@@ -348,17 +348,17 @@ try {
   await page.evaluate(() => { window.__petQa.surface.availableWidth = 280; window.__petQa.finishDrag(true); });
   await page.waitForFunction(() => innerWidth === 280);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-  assert.equal(await page.locator('#notch-completed-codex .provider-icon').count(), 1);
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.codex"] .provider-icon').count(), 1);
   await page.screenshot({ path: resolve(output, 'agent-expanded-narrow.png') });
   await page.evaluate(() => { window.__petQa.surface.availableWidth = 1440; window.__petQa.finishDrag(true); });
   await page.waitForFunction(() => innerWidth === 440);
   // Cancelled tasks can resume and then return to the same provider group.
-  await page.evaluate(() => { window.__petQa.tasks.find(t => t.id === 'codex-0').status = 'running'; });
+  await page.evaluate(() => { window.__petQa.tasks = window.__petQa.tasks.map(t => t.id === 'codex-0' ? {...t, status:'running'} : t); });
   await page.waitForFunction(() => document.querySelector('#notch-active')?.querySelectorAll('.notch-task').length === 2);
-  assert.equal(await page.locator('#notch-completed-codex .notch-task').count(), 2);
-  await page.evaluate(() => { window.__petQa.tasks.find(t => t.id === 'codex-0').status = 'interrupted'; });
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.codex"] .notch-task').count(), 2);
+  await page.evaluate(() => { window.__petQa.tasks = window.__petQa.tasks.map(t => t.id === 'codex-0' ? {...t, status:'interrupted'} : t); });
   await page.waitForFunction(() => document.querySelector('#notch-active')?.querySelectorAll('.notch-task').length === 1);
-  assert.equal(await page.locator('#notch-completed-codex .notch-task').count(), 3);
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.codex"] .notch-task').count(), 3);
   await codexToggle.click();
   assert.equal(await codexToggle.getAttribute('aria-expanded'), 'false');
   await codexToggle.click();
@@ -369,10 +369,10 @@ try {
   await page.evaluate(() => { window.__petQa.tasks = window.__petQa.tasks.filter(t => t.providerId !== 'codex'); });
   await page.waitForFunction(() => document.querySelectorAll('.completed-toggle').length === 1);
   assert.equal(await claudeToggle.getAttribute('aria-expanded'), 'true');
-  await page.evaluate(() => window.__petQa.tasks.push({ id: 'return', title: '新的完成任务', summary: '已完成', status: 'completed', providerId: 'codex', updatedAt: Date.now() }));
-  await page.waitForSelector('#notch-completed-codex');
-  assert.equal(await page.getByRole('button', { name: 'Codex 已完成任务（1）', exact: true }).getAttribute('aria-expanded'), 'false');
-  assert.equal(await page.locator('#notch-completed-codex').evaluate(el => el.classList.contains('stacked')), false);
+  await page.evaluate(() => window.__petQa.tasks = [...window.__petQa.tasks, { id: 'return', title: '新的完成任务', summary: '已完成', status: 'completed', providerId: 'codex', updatedAt: Date.now() }]);
+  await page.waitForSelector('[id="notch-completed-dev.codepet.codex"]');
+  assert.equal(await page.getByRole('button', { name: 'Codex 已结束条目（1）', exact: true }).getAttribute('aria-expanded'), 'false');
+  assert.equal(await page.locator('[id="notch-completed-dev.codepet.codex"]').evaluate(el => el.classList.contains('stacked')), false);
   // Completed-only history remains available, and clearing it restores the empty state.
   await page.evaluate(() => { window.__petQa.tasks = window.__petQa.tasks.filter(t => t.status === 'completed'); });
   await page.waitForFunction(() => !document.querySelector('[aria-label="当前任务"]'));

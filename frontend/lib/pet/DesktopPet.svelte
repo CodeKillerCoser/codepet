@@ -37,7 +37,7 @@
   $: hasCompletedActivities = activities.some(a => a.finished);
   $: runningBubble = settings?.appearance.runningBubble ?? defaultRunningBubbleSettings;
   $: activityStackHeightLimit = sizing.desktopListHeight;
-  $: topActivityId = activities[0]?.id ?? null;
+  $: topActivityId = activities[0]?.noticeId ?? null;
   $: if (activityStack && topActivityId !== lastTopActivityId) { lastTopActivityId = topActivityId; void tick().then(() => { if (activityStack) activityStack.scrollTop = 0; }); }
   onDestroy(clearWhipTimer);
   function clearWhipTimer() {

@@ -32,7 +32,7 @@ try {
   await page.waitForSelector('.notch-header');
   await page.locator('.notch-header').hover();
   await page.waitForFunction(() => document.querySelector('[data-dock-frame]')?.dataset.phase === 'open' && !document.querySelector('[data-dock-frame]')?.hasAttribute('data-morphing'));
-  const stack = page.locator('#notch-completed-codex');
+  const stack = page.locator('[id="notch-completed-dev.codepet.codex"]');
   await stack.locator('.notch-task:not([inert])').hover();
   await page.waitForTimeout(400);
   // Reserve a fixed preview canvas so expanded list scrolling is visible too.
@@ -41,7 +41,7 @@ try {
   await page.clock.pauseAt(new Date());
   const wheel = delta => stack.dispatchEvent('wheel', { deltaY: delta, bubbles: true, cancelable: true });
   const read = () => page.evaluate(() => {
-    const group = document.querySelector('#notch-completed-codex');
+    const group = document.querySelector('[id="notch-completed-dev.codepet.codex"]');
     const box = el => { const r = el.getBoundingClientRect(); return { x:r.x, y:r.y, width:r.width, height:r.height }; };
     return { now:performance.now(), position: Number(group.dataset.planePosition), moving:group.hasAttribute('data-plane-moving'), stage:box(group),
       header:box(document.querySelector('.notch-header')), scroll:document.querySelector('.notch-task-list').scrollTop,

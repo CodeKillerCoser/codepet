@@ -118,7 +118,7 @@
   </svelte:fragment>
   <span slot="indicator" class="status-dot" class:busy={latest && !latest.finished} class:attention={latest && attention(latest)} class:error={Boolean(data.error)}></span>
   <span slot="status" class="latest-status">{data.error ? '连接中断' : latest ? noticeStatusLabel(latest) : '就绪'}</span>
-  <span slot="summary" class="latest-title">{data.error ? '连接中断' : latest?.title || '就绪'}</span>
+  <span slot="summary" class="latest-title">{data.error ? '连接中断' : latest?.content.title || '就绪'}</span>
   <svelte:fragment slot="trailing">
     {#if data.notices.length > 1}<span class="task-count" aria-label={`${data.notices.length} 条通知`}>{data.notices.length}</span>{/if}
   </svelte:fragment>

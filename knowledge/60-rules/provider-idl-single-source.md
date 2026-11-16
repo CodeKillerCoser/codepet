@@ -46,3 +46,5 @@ Manifest 只接受当前版本，必须包含 icon、command 和 transport；不
 通知动作执行前先持久化 executionId 回执，未知结果不得重放；原始观察 Hook 不得自行获得回复或授权能力。新增文本输入入口必须在原生桌宠的非激活窗口上验收键盘焦点；只在用户打开编辑器时请求焦点。
 
 SDK 发布元信息必须包含 protocolVersion/minProtocolVersion，均从当前 Provider IDL 的范围派生或校验；README 使用同一模型插值，不手写最低版本。导出回归要修改 IDL 的 minVersion，确认 SDK 清单、methods/events 和使用说明一起更新。目录版本、清单格式与业务区间分开说明，不能通过名称里的 v2 推断业务版本。
+
+协议迁移必须同步原生 IPC 的界面测试 mock。桌宠验收通过标准 `codepet_gateway_request` 的 `notice.list` 和 `notice.changed` 事件提供数据，不能保留已删除的私有 Pet RPC。简写测试场景只允许在 mock 内转换为 Notice；生产摘要与展开卡片都从 `content.title` 读取标题，分组使用完整 pluginId，更新通过递增 revision 的事件传递。执行 `test:pet:ui`、`test:pet:motion` 和 `test:pet:stack`，分别验证两个视图与焦点、窗口展开动画和完成卡片堆叠，避免生成代码正确但视图仍读旧字段。

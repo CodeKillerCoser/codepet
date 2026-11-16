@@ -63,7 +63,7 @@ let fixtureRevision=0;
 function fixtureNotice(task:any){
   return {noticeId:task.id,pluginId:task.providerId.startsWith('dev.')?task.providerId:`dev.codepet.${task.providerId}`,sourceId:'qa',
     revision:fixtureRevision,finished:['completed','interrupted'].includes(task.status),
-    status:{value:task.status,label:({'running':'运行中','completed':'已结束','interrupted':'已取消','waiting-input':'等待输入','waiting-approval':'等待授权','failed':'失败'}as Record<string,string>)[task.status]??task.status},
+    status:{value:task.status,label:({'running':'进行中','completed':'本轮结束','interrupted':'已取消','waiting-input':'等待输入','waiting-approval':'等待授权','failed':'失败'}as Record<string,string>)[task.status]??task.status},
     content:{title:task.title,progress:task.summary?{text:task.summary}:undefined},
     actions:['waiting-input','waiting-approval','failed'].includes(task.status)?[{kind:'reply',id:'reply',label:'回复',enabled:true}]:[],
     createdAt:task.updatedAt,updatedAt:task.updatedAt};
