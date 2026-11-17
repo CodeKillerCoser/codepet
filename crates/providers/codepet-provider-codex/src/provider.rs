@@ -1,4 +1,5 @@
 mod directory_list;
+mod ordered_ids;
 mod hook_observation;
 use codepet_provider_data::conversation_atoms::{self, ConversationAtoms};
 use codepet_provider_sdk::local_runtime;
@@ -395,6 +396,7 @@ struct CodexInstanceRuntime {
     hook_ready: AtomicBool,
     atoms: ConversationAtoms,
     directory_pages: directory_list::DirectoryPages,
+    ordered_ids: ordered_ids::Pages,
     route: ProviderInstanceRoute,
     instance_kind: String,
     display_name: String,
@@ -429,6 +431,7 @@ impl CodexInstanceRuntime {
             hook_ready: AtomicBool::new(false),
             atoms,
             directory_pages: Default::default(),
+            ordered_ids: Default::default(),
             route: request.route.clone(),
             instance_kind: request.instance_kind,
             display_name: request.display_name,

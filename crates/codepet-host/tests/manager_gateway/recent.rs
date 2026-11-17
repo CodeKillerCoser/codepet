@@ -41,7 +41,19 @@ fn setup(
     path: &std::path::Path,
     fail_active: bool,
 ) -> (Arc<PluginManager>, Arc<ProviderGatewayService>) {
+    setup_with_forwarding(path, fail_active, true)
+}
+
+fn setup_with_forwarding(
+    path: &std::path::Path,
+    fail_active: bool,
+    forward_events: bool,
+) -> (Arc<PluginManager>, Arc<ProviderGatewayService>) {
     let mut descriptor = plugin("recent-plugin", &["recent-instance"]);
+    if let Ok(count) = std::fs::read_to_string(path.with_extension("ordered")) {
+        descriptor.env.insert("CODEPET_FAKE_RECENT_ORDERED".into(), "1".into());
+        descriptor.env.insert("CODEPET_FAKE_RECENT_ATTENTION_COUNT".into(), count);
+    }
     descriptor
         .env
         .insert("CODEPET_FAKE_RECENT".into(), "1".into());
@@ -66,7 +78,7 @@ fn setup(
         )
         .unwrap(),
     );
-    gateway.start_event_forwarding();
+    if forward_events { gateway.start_event_forwarding(); }
     (manager, gateway)
 }
 
@@ -218,6 +230,107 @@ async fn complete_global_recent_pages_preserve_scope_and_ordinary_list() {
             .unwrap(),
         "recent_cursor_expired"
     );
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn read_baseline_retry_reuses_completed_id_lookups_without_source_changes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.sqlite");
+    // Isolate baseline invalidation from legitimate startup capability events.
+    // Source-event fencing remains enabled in the other recent integration tests.
+    let (manager, service) = setup_with_forwarding(&path, false, false);
+    for (_, result) in manager.start_enabled().await { result.unwrap(); }
+    let first = fetch(&service, "reader", None).await.unwrap();
+    assert_eq!(first.conversations.len(), 20);
+    let requests = std::fs::read_to_string(path.with_extension("requests")).unwrap();
+    let ids_queries = requests.lines().filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|request| request["query"]["kind"] == "ids").collect::<Vec<_>>();
+    assert_eq!(ids_queries.len(), 2, "baseline invalidation must not repeat the two ID batches");
+    let replay = fetch(&service, "reader", None).await.unwrap();
+    assert_eq!(serde_json::to_value(first).unwrap()["conversations"], serde_json::to_value(replay).unwrap()["conversations"]);
+    assert_eq!(std::fs::read_to_string(path.with_extension("requests")).unwrap(), requests);
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn ordered_attention_is_paged_without_losing_old_unread_or_scope() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.sqlite");
+    std::fs::write(path.with_extension("ordered"), "1000").unwrap();
+    let (manager, service) = setup_with_forwarding(&path, false, false);
+    for (_, result) in manager.start_enabled().await { result.unwrap(); }
+    let store = SharedConversationStateStore::open(&path).unwrap();
+    store.ensure_client("reader").unwrap();
+    let mut baseline = (0..1000).map(|i| serde_json::from_value::<gateway::Conversation>(serde_json::json!({
+        "resource":{"providerId":"recent-instance","nativeResourceId":format!("active-{i:03}")},
+        "title":format!("Fake active-{i:03}"),"preview":"fixture conversation","status":"running","updatedAt":1,
+    })).unwrap()).collect::<Vec<_>>();
+    baseline.push(serde_json::from_value(serde_json::json!({"resource":{"providerId":"recent-instance","nativeResourceId":"recent"},"title":"Fake recent","preview":"fixture conversation","status":"idle","updatedAt":1})).unwrap());
+    for row in baseline.iter_mut().take(20) { row.preview = Some("before".into()); }
+    store.observe_and_decorate_summaries("reader", &mut baseline).unwrap();
+    let mut old: gateway::Conversation = serde_json::from_value(serde_json::json!({"resource":{"providerId":"recent-instance","nativeResourceId":"unread-old"},"title":"Fake unread-old","preview":"before","status":"idle","updatedAt":1})).unwrap();
+    store.observe_summary(&old).unwrap();
+    old.preview = Some("fixture conversation".into());
+    store.observe_summary(&old).unwrap();
+    store.ensure_client("other-reader").unwrap();
+    let first = fetch(&service, "reader", None).await.unwrap();
+    assert_eq!(first.conversations.len(), 20);
+    let requests = std::fs::read_to_string(path.with_extension("requests")).unwrap();
+    let first_queries = requests.lines().map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()).collect::<Vec<_>>();
+    assert_eq!(first_queries.len(), 1, "1000 active candidates require only 20 objects, including a read-state baseline retry");
+    assert_eq!(first_queries[0]["query"]["orderByUpdatedAt"], true);
+    assert_eq!(first_queries[0]["limit"], 20);
+    let first_cursor = first.page_info.next_cursor.clone().unwrap();
+    assert_eq!(fetch(&service,"other-reader",Some(first_cursor.clone())).await.unwrap_err(), "invalid_cursor");
+    let second = fetch(&service, "reader", Some(first_cursor.clone())).await.unwrap();
+    let reads = std::fs::read_to_string(path.with_extension("requests")).unwrap();
+    assert_eq!(serde_json::to_value(&second).unwrap(), serde_json::to_value(fetch(&service, "reader", Some(first_cursor)).await.unwrap()).unwrap());
+    assert_eq!(std::fs::read_to_string(path.with_extension("requests")).unwrap(), reads);
+    let mut rows = first.conversations;
+    rows.extend(second.conversations);
+    let mut cursor = second.page_info.next_cursor;
+    while let Some(next) = cursor {
+        let page = fetch(&service, "reader", Some(next)).await.unwrap();
+        rows.extend(page.conversations);
+        cursor = page.page_info.next_cursor;
+    }
+    assert_eq!(rows.len(), 1002);
+    assert_eq!(rows[999].resource.native_resource_id, "active-999");
+    assert_eq!(rows[1000].resource.native_resource_id, "unread-old");
+    assert!(rows[1000].read_state.as_ref().unwrap().unread);
+    assert_eq!(rows[1001].resource.native_resource_id, "recent");
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn ordered_attention_expired_source_requires_a_new_recent_first_page() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.sqlite");
+    std::fs::write(path.with_extension("ordered"), "125").unwrap();
+    let (manager, service) = setup_with_forwarding(&path, false, false);
+    for (_, result) in manager.start_enabled().await { result.unwrap(); }
+    let first = fetch(&service, "reader", None).await.unwrap();
+    std::fs::write(path.with_extension("expired"), "1").unwrap();
+    assert_eq!(fetch(&service, "reader", first.page_info.next_cursor).await.unwrap_err(), "recent_cursor_expired");
+    std::fs::remove_file(path.with_extension("expired")).unwrap();
+    assert_eq!(fetch(&service, "reader", None).await.unwrap().conversations.len(), 20);
+    manager.shutdown().await;
+}
+
+#[tokio::test]
+async fn ordered_ids_are_never_sent_to_a_provider_without_the_capability() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.sqlite");
+    let (manager, _service) = setup_with_forwarding(&path, false, false);
+    for (_, result) in manager.start_enabled().await { result.unwrap(); }
+    let request = serde_json::from_value(serde_json::json!({
+        "route":{"deviceId":"recent-device","providerPluginId":"recent-plugin","providerInstanceId":"recent-instance"},
+        "projectFilter":{"kind":"all"},"limit":20,
+        "query":{"kind":"ids","ids":["active-000"],"orderByUpdatedAt":true},
+    })).unwrap();
+    assert_eq!(manager.conversation_list(request).await.unwrap_err().code, "unsupported");
+    assert!(!path.with_extension("requests").exists(), "unsupported mode must be rejected before any plugin RPC");
     manager.shutdown().await;
 }
 

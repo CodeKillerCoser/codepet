@@ -7,6 +7,21 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 type Active = BTreeMap<Identity, (gateway::ConversationStatus, String)>;
 type Unread = BTreeMap<Identity, gateway::ConversationReadState>;
 
+#[derive(Default)]
+struct BuildSummaries {
+    rows: BTreeMap<Identity, gateway::Conversation>,
+    checked: BTreeSet<Identity>,
+    ordered: Option<OrderedBuild>,
+}
+
+struct OrderedBuild {
+    active: Active,
+    unread_ids: BTreeSet<Identity>,
+    rows: Vec<gateway::Conversation>,
+    tail: Option<feed::RecentTail>,
+    boundary: Option<u64>,
+}
+
 impl ProviderGatewayService {
     pub(super) async fn mark_read_for_scope(
         &self,
@@ -52,7 +67,7 @@ impl ProviderGatewayService {
     ) -> Result<(), gateway::ProtocolError> {
         let mut snapshots = self.recent.lock().map_err(|_| gateway_state_error())?;
         if snapshots.is_tracked(provider_id) {
-            snapshots.invalidate(provider_id);
+            snapshots.invalidate_source(provider_id);
         }
         Ok(())
     }
@@ -80,6 +95,20 @@ impl ProviderGatewayService {
     }
 
     pub(super) async fn conversation_recent_for_scope(
+        &self,
+        scope: &str,
+        request: gateway::ConversationRecentRequest,
+    ) -> Result<gateway::ConversationRecentResponse, gateway::ProtocolError> {
+        let started = std::time::Instant::now();
+        let provider_id = request.provider_id.clone();
+        let result = recent_with_budget(self.conversation_recent_inner(scope, request), Duration::from_secs(25)).await;
+        eprintln!("{}", serde_json::json!({"name":"gateway.conversation.recent","providerId":provider_id,
+            "elapsedMs":started.elapsed().as_millis(),"returned":result.as_ref().map(|page|page.conversations.len()).unwrap_or(0),
+            "outcome":result.as_ref().err().map(|error|error.code.as_str()).unwrap_or("ok")}));
+        result
+    }
+
+    async fn conversation_recent_inner(
         &self,
         scope: &str,
         request: gateway::ConversationRecentRequest,
@@ -181,7 +210,7 @@ impl ProviderGatewayService {
             let epoch = self.recent.lock().map_err(|_| gateway_state_error())?.epoch(&key.provider_id);
             let (rows, tail) = match self.collect_recent_tail(&runtime.route, scope, tail, needed).await {
                 Ok(page) => page,
-                Err(error) if error.code == "invalid_cursor" => {
+                Err(error) if error.code == "invalid_cursor" || error.code == "conversation_cursor_expired" => {
                     self.recent.lock().map_err(|_| gateway_state_error())?.invalidate(&key.provider_id);
                     return Err(feed::error("recent_cursor_expired", "Provider list cursor expired; fetch a new recent first page", false));
                 }
@@ -193,15 +222,24 @@ impl ProviderGatewayService {
         }
         // Bounded internal concurrency: one sequential enumeration per build, one build
         // per view. Dropping this future cancels the outstanding RPC and no snapshot installs.
+        let mut resolved = BuildSummaries::default();
+        let mut previous_source_epoch = None;
         for attempt in 0..3 {
             let started = now_ms();
-            let epoch = self
-                .recent
-                .lock()
-                .map_err(|_| gateway_state_error())?
-                .epoch(&key.provider_id);
+            let (epoch, source_epoch) = {
+                let snapshots = self.recent.lock().map_err(|_| gateway_state_error())?;
+                (snapshots.epoch(&key.provider_id), snapshots.source_epoch(&key.provider_id))
+            };
             let fence = self.current_event_cursor();
-            let collected = self.collect_recent(&runtime.route, scope, started, request.limit.unwrap_or(20) as usize).await;
+            // Establishing read baselines can require a new attention snapshot,
+            // but must not repeat every native lookup. Reuse only within this
+            // build; any intervening source change disqualifies the objects.
+            // Our own recentChanged hints do not restart native disk lookups.
+            if previous_source_epoch.is_some_and(|previous| previous != source_epoch) {
+                resolved = BuildSummaries::default();
+            }
+            previous_source_epoch = Some(source_epoch);
+            let collected = self.collect_recent(&runtime.route, scope, started, request.limit.unwrap_or(20) as usize, runtime.provider_ordered_ids, &mut resolved).await;
             let (rows, boundary_at, tail) = match collected {
                 Ok(rows) => rows,
                 Err(error) => {
@@ -268,14 +306,18 @@ impl ProviderGatewayService {
         scope: &str,
         now: u64,
         limit: usize,
+        ordered_ids: bool,
+        resolved: &mut BuildSummaries,
     ) -> Result<(Vec<gateway::Conversation>, Option<u64>, Option<feed::RecentTail>), gateway::ProtocolError> {
         let active = self.collect_active(route).await?;
         let unread = self.collect_unread(route, scope).await?;
-        let mut summaries = BTreeMap::new();
+        if ordered_ids && active.len().max(unread.len()) <= 10000 {
+            return self.collect_ordered_recent(route, scope, now, limit, active, unread, resolved).await;
+        }
         let missing: BTreeSet<_> = active
             .keys()
             .chain(unread.keys())
-            .filter(|id| !summaries.contains_key(*id))
+            .filter(|id| !resolved.checked.contains(*id))
             .cloned()
             .collect();
         let missing: Vec<_> = missing.into_iter().map(|(_, native)| native).collect();
@@ -288,17 +330,21 @@ impl ProviderGatewayService {
                         provider::ConversationIdsQuery {
                             kind: provider::ConversationIdsQueryKind::Ids,
                             ids: batch.to_vec(),
+                            order_by_updated_at: None,
                         },
                     ),
                 )
                 .await?;
-            summaries.extend(fetched);
+            resolved.rows.extend(fetched);
+            resolved.checked.extend(batch.iter().map(|id| (route.provider_instance_id.clone(), id.clone())));
         }
         let state = self.conversation_state.clone();
         let snapshots = self.recent.clone();
         let owned_scope = scope.to_owned();
         let provider_id = route.provider_instance_id.clone();
-        let mut rows: Vec<_> = summaries.into_values().collect();
+        let mut rows: Vec<_> = resolved.rows.iter()
+            .filter(|(id, _)| active.contains_key(*id) || unread.contains_key(*id))
+            .map(|(_, row)| row.clone()).collect();
         // File lock/JSON/atomic replacement stays off the async control-message workers.
         // Invalidate inside the operation even if its awaiting client disconnects.
         let rows = tokio::task::spawn_blocking(move || -> Result<_, gateway::ProtocolError> {
@@ -334,12 +380,46 @@ impl ProviderGatewayService {
         let active_ids = active.keys().cloned().collect();
         let excluded = summaries.keys().cloned().collect();
         let (mut rows, mut boundary) = feed::aggregate(summaries, &active_ids, &unread, now);
-        let tail = feed::RecentTail { cursor: None, cutoff: now.saturating_sub(feed::RECENT_WINDOW_MS), excluded, seen_cursors: BTreeSet::new() };
+        let tail = feed::RecentTail { attention: Default::default(), attention_members: Default::default(), cursor: None, cutoff: now.saturating_sub(feed::RECENT_WINDOW_MS), excluded, seen_cursors: BTreeSet::new() };
         let (recent, tail) = self.collect_recent_tail(route, scope, tail, limit.saturating_sub(rows.len())).await?;
         for row in &recent {
             if let Some(expiry) = row.updated_at.and_then(|time| time.checked_add(feed::RECENT_WINDOW_MS + 1)) { boundary = Some(boundary.map_or(expiry, |old| old.min(expiry))); }
         }
         rows.extend(recent);
+        Ok((rows, boundary, tail))
+    }
+
+    async fn collect_ordered_recent(&self, route: &provider::ProviderInstanceRoute, scope: &str, now: u64, limit: usize, active: Active, unread: Unread, resolved: &mut BuildSummaries) -> Result<(Vec<gateway::Conversation>, Option<u64>, Option<feed::RecentTail>), gateway::ProtocolError> {
+        let unread_ids = unread.keys().filter(|id| !active.contains_key(*id)).cloned().collect::<BTreeSet<_>>();
+        if let Some(cached) = &resolved.ordered {
+            if cached.active == active && cached.unread_ids == unread_ids && cached.boundary.is_none_or(|expiry| now < expiry) {
+                if active != self.collect_active(route).await? || unread != self.collect_unread(route, scope).await? { return Err(changed()); }
+                let mut rows = cached.rows.clone();
+                for row in &mut rows {
+                    if let Some(state) = unread.get(&feed::identity(row)) { row.read_state = Some(state.clone()); }
+                    else if let Some(state) = &mut row.read_state { state.unread = false; }
+                }
+                return Ok((rows, cached.boundary, cached.tail.clone()));
+            }
+        }
+        let members: BTreeSet<_> = active.keys().chain(unread.keys()).cloned().collect();
+        let mut attention = std::collections::VecDeque::new();
+        for is_active in [true, false] {
+            let ids = if is_active { active.keys().map(|(_, id)| id.clone()).collect::<Vec<_>>() }
+                else { unread.keys().filter(|id| !active.contains_key(*id)).map(|(_, id)| id.clone()).collect() };
+            if ids.is_empty() { continue; }
+            let statuses = if is_active { active.iter().map(|((_, id), (status, _))| (id.clone(), status.clone())).collect() } else { BTreeMap::new() };
+            let read_states = unread.iter().filter(|(id, _)| active.contains_key(*id) == is_active).map(|((_, id), state)| (id.clone(), state.clone())).collect();
+            attention.push_back(feed::RecentAttention { ids, statuses, unread: read_states, cursor: None, last: None, seen_cursors: BTreeSet::new() });
+        }
+        let tail = feed::RecentTail { attention, attention_members: members.clone(), cursor: None,
+            cutoff: now.saturating_sub(feed::RECENT_WINDOW_MS), excluded: members.clone(), seen_cursors: BTreeSet::new() };
+        let (rows, tail) = self.collect_recent_tail(route, scope, tail, limit).await.map_err(|error| {
+            if error.code == "invalid_cursor" || error.code == "conversation_cursor_expired" { changed() } else { error }
+        })?;
+        let boundary = rows.iter().filter(|row| !members.contains(&feed::identity(row))).filter_map(|row| row.updated_at.and_then(|time| time.checked_add(feed::RECENT_WINDOW_MS + 1))).min();
+        resolved.ordered = Some(OrderedBuild { active: active.clone(), unread_ids, rows: rows.clone(), tail: tail.clone(), boundary });
+        if active != self.collect_active(route).await? || unread != self.collect_unread(route, scope).await? { return Err(changed()); }
         Ok((rows, boundary, tail))
     }
 
@@ -364,6 +444,32 @@ impl ProviderGatewayService {
         // IDs have already been fetched separately and retain their higher rank.
         for _ in 0..128 {
             if rows.len() >= needed { return Ok((rows, Some(tail))); }
+            if let Some(group) = tail.attention.front_mut() {
+                let remaining = (needed - rows.len()).clamp(1, 100);
+                let page = self.manager.conversation_list(provider::ConversationListRequest {
+                    route: route.clone(), cursor: group.cursor.clone(), limit: Some(remaining as u64),
+                    project_filter: provider::ConversationProjectFilter::ConversationProjectFilterAll(provider::ConversationProjectFilterAll { kind: provider::ConversationProjectFilterAllKind::All }),
+                    query: Some(provider::ConversationListQuery::ConversationIdsQuery(provider::ConversationIdsQuery {
+                        kind: provider::ConversationIdsQueryKind::Ids, ids: group.ids.clone(), order_by_updated_at: Some(true),
+                    })), reader_scope: Some(scope.to_owned()),
+                }).await.map_err(gateway_error)?;
+                if page.conversations.len() > remaining { return Err(feed::error("conversation_query_incomplete", "Ordered IDs source exceeded its page limit", false)); }
+                for mut row in page.conversations {
+                    let id = row.resource.native_resource_id.clone();
+                    if (!group.statuses.contains_key(&id) && !group.unread.contains_key(&id)) || group.last.as_ref().is_some_and(|(time, previous)| row.updated_at > *time || row.updated_at == *time && id <= *previous) {
+                        return Err(feed::error("conversation_query_incomplete", "Ordered IDs source returned an out-of-query or unordered object", false));
+                    }
+                    group.last = Some((row.updated_at, id.clone()));
+                    if let Some(status) = group.statuses.get(&id) { row.status = status.clone(); }
+                    if let Some(read_state) = group.unread.get(&id) { row.read_state = Some(read_state.clone()); }
+                    rows.push(row);
+                }
+                group.cursor = page.page_info.next_cursor;
+                if let Some(cursor) = &group.cursor {
+                    if !group.seen_cursors.insert(cursor.clone()) { return Err(feed::error("conversation_query_incomplete", "Ordered IDs source cursor repeated", true)); }
+                } else { tail.attention.pop_front(); }
+                continue;
+            }
             let page = self.manager.conversation_list(provider::ConversationListRequest {
                 route: route.clone(), cursor: tail.cursor.clone(), limit: Some((needed - rows.len()).clamp(1, 100) as u64),
                 project_filter: provider::ConversationProjectFilter::ConversationProjectFilterAll(provider::ConversationProjectFilterAll { kind: provider::ConversationProjectFilterAllKind::All }),
@@ -534,6 +640,12 @@ impl ProviderGatewayService {
     }
 }
 
+async fn recent_with_budget<T>(work: impl std::future::Future<Output = Result<T, gateway::ProtocolError>>, budget: Duration) -> Result<T, gateway::ProtocolError> {
+    tokio::time::timeout(budget, work).await.map_err(|_| feed::error(
+        "recent_query_timeout", "Recent query exceeded its time budget; retry the query", true,
+    ))?
+}
+
 fn check_revision(
     revision: &mut Option<String>,
     received: &str,
@@ -580,6 +692,23 @@ pub(super) fn now_ms() -> u64 {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn recent_budget_cancels_the_whole_build_without_hiding_errors() {
+        struct Dropped(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) { self.0.store(true, std::sync::atomic::Ordering::SeqCst); }
+        }
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let guard = Dropped(dropped.clone());
+        let work = async move {
+            let _guard = guard;
+            std::future::pending::<Result<(), gateway::ProtocolError>>().await
+        };
+        assert_eq!(recent_with_budget(work, Duration::from_millis(10)).await.unwrap_err().code, "recent_query_timeout");
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+        assert_eq!(recent_with_budget(async { Err::<(), _>(changed()) }, Duration::from_secs(1)).await.unwrap_err().code, "recent_snapshot_changed");
+    }
+
     #[test]
     fn recent_advertisement_requires_every_complete_atom() {
         let capabilities: provider::ProviderCapabilities = serde_json::from_value(serde_json::json!({
@@ -603,10 +732,12 @@ mod tests {
             Some(provider::ConversationListQueryCapabilities {
                 updated_after: false,
                 ids: true,
+                ordered_ids: None,
             }),
             Some(provider::ConversationListQueryCapabilities {
                 updated_after: true,
                 ids: false,
+                ordered_ids: None,
             }),
         ] {
             let mut missing = capabilities.clone();

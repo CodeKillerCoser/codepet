@@ -5073,3 +5073,140 @@ fn wait_for_replacement_server(marker: &std::path::Path, count: usize) {
         std::thread::sleep(Duration::from_millis(20));
     }
 }
+
+fn metadata_read_count(marker: &Path) -> usize {
+    session_log_paths(marker).iter().filter_map(|path| std::fs::read_to_string(path).ok())
+        .map(|text| text.lines().filter(|line| line.contains("\tthread/read\t")).count()).sum()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ordered_ids_hydrates_only_the_requested_modern_page_and_replays_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("ordered-marker");
+    let home = temp.path().join("codex-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let db = rusqlite::Connection::open(home.join("state_5.sqlite")).unwrap();
+    db.execute_batch("CREATE TABLE threads(id TEXT PRIMARY KEY, archived INTEGER, updated_at INTEGER, updated_at_ms INTEGER, history_mode TEXT);").unwrap();
+    let mut times = serde_json::Map::new();
+    for i in 0..1000 {
+        let id = format!("ordered-{i:04}");
+        db.execute("INSERT INTO threads VALUES(?1,0,?2,?3,'paginated')", rusqlite::params![id, 1000+i, (1000+i)*1000+123]).unwrap();
+        times.insert(id, json!(1000+i));
+    }
+    let source = marker.with_extension("directory.json");
+    std::fs::write(&source, json!({"rows":[],"metadataUpdatedAt":times}).to_string()).unwrap();
+    std::fs::write(home.join(".codex-global-state.json"), json!({
+        "app-server-project-id-by-legacy-project-id-by-host":{format!("local:{}",home.display()):{"legacy":"project-fixture"}},
+        "thread-project-assignments":{"ordered-0999":{"projectKind":"local","projectId":"legacy"}}
+    }).to_string()).unwrap();
+    let (provider, route, _) = configured_direct_provider("union-directory", &marker).await;
+    let mut request = ids_list_request(&route, (0..1000).map(|i| format!("ordered-{i:04}")).collect());
+    request.limit = Some(20);
+    request.query = Some(serde_json::from_value(json!({"kind":"ids","ids":(0..1000).map(|i|format!("ordered-{i:04}")).collect::<Vec<_>>(),"orderByUpdatedAt":true})).unwrap());
+    let first = provider.conversation_list(request.clone()).await.unwrap();
+    assert_eq!(first.conversations[0].resource.native_resource_id, "ordered-0999");
+    assert_eq!(first.conversations[0].updated_at, Some(1999123));
+    assert_eq!(first.conversations[0].project.as_ref().unwrap().native_resource_id, "project-fixture");
+    assert_eq!(metadata_read_count(&marker), 20, "1000 rank keys require only 20 native objects for the first page");
+    request.cursor = first.page_info.next_cursor;
+    let second = provider.conversation_list(request.clone()).await.unwrap();
+    assert_eq!(second.conversations[0].resource.native_resource_id, "ordered-0979");
+    assert_eq!(metadata_read_count(&marker), 40);
+    let mut wrong_scope = request.clone();
+    wrong_scope.reader_scope = Some("other-reader".into());
+    assert_eq!(provider.conversation_list(wrong_scope).await.unwrap_err().code, "invalid_cursor");
+    assert_eq!(serde_json::to_value(&second).unwrap(), serde_json::to_value(provider.conversation_list(request.clone()).await.unwrap()).unwrap());
+    assert_eq!(metadata_read_count(&marker), 40);
+    // An unvisited object's native time changed beyond the frozen rank: expire
+    // rather than silently returning a misplaced object or skipping it forever.
+    times.insert("ordered-0959".into(), json!(3000));
+    std::fs::write(&source, json!({"rows":[],"metadataUpdatedAt":times}).to_string()).unwrap();
+    request.cursor = second.page_info.next_cursor;
+    assert_eq!(provider.conversation_list(request.clone()).await.unwrap_err().code, "invalid_cursor");
+    db.execute("UPDATE threads SET updated_at=3000,updated_at_ms=3000123 WHERE id='ordered-0959'", []).unwrap();
+    request.cursor = None;
+    assert_eq!(provider.conversation_list(request).await.unwrap().conversations[0].resource.native_resource_id, "ordered-0959");
+    assert!(!marker.with_extension("directory-requests.jsonl").exists(), "explicit IDs must not enumerate native history");
+    provider.instance_stop(InstanceStopRequest {route}).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ordered_ids_certifies_legacy_and_unpersisted_candidates_natively() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("ordered-legacy-marker");
+    let home = temp.path().join("codex-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let db = rusqlite::Connection::open(home.join("state_5.sqlite")).unwrap();
+    db.execute_batch("CREATE TABLE threads(id TEXT PRIMARY KEY, archived INTEGER, updated_at INTEGER, history_mode TEXT);
+        INSERT INTO threads VALUES('legacy-repaired',0,40,'legacy'),('legacy-corrected',0,90,'legacy');").unwrap();
+    std::fs::write(marker.with_extension("directory.json"), json!({"rows":[],"metadataDelayMs":0,"metadataUpdatedAt":{"legacy-corrected":11}}).to_string()).unwrap();
+    let (provider, route, _) = configured_direct_provider("union-directory", &marker).await;
+    let mut request = ids_list_request(&route, vec![]);
+    request.query = Some(serde_json::from_value(json!({"kind":"ids","ids":["legacy-repaired","legacy-corrected","event-only","missing-000"],"orderByUpdatedAt":true})).unwrap());
+    let page = provider.conversation_list(request).await.unwrap();
+    assert_eq!(page.conversations.iter().map(|row| row.resource.native_resource_id.as_str()).collect::<Vec<_>>(), vec!["legacy-repaired","legacy-corrected","event-only"]);
+    assert_eq!(page.conversations[0].updated_at, Some(40000));
+    assert_eq!(page.conversations[1].updated_at, Some(11000), "a valid native correction must not be replaced by max(DB,native)");
+    assert_eq!(metadata_read_count(&marker), 4);
+    provider.instance_stop(InstanceStopRequest {route}).await.unwrap();
+}
+
+async fn wait_for_metadata_reads(marker: &Path, count: usize) {
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while metadata_read_count(marker) < count { tokio::time::sleep(Duration::from_millis(5)).await; }
+    }).await.expect("metadata reads should run concurrently");
+}
+
+fn ids_list_request(route: &ProviderInstanceRoute, ids: Vec<String>) -> ConversationListRequest {
+    ConversationListRequest { route: route.clone(), project_filter: all_project_filter(), cursor: None,
+        limit: Some(100), query: Some(serde_json::from_value(json!({"kind":"ids","ids":ids})).unwrap()), reader_scope: None }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn union_directory_metadata_reads_are_bounded_shared_and_not_cached() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("parallel-marker");
+    std::fs::write(marker.with_extension("directory.json"), json!({"rows":[],"metadataGate":true}).to_string()).unwrap();
+    let (provider, route, _) = configured_direct_provider("union-directory", &marker).await;
+    let request = ids_list_request(&route, (0..100).map(|i| format!("parallel-{i:03}")).collect());
+    let first = tokio::spawn({ let provider = provider.clone(); let request = request.clone(); async move { provider.conversation_list(request).await } });
+    wait_for_metadata_reads(&marker, 8).await;
+    let second = tokio::spawn({ let provider = provider.clone(); let request = request.clone(); async move { provider.conversation_list(request).await } });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(metadata_read_count(&marker), 8, "both queries share the same eight in-flight native reads");
+    // A control request uses the same native process while metadata is blocked.
+    let projects = tokio::time::timeout(Duration::from_secs(2), provider.project_list(ProjectListRequest { route: route.clone(), cursor: None, limit: Some(20) })).await.unwrap().unwrap();
+    assert!(!projects.projects.is_empty());
+    std::fs::write(marker.with_extension("metadata-release"), "1").unwrap();
+    let first = first.await.unwrap().unwrap();
+    let second = second.await.unwrap().unwrap();
+    assert_eq!(first.conversations.len(), 100);
+    assert_eq!(serde_json::to_value(first).unwrap()["conversations"], serde_json::to_value(second).unwrap()["conversations"]);
+    assert_eq!(metadata_read_count(&marker), 100, "overlapping queries must not duplicate native reads");
+    assert_eq!(provider.conversation_list(request).await.unwrap().conversations.len(), 100);
+    assert_eq!(metadata_read_count(&marker), 200, "fresh queries must observe external metadata changes");
+    let missing = ids_list_request(&route, vec!["missing-000".into()]);
+    assert!(provider.conversation_list(missing.clone()).await.unwrap().conversations.is_empty());
+    assert!(provider.conversation_list(missing).await.unwrap().conversations.is_empty());
+    assert_eq!(metadata_read_count(&marker), 202, "absence must not become a persistent negative cache");
+    provider.instance_stop(InstanceStopRequest { route }).await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn union_directory_cancellation_keeps_capacity_until_native_reads_finish() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("cancel-marker");
+    std::fs::write(marker.with_extension("directory.json"), json!({"rows":[],"metadataGate":true}).to_string()).unwrap();
+    let (provider, route, _) = configured_direct_provider("union-directory", &marker).await;
+    let first = tokio::spawn({ let provider = provider.clone(); let request = ids_list_request(&route, (0..100).map(|i| format!("cancel-{i:03}")).collect()); async move { provider.conversation_list(request).await } });
+    wait_for_metadata_reads(&marker, 8).await;
+    first.abort();
+    assert!(first.await.unwrap_err().is_cancelled());
+    let second = tokio::spawn({ let provider = provider.clone(); let request = ids_list_request(&route, vec!["after-cancel".into()]); async move { provider.conversation_list(request).await } });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(metadata_read_count(&marker), 8, "cancellation cannot free slots still used by native workers");
+    std::fs::write(marker.with_extension("metadata-release"), "1").unwrap();
+    assert_eq!(second.await.unwrap().unwrap().conversations.len(), 1);
+    assert_eq!(metadata_read_count(&marker), 9);
+    provider.instance_stop(InstanceStopRequest { route }).await.unwrap();
+}

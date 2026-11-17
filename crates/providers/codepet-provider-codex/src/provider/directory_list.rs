@@ -8,7 +8,51 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 #[derive(Default)]
-pub(super) struct DirectoryPages(Mutex<HashMap<String, Arc<tokio::sync::Mutex<QueryState>>>>);
+pub(super) struct DirectoryPages {
+    views: Mutex<HashMap<String, Arc<tokio::sync::Mutex<QueryState>>>>,
+    pub(super) metadata: Arc<MetadataReads>,
+}
+
+const METADATA_CONCURRENCY: usize = 8;
+const LIST_BUDGET: Duration = Duration::from_secs(20);
+type MetadataResult = Result<CodexConversationSnapshot, CodexAppServerError>;
+type MetadataCell = tokio::sync::OnceCell<MetadataResult>;
+
+/// Share overlapping reads only. No positive or negative cache can outlive a
+/// request, so external edits and newly materialized threads remain visible.
+pub(super) struct MetadataReads {
+    pending: Mutex<HashMap<(String, u64, String), std::sync::Weak<MetadataCell>>>,
+    slots: Arc<tokio::sync::Semaphore>,
+}
+
+impl Default for MetadataReads {
+    fn default() -> Self {
+        Self { pending: Default::default(), slots: Arc::new(tokio::sync::Semaphore::new(METADATA_CONCURRENCY)) }
+    }
+}
+
+impl MetadataReads {
+    pub(super) async fn read(&self, generation: String, epoch: u64, server: CodexAppServerSession, id: String) -> MetadataResult {
+        let cell = {
+            let mut pending = lock(&self.pending);
+            pending.retain(|_, cell| cell.strong_count() > 0);
+            pending.get(&(generation.clone(), epoch, id.clone())).and_then(std::sync::Weak::upgrade).unwrap_or_else(|| {
+                let cell = Arc::new(MetadataCell::new());
+                pending.insert((generation.clone(), epoch, id.clone()), Arc::downgrade(&cell));
+                cell
+            })
+        };
+        cell.get_or_init(|| async {
+            let permit = self.slots.clone().acquire_owned().await.map_err(|_| CodexAppServerError::Shutdown)?;
+            tokio::task::spawn_blocking(move || {
+                // A cancelled caller cannot release capacity while its native
+                // request is still running on the blocking worker.
+                let _permit = permit;
+                server.thread_read_metadata(&id)
+            }).await.map_err(|error| CodexAppServerError::Protocol(format!("Metadata worker failed: {error}")))?
+        }).await.clone()
+    }
+}
 
 #[derive(Clone)]
 struct QueryState {
@@ -74,12 +118,21 @@ impl QueryState {
 
 impl CodexInstanceRuntime {
     pub(super) async fn list_directory_page(&self, generation: &str, request: &ConversationListRequest) -> Result<ConversationListResponse, ProtocolError> {
+        if matches!(&request.query, Some(ConversationListQuery::ConversationIdsQuery(query)) if query.order_by_updated_at == Some(true)) {
+            return tokio::time::timeout(LIST_BUDGET, self.list_ordered_ids(generation, request)).await
+                .map_err(|_| protocol_error("conversation_query_incomplete", "Ordered IDs page exceeded its time budget".into(), true))?;
+        }
+        tokio::time::timeout(LIST_BUDGET, self.list_directory_page_inner(generation, request)).await
+            .map_err(|_| protocol_error("conversation_query_incomplete", "List page exceeded its time budget; retry the query".into(), true))?
+    }
+
+    async fn list_directory_page_inner(&self, generation: &str, request: &ConversationListRequest) -> Result<ConversationListResponse, ProtocolError> {
         let mut value = serde_json::to_value(request).map_err(|e| protocol_error("invalid_request", e.to_string(), false))?;
         value.as_object_mut().unwrap().remove("cursor");
         value.as_object_mut().unwrap().remove("limit");
         let binding = format!("{generation}:{value}");
         let (token, offset, state) = {
-            let mut pages = lock(&self.directory_pages.0);
+            let mut pages = lock(&self.directory_pages.views);
             pages.retain(|_, state| state.try_lock().map(|state| state.created.elapsed() < Duration::from_secs(120)).unwrap_or(true));
             if let Some(cursor) = &request.cursor {
                 let (token, offset) = cursor.rsplit_once(':').ok_or_else(invalid_cursor)?;
@@ -185,6 +238,9 @@ impl CodexInstanceRuntime {
         if let Some(ids) = &state.db.ids {
             for id in ids { if !candidates.iter().any(|(known,_)| known == id) { candidates.push((id.clone(), None)); } }
         }
+        let generation = self.query_generation()?;
+        let epoch = self.atoms.event_epoch();
+        let mut reads = tokio::task::JoinSet::new();
         for (id, fact) in candidates {
             if state.emitted.contains(&id) { continue; }
             if let Some(row) = state.pending.get_mut(&id) {
@@ -192,8 +248,16 @@ impl CodexInstanceRuntime {
                 continue;
             }
             let server = self.ready_server()?;
-            let requested = id.clone();
-            let mut snapshot = match tokio::task::spawn_blocking(move || server.thread_read_metadata(&requested)).await.map_err(provider_task_error)? {
+            let metadata = self.directory_pages.metadata.clone();
+            let generation = generation.clone();
+            reads.spawn(async move {
+                let result = metadata.read(generation, epoch, server, id.clone()).await;
+                (id, fact, result)
+            });
+        }
+        while let Some(result) = reads.join_next().await {
+            let (id, fact, result) = result.map_err(provider_task_error)?;
+            let mut snapshot = match result {
                 Ok(snapshot) => snapshot,
                 Err(error) if state.db.ids.is_some() && error.is_thread_not_loaded(&id) => continue,
                 Err(error) => return Err(CodexProtocolMapper::error(error)),

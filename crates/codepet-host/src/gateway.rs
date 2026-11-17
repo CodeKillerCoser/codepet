@@ -40,6 +40,7 @@ struct GatewayProviderRuntime {
     summary: gateway::ProviderSummary,
     capabilities: gateway::GatewayCapabilities,
     provider_mark_read: bool,
+    provider_ordered_ids: bool,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -1647,6 +1648,7 @@ fn gateway_provider(
         .and_then(|instance| instance.harness.executable_path.clone())
         .or_else(|| configured_executable_path(&runtime.record.settings));
     GatewayProviderRuntime {
+        provider_ordered_ids: runtime.instance.as_ref().and_then(|instance| instance.capabilities.conversation_list_query.as_ref()).is_some_and(|query| query.ordered_ids == Some(true)),
         provider_mark_read: runtime.instance.as_ref().is_some_and(|instance|
             instance.capabilities.methods.contains(&provider::ProviderCapability::ConversationMarkRead)),
         route: provider::ProviderInstanceRoute {

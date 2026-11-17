@@ -11,6 +11,7 @@ pub(crate) struct ConversationStateStore {
     path: Option<PathBuf>,
 }
 
+
 impl ConversationStateStore {
     pub(crate) fn recent_turn_failures(&self, conversation: &gateway::RoutedResourceId) -> HostResult<Vec<gateway::TurnTask>> {
         self.store(&conversation.provider_id)?.recent_turn_failures(conversation).map_err(HostError::from)
@@ -84,14 +85,31 @@ impl ConversationStateStore {
         scope: &str,
         conversations: &mut [gateway::Conversation],
     ) -> HostResult<bool> {
-        let mut changed=false;
-        for conversation in conversations { changed |= self.store(&conversation.resource.provider_id)?.observe_and_decorate_summaries(scope,std::slice::from_mut(conversation)).map_err(HostError::from)?; }
-        Ok(changed)
+        self.observe_batches(scope, conversations, false)
     }
     pub(crate) fn observe_page_summaries(&self, scope: &str, conversations: &mut [gateway::Conversation]) -> HostResult<bool> {
+        self.observe_batches(scope, conversations, true)
+    }
+    fn observe_batches(&self, scope: &str, conversations: &mut [gateway::Conversation], page: bool) -> HostResult<bool> {
+        let observe = |store: &SharedConversationStateStore, rows: &mut [gateway::Conversation]| {
+            if page { store.observe_page_summaries(scope, rows) }
+            else { store.observe_and_decorate_summaries(scope, rows) }.map_err(HostError::from)
+        };
+        let Some(first) = conversations.first() else { return Ok(false); };
+        if conversations.iter().all(|row| row.resource.provider_id == first.resource.provider_id) {
+            return observe(self.store(&first.resource.provider_id)?.as_ref(), conversations);
+        }
+        // Mixed routes retain caller order while each Provider database gets
+        // one transaction. Most list responses take the allocation-free path above.
+        let mut batches = std::collections::BTreeMap::<String, Vec<(usize, gateway::Conversation)>>::new();
+        for (index, row) in conversations.iter().enumerate() {
+            batches.entry(row.resource.provider_id.clone()).or_default().push((index, row.clone()));
+        }
         let mut changed = false;
-        for conversation in conversations {
-            changed |= self.store(&conversation.resource.provider_id)?.observe_page_summaries(scope, std::slice::from_mut(conversation)).map_err(HostError::from)?;
+        for (provider, batch) in batches {
+            let (indices, mut rows): (Vec<_>, Vec<_>) = batch.into_iter().unzip();
+            changed |= observe(self.store(&provider)?.as_ref(), &mut rows)?;
+            for (index, row) in indices.into_iter().zip(rows) { conversations[index] = row; }
         }
         Ok(changed)
     }
@@ -118,5 +136,45 @@ impl ConversationStateStore {
         };
         let store=match id{Some(id)=>self.store(id)?,None=>self.shared.clone()};
         store.observe_provider_event(event).map_err(HostError::from)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn row(provider: &str, id: &str, preview: &str) -> gateway::Conversation {
+        serde_json::from_value(serde_json::json!({
+            "resource":{"providerId":provider,"nativeResourceId":id},
+            "title":id,"preview":preview,"status":"idle","updatedAt":1,
+        })).unwrap()
+    }
+
+    #[test]
+    fn batches_preserve_provider_routing_order_and_reader_isolation() {
+        let store = ConversationStateStore::memory();
+        for provider in ["p1", "p2"] {
+            let shared = std::sync::Arc::new(SharedConversationStateStore::memory());
+            shared.ensure_client("reader-a").unwrap();
+            shared.ensure_client("reader-b").unwrap();
+            store.stores.lock().unwrap().insert(provider.into(), shared);
+        }
+        let mut rows = vec![row("p1", "same-id", "before"), row("p2", "same-id", "before"), row("p1", "other-id", "before")];
+        assert!(!store.observe_page_summaries("reader-a", &mut rows).unwrap(), "new baselines do not invalidate the page");
+        assert!(rows.iter().all(|row| !row.read_state.as_ref().unwrap().unread));
+        for row in &mut rows { row.preview = Some("after".into()); }
+        assert!(store.observe_and_decorate_summaries("reader-a", &mut rows).unwrap());
+        assert!(rows.iter().all(|row| row.read_state.as_ref().unwrap().unread));
+        assert_eq!(rows.iter().map(|row| row.resource.provider_id.as_str()).collect::<Vec<_>>(), vec!["p1", "p2", "p1"]);
+        let version = rows[0].read_state.as_ref().unwrap().activity_version.clone();
+        store.mark_read("reader-a", &rows[0].resource, &version).unwrap();
+        assert!(!store.observe_page_summaries("reader-a", &mut rows).unwrap());
+        assert!(!rows[0].read_state.as_ref().unwrap().unread);
+        assert!(rows[1].read_state.as_ref().unwrap().unread, "same native ID in another Provider is independent");
+        store.observe_page_summaries("reader-b", &mut rows).unwrap();
+        assert!(rows[0].read_state.as_ref().unwrap().unread, "another reader remains unread");
+        // The common single-Provider path and mixed batches use the same state.
+        assert!(!store.observe_and_decorate_summaries("reader-b", &mut rows[..1]).unwrap());
+        assert!(!store.observe_page_summaries("reader-a", &mut []).unwrap());
     }
 }

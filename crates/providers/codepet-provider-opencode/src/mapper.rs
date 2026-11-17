@@ -37,7 +37,7 @@ impl OpenCodeProtocolMapper {
 
     pub fn base_capabilities() -> ProviderCapabilities {
         codepet_provider_data::with_usage_capabilities(ProviderCapabilities { usage_datasets: Some(codepet_provider_data::datasets(false)),
-            conversation_list_query: Some(codepet_provider_sdk::ConversationListQueryCapabilities { updated_after: true, ids: true }),
+            conversation_list_query: Some(codepet_provider_sdk::ConversationListQueryCapabilities { updated_after: true, ids: true, ordered_ids: Some(true) }),
             revision: "opencode-server-1.18.25-controls-v2".to_string(),
             methods: vec![
                 ProviderCapability::ConversationList,

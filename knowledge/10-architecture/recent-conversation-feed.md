@@ -76,7 +76,9 @@ updatedAfter 查询（14天）───────────────┴�
 
 运行中优先、未读次之、其余近期最后；每组 updatedAt 降序；同时间按完整 routed resource identity 排序。一个会话只出现一次，同时 active/unread 归 active。
 
-Host 完整收集自有 active/unread ID 集合并补读这些明确 ID 的摘要，先确定高优先级排序；14 天历史只查询当前页面缺口，保存 Provider cursor 按需续取。已访问页可重放，未访问历史不提前物化。内部请求与并发有界、可取消且不阻塞控制消息；不截断到任意 N 条冒充结束。
+Host 完整收集 active/unread 的轻量 ID 集合。实例声明可选的 `conversationListQuery.orderedIds` 时，使用现有 `conversation.list` 的 `orderByUpdatedAt=true` IDs 模式分别分页活动、去除活动后的未读，最后用 14 天历史补足页面；保存各组 Provider cursor、跨页排序边界和已访问结果，不提前物化全部高优先级对象。单组超过有序 IDs 的 10000 候选上限，或实例未声明能力时，保留原有完整聚合路径；不任意截断。内部请求与并发有界、可取消且不阻塞控制消息。
+
+Codex 的有序路径只用已核对版本的 paginated DB 时间及 Hook 时间作为轻量排序键，正式对象仍来自 App Server；legacy、未知 schema/运行时或未落库会话先原生核实。首屏对象与排序键不一致时回退完整核实；后续页不一致则失效游标。该优化不会恢复启动/周期全历史扫描，也不能声称所有异常候选都只需读取 20 个对象。实现与性能证据见 [有序高优先级分页](../40-runbooks/recent-ordered-attention-pagination.md)。
 
 Gateway `conversation.recent` 的稳定目标形状：
 

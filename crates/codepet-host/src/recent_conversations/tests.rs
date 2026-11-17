@@ -17,6 +17,21 @@ fn key(scope: &str, generation: u64) -> ViewKey {
 }
 
 #[test]
+fn read_baseline_invalidations_do_not_discard_native_metadata_but_source_changes_do() {
+    let mut store = RecentSnapshots::default();
+    store.track("p");
+    store.invalidate("p");
+    assert_eq!(store.epoch("p"), 1);
+    assert_eq!(store.source_epoch("p"), 0);
+    assert_eq!(store.take_invalidations(1).len(), 1);
+    assert_eq!(store.source_epoch("p"), 0, "publishing our own invalidation hint cannot restart native lookup");
+    store.invalidate_source("p");
+    assert_eq!(store.epoch("p"), 2);
+    assert_eq!(store.source_epoch("p"), 1);
+    assert_eq!(store.source_epoch("other-provider"), 0);
+}
+
+#[test]
 fn all_attention_groups_share_one_page_budget_and_old_ids_are_included() {
     let now = RECENT_WINDOW_MS * 3;
     let mut summaries = BTreeMap::new();

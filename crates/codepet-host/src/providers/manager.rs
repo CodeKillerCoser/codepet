@@ -1165,16 +1165,16 @@ impl PluginManager {
             let allowed = match &request.query {
                 Some(codepet_provider_sdk::ConversationListQuery::Unrecognized(_)) => false,
                 Some(codepet_provider_sdk::ConversationListQuery::ConversationUpdatedAfterQuery(_)) => modes.updated_after,
-                Some(codepet_provider_sdk::ConversationListQuery::ConversationIdsQuery(_)) => modes.ids,
+                Some(codepet_provider_sdk::ConversationListQuery::ConversationIdsQuery(query)) => modes.ids && (query.order_by_updated_at != Some(true) || modes.ordered_ids == Some(true)),
                 None => modes.updated_after || modes.ids,
             };
             if !allowed { return Err(HostError::new("unsupported", "Provider does not support this summary query")); }
             if let Some(codepet_provider_sdk::ConversationListQuery::ConversationIdsQuery(query)) = &request.query {
-                if query.ids.is_empty() || query.ids.len() > 100
+                if query.ids.is_empty() || query.ids.len() > (if query.order_by_updated_at == Some(true) { 10000 } else { 100 })
                     || query.ids.iter().any(|id| id.trim().is_empty())
                     || query.ids.iter().collect::<BTreeSet<_>>().len() != query.ids.len()
                     || !matches!(request.project_filter, codepet_provider_sdk::ConversationProjectFilter::ConversationProjectFilterAll(_)) {
-                    return Err(HostError::new("invalid_request", "IDs query requires 1..100 distinct IDs and all project scope"));
+                    return Err(HostError::new("invalid_request", "IDs query requires distinct IDs within its mode limit and all project scope"));
                 }
             }
         }

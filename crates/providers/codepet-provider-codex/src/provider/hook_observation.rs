@@ -22,6 +22,12 @@ pub(super) struct ActivityProjection {
 }
 
 impl ActivityProjection {
+    pub(super) fn projected_time(&self, id: &str, time: Option<u64>) -> Option<u64> {
+        match self.sessions.get(id).map(|facts| facts.received_at).filter(|time| *time != 0) {
+            Some(received) => Some(time.unwrap_or(0).max(received)),
+            None => time,
+        }
+    }
     fn project(&mut self, conversation: &mut Conversation) {
         let facts = self.sessions.entry(conversation.resource.native_resource_id.clone()).or_default();
         if let Some(status) = facts.status.clone() {
@@ -190,6 +196,16 @@ mod tests {
              event_id: id.into(), received_at: time, gap:false,
             payload: serde_json::from_value(json!({"hook_event_name":name,"session_id":"thread"})).unwrap(),
         }
+    }
+
+    #[test]
+    fn rank_keys_apply_the_same_hook_time_as_formal_objects() {
+        let (runtime, _) = runtime();
+        runtime.observe_hook(&notification("start", "UserPromptSubmit", 100)).unwrap();
+        let projection = lock(&runtime.hook_activity);
+        assert_eq!(projection.projected_time("thread", Some(50)), Some(100));
+        assert_eq!(projection.projected_time("thread", Some(200)), Some(200));
+        assert_eq!(projection.projected_time("unknown", None), None);
     }
 
     #[test]

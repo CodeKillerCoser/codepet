@@ -244,6 +244,8 @@ methods.json 中 dispatchLane=control 的请求及响应使用 control 预留资
 
 Provider 通过实例能力声明可用业务方法；对象、输入、选择与事件的具体含义见对应 Schema 和注册表。 能力目录与实际 selection 必须一致：create/acquire/turn 返回同一实例已生效的选择，声明了目录的维度使用其中存在且未禁用的选项，有默认值时返回实际默认选择；未声明的维度不携带值。目录变化应更新能力 revision，错误选择应明确拒绝。仅按 JSON Schema 校验一个对象，不能替代这类跨对象一致性校验。宿主、插件包、实例与原生 Harness 分别具有自己的生命周期，不能把“插件在线”直接解释为“所有实例可用”。
 
+会话候选的有序分页是可选能力：只有声明 `conversationListQuery.orderedIds` 的实例，Host 才会在 `conversation.list` 的 IDs 查询中启用 `orderByUpdatedAt`。Provider 按整个候选集合的最终更新时间排序，再补齐请求页的正式对象；未知排序依据必须核实，不能猜测或静默丢弃。已有页可重放，无法保持后续页顺序时明确使游标失效。未声明该能力时仍沿用原有 IDs 查询与 Host 聚合，普通列表、项目列表和默认 IDs 排序不变；具体限制见会话模块 Schema。
+
 如果需要 Host 帮助选择外部 Harness，`runtime.getInstalled` 返回库存和当前选择，selectionRequired 缺省为 true。自行管理依赖的插件可显式返回 selectionRequired=false，此时清单应为空、selected 为 null、扫描不在进行且没有 scanError。App 显示“由 Provider 管理，无需选择”。这只表明选择职责，不保证依赖已安装；真实启动失败仍由实例诊断报告。
 
 

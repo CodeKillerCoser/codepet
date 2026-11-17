@@ -149,6 +149,8 @@ pub struct ConversationGetResponse {
 pub struct ConversationIdsQuery {
     pub kind: ConversationIdsQueryKind,
     pub ids: Vec<NativeResourceId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub order_by_updated_at: Option<bool>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -192,6 +194,8 @@ impl<'de> Deserialize<'de> for ConversationListQuery {
 pub struct ConversationListQueryCapabilities {
     pub updated_after: bool,
     pub ids: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ordered_ids: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -2172,6 +2176,9 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
         },
         "minItems": 1,
         "uniqueItems": true
+      },
+      "orderByUpdatedAt": {
+        "type": "boolean"
       }
     },
     "required": [
@@ -2187,6 +2194,9 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
         "type": "boolean"
       },
       "ids": {
+        "type": "boolean"
+      },
+      "orderedIds": {
         "type": "boolean"
       }
     },

@@ -133,6 +133,7 @@ fn main() {
                     continue;
                 }
                 let user_agent = match options.approval_mode.as_str() {
+                    "union-directory" => "codex-cli/0.166.0",
                     "app-server-0.151-history" => "codex-cli/0.151.0",
                     "app-server-0.152-history" => "codex-cli/0.152.0",
                     "app-server-code-pet-history" => "code-pet/0.153.1 (Mac OS 26.3.2; arm64) iTerm.app/3.6.9 (code-pet; 0.1.0)",
@@ -492,12 +493,38 @@ fn main() {
                     continue;
                 }
                 if options.approval_mode == "union-directory" {
+                    let config: Value = serde_json::from_slice(&std::fs::read(options.marker.as_ref().unwrap().with_extension("directory.json")).unwrap()).unwrap();
+                    if config["metadataGate"] == true || config["metadataDelayMs"].is_number() {
+                        let release = options.marker.as_ref().unwrap().with_extension("metadata-release");
+                        let gated = config["metadataGate"] == true;
+                        let delay = config["metadataDelayMs"].as_u64().unwrap_or(0);
+                        let missing = thread_id.starts_with("missing-");
+                        let thread_id = thread_id.to_owned();
+                        std::thread::spawn(move || {
+                            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+                            while gated && !release.exists() && std::time::Instant::now() < deadline {
+                                std::thread::sleep(Duration::from_millis(5));
+                            }
+                            std::thread::sleep(Duration::from_millis(delay));
+                            let mut value = thread(&thread_id, "idle", Vec::new());
+                            value["updatedAt"] = config["metadataUpdatedAt"].get(&thread_id).cloned().unwrap_or(json!(10));
+                            value["name"] = Value::Null;
+                            value["preview"] = json!("");
+                            let response = if missing {
+                                json!({"id":id,"error":{"code":-32600,"message":format!("thread not loaded: {thread_id}")}})
+                            } else { json!({"id":id,"result":{"thread":value}}) };
+                            let mut encoded = serde_json::to_vec(&response).unwrap();
+                            encoded.push(b'\n');
+                            std::io::stdout().lock().write_all(&encoded).unwrap();
+                        });
+                        continue;
+                    }
                     if thread_id == "broken" {
                         write_json(&mut writer, json!({"id":id,"error":{"code":-32603,"message":"unreadable rollout"}}));
                         continue;
                     }
                     let mut value = thread(thread_id, "idle", Vec::new());
-                    value["updatedAt"] = json!(10);
+                    value["updatedAt"] = config["metadataUpdatedAt"].get(&thread_id).cloned().unwrap_or(json!(10));
                     value["name"] = Value::Null;
                     value["preview"] = json!("");
                     respond(&mut writer, id, json!({"thread":value}));
@@ -1326,7 +1353,8 @@ fn request(
 }
 
 fn write_json(writer: &mut BufWriter<std::io::Stdout>, value: Value) {
-    serde_json::to_writer(&mut *writer, &value).unwrap();
-    writer.write_all(b"\n").unwrap();
+    let mut encoded = serde_json::to_vec(&value).unwrap();
+    encoded.push(b'\n');
+    writer.write_all(&encoded).unwrap();
     writer.flush().unwrap();
 }

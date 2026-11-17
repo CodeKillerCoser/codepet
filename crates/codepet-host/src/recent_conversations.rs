@@ -77,7 +77,19 @@ pub(crate) fn aggregate(
 }
 
 #[derive(Clone)]
+pub(crate) struct RecentAttention {
+    pub ids: Vec<String>,
+    pub statuses: BTreeMap<String, gateway::ConversationStatus>,
+    pub unread: BTreeMap<String, gateway::ConversationReadState>,
+    pub cursor: Option<String>,
+    pub last: Option<(Option<u64>, String)>,
+    pub seen_cursors: BTreeSet<String>,
+}
+
+#[derive(Clone)]
 pub(crate) struct RecentTail {
+    pub attention: std::collections::VecDeque<RecentAttention>,
+    pub attention_members: BTreeSet<Identity>,
     pub cursor: Option<String>,
     pub cutoff: u64,
     pub excluded: BTreeSet<Identity>,
@@ -85,6 +97,7 @@ pub(crate) struct RecentTail {
 }
 
 struct Snapshot {
+    attention_members: BTreeSet<Identity>,
     tail: Option<RecentTail>,
     rows: Vec<gateway::Conversation>,
     revision: String,
@@ -96,6 +109,7 @@ struct Snapshot {
 #[derive(Default)]
 struct ProviderVersion {
     epoch: u64,
+    source_epoch: u64,
     revision: u64,
     pending: bool,
     boundary_at: Option<u64>,
@@ -136,6 +150,18 @@ impl RecentSnapshots {
 
     pub(crate) fn epoch(&self, provider_id: &str) -> u64 {
         self.versions.get(provider_id).map_or(0, |v| v.epoch)
+    }
+
+    pub(crate) fn source_epoch(&self, provider_id: &str) -> u64 {
+        self.versions.get(provider_id).map_or(0, |v| v.source_epoch)
+    }
+
+    /// Source changes disqualify build-local metadata. Read-baseline admission
+    /// only invalidates the view and does not make native metadata stale.
+    pub(crate) fn invalidate_source(&mut self, provider_id: &str) {
+        let version = self.versions.entry(provider_id.to_owned()).or_default();
+        version.source_epoch = version.source_epoch.saturating_add(1);
+        self.invalidate(provider_id);
     }
 
     pub(crate) fn invalidate(&mut self, provider_id: &str) {
@@ -203,6 +229,7 @@ impl RecentSnapshots {
         self.snapshots.insert(
             key,
             Snapshot {
+                attention_members: BTreeSet::new(),
                 tail: None,
                 rows,
                 revision: revision(version.revision),
@@ -215,7 +242,10 @@ impl RecentSnapshots {
     }
 
     pub(crate) fn set_tail(&mut self, key: &ViewKey, tail: Option<RecentTail>) {
-        if let Some(snapshot) = self.snapshots.get_mut(key) { snapshot.tail = tail; }
+        if let Some(snapshot) = self.snapshots.get_mut(key) {
+            snapshot.attention_members = tail.as_ref().map(|tail| tail.attention_members.clone()).unwrap_or_default();
+            snapshot.tail = tail;
+        }
     }
 
     pub(crate) fn pending_tail(&self, key: &ViewKey, cursor: Option<&str>, limit: Option<u64>) -> Result<Option<(RecentTail, usize)>, gateway::ProtocolError> {
@@ -235,7 +265,7 @@ impl RecentSnapshots {
         if self.epoch(&key.provider_id) != epoch { return Err(expired_cursor()); }
         let snapshot = self.snapshots.get_mut(key).ok_or_else(expired_cursor)?;
         if now >= snapshot.expires_at { return Err(expired_cursor()); }
-        if let Some(boundary) = rows.iter().filter_map(|row| row.updated_at.and_then(|time| time.checked_add(RECENT_WINDOW_MS + 1))).min() {
+        if let Some(boundary) = rows.iter().filter(|row| !snapshot.attention_members.contains(&identity(row))).filter_map(|row| row.updated_at.and_then(|time| time.checked_add(RECENT_WINDOW_MS + 1))).min() {
             if now >= boundary { return Err(expired_cursor()); }
             let version = self.versions.entry(key.provider_id.clone()).or_default();
             version.boundary_at = Some(version.boundary_at.map_or(boundary, |old| old.min(boundary)));

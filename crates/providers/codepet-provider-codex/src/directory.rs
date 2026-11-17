@@ -10,6 +10,7 @@ pub(crate) struct DbEvidence {
     pub archived: bool,
     pub updated_ms: Option<u64>,
     pub legacy: bool,
+    pub paginated: bool,
 }
 
 fn unavailable(error: impl std::fmt::Display) -> ProtocolError {
@@ -151,6 +152,7 @@ pub(crate) fn read_page(home: &Path, query: &DbQuery) -> Result<Vec<(String, DbE
                     archived: row.get::<_, bool>(1)?,
                     updated_ms: updated.and_then(|value| u64::try_from(value).ok()),
                     legacy: row.get::<_, Option<String>>(3)?.as_deref() == Some("legacy"),
+                    paginated: row.get::<_, Option<String>>(3)?.as_deref() == Some("paginated"),
                 },
             ))
         })
@@ -210,7 +212,7 @@ mod tests {
             "resource":{"providerId":"i","nativeResourceId":"t"},
             "title":"t","status":"idle","createdAt":9000,"updatedAt":10000
         })).unwrap();
-        let evidence = DbEvidence { archived: false, updated_ms: Some(10500), legacy: false };
+        let evidence = DbEvidence { archived: false, updated_ms: Some(10500), legacy: false, paginated: false };
         repair_time(&mut row, &evidence);
         assert_eq!(row.updated_at, Some(10500));
         row.updated_at = Some(11000);

@@ -1253,6 +1253,10 @@
           "minItems": 1,
           "uniqueItems": true,
           "description": "需要按身份枚举的会话资源清单。"
+        },
+        "orderByUpdatedAt": {
+          "type": "boolean",
+          "description": "可选的有序 IDs 模式，仅在 Provider 声明 orderedIds=true 时启用。true 时按最终 updatedAt 降序、原生 ID 升序分页；一次最多 10000 个候选。缺失或 false 保留最多 100 个 ID、按 ID 升序的原有模式。"
         }
       },
       "required": [
@@ -1260,7 +1264,7 @@
         "ids"
       ],
       "additionalProperties": true,
-      "description": "Request 1..100 distinct native conversation IDs within route. Filter before pagination; enumerate the full requested set across pages in native ID ascending order. Deleted IDs may be omitted; lookup failures must fail the request, never masquerade as deletion. Larger batches are invalid_request. Requires projectFilter.kind=all; other filters are invalid_request."
+      "description": "按明确 ID 集合查询正式会话对象，过滤后分页。默认最多 100 个 ID、按 ID 升序；orderByUpdatedAt=true 需要 orderedIds 能力，最多 10000 个 ID，按最终 updatedAt 降序、ID 升序。只能省略确认缺失的对象；I/O 或查询错误不得伪装成删除。必须使用 projectFilter.kind=all。游标绑定整个集合、排序模式、readerScope 和实例 generation；已访问页可重放。"
     },
     "ConversationListQueryCapabilities": {
       "type": "object",
@@ -1272,6 +1276,10 @@
         "ids": {
           "type": "boolean",
           "description": "需要按身份枚举的会话资源清单。"
+        },
+        "orderedIds": {
+          "type": "boolean",
+          "description": "是否支持 orderByUpdatedAt=true 的 IDs 查询：按完整候选集合的最终更新时间排序后按需返回正式对象。缺失或 false 时 Host 保留原有完整聚合路径，不猜测支持。"
         }
       },
       "required": [

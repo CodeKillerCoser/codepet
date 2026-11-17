@@ -788,7 +788,7 @@ async fn wait_for_snapshot_release() {
 
 fn capabilities() -> ProviderCapabilities {
     let mut capabilities = ProviderCapabilities { usage_datasets: None,
-        conversation_list_query: recent::enabled().then_some(codepet_provider_sdk::ConversationListQueryCapabilities { updated_after: true, ids: true }),
+        conversation_list_query: recent::enabled().then_some(codepet_provider_sdk::ConversationListQueryCapabilities { updated_after: true, ids: true, ordered_ids: Some(std::env::var_os("CODEPET_FAKE_RECENT_ORDERED").is_some()) }),
         revision: "fake-capabilities-v1".to_string(),
         methods: vec![
             ProviderCapability::ProjectList,

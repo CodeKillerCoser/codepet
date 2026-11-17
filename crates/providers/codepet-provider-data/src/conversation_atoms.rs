@@ -26,7 +26,7 @@ pub fn shared_state_configured() -> bool {
 pub fn advertise(capabilities: &mut ProviderCapabilities) {
     if !capabilities.methods.contains(&ProviderCapability::ConversationActiveList) { capabilities.methods.push(ProviderCapability::ConversationActiveList); }
     // Native global read markers do not provide Host readerScope semantics.
-    capabilities.conversation_list_query = Some(ConversationListQueryCapabilities { updated_after: true, ids: true });
+    capabilities.conversation_list_query = Some(ConversationListQueryCapabilities { updated_after: true, ids: true, ordered_ids: Some(true) });
     if shared_state_configured() {
         for method in [ProviderCapability::ConversationUnreadList, ProviderCapability::ConversationMarkRead] {
             if !capabilities.methods.contains(&method) { capabilities.methods.push(method); }
@@ -179,7 +179,7 @@ impl ConversationAtoms {
             None => {}
         }
         sort_summaries(&mut rows);
-        if matches!(&request.query, Some(ConversationListQuery::ConversationIdsQuery(_))) { rows.sort_by(|a,b| a.resource.native_resource_id.cmp(&b.resource.native_resource_id)); }
+        if matches!(&request.query, Some(ConversationListQuery::ConversationIdsQuery(query)) if query.order_by_updated_at != Some(true)) { rows.sort_by(|a,b| a.resource.native_resource_id.cmp(&b.resource.native_resource_id)); }
         if let Some(scope) = &request.reader_scope { SharedConversationStateStore::from_env()?.decorate_many(scope, &mut rows)?; }
         let page = self.lists.start(binding("list", generation, request)?, rows, request.limit)?;
         Ok(ConversationListResponse { conversations: page.rows, page_info: PageInfo { next_cursor: page.next_cursor } })
@@ -240,8 +240,8 @@ pub fn validate_list(request: &ConversationListRequest) -> Result<(), ProtocolEr
         if !matches!(request.project_filter, ConversationProjectFilter::ConversationProjectFilterAll(_)) {
             return Err(query_error("invalid_request", "IDs queries require projectFilter all"));
         }
-        if query.ids.is_empty() || query.ids.len() > 100 || query.ids.iter().any(|id| id.trim().is_empty()) || query.ids.iter().collect::<BTreeSet<_>>().len() != query.ids.len() {
-            return Err(query_error("invalid_request", "IDs queries require 1 to 100 distinct nonempty IDs"));
+        if query.ids.is_empty() || query.ids.len() > (if query.order_by_updated_at == Some(true) { 10000 } else { 100 }) || query.ids.iter().any(|id| id.trim().is_empty()) || query.ids.iter().collect::<BTreeSet<_>>().len() != query.ids.len() {
+            return Err(query_error("invalid_request", "IDs queries require distinct nonempty IDs within the mode limit (100, or 10000 for ordered IDs)"));
         }
     }
     if request.reader_scope.as_ref().is_some_and(|scope| scope.trim().is_empty()) {
@@ -328,8 +328,22 @@ mod tests {
         assert_eq!(page.conversations[0].resource.native_resource_id, "a");
         request.cursor = page.page_info.next_cursor;
         assert_eq!(service.list_cached("generation-2", &request).unwrap_err().code, "invalid_cursor");
-        request.query = Some(ConversationListQuery::ConversationIdsQuery(ConversationIdsQuery { kind: ConversationIdsQueryKind::Ids, ids: vec!["a".into(),"a".into()] }));
+        request.query = Some(ConversationListQuery::ConversationIdsQuery(ConversationIdsQuery { kind: ConversationIdsQueryKind::Ids, ids: vec!["a".into(),"a".into()], order_by_updated_at: None }));
         assert_eq!(validate_list(&request).unwrap_err().code, "invalid_request");
+    }
+    #[test]
+    fn ordered_ids_sort_before_paging_and_keep_legacy_mode_limit() {
+        let service = ConversationAtoms::default();
+        let ids = (0..1000).map(|i| format!("id-{i:04}")).collect::<Vec<_>>();
+        let mut request = request(serde_json::json!({"kind":"ids","ids":ids,"orderByUpdatedAt":true}));
+        let rows = (0..1000).map(|i| row(&format!("id-{i:04}"), Some(i))).collect();
+        let first = service.list("generation", &request, rows).unwrap();
+        assert_eq!(first.conversations[0].resource.native_resource_id,"id-0999");
+        request.cursor = first.page_info.next_cursor;
+        let second = service.list_cached("generation", &request).unwrap().unwrap();
+        assert_eq!(second.conversations[0].resource.native_resource_id,"id-0979");
+        if let Some(ConversationListQuery::ConversationIdsQuery(query)) = &mut request.query { query.order_by_updated_at = None; }
+        assert_eq!(validate_list(&request).unwrap_err().code,"invalid_request");
     }
     #[test]
     fn explicit_activity_is_not_recreated_from_native_summaries() {

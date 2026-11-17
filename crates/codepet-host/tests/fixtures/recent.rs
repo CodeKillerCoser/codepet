@@ -20,6 +20,10 @@ fn dated_mode() -> bool {
     std::env::var_os("CODEPET_FAKE_RECENT_DATED_MODE").is_some_and(|path| std::path::Path::new(&path).exists())
 }
 
+fn attention_count() -> usize {
+    std::env::var("CODEPET_FAKE_RECENT_ATTENTION_COUNT").ok().and_then(|value| value.parse().ok()).unwrap_or(125)
+}
+
 impl RecentFixture {
     pub(super) fn active(
         &self,
@@ -38,7 +42,7 @@ impl RecentFixture {
         let page = if let Some(cursor) = request.cursor {
             self.active.page(&binding, &cursor, request.limit)?
         } else {
-            let rows = (0..if dated_mode() { 0 } else { 125 })
+            let rows = (0..if dated_mode() { 0 } else { attention_count() })
                 .map(|n| sdk::ConversationActiveEntry {
                     conversation: provider_resource(&request.route, &format!("active-{n:03}")),
                     status: ConversationStatus::Running,
@@ -111,7 +115,7 @@ impl RecentFixture {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_millis() as u64;
-            let mut rows: Vec<_> = (0..125)
+            let mut rows: Vec<_> = (0..attention_count())
                 .map(|n| {
                     let mut row = conversation(&request.route, &format!("active-{n:03}"));
                     row.status = ConversationStatus::Running;
