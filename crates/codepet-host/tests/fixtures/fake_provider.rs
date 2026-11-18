@@ -356,6 +356,9 @@ impl ProtocolServer for FakeProvider {
     ) -> ProtocolFuture<'a, ConversationListResponse> {
         Box::pin(async move {
             self.instance(&request.route)?;
+            if request.route.provider_instance_id == "instance-slow-summary" {
+                tokio::time::sleep(Duration::from_millis(2400)).await;
+            }
             if request.query.is_some() && recent::enabled() { return self.recent.summaries(request); }
             if std::env::var("CODEPET_FAKE_CONVERSATION_LIST_SNAPSHOT_RACE").as_deref() == Ok("1") {
                 self.publish_conversation(&request.route, "conversation-list-event-first")?;

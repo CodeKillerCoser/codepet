@@ -149,3 +149,11 @@ Provider 的 `read_db_page` 对请求的每个 ID 都准备候选，包括 Codex
 `recent.rpc.received` 表示请求到达桌面并准备入队，`started` 给出队列等待时间，`completed` 记录条数、业务错误码、总耗时以及回复是否进入发送队列。按相同连接与请求 ID 匹配手机的发送、超时或收到事件。进入发送队列之后，仍需手机端的收包记录才能确认送达。
 
 Host 合成 1000 个活动候选的集成测试首屏 20 条用时 157 ms。Codex 子进程用 128 个缺失和 3 个可解析候选触发排序回退，131 次原生读取后返回正确第一条。另用持有 SQLite 写事务的第二个连接确认已注册读者能立即读取已提交状态。运行 Host、Provider、共享状态库的单元及纵向测试；这些数据来自独立测试环境，手机与故障机的真实查询仍需同次请求核对。
+
+#### 真实 App Server 压力回放
+
+用隔离的 Host、内置 Codex Provider 和本机 Codex App Server 构造 24 个有 rollout 的会话、1278 个缺失的未读候选，以及分布在 336 个历史子目录中的 5040 个占位文件。整个环境单独初始化，没有复制用户会话或认证数据。此前的合成 Provider 首屏耗时无法覆盖这种原生目录查找。
+
+相同规模下，原 Host 连续两次在 10072 ms 和 10060 ms 返回 `provider_request_timeout`，错误阶段是 `conversation.list / stream`。Host 与 Provider 的传输层使用普通 RPC 的 10 秒期限，早于 Codex 列表自身的 20 秒预算。带读者 scope 和查询条件的列表现在使用 22 秒的传输预算，整次 recent 仍受 Host 的 25 秒和手机的 30 秒约束。再次回放，冷首屏在 10892 ms 返回 20 条并提供续页游标，同一读者再次请求命中快照，耗时低于 1 ms。
+
+`process_rpc::scoped_summary_has_its_own_deadline_on_the_provider_stream` 用同一个慢 Provider 同时发普通列表和 scoped 列表，验证前者按普通期限退出，后者可等到有效结果。此实验复现了一个真实可达的超时原因。原手机请求的服务端阶段仍须从新版的同次收发日志确认。

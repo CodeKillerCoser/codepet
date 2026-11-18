@@ -285,6 +285,29 @@ async fn slow_interaction_acquire_outlives_ordinary_rpc_deadline_without_blockin
 }
 
 #[tokio::test]
+async fn scoped_summary_has_its_own_deadline_on_the_provider_stream() {
+    let plugin = "dev.codepet.slow-summary";
+    let instance = "instance-slow-summary";
+    let process = ready_process(plugin, instance).await;
+    let ordinary: codepet_provider_sdk::ConversationListRequest = serde_json::from_value(
+        serde_json::json!({
+            "route":{"deviceId":"device-test","providerPluginId":plugin,"providerInstanceId":instance},
+            "projectFilter":{"kind":"all"}, "limit":20
+        })
+    ).unwrap();
+    let mut scoped = ordinary.clone();
+    scoped.reader_scope = Some("reader".into());
+    scoped.query = Some(serde_json::from_value(serde_json::json!({"kind":"updatedAfter","updatedAfter":0})).unwrap());
+    let (list, summary) = tokio::join!(
+        process.client().conversation_list(ordinary),
+        process.client().conversation_list(scoped),
+    );
+    assert_eq!(list.unwrap_err().code, "provider_request_timeout");
+    assert_eq!(summary.unwrap().conversations.len(), 1);
+    process.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn timeout_does_not_poison_later_requests() {
     let process = ready_process("dev.codepet.timeout", "instance-timeout").await;
     let error = process

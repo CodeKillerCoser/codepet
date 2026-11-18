@@ -45,3 +45,5 @@ Codex `union_directory`/`directory::tests` 覆盖 1,000 + 1,000 候选首屏有�
 2026-11-17 实时栈和原生对照见 [recent 超时排查](../40-runbooks/codex-recent-timeout-20261116.md)：5040 个合成历史文件名使不存在 ID 的 metadata 读取中位数从约 0.18ms 增至 36.85ms；新用例应检查落空 ID 的查找次数随批次而非“IDs × 历史目录大小”增长，并覆盖文件布局、未落库和 I/O 失败。
 
 排序证据失配并回退到原生核实时，保留本次构建中已经读到的正式对象与精确落空结果，只补读尚未核实的候选。跨查询仍须重新读取。未读游标应从已固定的读者快照续页，首屏用另一个 SQLite 连接持有写事务验证可读取已提交状态。参见[单 Provider 超时排查](../40-runbooks/codex-recent-timeout-20261116.md#2026-11-19-的-codex-单-provider-超时)。
+
+给 scoped 列表设置工作预算时，要逐层核对 Provider 原生工作、Host 到 Provider 的传输、整个 recent 和手机四处期限。用真实子进程将响应延迟到普通 RPC 期限之后，验证完整结果能在外层预算内返回，普通请求仍按原期限结束。参见[原生压力回放](../40-runbooks/codex-recent-timeout-20261116.md#真实-app-server-压力回放)。

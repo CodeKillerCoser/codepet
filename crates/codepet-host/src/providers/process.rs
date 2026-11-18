@@ -27,6 +27,8 @@ use tokio::time::Instant;
 pub struct PluginProcessOptions {
     pub max_frame_bytes: usize,
     pub request_timeout: Duration,
+    /// Reader-scoped list builds can spend up to 20s certifying native metadata.
+    pub summary_query_timeout: Duration,
     /// Includes runtime initialization and the native thread/resume round trip.
     pub interaction_timeout: Duration,
     pub shutdown_timeout: Duration,
@@ -41,6 +43,7 @@ impl Default for PluginProcessOptions {
         Self {
             max_frame_bytes: MAX_PROVIDER_FRAME_BYTES,
             request_timeout: Duration::from_secs(10),
+            summary_query_timeout: Duration::from_secs(22),
             interaction_timeout: Duration::from_secs(45),
             shutdown_timeout: Duration::from_secs(3),
             inbound_capacity: 256,
@@ -82,6 +85,7 @@ struct RpcShared {
     inbound: StdMutex<Option<mpsc::Sender<ProviderInboundMessage>>>,
     next_request_id: AtomicU64,
     request_timeout: Duration,
+    summary_query_timeout: Duration,
     interaction_timeout: Duration,
     shutting_down: AtomicBool,
     close_error: StdMutex<Option<ProtocolError>>,
@@ -202,17 +206,13 @@ impl ProviderRpcClient {
         method: ProtocolMethod,
         params: Value,
     ) -> Result<Value, ProtocolError> {
-        self.request_value_until(
-            method,
-            params,
-            Instant::now() + if method == ProtocolMethod::ConversationAcquireInteraction {
-                self.shared.interaction_timeout
-            } else {
-                self.shared.request_timeout
-            },
-            false,
-        )
-        .await
+        let budget = match method {
+            ProtocolMethod::ConversationAcquireInteraction => self.shared.interaction_timeout,
+            ProtocolMethod::ConversationList if params["readerScope"].is_string() && params["query"].is_object() =>
+                self.shared.summary_query_timeout,
+            _ => self.shared.request_timeout,
+        };
+        self.request_value_until(method, params, Instant::now() + budget, false).await
     }
 
     async fn request_value_until(
@@ -402,6 +402,7 @@ impl PluginProcess {
             inbound: StdMutex::new(Some(inbound_sender)),
             next_request_id: AtomicU64::new(1),
             request_timeout: options.request_timeout,
+            summary_query_timeout: options.summary_query_timeout,
             interaction_timeout: options.interaction_timeout,
             shutting_down: AtomicBool::new(false),
             close_error: StdMutex::new(None),
