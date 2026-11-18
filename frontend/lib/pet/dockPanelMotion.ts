@@ -16,7 +16,8 @@ export class DockPanelMotion {
   private token?: number;
   private stopAnimation?: () => void;
 
-  constructor(private frame: HTMLElement, private surface: PetSurfaceController, private failed: (error: unknown) => void) {
+  constructor(private frame: HTMLElement, private surface: PetSurfaceController, private failed: (error: unknown) => void,
+    private windowHandoff?: () => (() => Promise<void>) | undefined) {
     const bounds = frame.getBoundingClientRect();
     this.visual = { x: 0, width: bounds.width, height: bounds.height, progress: 0, inset: this.safeInset() };
     this.paint(this.visual);
@@ -60,6 +61,8 @@ export class DockPanelMotion {
     const id = ++this.sequence;
     this.stopAnimation?.();
     this.preparing = true; this.running = true; this.dirty = false;
+    const reveal = this.windowHandoff?.();
+    this.frame.toggleAttribute('data-window-handoff', Boolean(reveal));
     this.frame.dataset.morphing = '';
     this.frame.dataset.phase = expanded ? 'opening' : 'closing';
     this.surface.pauseLayout();
@@ -78,37 +81,51 @@ export class DockPanelMotion {
         plan = await this.surface.plan(layout);
         if (!alive()) return;
       }
-      const grows = plan.to.width > plan.from.width || plan.to.height > plan.from.height;
-      if (grows) {
-        const offset = plan.from.x - plan.to.x;
-        // The native cover owns presentation while the viewport changes.
-        await this.surface.commit(layout);
-        if (!alive()) return;
-        this.paint({ ...this.visual, x: this.visual.x + offset });
-      }
-      target.visual.x = grows ? 0 : plan.to.x - plan.from.x;
-      await this.surface.endFrame(token);
-      if (!alive()) return;
-      this.token = undefined; this.preparing = false;
-      if (this.desired !== expanded) { void this.request(this.desired); return; }
-      await this.animate(target.visual);
-      if (!alive()) return;
-      if (!grows) {
-        this.preparing = true;
-        token = await this.surface.beginFrame();
-        if (!alive()) { await this.surface.endFrame(token, true); return; }
-        this.token = token;
-        await this.surface.commit(layout);
-        if (!alive()) return;
+      if (reveal) {
+        // An external window cannot be tweened by WebKit. Commit just the
+        // endpoint under one native cover, including its validated aperture.
         this.paint({ ...target.visual, x: 0 });
+        await this.surface.commit(layout);
+        if (!alive()) return;
+        if (expanded && this.desired) await reveal();
+        if (!alive()) return;
         await this.surface.endFrame(token);
         if (!alive()) return;
         this.token = undefined;
+      } else {
+        const grows = plan.to.width > plan.from.width || plan.to.height > plan.from.height;
+        if (grows) {
+          const offset = plan.from.x - plan.to.x;
+          // The native cover owns presentation while the viewport changes.
+          await this.surface.commit(layout);
+          if (!alive()) return;
+          this.paint({ ...this.visual, x: this.visual.x + offset });
+        }
+        target.visual.x = grows ? 0 : plan.to.x - plan.from.x;
+        await this.surface.endFrame(token);
+        if (!alive()) return;
+        this.token = undefined; this.preparing = false;
+        if (this.desired !== expanded) { void this.request(this.desired); return; }
+        await this.animate(target.visual);
+        if (!alive()) return;
+        if (!grows) {
+          this.preparing = true;
+          token = await this.surface.beginFrame();
+          if (!alive()) { await this.surface.endFrame(token, true); return; }
+          this.token = token;
+          await this.surface.commit(layout);
+          if (!alive()) return;
+          this.paint({ ...target.visual, x: 0 });
+          await this.surface.endFrame(token);
+          if (!alive()) return;
+          this.token = undefined;
+        }
       }
       this.paint({ ...target.visual, x: 0 });
       this.preparing = false; this.running = false;
       this.frame.dataset.phase = expanded ? 'open' : 'closed';
       delete this.frame.dataset.morphing;
+      delete this.frame.dataset.windowHandoff;
       this.surface.resumeLayout();
       if (this.desired !== expanded) void this.request(this.desired);
       else if (this.dirty) { this.dirty = false; this.refresh(); }
@@ -120,6 +137,7 @@ export class DockPanelMotion {
       this.preparing = false; this.running = false;
       this.frame.dataset.phase = expanded ? 'open' : 'closed';
       delete this.frame.dataset.morphing;
+      delete this.frame.dataset.windowHandoff;
       this.surface.resumeLayout();
       this.failed(error);
       if (this.desired !== expanded) void this.request(this.desired);

@@ -4,9 +4,11 @@
 
   import { onMount, onDestroy } from 'svelte';
   import { PlaneStackMotion, planeStackCards, type PlaneStackFrame } from './planeStackMotion';
-  import { Bell, ExternalLink, PanelTop, Plug, X } from '@lucide/svelte';
+  import { Bell, ExternalLink, PanelTop, Pin, Plug, X } from '@lucide/svelte';
   import PetAvatar from './PetAvatar.svelte';
   import MarkdownMessage from '../MarkdownMessage.svelte';
+  import WindowDock from './WindowDock.svelte';
+  import { defaultDrawerSize, drawerCommand, type DrawerWindow, type DrawerPointer, type DrawerRect } from './windowDrawer';
   import DockPanel from './DockPanel.svelte';
   import type { PetSurfaceController } from './surface';
   import { type Notice } from '../noticeGateway';
@@ -14,19 +16,43 @@
   import type { PetData } from './model';
   import type { SurfaceView } from './surface';
   import type { petSizing } from './sizing';
+  export let syncHitRegions: () => Promise<void>;
   export let sizing: ReturnType<typeof petSizing>;
   export let data: PetData;
   export let settings: AppSettings | null;
   export let avatarStatus: TaskStatus;
   export let surface: SurfaceView;
   export let controller: PetSurfaceController | null;
-  export let pointer: { x: number; y: number } | null;
+  export let pointer: DrawerPointer | null;
   export let failed: (error: unknown) => void;
   export let actionNotice: string;
   export let dragWindow: () => Promise<void>;
   export let toggleSurface: (event: MouseEvent) => void;
   export let openMain: (event: MouseEvent) => void;
   export let dismissActivity: (event: MouseEvent, task: Notice) => void;
+  let dropReady = false;
+  let drawerSupported = false, helpOpen = false, pinned = false;
+  let visibleRects: DrawerRect[] = [];
+  let selectedWindow: DrawerWindow | null = null;
+  let dock: WindowDock;
+  let windowHost: HTMLElement | undefined;
+  let panel: DockPanel;
+  // Prefer 800 × 560; expand only to dimensions the native app actually enforces.
+  let notificationHeight = 0;
+  $: drawerChromeHeight = sizing.headerHeight + (surface.topInset || 0) + 36 + Math.min(85, notificationHeight);
+  $: maxWidth = Math.max(1, (surface.availableWidth ?? 836) - 36);
+  $: maxHeight = Math.max(1, surface.availableHeight - drawerChromeHeight);
+  $: hostHeight = Math.min(selectedWindow?.requiredHeight ?? defaultDrawerSize.height, maxHeight);
+  $: panelSizing = selectedWindow ? {
+    ...sizing,
+    expandedWidth: Math.min(selectedWindow.requiredWidth ?? defaultDrawerSize.width, maxWidth) + 36,
+    expandedHeight: Math.min(surface.availableHeight, hostHeight + drawerChromeHeight),
+  } : sizing;
+  onMount(() => {
+    let mounted = true;
+    void drawerCommand('supported').then(value => { if (mounted) drawerSupported = value === true; }).catch(() => {});
+    return () => { mounted = false; };
+  });
   let failedIcons = new Set<string>();
   let expandedCompleted = new Set<string>();
   const stackMotions = new Map<string, PlaneStackMotion>();
@@ -110,7 +136,10 @@
   }
 </script>
 
-<DockPanel {controller} {surface} {pointer} {sizing} {dragWindow} {failed}
+<DockPanel bind:this={panel} {controller} {surface} {pointer} sizing={panelSizing} {dragWindow} {failed}
+  holdOpen={pinned || helpOpen} beforeCollapse={selectedWindow ? () => dock.beforeCollapse() : undefined}
+  prepareWindow={selectedWindow ? () => dock.prepareReveal() : undefined}
+  onExpand={() => dock?.resumed()}
   title={data.error || (latest ? `${noticeStatusLabel(latest)} · ${latest.content.title}` : '就绪')}>
   <svelte:fragment slot="leading">
     <PetAvatar petId={settings?.pet.selectedPetId ?? 'default'} kind={settings?.pet.kind} imagePath={settings?.pet.imagePath}
@@ -123,11 +152,18 @@
     {#if data.notices.length > 1}<span class="task-count" aria-label={`${data.notices.length} 条通知`}>{data.notices.length}</span>{/if}
   </svelte:fragment>
   <svelte:fragment slot="actions">
+    {#if drawerSupported}<button class="panel-action" type="button" aria-pressed={pinned} aria-label={pinned ? '取消固定' : '固定展开'} title={pinned ? '取消固定' : '固定展开'} on:click={() => pinned = !pinned}><Pin size={14}/></button>{/if}
     <button class="panel-action" type="button" aria-label="切换为悬浮" title="切换为悬浮" on:click={toggleSurface}><PanelTop size={14} /></button>
     <button class="panel-action" type="button" aria-label="打开主窗口" title="打开主窗口" on:click={openMain}><ExternalLink size={14} /></button>
   </svelte:fragment>
+  <svelte:fragment slot="dragHint">
+    {#if dropReady}<div class="drop-hint" role="status">松手钉住窗口</div>{/if}
+  </svelte:fragment>
+  <svelte:fragment slot="overlay" let:frame let:panel={shell} let:backdrop let:body>
+    {#if drawerSupported}<WindowDock {syncHitRegions} {frame} panel={shell} {backdrop} {body} host={windowHost} bind:this={dock} bind:dropReady bind:selected={selectedWindow} bind:helpOpen bind:visibleRects {maxWidth} {maxHeight} {failed} {pointer} {pinned} openPanel={() => panel.expandForWindow()}/>{/if}
+  </svelte:fragment>
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <div class="notch-task-list" tabindex="0" role="region" aria-label="任务列表">
+      <div class="notch-task-list" bind:clientHeight={notificationHeight} class:hosting={selectedWindow} class:help-open={helpOpen} tabindex="0" role="region" aria-label="任务列表">
         {#if data.error}<p class="connection-error" role="status">活动连接暂不可用，正在重试</p>{/if}
         {#each taskGroups as group (group.id)}
           {@const completedExpanded = expandedCompleted.has(group.id)}
@@ -197,10 +233,31 @@
           <div class="empty-state"><strong>暂时没有通知</strong><span>收到来源消息后，最新进展会显示在这里</span></div>
         {/each}
       </div>
+      {#if selectedWindow}
+        <div bind:this={windowHost} class="window-host" data-window-host aria-label={selectedWindow.name + ' · ' + selectedWindow.title}
+          style:height={`${hostHeight}px`}>
+          {#each visibleRects as area}
+            <div class="native-window-region" data-native-window-region
+              style:left={`${area.x}px`} style:top={`${area.y}px`}
+              style:width={`${area.width}px`} style:height={`${area.height}px`}></div>
+          {/each}
+          <button type="button" class="activate-window" data-window-control on:click={() => dock.activateSelected()}>激活{selectedWindow.name}窗口</button>
+        </div>
+      {/if}
       {#if actionNotice}<p class="action-notice" role="status">{actionNotice}</p>{/if}
 </DockPanel>
 
 <style>
+  .drop-hint {position:absolute;inset:0;z-index:5;display:grid;place-items:center;background:var(--gray-3);border:1px dashed var(--gray-8);border-radius:8px;color:var(--gray-12);font-size:12px;pointer-events:none}
+  .native-window-region { position:absolute; }
+  .window-host { position:relative; min-height:0; flex:none; display:grid; place-items:center; }
+  .activate-window { color:var(--gray-11); font:inherit; cursor:pointer; }
+  .window-host:not(:global([data-covered])) .activate-window { display:none; }
+  .notch-task-list.hosting { flex-shrink:0; max-height:85px; }
+  .hosting .completed-heading,.hosting .task-group.completed,.hosting .notch-task:not(:first-child),.hosting .empty-state { display:none; }
+  .notch-task-list.help-open:not(.hosting) { min-height:min(170px,calc(var(--notch-max-height) - 80px)); }
+  .panel-action[aria-pressed="true"] { color:var(--color-text-primary); background:var(--gray-4); }
+
   button { color: inherit; border: 0; background: transparent; }
   button:focus-visible, .notch-task-list:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; border-radius: 6px; }
   .panel-action { display: grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 6px; color: var(--gray-10); }

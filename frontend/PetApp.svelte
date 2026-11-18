@@ -10,7 +10,6 @@
   import NotchPet from './lib/pet/NotchPet.svelte';
   import type { ProviderConnectionState } from './lib/providerRuntimes';
   import { createPetData } from './lib/pet/model';
-  import { initialPresentation, present, type PresentationEvent } from './lib/pet/presentation';
   import type { ActivityGroupId } from './lib/activityGroups';
 
   import { type Notice } from './lib/noticeGateway';
@@ -18,27 +17,29 @@
   import { rectFromElementBounds, shouldIgnorePetWindowCursor, type PetHitRect } from './lib/petHitTest';
   import { isPointOnOpaquePetImage } from './lib/pet/hitTest';
   import { noticeStatusForPet } from './lib/pet/animation';
-  import { PetSurfaceController } from './lib/pet/surface';
+  import { initialSurface, PetSurfaceController } from './lib/pet/surface';
+  import type { DrawerPointer } from './lib/pet/windowDrawer';
   import { petSizing } from './lib/pet/sizing';
   import { themeClassNames } from './lib/theme';
   import type { AppSettings } from './lib/types';
   let settings: AppSettings | null = null;
-  let presentation = initialPresentation;
-  let nativePointer: { x: number; y: number } | null = null;
-  const petData = createPetData(() => dispatch({ type: 'new-task' }));
+  let surface = initialSurface;
+  let tasksCollapsed = false;
+  let nativePointer: DrawerPointer | null = null;
+  const petData = createPetData(() => { tasksCollapsed = false; });
   let expandedGroups = new Set<ActivityGroupId>();
   let systemDark = false;
   let ready = false;
   let actionNotice = '';
   let noticeTimer: number | null = null;
-  $: surface = presentation.surface;
   let surfaceController: PetSurfaceController | null = null;
   let petWindowElement: HTMLElement | null = null;
   let petContentElement: HTMLElement | null = null;
   let cursorPassthroughTimer: number | null = null;
   let cursorEventsIgnored = false;
   let petDragging = false;
-  let cursorPassthroughInFlight = false;
+  let cursorSync: Promise<void> | undefined;
+  let drawerHitPending = false;
   const noticeVisibleMs = 2500;
   const cursorPassthroughPollMs = 60;
   const petHitPadding = 2;
@@ -53,7 +54,6 @@
   $: railHeight = (2 + Number(activities.length > 0) + Number(activities.some(a => a.finished)) + Number(surface.canDock)) * 28;
   $: sizing = petSizing(surface, settings?.pet.scale, railHeight);
   $: if (ready) surfaceController?.schedule();
-  function dispatch(event: PresentationEvent) { presentation = present(presentation, event); }
   onMount(() => {
     let disposed = false;
     const cleanup: (() => void)[] = [];
@@ -81,17 +81,21 @@
     const windowHandle = getCurrentWindow();
     void windowHandle.setResizable(false);
     if (petContentElement) {
-      surfaceController = new PetSurfaceController(petContentElement, value => { dispatch({ type: 'surface', surface: value }); }, error => showNotice(String(error)));
+      surfaceController = new PetSurfaceController(petContentElement, value => { surface = value; }, error => showNotice(String(error)));
       void surfaceController.start().catch(error => showNotice(String(error)));
       cleanup.push(() => surfaceController?.dispose());
     }
-    cursorPassthroughTimer = window.setInterval(() => void syncCursorPassthrough(), cursorPassthroughPollMs);
+    cursorPassthroughTimer = window.setInterval(() => {
+      void syncCursorPassthrough().catch(error => console.error("failed to update pet cursor passthrough", error));
+    }, cursorPassthroughPollMs);
     void getAppSettings().then(value => { if (!disposed) { settings = value; ready = true; surfaceController?.schedule(); } }).catch(error => { if (!disposed) showNotice(String(error)); });
     void petData.refresh();
     const poll = window.setInterval(() => void petData.refresh(), 10000);
     return () => {
       disposed = true; window.clearInterval(poll); cleanup.forEach(fn => fn()); media.removeEventListener('change', syncTheme);
-      petData.dispose(); clearNoticeTimer(); clearCursorPassthroughTimer(); void setPetWindowCursorEventsIgnored(false);
+      petData.dispose(); clearNoticeTimer(); clearCursorPassthroughTimer();
+      void Promise.resolve(cursorSync).catch(() => {}).then(() => setPetWindowCursorEventsIgnored(false))
+        .catch(error => console.error("failed to restore pet cursor events", error));
     };
   });
   function dismissActivity(event: MouseEvent, task: Notice) { event.stopPropagation(); petData.dismiss(task); }
@@ -119,36 +123,37 @@
     }
   }
 
-  async function syncCursorPassthrough() {
-    if (!petWindowElement || cursorPassthroughInFlight) {
-      return;
+  function syncCursorPassthrough(regionsChanged = false): Promise<void> {
+    if (cursorSync) {
+      if (regionsChanged) drawerHitPending = true;
+      return cursorSync;
     }
+    if (!petWindowElement) return Promise.resolve();
+    cursorSync = updateCursorPassthrough();
+    return cursorSync;
+  }
 
-    cursorPassthroughInFlight = true;
+  async function updateCursorPassthrough() {
     try {
-      const point = await invoke<{ x: number; y: number }>('pet_surface_pointer');
-      nativePointer = point;
-      const ignoreCursor = !petDragging && shouldIgnorePetWindowCursor(point, collectPetHitRects(petWindowElement)) && !isPointOnOpaquePetImage(petWindowElement, point);
-      await setPetWindowCursorEventsIgnored(ignoreCursor);
-    } catch (error) {
-      console.error("failed to update pet cursor passthrough", error);
+      do {
+        drawerHitPending = false;
+        const point = await invoke<DrawerPointer>('pet_surface_pointer');
+        if (!petWindowElement) return;
+        nativePointer = point;
+        const hit = document.elementFromPoint(point.x, point.y);
+        const hosted = Boolean(hit?.closest('[data-window-host][data-presented] [data-native-window-region]')) && !hit?.closest('[data-window-control], [data-morphing]');
+        const ignoreCursor = !petDragging && (hosted || shouldIgnorePetWindowCursor(point, collectPetHitRects(petWindowElement)) && !isPointOnOpaquePetImage(petWindowElement, point));
+        await setPetWindowCursorEventsIgnored(ignoreCursor);
+      } while (drawerHitPending);
     } finally {
-      cursorPassthroughInFlight = false;
+      cursorSync = undefined;
     }
   }
 
   async function setPetWindowCursorEventsIgnored(ignore: boolean) {
-    if (cursorEventsIgnored === ignore) {
-      return;
-    }
-
+    if (cursorEventsIgnored === ignore) return;
+    await getCurrentWindow().setIgnoreCursorEvents(ignore);
     cursorEventsIgnored = ignore;
-    try {
-      await getCurrentWindow().setIgnoreCursorEvents(ignore);
-    } catch (error) {
-      cursorEventsIgnored = !ignore;
-      console.error("failed to set pet cursor passthrough", error);
-    }
   }
 
   function collectPetHitRects(root: HTMLElement): PetHitRect[] {
@@ -189,7 +194,7 @@
 
   function toggleTasks(event: MouseEvent) {
     event.stopPropagation();
-    dispatch({ type: 'toggle-tasks' });
+    tasksCollapsed = !tasksCollapsed;
   }
 
   async function openMain(event: MouseEvent) {
@@ -221,11 +226,11 @@
   on:dblclick={preventPetWindowDoubleClick}>
   <div class="pet-content" bind:this={petContentElement}>
     {#if surface.mode === 'docked'}
-      <NotchPet data={$petData} {settings} {avatarStatus} {surface} {sizing} controller={surfaceController} pointer={nativePointer} failed={error => showNotice(String(error))}
+      <NotchPet syncHitRegions={() => syncCursorPassthrough(true)} data={$petData} {settings} {avatarStatus} {surface} {sizing} controller={surfaceController} pointer={nativePointer} failed={error => showNotice(String(error))}
         {dragWindow} {toggleSurface} {openMain} {dismissActivity} {actionNotice} />
     {:else}
       <DesktopPet {activities} sources={$petData.sources} gatewayError={$petData.error} {settings} {avatarStatus} {surface} {sizing}
-        tasksCollapsed={presentation.tasksCollapsed} bind:expandedGroups {actionNotice}
+        {tasksCollapsed} bind:expandedGroups {actionNotice}
         {dismissActivity} {clearCompletedActivities} {dragWindow} {toggleSurface} {toggleTasks} {openMain} />
     {/if}
   </div>

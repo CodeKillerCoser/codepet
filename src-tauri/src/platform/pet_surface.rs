@@ -37,10 +37,14 @@ mod implementation {
         cell::RefCell,
         ptr::NonNull,
         rc::Rc,
-        sync::atomic::{AtomicBool, Ordering},
+        sync::atomic::{AtomicBool, AtomicU32, Ordering},
     };
     use tauri_nspanel::objc2_app_kit::{NSEventMask, NSEventType};
     static LEFT_DOWN: AtomicBool = AtomicBool::new(false);
+    static EXTERNAL_RELEASES: AtomicU32 = AtomicU32::new(0);
+    pub fn external_releases() -> u32 { EXTERNAL_RELEASES.load(Ordering::Relaxed) }
+    thread_local! { static RELEASE_POINT: std::cell::Cell<Option<Point>> = const { std::cell::Cell::new(None) }; }
+    pub fn external_release_point() -> Option<Point> { RELEASE_POINT.with(|p| p.get()) }
     thread_local! { static MONITORS: RefCell<Vec<Retained<AnyObject>>> = const { RefCell::new(Vec::new()) }; }
     use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
     use tauri_nspanel::{
@@ -48,8 +52,13 @@ mod implementation {
         ManagerExt,
     };
     unsafe extern "C" {
+        fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
+        fn cp_drawer_host_changed();
+        fn cp_drawer_sample_press(down: bool);
+        fn cp_drawer_mouse_event(event: *mut std::ffi::c_void, pet: bool) -> NSPoint;
         fn CGEventSourceKeyState(state_id: i32, key: u16) -> bool;
     }
+    pub fn sample_drawer_press(down: bool) { unsafe { cp_drawer_sample_press(down) } }
     fn rect(r: NSRect) -> Rect {
         Rect {
             x: r.origin.x,
@@ -57,6 +66,16 @@ mod implementation {
             width: r.size.width,
             height: r.size.height,
         }
+    }
+    // AX uses top-down points relative to the primary screen. Following an
+    // already-hosted window needs neither display metadata nor a pointer poll.
+    pub fn drawer_frame(app: &AppHandle) -> Result<Rect, String> {
+        let mtm = MainThreadMarker::new().ok_or("surface must run on main thread")?;
+        let panel = app.get_webview_panel("pet").map_err(|e| format!("{e:?}"))?;
+        let primary = NSScreen::screens(mtm).firstObject().ok_or("没有显示器")?;
+        let mut frame = rect(panel.as_panel().frame());
+        frame.y -= rect(primary.frame()).y;
+        Ok(frame)
     }
     pub fn read(app: &AppHandle) -> Result<Environment, String> {
         let mtm = MainThreadMarker::new().ok_or("surface must run on main thread")?;
@@ -117,7 +136,7 @@ mod implementation {
                 x: mouse.x,
                 y: -mouse.y,
             },
-            pressed: LEFT_DOWN.load(Ordering::Relaxed) || NSEvent::pressedMouseButtons() & 1 != 0,
+            pressed: LEFT_DOWN.load(Ordering::Relaxed) || unsafe { CGEventSourceButtonState(1, 0) },
             cancel: unsafe { CGEventSourceKeyState(1, 53) },
         })
     }
@@ -134,7 +153,11 @@ mod implementation {
             let Ok(panel) = handle.get_webview_panel("pet") else {
                 return raw.as_ptr();
             };
-            if event.windowNumber() != panel.as_panel().windowNumber() {
+            let is_pet = event.windowNumber() == panel.as_panel().windowNumber();
+            if kind == NSEventType::LeftMouseDown || kind == NSEventType::LeftMouseUp {
+                unsafe { cp_drawer_mouse_event(raw.as_ptr().cast(), is_pet) };
+            }
+            if !is_pet {
                 return raw.as_ptr();
             }
             let p = panel
@@ -171,8 +194,14 @@ mod implementation {
             }
             raw.as_ptr()
         });
-        let global = RcBlock::new(|_: NonNull<NSEvent>| {
-            LEFT_DOWN.store(false, Ordering::Relaxed);
+        let global = RcBlock::new(|event: NonNull<NSEvent>| {
+            let point = unsafe { cp_drawer_mouse_event(event.as_ptr().cast(), false) };
+            let down = unsafe { event.as_ref() }.r#type() == NSEventType::LeftMouseDown;
+            if !down {
+                RELEASE_POINT.with(|v| v.set(Some(Point { x: point.x, y: point.y })));
+                LEFT_DOWN.store(false, Ordering::Relaxed);
+                EXTERNAL_RELEASES.fetch_add(1, Ordering::Relaxed);
+            }
         });
         MONITORS.with(|monitors| {
             let mut monitors = monitors.borrow_mut();
@@ -193,7 +222,7 @@ mod implementation {
             }
             // Mouse-up in another application ends the same drag without requiring focus.
             if let Some(m) = NSEvent::addGlobalMonitorForEventsMatchingMask_handler(
-                NSEventMask::LeftMouseUp,
+                NSEventMask::LeftMouseDown | NSEventMask::LeftMouseUp,
                 &global,
             ) {
                 monitors.push(m);
@@ -228,6 +257,7 @@ mod implementation {
             super::macos_frame::reposition(rect(ns.frame()), frame);
             ns.setFrame_display(next, true);
             NSAnimationContext::endGrouping();
+            unsafe { cp_drawer_host_changed() };
         }
         Ok(())
     }
@@ -316,7 +346,13 @@ mod implementation {
     }
 }
 #[cfg(target_os = "macos")]
-pub use implementation::install_drag_monitor;
+pub use implementation::{drawer_frame, external_release_point, external_releases, install_drag_monitor, sample_drawer_press};
+#[cfg(not(target_os = "macos"))]
+pub fn sample_drawer_press(_: bool) {}
+#[cfg(not(target_os = "macos"))]
+pub fn external_release_point() -> Option<Point> { None }
+#[cfg(not(target_os = "macos"))]
+pub fn external_releases() -> u32 { 0 }
 pub use implementation::{apply, read, show};
 #[cfg(not(target_os = "macos"))]
 pub fn install_drag_monitor(_: &AppHandle) {}

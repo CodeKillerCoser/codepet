@@ -601,8 +601,17 @@ pub async fn pet_surface_drag(app: AppHandle, cancel: bool) -> Result<View, Stri
     )
     .await
 }
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PointerSample {
+    external_releases: u32,
+    release_point: Option<Point>,
+    x: f64,
+    y: f64,
+    pressed: bool,
+}
 #[tauri::command]
-pub async fn pet_surface_pointer(app: AppHandle) -> Result<Point, String> {
+pub async fn pet_surface_pointer(app: AppHandle) -> Result<PointerSample, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let handle = app.clone();
     app.run_on_main_thread(move || {
@@ -610,7 +619,14 @@ pub async fn pet_surface_pointer(app: AppHandle) -> Result<Point, String> {
             let unit = display_for(e.frame.center(), &e.displays)
                 .map(|d| d.unit)
                 .unwrap_or(1.);
-            Point {
+            platform::sample_drawer_press(e.pressed);
+            PointerSample {
+                external_releases: platform::external_releases(),
+                release_point: platform::external_release_point().zip(e.displays.first()).map(|(p, primary)| Point {
+                    x: (p.x - e.frame.x) / unit,
+                    y: (p.y + primary.frame.y - e.frame.y) / unit,
+                }),
+                pressed: e.pressed,
                 x: (e.pointer.x - e.frame.x) / unit,
                 y: (e.pointer.y - e.frame.y) / unit,
             }

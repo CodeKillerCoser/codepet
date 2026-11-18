@@ -12,9 +12,14 @@
   export let title = '';
   export let dragWindow: () => Promise<void>;
   export let failed: (error: unknown) => void;
+  export let prepareWindow: (() => Promise<void>) | undefined = undefined;
+  export let holdOpen = false;
+  export let beforeCollapse: (() => Promise<void>) | undefined = undefined;
+  export let onExpand: () => void = () => {};
+  let preparingClose = false;
   let state = { ...initialPresentation, surface };
   let frame: HTMLElement, panel: HTMLElement, summary: HTMLButtonElement;
-  let body: HTMLElement, status: HTMLElement, actions: HTMLElement;
+  let backdrop: HTMLElement, body: HTMLElement, status: HTMLElement, actions: HTMLElement;
   let mounted = false;
   let motion: DockPanelMotion | undefined;
   let openTimer: ReturnType<typeof setTimeout>, closeTimer: ReturnType<typeof setTimeout>;
@@ -33,22 +38,36 @@
       motion?.refresh();
     });
   }
-  function send(event: PresentationEvent) {
+  export function expandForWindow() { send({ type: 'expand' }); }
+  function send(event: PresentationEvent, prepared = false) {
+    if (event.type === 'close-delay' && holdOpen) return;
+    if (!prepared && beforeCollapse && state.expanded && !present(state,event).expanded) {
+      if (!preparingClose) {
+        preparingClose = true;
+        void beforeCollapse().then(() => {
+          if (!mounted) return;
+          send(event,true);
+          if (state.expanded) onExpand();
+        }).catch(failed).finally(() => { preparingClose = false; });
+      }
+      return;
+    }
     const previous = state;
     state = present(state, event);
+    if (state.expanded && !previous.expanded) onExpand();
     if (state.expanded !== previous.expanded) void motion?.request(state.expanded);
     if (!state.openPending) clearTimeout(openTimer);
-    else if (!previous.openPending) openTimer = setTimeout(() => send({ type: 'open-delay' }), 200);
+    else if (!previous.openPending) openTimer = setTimeout(() => send({ type: 'open-delay' }), 280);
     if (state.pointerHeld || state.surface.dragging || state.hovered || state.focused || !state.expanded) clearTimeout(closeTimer);
     else if (['leave', 'blur', 'release', 'surface'].includes(event.type)) {
-      clearTimeout(closeTimer); closeTimer = setTimeout(() => send({ type: 'close-delay' }), 240);
+      clearTimeout(closeTimer); closeTimer = setTimeout(() => send({ type: 'close-delay' }), 850);
     }
   }
   $: if (surface !== state.surface) { send({ type: 'surface', surface }); refresh(); }
   $: if (surface.dragging) { dragged = true; press = null; }
-  $: if (mounted && controller && !motion) { motion = new DockPanelMotion(frame, controller, failed); refresh(); }
+  $: if (mounted && controller && !motion) { motion = new DockPanelMotion(frame, controller, failed, () => prepareWindow); refresh(); }
   $: if (sizing) refresh();
-  $: if (mounted && pointer && !document.hasFocus() && !surface.dragging) {
+  $: if (mounted && pointer && (!document.hasFocus() || beforeCollapse) && !surface.dragging) {
     const bounds = panel.getBoundingClientRect();
     const inside = pointer.x >= bounds.left && pointer.x < bounds.right && pointer.y >= bounds.top && pointer.y < bounds.bottom;
     hover(inside);
@@ -103,7 +122,8 @@
     on:mouseenter={() => hover(true)} on:mouseleave={() => hover(false)}
     on:focusin={event => { if ((event.target as HTMLElement).matches(':focus-visible')) send({ type: 'focus' }); }}
     on:focusout={event => { if (!panel.contains(event.relatedTarget as Node)) send({ type: 'blur' }); }} on:keydown={key}>
-    <div class="notch-backdrop" aria-hidden="true"></div>
+    <slot name="dragHint" />
+    <div class="notch-backdrop" bind:this={backdrop} aria-hidden="true"></div>
     <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
     <div class="notch-drag-region" data-pet-drag-region on:pointerdown={down} on:click|capture={click}>
       <div class="notch-header">
@@ -123,6 +143,7 @@
     </div>
     <div class="dock-body-clip" inert={!state.expanded} aria-hidden={!state.expanded}>
       <div class="notch-details" id="notch-details" bind:this={body}><slot /></div>
+      <slot name="overlay" {frame} {panel} {backdrop} {body} />
     </div>
   </section>
 </div>
@@ -132,6 +153,7 @@
   .dock-frame:global([data-ready]) { max-width: none; }
   .notch-panel { position: relative; isolation: isolate; width: 100%; height: 100%; min-width: var(--notch-min-width); padding-top: var(--dock-inset); color: var(--color-text-primary); color-scheme: dark; border-radius: 0 0 calc(8px + 4px * var(--dock-progress)) calc(8px + 4px * var(--dock-progress)); cursor: default; }
   .notch-backdrop { position: absolute; inset: 0; z-index: -1; background: var(--color-black); border-radius: inherit; pointer-events: none; }
+  .dock-frame:global([data-morphing]:not([data-window-handoff])) .notch-backdrop { clip-path:none !important; }
   .notch-backdrop::before, .notch-backdrop::after { content: ''; position: absolute; top: 0; width: 6px; height: 6px; background: var(--color-black); pointer-events: none; }
   .notch-backdrop::before { left: -6px; mask-image: radial-gradient(circle at 0 100%, transparent 5.5px, black 6px); }
   .notch-backdrop::after { right: -6px; mask-image: radial-gradient(circle at 100% 100%, transparent 5.5px, black 6px); }

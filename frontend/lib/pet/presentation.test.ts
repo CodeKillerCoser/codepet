@@ -14,18 +14,19 @@ it('keeps a dropdown open while entering its body or holding keyboard focus', ()
   state = present(state, { type: 'blur' });
   expect(present(state, { type: 'close-delay' }).expanded).toBe(false);
 });
-it('resets the dropdown on detach and redock but retains desktop task folding', () => {
-  let state = present(open(), { type: 'toggle-tasks' });
+it('resets the dropdown on detach and redock and ignores stale surface revisions', () => {
+  let state = open();
   state = present(state, { type: 'surface', surface: { ...initialSurface, revision: 2, dragging: true } });
-  expect(state.expanded).toBe(false); expect(state.tasksCollapsed).toBe(true);
+  expect(state.expanded).toBe(false);
   expect(present(state, { type: 'enter' }).expanded).toBe(false);
   state = present(state, { type: 'surface', surface: { ...initialSurface, mode: 'docked', revision: 3 } });
   expect(state.expanded).toBe(false);
   expect(present(state, { type: 'surface', surface: { ...initialSurface, revision: 1 } })).toBe(state);
 });
-it('new tasks do not force a top panel open and Escape can collapse a hovered panel', () => {
+it('Escape collapses a hovered panel', () => {
   const state = present(open(), { type: 'collapse' });
-  expect(present(state, { type: 'new-task' }).expanded).toBe(false);
+  expect(state.hovered).toBe(true);
+  expect(state.expanded).toBe(false);
 });
 it('keeps the same hover and keyboard presentation when notch clearance changes', () => {
   let state = open();

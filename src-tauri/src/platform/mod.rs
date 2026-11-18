@@ -11,3 +11,4 @@ pub mod macos_window;
 pub mod power;
 
 pub mod notice_activation;
+pub mod window_drawer;

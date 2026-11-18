@@ -100,3 +100,21 @@ it('releases the native cover and resumes measurement if the frame commit fails'
   expect(failed).toHaveBeenCalledWith(error);
   const closing = motion.request(false); await vi.advanceTimersByTimeAsync(500); await closing;
 });
+
+it('keeps one native cover through hosted layout and aperture validation', async () => {
+  motion.dispose();
+  const ready = deferred<void>();
+  const reveal = vi.fn(() => ready.promise);
+  motion = new DockPanelMotion(frame, surface as PetSurfaceController, failed, () => reveal);
+  const opening = motion.request(true);
+  await vi.advanceTimersByTimeAsync(10);
+  expect(reveal).toHaveBeenCalledTimes(1);
+  expect(surface.commit).toHaveBeenCalled();
+  expect(surface.endFrame).not.toHaveBeenCalled();
+  ready.resolve(); await opening;
+  expect(surface.endFrame).toHaveBeenCalledTimes(1);
+  await motion.request(false);
+  expect(reveal).toHaveBeenCalledTimes(1);
+  expect(surface.beginFrame).toHaveBeenCalledTimes(2);
+  expect(frame.dataset.phase).toBe('closed');
+});

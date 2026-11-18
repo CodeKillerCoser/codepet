@@ -509,6 +509,7 @@ pub fn run() {
             record_perf_event,
             open_main_window,
             pet_asset_data_url,
+            platform::window_drawer::pet_window_drawer,
             pet::surface::pet_surface_state,
             pet::surface::pet_surface_layout,
             pet::surface::pet_surface_plan_layout,
@@ -612,6 +613,10 @@ fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
     }
 
     match event {
+        #[cfg(target_os = "macos")]
+        tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Destroyed, .. } if label == "pet" => {
+            platform::window_drawer::restore_all();
+        }
         tauri::RunEvent::ExitRequested { code, api, .. } => {
             let provider_host = app.state::<ProviderHostState>().inner().clone();
             let remote_access = app.state::<RemoteAccessRuntime>().inner().clone();
@@ -628,6 +633,8 @@ fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
             });
         }
         tauri::RunEvent::Exit => {
+            #[cfg(target_os = "macos")]
+            platform::window_drawer::restore_all();
             #[cfg(target_os = "macos")]
             if let Some(guard) = app.try_state::<std::sync::Mutex<Option<platform::power::AwakeGuard>>>() {
                 guard.lock().unwrap_or_else(|e| e.into_inner()).take();
