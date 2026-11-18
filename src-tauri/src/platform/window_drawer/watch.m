@@ -1,8 +1,10 @@
 #import "watch.h"
+#import <stdatomic.h>
 
 // Only the presented window owns observers. AppKit/workspace notifications
 // arrive on the main run loop; AX is best effort (some owners omit events).
 static __weak NSWindow *drawerHost;
+static _Atomic(CGWindowID) hostNumber;
 static void (*notifyDrawer)(bool,double,double);
 static NSRect hostFrame;
 static NSPoint displacement;
@@ -18,8 +20,11 @@ static BOOL wakeQueued, mustCover;
 
 void cp_drawer_connect(void *host, void (*notify)(bool,double,double)) {
     drawerHost = (__bridge NSWindow *)host;
+    atomic_store(&hostNumber,(CGWindowID)drawerHost.windowNumber);
     notifyDrawer = notify;
 }
+
+CGWindowID cp_drawer_host_number(void) { return atomic_load(&hostNumber); }
 
 static void wakeDrawer(BOOL cover) {
     if (!watchedWindow || !notifyDrawer) return;
@@ -112,7 +117,7 @@ void cp_drawer_other_window_pressed(CGWindowID number) {
 
 void cp_drawer_watch(id window, pid_t pid, CGWindowID number) {
     dispatch_async(dispatch_get_main_queue(), ^{
-        if (watchedWindow == window) return;
+        if (watchedWindow == window) { watchedNumber = number; return; }
         subscription++;
         wakeQueued = NO;
         mustCover = NO;

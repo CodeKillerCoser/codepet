@@ -63,6 +63,9 @@ fn call(operation: &str, id: &str, region: Region) -> Result<Value, String> {
     let reply = unsafe { serde_json::from_slice::<Value>(CStr::from_ptr(raw).to_bytes()) };
     unsafe { libc::free(raw.cast()) };
     let reply = reply.map_err(|e| e.to_string())?;
+    if let Some(diagnostic) = reply.get("diagnostic").and_then(Value::as_str) {
+        crate::app_log::info("pet.window_drawer", diagnostic);
+    }
     if operation == "drop" {
         // Stage only. Do not persist window titles or application content.
         if let Some(reason) = reply.get("ignored").and_then(Value::as_str) {

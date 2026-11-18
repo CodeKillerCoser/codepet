@@ -60,3 +60,15 @@
 
 - `npm run test:pet:ui` 验证移动后剩余可见区域和异步同步过期；`npm run test:pet:motion` 覆盖通知页居中、边缘和反向动效。
 - `clang -fobjc-arc -framework AppKit -framework ApplicationServices -framework ImageIO src-tauri/tests/macos_drawer_parking.m src-tauri/src/platform/window_drawer/watch.m -o /tmp/codepet-drawer-parking-test` 后执行 `/tmp/codepet-drawer-parking-test --notifications`，验证真实面板移动、Space 失效通知和收起后注销。解锁后执行同一程序不带参数，验证完整窗口与停靠链路。
+
+### 从 GitHub 安装后只见激活按钮或尺寸提示
+
+GitHub Actions 的 macOS DMG `0.3.11-beta+34dba6d` 内包含窗口收纳原生模块和接口 19 的桌宠页面。排查先核对运行中进程的可执行文件路径，再检查该包的 `CFBundleVersion` 和资源目录中 webcontent manifest 的 `backendApiVersion`。本次检查时本机实际运行的是同一 bundle identifier 的接口 17 测试包。用户遇到钉钉问题时的进程版本和原始报错尚待确认。
+
+接口 20 起，在日志中过滤 `pet.window_drawer`。从一次 `drop matched window` 向后检查展示阶段。
+
+- `resize-panel` 表示 AX 回读的窗口比请求的区域大。先按窗口实际尺寸扩容再对齐。屏幕容纳不下时，提示同时给出所需尺寸和可用尺寸。`fit failed` 记录请求与回读的位置、大小，可用于区分位置被钳制与尺寸超限。
+- `awaiting-surface` 表示窗口列表还无法确认原窗口在目标位置。桌宠封住展示区并短暂加快复查。若原窗口编号已消失，只在同一进程内同时确认唯一几何匹配及原 AX 窗口身份之后更新编号。
+- `covered` 表示窗口已找到且全部被遮挡。显式展开时会核对激活后的层级，后台复查不会抢焦点。`visible` 表示已找到可展示的区域。
+
+本地回归运行 `macos_drawer_parking.m` 的 `--notifications` 分支及 `npm run test:pet:ui`。在已解锁的目标 Mac 上运行同一原生程序的 `--fit` 分支检查 AX 写入与回读，再在实际钉钉窗口核对尺寸、拖入后直接显示及释放后的位置。锁屏下的模拟窗口栈、AppKit 通知和浏览器回归无法验收第三方窗口的实际合成画面。

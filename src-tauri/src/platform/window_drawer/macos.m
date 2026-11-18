@@ -15,6 +15,7 @@
 @property pid_t pid;
 @property NSUInteger lastUse;
 @property CGWindowID windowID;
+@property(nonatomic,copy) NSString *presentationState;
 @end
 @implementation CPDrawerEntry
 @end
@@ -73,6 +74,18 @@ static BOOL place(CPDrawerEntry *entry, CGRect rect) {
     return getFrame(entry,&actual) && fabs(actual.origin.x-rect.origin.x)<=1 && fabs(actual.origin.y-rect.origin.y)<=1
         && fabs(actual.size.width-rect.size.width)<=1 && fabs(actual.size.height-rect.size.height)<=1;
 }
+static BOOL needsMoreSpace(CGSize measured, CGSize slot) {
+    return measured.width > slot.width + 1 || measured.height > slot.height + 1;
+}
+static BOOL alignedWithSlot(CGRect measured, CGRect slot) {
+    return fabs(measured.origin.x-slot.origin.x)<=2 && fabs(measured.origin.y-slot.origin.y)<=2;
+}
+static BOOL acceptsMeasurement(CGRect measured, CGRect slot, BOOL knownSize, BOOL finalRead) {
+    // A minimum-size window can be clamped to the work area before the
+    // pet has recentered its larger panel. Negotiate size before alignment.
+    if (finalRead && needsMoreSpace(measured.size,slot.size)) return YES;
+    return alignedWithSlot(measured,slot) && (knownSize || CGSizeEqualToSize(measured.size,slot.size) || finalRead);
+}
 // AX success acknowledges the request. The owner may apply it later, snap
 // to a character grid, or enforce an intrinsic minimum.
 static BOOL fitWindow(CPDrawerEntry *entry, CGRect slot, CGRect *actual) {
@@ -87,11 +100,12 @@ static BOOL fitWindow(CPDrawerEntry *entry, CGRect slot, CGRect *actual) {
     for (int attempt = 0; attempt < 4; attempt++) {
         if (attempt) [NSThread sleepForTimeInterval:0.035];
         if (!getFrame(entry, actual) || CGRectIsEmpty(*actual)) continue;
-        BOOL aligned = fabs(actual->origin.x-slot.origin.x)<=2 && fabs(actual->origin.y-slot.origin.y)<=2;
-        if (aligned && (negotiated || CGSizeEqualToSize(actual->size, slot.size) || attempt == 3)) {
+        if (acceptsMeasurement(*actual,slot,negotiated,attempt == 3)) {
             if (wroteSize) { entry.requestedSize = slot.size; entry.acceptedSize = actual->size; }
             return YES;
         }
+        if (attempt == 1 && !alignedWithSlot(*actual,slot) && !needsMoreSpace(actual->size,slot.size))
+            writeValue(entry,kAXPositionAttribute,kAXValueCGPointType,&slot.origin);
     }
     return NO;
 }
@@ -240,13 +254,15 @@ static BOOL nearFrame(CGRect a, CGRect b) {
            fabs(a.size.width-b.size.width)<=2 && fabs(a.size.height-b.size.height)<=2;
 }
 static CGWindowID identifyWindow(NSArray *stack, pid_t pid, CGRect frame) {
+    CGWindowID candidate = kCGNullWindowID;
     for (NSDictionary *info in stack) {
         CGRect bounds;
-        if ([info[(__bridge id)kCGWindowOwnerPID] intValue] == pid &&
-            boundsOf(info, &bounds) && nearFrame(bounds, frame))
-            return [info[(__bridge id)kCGWindowNumber] unsignedIntValue];
+        if ([info[(__bridge id)kCGWindowOwnerPID] intValue] != pid ||
+            !boundsOf(info, &bounds) || !nearFrame(bounds, frame)) continue;
+        if (candidate) return kCGNullWindowID;
+        candidate = [info[(__bridge id)kCGWindowNumber] unsignedIntValue];
     }
-    return kCGNullWindowID;
+    return candidate;
 }
 
 // A frameless Qt QMainWindow can report AXDialog, even when it is the app's
@@ -466,7 +482,7 @@ static NSArray *visibleParts(NSArray *stack, CPDrawerEntry *entry, CGRect actual
         CGWindowID number = [info[(__bridge id)kCGWindowNumber] unsignedIntValue];
         if (pid == entry.pid && entry.windowID && number == entry.windowID) {
             CGRect footprint = CGRectIntersection(CGRectIntersection(slot, actual), bounds);
-            if (CGRectIsEmpty(footprint)) return @[];
+            if (CGRectIsEmpty(footprint)) return nil;
             NSArray *parts = @[[NSValue valueWithRect:footprint]];
             for (NSValue *cover in covers) parts = subtractCover(parts, cover.rectValue);
             NSMutableArray *relative = [NSMutableArray new];
@@ -478,19 +494,47 @@ static NSArray *visibleParts(NSArray *stack, CPDrawerEntry *entry, CGRect actual
             return relative;
         }
         NSInteger layer = [info[(__bridge id)kCGWindowLayer] integerValue];
+        if (pid == getpid() && number == cp_drawer_host_number()) continue;
         if (layer > 0 && (pid == getpid() || pid == entry.pid)) continue;
         if (layer == NSFloatingWindowLevel &&
             isCursorOverlay(layer, [NSRunningApplication runningApplicationWithProcessIdentifier:pid].bundleIdentifier)) continue;
         [covers addObject:[NSValue valueWithRect:bounds]];
     }
-    return @[];
+    return nil; // The compositor has not confirmed the target at this location.
+}
+
+// Some owners recreate the backing surface while retaining their AXWindow.
+// Never adopt an overlapping sibling, or rebind a window parked on another Space.
+static BOOL rebindRetiredSurface(NSArray *stack, CPDrawerEntry *entry, CGRect actual) {
+    if (!entry.windowID || windowInfo(entry.windowID)) return NO;
+    CGWindowID candidate = identifyWindow(stack,entry.pid,actual);
+    if (!candidate) return NO;
+    CPDrawerPress identity = {.number=candidate, .pid=entry.pid, .original=actual};
+    CPDrawerEntry *match = entryForPress(identity,actual);
+    if (!match || !CFEqual(elementOf(match),elementOf(entry))) return NO;
+    entry.windowID = candidate;
+    cp_drawer_watch(entry.element,entry.pid,candidate);
+    return YES;
 }
 
 static NSDictionary *presentation(CPDrawerEntry *entry, CGRect actual, CGRect slot) {
-    NSArray *parts = visibleParts(windowStack(), entry, actual, slot);
-    // A passive visibility check must not reorder apps behind the pet.
-    // Explicit activation (including reopening a parked window) raises it.
-    return @{@"width":@(actual.size.width), @"height":@(actual.size.height), @"visible":parts};
+    BOOL grow = needsMoreSpace(actual.size,slot.size);
+    NSArray *parts = nil;
+    if (!grow) {
+        NSArray *stack = windowStack();
+        parts = visibleParts(stack,entry,actual,slot);
+        if (!parts && rebindRetiredSurface(stack,entry,actual))
+            parts = visibleParts(stack,entry,actual,slot);
+    }
+    NSString *state = grow ? @"resize-panel" : !parts ? @"awaiting-surface" : parts.count ? @"visible" : @"covered";
+    NSMutableDictionary *result = [@{@"width":@(actual.size.width), @"height":@(actual.size.height),
+                                     @"visible":parts ?: @[], @"awaitingSurface":@(!grow && !parts)} mutableCopy];
+    if (![state isEqual:entry.presentationState]) {
+        entry.presentationState = state;
+        result[@"diagnostic"] = [NSString stringWithFormat:@"%@ requested %.0fx%.0f measured %.0fx%.0f",
+            state,slot.size.width,slot.size.height,actual.size.width,actual.size.height];
+    }
+    return result;
 }
 
 static void activateEntry(CPDrawerEntry *entry) {
@@ -539,6 +583,7 @@ static id run(NSString *operation,NSString *key,CGRect rect) {
     if ([operation isEqual:@"park"]) {
         if (!current) return @YES;
         if (!park(entries[current])) return failure(@"此窗口无法停靠在屏幕下角，面板将保持展开。你可以释放窗口。");
+        entries[current].presentationState=nil;
         current=nil; cp_drawer_watch(nil,0,0);
         return @YES;
     }
@@ -554,19 +599,35 @@ static id run(NSString *operation,NSString *key,CGRect rect) {
         if (getFrame(entry,&actual) && CGRectEqualToRect(actual,lastActual)) return presentation(entry,actual,rect);
     }
     if (current && ![current isEqual:key]) return failure(@"请先收起当前窗口。");
-    CGRect actual;
+    CGRect actual = CGRectZero;
     if (!fitWindow(entry,rect,&actual)) {
         BOOL recovered=restore(entry);
         if ([current isEqual:key] && recovered) { current=nil; cp_drawer_watch(nil,0,0); }
-        return failure(recovered ? @"应用未接受展示位置，已恢复原窗口。" : @"窗口调整失败，请重试释放窗口。");
+        return @{@"error":recovered ? @"应用未接受展示位置，已恢复原窗口。" : @"窗口调整失败，请重试释放窗口。",
+                 @"diagnostic":[NSString stringWithFormat:@"fit failed: requested %@ measured %@",
+                                      NSStringFromRect(rect), NSStringFromRect(actual)]};
     }
-    if (activating || ![current isEqual:key]) {
+    BOOL revealing = !needsMoreSpace(actual.size,rect.size) &&
+        (activating || ![current isEqual:key] || needsMoreSpace(lastActual.size,lastFrame.size));
+    if (revealing) {
         activateEntry(entry);
         entry.lastUse = ++useCounter;
     }
     if (![current isEqual:key]) cp_drawer_watch(entry.element,entry.pid,entry.windowID);
     current=[key copy]; lastFrame=rect; lastActual=actual;
-    return presentation(entry,actual,rect);
+    NSDictionary *layout = presentation(entry,actual,rect);
+    // App activation and window ordering are separate WindowServer updates.
+    // Retry the raise once during this reveal, only if focus belongs to the
+    // target application. Passive visibility checks never change the order.
+    if (revealing && ![layout[@"visible"] count]) {
+        [NSThread sleepForTimeInterval:0.05];
+        if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == entry.pid) {
+            onAXOwner(elementOf(entry),^{ AXUIElementPerformAction(elementOf(entry),kAXRaiseAction); });
+            entry.presentationState = nil;
+            return presentation(entry,actual,rect);
+        }
+    }
+    return layout;
 }
 char *cp_drawer_call(const char *op,const char *key,double x,double y,double w,double h) {
     @autoreleasepool {

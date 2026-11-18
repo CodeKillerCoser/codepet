@@ -31,6 +31,7 @@
   let timer: ReturnType<typeof setTimeout>, check: ReturnType<typeof setTimeout> | undefined;
   let dirty = false, immediateCheck = false, epoch = 0, lastPath = '';
   const idleCheckMs = 500;
+  let awaitingSince: number | undefined;
   function cancelCheck() { clearTimeout(check); check = undefined; immediateCheck = false; }
   function schedule(delay = 0) {
     if (disposed || suspended || !selected) return;
@@ -121,7 +122,7 @@
       }).catch(e => { if (reportFailure && !disposed) failed(e); });
   }
   $: if (pointer && edge) sampleDrag(pointer);
-  function aperture(rect?: DOMRect, parts: DrawerRect[] = [], updateHit = true) {
+  function aperture(rect?: DOMRect, parts: DrawerRect[] = [], updateHit = true, covered = false) {
     if (!panel || !backdrop) return;
     const previous = visibleRects;
     const regionsChanged = parts.length !== previous.length || parts.some((r,i) =>
@@ -131,7 +132,8 @@
     }
     const hadHole = host?.hasAttribute('data-presented');
     host?.toggleAttribute('data-presented', Boolean(rect && parts.length));
-    host?.toggleAttribute('data-covered', Boolean(rect && !parts.length));
+    host?.toggleAttribute('data-covered', covered);
+    host?.removeAttribute('data-missing');
     if (updateHit && (hadHole !== Boolean(host?.hasAttribute('data-presented')) || regionsChanged)) {
       void tick().then(() => { if (!disposed) return syncHitRegions(); }).catch(failed);
     }
@@ -183,7 +185,7 @@
     syncing = true;
     const target = selected;
     const generation = epoch;
-    let retry = false;
+    let retryDelay = idleCheckMs;
     try {
       await serializeDrawer(async () => {
         if (disposed || suspended || busy || selected !== target) return;
@@ -191,7 +193,7 @@
         activateNext = false;
         const layout = await drawerCommand(op, target.id, rect);
         if ('pending' in layout) {
-          retry = true;
+          retryDelay = 16;
           if (op === 'activate') activateNext = true;
           aperture();
           return;
@@ -199,19 +201,27 @@
         presented = true;
         if (disposed || busy || selected !== target || suspended || generation !== epoch) return;
         if (layout.width > maxWidth + 1 || layout.height > maxHeight + 1) {
-          throw new Error(`${target.name}需要 ${Math.ceil(layout.width)} × ${Math.ceil(layout.height)} 点，超过此屏幕的展示空间。`);
+          throw new Error(`${target.name}需要 ${Math.ceil(layout.width)} × ${Math.ceil(layout.height)} 点，当前展示区最多容纳 ${Math.floor(maxWidth)} × ${Math.floor(maxHeight)} 点。`);
         }
         if (layout.width > rect.width + 1 || layout.height > rect.height + 1) {
+          aperture();
           const fitted = { ...target, requiredWidth: Math.max(target.requiredWidth ?? defaultDrawerSize.width, Math.ceil(layout.width)),
             requiredHeight: Math.max(target.requiredHeight ?? defaultDrawerSize.height, Math.ceil(layout.height)) };
           if (fitted.requiredWidth !== target.requiredWidth || fitted.requiredHeight !== target.requiredHeight) {
-            aperture();
             windows = windows.map(item => item.id === target.id ? fitted : item);
-            selected = fitted; retry = true;
-            return;
+            selected = fitted; retryDelay = 16;
           }
+          return;
         }
-        aperture(rect, layout.visible);
+        if (layout.awaitingSurface) {
+          aperture();
+          awaitingSince ??= performance.now();
+          if (performance.now() - awaitingSince < 400) retryDelay = 50;
+          else host?.setAttribute('data-missing', '');
+          return;
+        }
+        awaitingSince = undefined;
+        aperture(rect, layout.visible, true, !layout.visible.length);
       });
     } catch (e) {
       if (disposed || busy || suspended || selected !== target || generation !== epoch) return;
@@ -231,7 +241,7 @@
       failed(e);
     } finally {
       syncing = false;
-      const delay = dirty ? 0 : retry ? 16 : idleCheckMs;
+      const delay = dirty ? 0 : retryDelay;
       dirty = false;
       schedule(delay);
     }
@@ -247,6 +257,7 @@
       }
       if (selected?.id !== target?.id) await serializeDrawer(park);
       activateNext = Boolean(target);
+      awaitingSince = undefined;
       selected = target; helpOpen = false; suspended = false; error = '';
     } catch (e) { failed(e); }
     finally { busy = false; schedule(); deferHide(); }

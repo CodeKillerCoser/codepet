@@ -565,6 +565,17 @@ try {
   await page.getByRole('button',{name:'激活便笺窗口'}).click();
   await page.waitForSelector('[data-window-host][data-presented]');
   assert.ok(await page.evaluate(() => window.__petQa.drawerCalls.includes('activate')));
+  const activations = await page.evaluate(() => {
+    const q = window.__petQa;
+    q.drawerAwaitingSurface = true; q.drawerChanged(true);
+    return q.drawerCalls.filter(op => op === 'activate').length;
+  });
+  await page.getByRole('button',{name:'重新显示便笺窗口'}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'激活便笺窗口'}).isVisible(),false);
+  assert.equal(await page.locator('[data-native-window-region]').count(),0);
+  await page.evaluate(() => { window.__petQa.drawerAwaitingSurface = false; });
+  await page.waitForSelector('[data-window-host][data-presented]');
+  assert.equal(await page.evaluate(() => window.__petQa.drawerCalls.filter(op => op === 'activate').length),activations);
   await page.evaluate(point => { window.__petQa.cursor = point; }, {x:rect.x+rect.width/2,y:rect.y+16});
   await page.waitForFunction(() => window.__petQa.ignored === true);
   await page.getByRole('button', {name:'收起任务面板', exact:true}).click();

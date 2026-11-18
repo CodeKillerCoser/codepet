@@ -28,6 +28,7 @@ const qa = {
   surface: { revision: 1, mode: 'floating' as 'floating' | 'docked', dragging: false, snapCandidate: false, canDock: true, availableHeight: 860, availableWidth: 1440, nativeDrag: true, physicalNotch: true, topInset: 0, notchWidth: 185 },
   drawerCalls: [] as string[],
   drawerCovered: false,
+  drawerAwaitingSurface: false,
   drawerMinimumWidth: 0,
   drawerChanged: (cover: boolean, dx=0, dy=0) => fire('pet-drawer-changed', {cover,dx,dy}),
   pendingCursorCapture: null as Promise<void> | null,
@@ -99,7 +100,8 @@ mockIPC((command, args: any) => {
     if (args.operation === 'activate') qa.drawerCovered = false;
     if (args.operation === 'show' || args.operation === 'activate') {
       const {width,height} = args.region;
-      const result = {width:Math.max(width,qa.drawerMinimumWidth),height,visible:qa.drawerCovered ? [] :
+      const result = {width:Math.max(width,qa.drawerMinimumWidth),height,awaitingSurface:qa.drawerAwaitingSurface,
+        visible:qa.drawerCovered || qa.drawerAwaitingSurface ? [] :
         [{x:qa.drawerInset,y:0,width:width-qa.drawerInset,height}]};
       return qa.pendingDrawer ? qa.pendingDrawer.then(() => result) : result;
     }

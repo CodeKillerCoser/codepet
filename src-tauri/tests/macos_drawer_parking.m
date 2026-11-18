@@ -5,6 +5,7 @@
 // Simulate a window owner that enforces its own layout minimum for AX requests.
 @interface MinimumWindow : NSWindow
 @property NSSize enforcedMinimum;
+@property CGFloat maximumX;
 @property BOOL testModal;
 @end
 @implementation MinimumWindow
@@ -14,6 +15,7 @@
 - (void)setFrame:(NSRect)frame display:(BOOL)display {
     frame.size.width = MAX(frame.size.width, self.enforcedMinimum.width);
     frame.size.height = MAX(frame.size.height, self.enforcedMinimum.height);
+    if (self.maximumX && frame.origin.x > self.maximumX) frame.origin.x = self.maximumX;
     [super setFrame:frame display:display];
 }
 @end
@@ -38,18 +40,28 @@ static NSDictionary *surface(pid_t pid, CGRect frame) {
 }
 static void checkOcclusion(void) {
     CGRect slot = CGRectMake(240, 80, 800, 560);
+    CGRect clamped = CGRectMake(180,80,920,600);
+    assert(!acceptsMeasurement(clamped,slot,NO,NO));
+    assert(acceptsMeasurement(clamped,slot,NO,YES));
+    assert(!acceptsMeasurement(CGRectOffset(slot,40,0),slot,YES,YES));
     NSDictionary *target = surface(1, slot);
     NSDictionary *finder = surface(2, CGRectOffset(slot, -200, 200));
+    NSMutableDictionary *sibling = [target mutableCopy];
+    sibling[(__bridge id)kCGWindowNumber] = @12345;
+    assert(identifyWindow(@[target,sibling],1,slot) == kCGNullWindowID);
     CPDrawerEntry *entry = [CPDrawerEntry new];
     entry.pid = 1;
+    NSDictionary *negotiation = presentation(entry,clamped,slot);
+    assert([negotiation[@"width"] intValue] == 920 && [negotiation[@"visible"] isEqual:@[]]);
     NSArray *all = visibleParts(@[target, finder], entry, slot, slot);
     assert(all.count == 1 && [all[0][@"width"] intValue] == 800);
     NSArray *parts = visibleParts(@[finder, target], entry, slot, slot);
     double area = 0;
     for (NSDictionary *part in parts) area += [part[@"width"] doubleValue] * [part[@"height"] doubleValue];
     assert(area == 800*560 - 600*360);
-    assert(visibleParts(@[finder], entry, slot, slot).count == 0);
-    assert(visibleParts(@[surface(2, slot), target], entry, slot, slot).count == 0);
+    assert(visibleParts(@[finder], entry, slot, slot) == nil);
+    assert(visibleParts(@[surface(1,CGRectOffset(slot,900,0))], entry, slot, slot) == nil);
+    assert([visibleParts(@[surface(2, slot), target], entry, slot, slot) isEqual:@[]]);
     assert(isCursorOverlay(NSFloatingWindowLevel, @"com.openai.sky.CUAService"));
     assert(!isCursorOverlay(NSNormalWindowLevel, @"com.openai.sky.CUAService"));
     assert(!isCursorOverlay(NSFloatingWindowLevel, @"example.opaque-palette"));
@@ -66,6 +78,22 @@ static void checkOcclusion(void) {
     CGRect snapped = CGRectMake(slot.origin.x, slot.origin.y, 800, 559);
     NSArray *grid = visibleParts(@[surface(1,snapped)], entry, snapped, slot);
     assert(grid.count == 1 && [grid[0][@"height"] intValue] == 559);
+}
+
+static void checkClampedMinimum(MinimumWindow *fixture, CPDrawerEntry *entry, CGRect original) {
+    fixture.enforcedMinimum = NSMakeSize(880,610);
+    fixture.maximumX = original.origin.x + 10;
+    CGRect slot = CGRectMake(fixture.maximumX + 40, original.origin.y, 800, 560);
+    CGRect measured;
+    assert(fitWindow(entry,slot,&measured));
+    assert(needsMoreSpace(measured.size,slot.size) && measured.origin.x < slot.origin.x - 2);
+    NSDictionary *pending = presentation(entry,measured,slot);
+    assert([pending[@"visible"] isEqual:@[]] && [pending[@"width"] doubleValue] >= 880);
+    CGRect larger = (CGRect){.origin=original.origin, .size=measured.size};
+    assert(fitWindow(entry,larger,&measured) && nearFrame(larger,measured));
+    fixture.maximumX = 0;
+    fixture.enforcedMinimum = NSZeroSize;
+    assert(place(entry,original));
 }
 // Deliver an event to the drawer callback, without moving the user's mouse.
 static void fixtureMouse(CGEventType type, CGWindowID number, CGPoint point, BOOL pet) {
@@ -129,6 +157,13 @@ static void pump(void) {
 static void checkDrawerEvents(NSWindow *window, CPDrawerEntry *entry) {
     NSPoint origin = window.frame.origin;
     cp_drawer_connect((__bridge void *)window,notice);
+    CGRect slot = CGRectMake(240,80,800,560);
+    CPDrawerEntry *other = [CPDrawerEntry new]; other.pid = 1;
+    NSMutableDictionary *host = [surface(getpid(),slot) mutableCopy];
+    host[(__bridge id)kCGWindowNumber] = @(window.windowNumber);
+    assert(visibleParts(@[host,surface(1,slot)],other,slot,slot).count == 1);
+    host[(__bridge id)kCGWindowNumber] = @(window.windowNumber + 1);
+    assert([visibleParts(@[host,surface(1,slot)],other,slot,slot) isEqual:@[]]);
     cp_drawer_watch(entry.element,entry.pid,(CGWindowID)window.windowNumber);
     pump();
     hostDX = 0;
@@ -173,14 +208,16 @@ int main(int argc, const char **argv) {
         CPDrawerEntry *entry = [CPDrawerEntry new];
         entry.element = windows.firstObject;
         entry.pid = getpid();
+        NSRect originalFrame = fixture.frame;
+        CGRect original;
+        assert(getFrame(entry, &original));
+        checkClampedMinimum(fixture,entry,original);
+        if (argc == 2 && !strcmp(argv[1],"--fit")) { [fixture orderOut:nil]; return 0; }
         assert([attribute(elementOf(entry), kAXSubroleAttribute) isEqual:@"AXDialog"]);
         assert(isDraggableWindow(entry.element));
         fixture.testModal = YES;
         assert(!isDraggableWindow(entry.element));
         fixture.testModal = NO;
-        NSRect originalFrame = fixture.frame;
-        CGRect original;
-        assert(getFrame(entry, &original));
         // Use only this disposable window for the live WindowServer identity check.
         fixture.level = NSStatusWindowLevel;
         [fixture orderFrontRegardless];

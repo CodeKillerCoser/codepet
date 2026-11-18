@@ -4,6 +4,7 @@
 
 // Main thread. A pure host move reports its displacement in top-down points.
 void cp_drawer_connect(void *host, void (*notify)(bool cover, double dx, double dy));
+CGWindowID cp_drawer_host_number(void);
 void cp_drawer_host_changed(void);
 void cp_drawer_other_window_pressed(CGWindowID number);
 
