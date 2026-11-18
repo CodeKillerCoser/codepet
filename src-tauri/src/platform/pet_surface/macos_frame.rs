@@ -55,8 +55,6 @@ pub fn reposition(previous: Rect, frame: Rect) {
             if previous.width == frame.width && previous.height == frame.height {
                 c.frame.x += frame.x - previous.x;
                 c.frame.y += frame.y - previous.y;
-            }
-            if previous.width == frame.width && previous.height == frame.height {
                 c.window
                     .setFrameOrigin(NSPoint::new(c.frame.x, -c.frame.y - c.frame.height));
             }

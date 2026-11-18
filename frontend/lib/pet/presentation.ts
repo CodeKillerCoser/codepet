@@ -7,15 +7,14 @@ export interface Presentation {
   focused: boolean;
   pointerHeld: boolean;
   openPending: boolean;
-  tasksCollapsed: boolean;
 }
 export const initialPresentation: Presentation = {
   surface: initialSurface, expanded: false, hovered: false, focused: false,
-  pointerHeld: false, openPending: false, tasksCollapsed: false,
+  pointerHeld: false, openPending: false,
 };
 export type PresentationEvent =
   | { type: 'surface'; surface: SurfaceView }
-  | { type: 'enter' | 'leave' | 'focus' | 'blur' | 'press' | 'release' | 'open-delay' | 'close-delay' | 'expand' | 'collapse' | 'toggle-tasks' | 'new-task' };
+  | { type: 'enter' | 'leave' | 'focus' | 'blur' | 'press' | 'release' | 'open-delay' | 'close-delay' | 'expand' | 'collapse' };
 
 // Native surface owns docking/drag transactions; this reducer owns presentation only.
 export function present(state: Presentation, event: PresentationEvent): Presentation {
@@ -40,7 +39,5 @@ export function present(state: Presentation, event: PresentationEvent): Presenta
     case 'blur': return { ...state, focused: false };
     case 'close-delay': return locked || state.hovered || state.focused ? state : { ...state, expanded: false };
     case 'collapse': return locked ? state : { ...state, expanded: false, openPending: false };
-    case 'toggle-tasks': return { ...state, tasksCollapsed: !state.tasksCollapsed };
-    case 'new-task': return { ...state, tasksCollapsed: false };
   }
 }

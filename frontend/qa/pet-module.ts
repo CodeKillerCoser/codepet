@@ -26,6 +26,15 @@ const native = {
 const qa = {
   native,
   surface: { revision: 1, mode: 'floating' as 'floating' | 'docked', dragging: false, snapCandidate: false, canDock: true, availableHeight: 860, availableWidth: 1440, nativeDrag: true, physicalNotch: true, topInset: 0, notchWidth: 185 },
+  drawerCalls: [] as string[],
+  drawerCovered: false,
+  drawerMinimumWidth: 0,
+  drawerChanged: (cover: boolean, dx=0, dy=0) => fire('pet-drawer-changed', {cover,dx,dy}),
+  pendingCursorCapture: null as Promise<void> | null,
+  cursorCaptureRequested: false,
+  pendingRelease: null as Promise<boolean> | null,
+  pendingDrawer: null as Promise<void> | null,
+  drawerInset: 0,
   manualDrag: false,
   dragAlongTop: false,
   finishDrag: (docked = false) => {
@@ -62,6 +71,22 @@ let anchor: { x: number; y: number } | undefined;
 let lastLayout: any;
 mockWindows("pet");
 mockIPC((command, args: any) => {
+  if (command === 'pet_window_drawer') {
+    qa.drawerCalls.push(args.operation);
+    if (args.operation === 'supported') return true;
+    if (args.operation === 'settings') return null;
+    if (args.operation === 'drop' || args.operation === 'dockClick') return { id: 'notes', name: '便笺', title: 'QA' };
+    if (args.operation === 'dragEnd') return null;
+    if (args.operation === 'release') return qa.pendingRelease ?? true;
+    if (args.operation === 'activate') qa.drawerCovered = false;
+    if (args.operation === 'show' || args.operation === 'activate') {
+      const {width,height} = args.region;
+      const result = {width:Math.max(width,qa.drawerMinimumWidth),height,visible:qa.drawerCovered ? [] :
+        [{x:qa.drawerInset,y:0,width:width-qa.drawerInset,height}]};
+      return qa.pendingDrawer ? qa.pendingDrawer.then(() => result) : result;
+    }
+    return true;
+  }
   if (command === "provider_connection_status") return qa.providers;
   if (command === "get_app_settings") return qa.settings;
   if (command === "pet_gateway_request") {
@@ -109,7 +134,14 @@ mockIPC((command, args: any) => {
     anchor = { x: x + l.anchor.x * scale, y: y + l.anchor.y * scale }; lastLayout = l;
     return Promise.resolve((window as any).__resizeNativeWindow({ width: l.width, height: l.height })).then(() => qa.surface);
   }
-  if (command === "plugin:window|set_ignore_cursor_events") { qa.ignored = args.value; return; }
+  if (command === "plugin:window|set_ignore_cursor_events") {
+    if (!args.value && qa.pendingCursorCapture) {
+      qa.cursorCaptureRequested = true;
+      return qa.pendingCursorCapture.then(() => { qa.ignored = false; });
+    }
+    qa.ignored = args.value;
+    return;
+  }
   if (command === "plugin:window|start_dragging") { qa.drags++; return new Promise(resolve => setTimeout(resolve, 200)); }
   if (command === "pet_asset_data_url") { if (qa.assets[args.path]) return qa.assets[args.path]; throw new Error("missing test asset"); }
 });

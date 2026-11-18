@@ -1,0 +1,368 @@
+<script lang="ts">
+  import { listen } from '@tauri-apps/api/event';
+  import { onMount, tick } from 'svelte';
+  import { Plus, Unlink, X } from '@lucide/svelte';
+  import petIcon from '../../../src-tauri/icons/32x32.png';
+  import { defaultDrawerSize, drawerCommand, serializeDrawer, type DrawerWindow, type DrawerPointer, type DrawerRect, type DrawerSelectionOperation } from './windowDrawer';
+  export let syncHitRegions: () => Promise<void>;
+  export let frame: HTMLElement;
+  export let panel: HTMLElement;
+  export let backdrop: HTMLElement;
+  export let body: HTMLElement;
+  export let host: HTMLElement | undefined;
+  export let selected: DrawerWindow | null = null;
+  export let helpOpen = false;
+  export let visibleRects: DrawerRect[] = [];
+  export let maxWidth: number;
+  export let maxHeight: number;
+  export let pointer: DrawerPointer | null;
+  export let pinned = false;
+  export let openPanel: () => void;
+  export let failed: (error: unknown) => void;
+  let windows: DrawerWindow[] = [];
+  let activateNext = false;
+  let pressed = false, tracking = false;
+  export let dropReady = false;
+  let probing = false, gesture = 0;
+  let lastExternalRelease: number | undefined;
+  let enterTimer: ReturnType<typeof setTimeout> | undefined;
+  let error = '', busy = false, visible = false, disposed = false;
+  let edge: HTMLButtonElement, bar: HTMLElement, helpPanel: HTMLElement;
+  let timer: ReturnType<typeof setTimeout>, check: ReturnType<typeof setTimeout> | undefined;
+  let dirty = false, immediateCheck = false, epoch = 0, lastPath = '';
+  const idleCheckMs = 500;
+  function cancelCheck() { clearTimeout(check); check = undefined; immediateCheck = false; }
+  function schedule(delay = 0) {
+    if (disposed || suspended || !selected) return;
+    if (syncing) { dirty = true; return; }
+    if (immediateCheck) return;
+    cancelCheck();
+    immediateCheck = delay === 0;
+    check = setTimeout(() => { check = undefined; immediateCheck = false; void sync(); }, delay);
+  }
+  type DrawerChange = { cover: boolean; dx: number; dy: number };
+  function changed({cover, dx, dy}: DrawerChange) {
+    if (!selected || disposed || suspended) return;
+    if (cover || dx || dy) epoch++;
+    if (cover) aperture();
+    else if ((dx || dy) && visibleRects.length) {
+      // Until the AX move is confirmed, expose only the overlap between the
+      // last verified pixels on screen and their destination in the panel.
+      const rect = host?.getBoundingClientRect();
+      aperture(rect, visibleRects.map(r => ({
+        x: r.x + Math.max(0,-dx), y: r.y + Math.max(0,-dy),
+        width: r.width - Math.abs(dx), height: r.height - Math.abs(dy),
+      })).filter(r => r.width > 0 && r.height > 0));
+    }
+    schedule();
+  }
+  let presented = false, syncing = false, suspended = false;
+  function reveal() { clearTimeout(timer); clearTimeout(enterTimer); enterTimer = undefined; visible = true; }
+  function enter() {
+    clearTimeout(timer);
+    if (!visible && !enterTimer) enterTimer = setTimeout(reveal, 180);
+  }
+  $: if (pinned) reveal(); else if (visible && !over) deferHide();
+  function deferHide() {
+    clearTimeout(enterTimer); enterTimer = undefined;
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!pinned && !helpOpen && !bar?.matches(':hover') && !bar?.querySelector(':focus-visible') && !edge?.matches(':focus-visible')) visible = false;
+    }, 700);
+  }
+  function inside(node: HTMLElement | undefined, point: {x:number;y:number}) {
+    if (!node || !node.getClientRects().length) return false;
+    const r = node.getBoundingClientRect();
+    return point.x >= r.left && point.x < r.right && point.y >= r.top && point.y < r.bottom;
+  }
+  let over = false;
+  $: if (pointer) {
+    const next = inside(edge,pointer) || (visible && inside(bar,pointer)) || (helpOpen && inside(helpPanel,pointer));
+    if (next && !over) enter(); else if (!next && over) deferHide();
+    over = next;
+  }
+  // The native press is recorded before WKWebView samples the pointer.
+  // Probe only at the destination and require the actual window to have moved.
+  function sampleDrag(point: DrawerPointer) {
+    const down = Boolean(point.pressed);
+    const released = point.externalReleases !== undefined && lastExternalRelease !== undefined &&
+      lastExternalRelease !== point.externalReleases;
+    lastExternalRelease = point.externalReleases;
+    const inPanel = inside(panel, point);
+    if (down && !pressed) {
+      gesture++;
+      tracking = !inPanel;
+    }
+    if (!down || !inPanel) { dropReady = false; gesture++; }
+    if (down && inPanel && !dropReady && !probing) {
+      const ticket = gesture;
+      probing = true;
+      void drawerCommand('dragProbe').then(moved => {
+        if (ticket === gesture && !disposed && moved) {
+          tracking = true;
+          dropReady = true;
+        }
+      }).catch(() => {}).finally(() => { probing = false; });
+    }
+    if (!down && (tracking && pressed || released)) {
+      const atPanel = inside(panel, released && point.releasePoint ? point.releasePoint : point);
+      if (atPanel) consumeDrop('drop', true);
+      else if (windows.length) consumeDrop(tracking ? 'dragEnd' : 'dockClick', false);
+      tracking = false;
+    }
+    pressed = down;
+  }
+  function consumeDrop(operation: DrawerSelectionOperation, reportFailure: boolean) {
+    void serializeDrawer(() => drawerCommand(operation))
+      .then(async target => {
+        if (!target || disposed) return;
+        openPanel();
+        await choose(target);
+      }).catch(e => { if (reportFailure && !disposed) failed(e); });
+  }
+  $: if (pointer && edge) sampleDrag(pointer);
+  function aperture(rect?: DOMRect, parts: DrawerRect[] = [], updateHit = true) {
+    if (!panel || !backdrop) return;
+    const previous = visibleRects;
+    const regionsChanged = parts.length !== previous.length || parts.some((r,i) =>
+      r.x !== previous[i].x || r.y !== previous[i].y || r.width !== previous[i].width || r.height !== previous[i].height);
+    if (regionsChanged) {
+      visibleRects = parts;
+    }
+    const hadHole = host?.hasAttribute('data-presented');
+    host?.toggleAttribute('data-presented', Boolean(rect && parts.length));
+    host?.toggleAttribute('data-covered', Boolean(rect && !parts.length));
+    if (updateHit && (hadHole !== Boolean(host?.hasAttribute('data-presented')) || regionsChanged)) {
+      void tick().then(() => { if (!disposed) return syncHitRegions(); }).catch(failed);
+    }
+    if (!rect || !parts.length) { if (lastPath) backdrop.style.clipPath = lastPath = ''; return; }
+    const bounds = panel.getBoundingClientRect();
+    const outline = `M0 0 H${bounds.width} V${bounds.height} H0 Z`;
+    const holes = parts.map(r => {
+      const x = rect.left - bounds.left + r.x, y = rect.top - bounds.top + r.y;
+      return `M${x} ${y} h${r.width} v${r.height} h${-r.width} Z`;
+    });
+    const path = `path(evenodd, "${outline} ${holes.join(' ')}")`;
+    if (path !== lastPath) backdrop.style.clipPath = lastPath = path;
+  }
+  async function coverBeforeMove() {
+    const openHole = host?.hasAttribute('data-presented');
+    aperture(undefined, [], false);
+    // Wait for both the opaque paint and the native input update before moving the window.
+    const inputReady = tick().then(syncHitRegions);
+    const paintReady = openHole && !document.hidden && new Promise<void>(done => {
+      let raf = 0;
+      const finish = () => { clearTimeout(timer); cancelAnimationFrame(raf); done(); };
+      const timer = setTimeout(finish, 80);
+      raf = requestAnimationFrame(() => { raf = requestAnimationFrame(finish); });
+    });
+    await Promise.all([inputReady, paintReady]);
+  }
+  async function park() {
+    if (!presented) { aperture(); return; }
+    await coverBeforeMove();
+    await drawerCommand('park');
+    presented = false;
+  }
+  export async function beforeCollapse() {
+    suspended = true; epoch++; cancelCheck();
+    try { await serializeDrawer(park); helpOpen = false; visible = false; }
+    catch (e) { suspended = false; schedule(); throw e; }
+  }
+  export function resumed() { suspended = false; schedule(); }
+  export async function prepareReveal() {
+    cancelCheck();
+    await tick();
+    await sync(true);
+  }
+  async function sync(handoff = false) {
+    if (!selected || busy || syncing || disposed || suspended) return;
+    if (!host || !handoff && (frame?.getAttribute('data-phase') !== 'open' || frame.hasAttribute('data-morphing'))) return;
+    const rect = host.getBoundingClientRect();
+    if (rect.height < 30 || rect.width < 30) return;
+    syncing = true;
+    const target = selected;
+    const generation = epoch;
+    let retry = false;
+    try {
+      await serializeDrawer(async () => {
+        if (disposed || suspended || busy || selected !== target) return;
+        const op = activateNext ? 'activate' : 'show';
+        activateNext = false;
+        const layout = await drawerCommand(op, target.id, rect);
+        if ('pending' in layout) {
+          retry = true;
+          if (op === 'activate') activateNext = true;
+          aperture();
+          return;
+        }
+        presented = true;
+        if (disposed || busy || selected !== target || suspended || generation !== epoch) return;
+        if (layout.width > maxWidth + 1 || layout.height > maxHeight + 1) {
+          throw new Error(`${target.name}需要 ${Math.ceil(layout.width)} × ${Math.ceil(layout.height)} 点，超过此屏幕的展示空间。`);
+        }
+        if (layout.width > rect.width + 1 || layout.height > rect.height + 1) {
+          const fitted = { ...target, requiredWidth: Math.max(target.requiredWidth ?? defaultDrawerSize.width, Math.ceil(layout.width)),
+            requiredHeight: Math.max(target.requiredHeight ?? defaultDrawerSize.height, Math.ceil(layout.height)) };
+          if (fitted.requiredWidth !== target.requiredWidth || fitted.requiredHeight !== target.requiredHeight) {
+            aperture();
+            windows = windows.map(item => item.id === target.id ? fitted : item);
+            selected = fitted; retry = true;
+            return;
+          }
+        }
+        aperture(rect, layout.visible);
+      });
+    } catch (e) {
+      if (disposed || busy || suspended || selected !== target || generation !== epoch) return;
+      // Restore even if a move succeeded but size or visibility readback failed.
+      busy = true;
+      try {
+        await restoreWindow(target.id);
+      } catch (releaseError) {
+        // Keep the entry reachable so the user can retry restoration.
+        suspended = true;
+        reveal();
+        failed(releaseError);
+        return;
+      } finally {
+        busy = false;
+      }
+      failed(e);
+    } finally {
+      syncing = false;
+      const delay = dirty ? 0 : retry ? 16 : idleCheckMs;
+      dirty = false;
+      schedule(delay);
+    }
+  }
+  async function choose(target: DrawerWindow | null) {
+    if (busy) return;
+    busy = true;
+    try {
+      if (target) {
+        const existing = windows.find(item => item.id === target.id);
+        if (existing) target = existing;
+        else windows = [...windows, target];
+      }
+      if (selected?.id !== target?.id) await serializeDrawer(park);
+      activateNext = Boolean(target);
+      selected = target; helpOpen = false; suspended = false; error = '';
+    } catch (e) { failed(e); }
+    finally { busy = false; schedule(); deferHide(); }
+  }
+  export function activateSelected() { if (selected) void choose(selected); }
+  async function dragHelp() {
+    if (busy) return;
+    helpOpen = true; reveal(); busy = true; error = '';
+    try { await drawerCommand('permission'); }
+    catch (e) { error = String(e); }
+    finally { busy = false; schedule(); }
+  }
+  async function restoreWindow(id: string) {
+    await serializeDrawer(async () => {
+      await coverBeforeMove();
+      await drawerCommand('release', id);
+    });
+    windows = windows.filter(item => item.id !== id);
+    if (selected?.id === id) {
+      selected = null;
+      presented = false;
+    }
+  }
+  async function release() {
+    if (!selected || busy) return;
+    busy = true;
+    const id = selected.id;
+    try {
+      await restoreWindow(id);
+    } catch (e) { failed(e); }
+    finally { busy = false; schedule(); }
+  }
+  function step(direction: number) {
+    const items = [null, ...windows];
+    const index = items.findIndex(item => item?.id === selected?.id);
+    const next = items[Math.max(0, Math.min(items.length - 1, index + direction))];
+    if (next !== selected) void choose(next);
+  }
+  let lastWheel = 0, distance = 0, switched = false;
+  function wheel(e: WheelEvent) {
+    if (helpOpen || !windows.length || Math.abs(e.deltaX) <= Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    const now = performance.now();
+    if (now - lastWheel > 180) { distance = 0; switched = false; }
+    lastWheel = now;
+    distance += e.deltaX * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? bar.clientWidth : 1);
+    if (!switched && Math.abs(distance) >= 24) {
+      switched = true;
+      step(Math.sign(distance));
+    }
+  }
+  function key(e: KeyboardEvent) {
+    if(e.key === 'Escape' && (helpOpen || visible)) {
+      e.stopPropagation(); helpOpen = false; edge.focus(); visible = pinned;
+    }
+    if(!helpOpen && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+      e.preventDefault();
+      step(e.key === 'ArrowLeft' ? -1 : 1);
+    }
+  }
+  onMount(() => {
+    void serializeDrawer(() => drawerCommand('reset')).catch(failed);
+    const phase = new MutationObserver(() => {
+      if (frame.dataset.phase === 'open' && !frame.hasAttribute('data-morphing')) schedule();
+      else { cancelCheck(); epoch++; aperture(); }
+    });
+    phase.observe(frame,{attributes:true,attributeFilter:['data-phase','data-morphing']});
+    const resize = new ResizeObserver(() => schedule());
+    resize.observe(body);
+    let unlisten: (() => void) | undefined;
+    void listen<DrawerChange>('pet-drawer-changed', event => changed(event.payload)).then(remove => {
+      if (disposed) remove(); else unlisten = remove;
+    }).catch(failed);
+    return () => {
+      disposed = true; cancelCheck(); phase.disconnect(); resize.disconnect(); unlisten?.(); clearTimeout(timer); clearTimeout(enterTimer); aperture();
+      void serializeDrawer(() => drawerCommand('reset')).catch(failed);
+    };
+  });
+</script>
+
+<button bind:this={edge} class="edge" data-window-control aria-label="显示窗口 Dock" aria-expanded={visible} on:pointerenter={enter} on:pointerleave={deferHide} on:focus={reveal} on:blur={deferHide} on:click={reveal}></button>
+{#if visible || helpOpen}
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <nav bind:this={bar} class="window-dock" data-window-control aria-label="窗口 Dock" on:pointerenter={enter} on:pointerleave={deferHide} on:wheel|nonpassive={wheel} on:keydown={key} on:focusin={reveal} on:focusout={deferHide}>
+    <button aria-label="Code Pet 通知列表" title="Code Pet 通知列表" aria-pressed={!selected} on:click={() => choose(null)}><img src={petIcon} alt="" /></button>
+    <div class="items">
+      {#each windows as item (item.id)}
+        <button title={item.name + ' · ' + item.title} aria-pressed={item.id === selected?.id} on:click={() => choose(item)}>{#if item.icon}<img src={item.icon} alt={item.name}/>{:else}<span>{item.name.slice(0,2)}</span>{/if}</button>
+      {/each}
+    </div>
+    <button aria-label="拖入窗口说明" aria-expanded={helpOpen} title="拖动窗口标题栏到桌宠以钉住" on:click={() => helpOpen ? (helpOpen=false) : dragHelp()}><Plus size={15}/></button>
+    {#if selected}<button title="释放当前窗口" aria-label="释放当前窗口" on:click={release}><Unlink size={15}/></button>{/if}
+  </nav>
+{/if}
+{#if helpOpen}
+  <!-- Escape also closes the drag instructions from the keyboard. -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <section bind:this={helpPanel} class="drag-help" data-window-control aria-label="拖入钉住窗口" on:keydown={key}>
+    <header>拖入钉住 <button aria-label="关闭说明" on:click={() => {helpOpen=false;deferHide();}}><X size={13}/></button></header>
+    {#if error}<p role="status">{error}</p><button on:click={() => drawerCommand('settings').catch(failed)}>打开辅助功能设置</button><button on:click={dragHelp}>刷新</button>
+    {:else}<p>拖动应用窗口的标题栏，在桌宠面板上松手即可钉住。</p>{/if}
+  </section>
+{/if}
+<style>
+  .edge,.window-dock,.drag-help {position:absolute;z-index:4;left:50%;transform:translateX(-50%)}
+  .edge {bottom:0;width:min(260px,75%);height:12px;border:0;background:transparent}
+  .edge:focus-visible {outline:1px solid var(--gray-9)}
+  .window-dock {bottom:5px;display:flex;align-items:center;gap:4px;max-width:95%;padding:4px 6px;background:var(--gray-3);color:var(--gray-12);border:1px solid var(--gray-7);border-radius:12px;box-shadow:0 4px 16px #0006}
+  button {color:inherit;font:inherit;cursor:pointer}
+  .window-dock button,.drag-help button {background:transparent;border:0;border-radius:6px}
+  .window-dock button {display:grid;place-items:center;min-width:27px;height:27px;font-size:11px}
+  .window-dock button[aria-pressed="true"],button:hover {background:var(--gray-5)}
+  img {width:20px;height:20px;border-radius:4px}
+  .items {display:flex;min-width:0;overflow-x:auto}
+  .items:empty {display:none}
+  .drag-help {bottom:44px;max-height:calc(100% - 50px);overflow:auto;width:min(280px,95%);padding:8px;background:var(--gray-3);color:var(--gray-12);border:1px solid var(--gray-7);border-radius:9px;font-size:12px;box-sizing:border-box}
+  header {display:flex;align-items:center;gap:6px}
+  header {justify-content:space-between;font-weight:600}
+</style>

@@ -35,3 +35,28 @@
 最终版原生 `--motion` 的正常展开/收起/反向共 129 帧通过；16 项 Surface、19 项前端定向、顶部 UI QA、浏览器居中/左右边缘/反向逐帧坐标、11 项 webcontent 检查通过。上述检查证明几何和交互回归，不替代最终桌面合成验收。完整 App 交付信息记录在顶部吸附文档。
 
 物理刘海、混合 DPI、其他平台仍需对应设备验证。CUA 原生坐标拖动能力有限，浏览器拖动与状态机测试不能冒充真实鼠标链验收。快照失败恢复、连续反向不能遗留不可见 WebView，后续回归应保留。回归规则已补到 `knowledge/60-rules/pet-window-click-through.md`。
+
+## 2026-11-18 应用页收纳原窗口
+
+本轮在隔离的 Tauri Debug 进程中使用生产桌宠页面、WKWebView 和一个专用 AppKit 窗口。旧版静止 6 秒仍执行 88～89 次窗口同步。每次都经过 WebView IPC、AX 边界读取及 WindowServer 遮挡检查。旧版展开先画 260 ms 面板动画，再等下一次定时器定位原窗口。收起先移走原窗口，剩下的动画显示空面板。两段串行解释了可复现的延迟。真实桌面出现空白的具体帧仍需合成录像判定。
+
+| 隔离样本 | 旧版 | 第一轮事件驱动版 |
+| --- | ---: | ---: |
+| 静止时原生同步次数/秒 | 14.75 | 1.94 |
+| 桌宠宿主 CPU | 5.82% | 4.99% |
+| WKWebView 内容进程 CPU | 4.10% | 4.27% |
+| 两进程合计 CPU | 9.92% | 9.26% |
+| 展开至首次确认原窗口可见，中位数 | 425 ms | 63 ms |
+| 收起至面板进入 closed，中位数 | 348 ms | 36 ms |
+| 各次切换的最大 rAF 间隔，中位数 / 全部最大值 | 38 / 44 ms | 23 / 48 ms |
+
+将同一窗口拖入后固定展开，静置 650 ms，再取三段各 6 秒样本。用宿主和对应 WK 内容进程的累计 CPU 秒增量除以墙钟秒，同一核心占满计 100%。六次切换用同一按钮触发，展开终点为展示区出现经校验的可见区域。外部应用、WindowServer 与 GPU 开销不在表内。长尾仍有一帧 48 ms，短样本不足以推断日常耗电。逐轮原始数据见[旧版](../../artifacts/window-drawer-performance/baseline.json)和[第一轮优化](../../artifacts/window-drawer-performance/event-driven.json)。
+
+应用页现在用 AX 通知、宿主 AppKit 通知与 Space/应用切换通知唤醒同步。主 RunLoop 合并同一轮通知，真实拖动触发即时复核。静止时每 500 ms 校验一次，停靠后注销应用页监听。原生层复用已协商的窗口尺寸，读宿主位置时只取面板和主屏几何。前端只在可见矩形发生变化时更新遮罩与鼠标命中，前一次异步结果不得覆盖较新的遮挡。窗口定位和面板最终尺寸在同一次原生快照交接内完成。收起先提交遮罩再移动原窗口，给两次 WebView 绘制回调留出时间，最长等 80 ms。上述保护以及后加的原生尺寸缓存与轻量坐标读取晚于表中 A/B 采样。
+
+终版另做了两组可在锁屏时运行的分段测量。真实 AppKit 样本窗口以约 60 Hz 水平移动 40 次，从设置位置到宿主原生回调中位 0.62 ms，P95 为 0.84 ms。独立 Chromium 运行生产 Svelte 组件并模拟 Tauri IPC，静止 18 秒得到 36 次校验，三条 renderer 进程 CPU 合计 2.28%。40 次模拟位移通知至组件发出同步命令，中位 0.80 ms，P95 为 1.10 ms。两组测量各自覆盖不同环节，外部窗口处理 AX 和 WindowServer 呈现时间需真机另测。数据见[AppKit 回调](../../artifacts/window-drawer-performance/final-host-move-ms.json)与[终版前端](../../artifacts/window-drawer-performance/final-web.json)。
+
+复查时用单独的原生样本窗口，保留相同的窗口尺寸、Debug/Release 配置和通知负载。前后各采 CPU 和切换时序，录像另跑一轮，避免把录屏开销混入 CPU。用一扇有明显颜色的窗口拖过展示区，连续捕获桌宠与原窗口的合成画面，同时检查快速反向和点击遮挡处。锁屏或显示器休眠时，将这轮标为无效。本次终版桌面像素采样因锁屏未完成。浏览器遮挡竞态、原生事件和 Surface 几何测试可独立运行。
+
+- `npm run test:pet:ui` 验证移动后剩余可见区域和异步同步过期；`npm run test:pet:motion` 覆盖通知页居中、边缘和反向动效。
+- `clang -fobjc-arc -framework AppKit -framework ApplicationServices -framework ImageIO src-tauri/tests/macos_drawer_parking.m src-tauri/src/platform/window_drawer/watch.m -o /tmp/codepet-drawer-parking-test` 后执行 `/tmp/codepet-drawer-parking-test --notifications`，验证真实面板移动、Space 失效通知和收起后注销。解锁后执行同一程序不带参数，验证完整窗口与停靠链路。

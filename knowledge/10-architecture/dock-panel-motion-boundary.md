@@ -9,7 +9,7 @@
 采用一个具体的 `DockPanel.svelte`，不建立多种桌宠 UI 的统一抽象接口。
 
 - `NotchPet.svelte` 保留角色、任务排序、完成/取消分组、消息和操作，通过具名插槽提供顶栏内容，通过默认插槽提供任务列表。它不创建动画，也不维护 hover 定时器。
-- `DockPanel.svelte` 拥有稳定的顶栏、正文容器、200ms 展开/240ms 收起定时器、焦点与整条顶栏拖动。继续使用 `presentation.ts` 的同一纯状态机；最新输入立即生效。收起时正文保留挂载，通过 `inert`、可见性及裁剪退出交互，不重建任务节点。
+- `DockPanel.svelte` 拥有稳定的顶栏、正文容器、悬停定时器、焦点与整条顶栏拖动。它独占顶部面板的纯状态机 `presentation.ts`，最新输入立即生效。收起时正文保留挂载，通过 `inert`、可见性及裁剪退出交互，不重建任务节点。
 - 私有 `dockPanelMotion.ts` 只修改组件持有的 frame 节点。宽、高、窗口偏移、安全区和单一展开进度由同一 rAF 驱动；CSS 根据进度布局状态区、操作区和正文。字号及角色图像不缩放，不查询业务后代，不克隆业务 DOM。
 - `PetSurfaceController` 仍负责测量/规划/提交原生窗口和 begin/end 画面交接。macOS 的 WKSnapshot 覆盖窗口留在平台层；API 12 不变。角色锚点及原生拖动范围沿用已有测量协议。
 
@@ -31,7 +31,7 @@
 
 ## 影响范围
 
-`PetApp.svelte` 移除顶部动效及定时器，继续拥有共享数据、Surface 和光标透传；`NotchPet.svelte` 专注任务；`DockPanel.svelte` 和其私有驱动承担交互与呈现。删除旧 `notchMotion.ts`。桌面悬浮 UI、自定义角色导入、Provider 协议和原生实现不变。QA 的关闭判断改为不可交互状态，不能再要求正文节点消失。
+`PetApp.svelte` 持有桌面列表的折叠状态、共享数据、Surface 和光标透传；`NotchPet.svelte` 专注任务；`DockPanel.svelte` 和其私有驱动承担交互与呈现。删除旧 `notchMotion.ts`。桌面悬浮 UI、自定义角色导入、Provider 协议和原生实现不变。QA 的关闭判断改为不可交互状态，不能再要求正文节点消失。
 
 ## 验证与后续观察
 

@@ -132,7 +132,7 @@ try {
   });
   await page.waitForFunction(() => innerWidth <= 280);
   await page.locator('.notch-header').hover(); await page.waitForFunction(() => document.querySelectorAll('.notch-task').length === 14);
-  await page.waitForTimeout(200);
+  await waitForExpandedPanel();
   assert.ok(await page.locator('.notch-task-list').evaluate(el => el.scrollHeight > el.clientHeight));
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth && innerHeight <= 340));
   assert.ok(await page.locator('.task-progress').first().innerText() === '尚未收到回复内容');
@@ -470,6 +470,164 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   assert.equal(await page.locator('.notch-backdrop').evaluate(el => getComputedStyle(el).animationName), 'none');
   await page.emulateMedia({ reducedMotion: 'no-preference' });
+  // A mouse drag onto the closed strip must show its cue outside the clipped body.
+  await page.getByRole('button', {name:'收起任务面板',exact:true}).click();
+  await settled('closed');
+  await page.locator('.notch-summary').evaluate(el => {
+    const r=el.getBoundingClientRect(); window.__petQa.cursorScreen=null;
+    window.__petQa.cursor={x:r.x+4,y:r.y+4,pressed:true,externalReleases:0};
+  });
+  await page.getByText('松手钉住窗口', {exact:true}).waitFor({state:'visible'});
+  // Release inside, then move outside before the next webview poll.
+  await page.locator('.notch-summary').evaluate(el => {
+    const r=el.getBoundingClientRect();
+    window.__petQa.cursor={x:-120,y:180,pressed:false,externalReleases:1,releasePoint:{x:r.x+4,y:r.y+4}};
+  });
+  await page.waitForSelector('[data-window-host][data-presented]');
+  await page.getByRole('button', {name:'显示窗口 Dock', exact:true}).focus();
+  await page.getByRole('button', {name:'释放当前窗口',exact:true}).click();
+  await page.waitForSelector('[data-window-host]', {state:'detached'});
+  // Exercise drop pinning, occlusion and activation with a simulated AX window.
+  await page.getByRole('button', {name:'固定展开', exact:true}).click();
+  const edge = page.getByRole('button', {name:'显示窗口 Dock', exact:true});
+  await edge.hover({position:{x:4,y:10}});
+  await page.getByRole('button',{name:'拖入窗口说明',exact:true}).click();
+  const help=page.getByRole('region',{name:'拖入钉住窗口',exact:true});
+  await help.waitFor();
+  await help.getByRole('button',{name:'关闭说明'}).press('Escape');
+  await help.waitFor({state:'detached'});
+  await page.evaluate(() => { window.__petQa.cursorScreen=null; window.__petQa.cursor={x:-20,y:200,pressed:true}; });
+  await page.waitForTimeout(120);
+  await page.locator('.notch-summary').evaluate(el => {
+    const r=el.getBoundingClientRect(); window.__petQa.cursor={x:r.x+4,y:r.y+4,pressed:true};
+  });
+  await page.getByRole('status', {name:''}).filter({hasText:'松手钉住窗口'}).waitFor({state:'visible'});
+  await page.locator('.notch-summary').evaluate(el => {
+    const r=el.getBoundingClientRect(); window.__petQa.cursor={x:r.x+4,y:r.y+4,pressed:false};
+  });
+  await page.waitForSelector('[data-window-host][data-presented]');
+  await edge.hover({position:{x:4,y:10}});
+  const drawerNav = page.getByRole('navigation', {name:'窗口 Dock'});
+  await drawerNav.dispatchEvent('wheel', {deltaX:-80, deltaY:0});
+  await page.waitForSelector('[data-window-host]', {state:'detached'});
+  await page.getByRole('button', {name:'Code Pet 通知列表'}).press('ArrowRight');
+  await page.waitForSelector('[data-window-host][data-presented]');
+  // Keyboard focus keeps the Dock visible until the user resumes pointer interaction.
+  await page.getByTitle('便笺 · QA', {exact:true}).click();
+  await page.waitForSelector('[data-window-host][data-presented]');
+  const rect = await page.locator('[data-window-host]').boundingBox();
+  assert.equal(rect.width,800);
+  assert.equal(rect.height,560);
+  await page.evaluate(() => {
+    const q = window.__petQa;
+    q.surface.availableWidth = 600; q.surface.availableHeight = 460; q.finishDrag(true);
+  });
+  await page.waitForFunction(() => {
+    const r=document.querySelector('[data-window-host]')?.getBoundingClientRect();
+    return r && r.width === 564 && r.height < 460;
+  });
+  await page.evaluate(() => {
+    const q=window.__petQa; q.surface.availableWidth=1440; q.surface.availableHeight=860; q.finishDrag(true);
+  });
+  await page.waitForFunction(() => document.querySelector('[data-window-host]')?.getBoundingClientRect().height===560);
+  await settled('open');
+  await page.mouse.move(rect.x + rect.width / 2, rect.y + 16);
+  await page.waitForTimeout(900);
+  assert.ok(await drawerNav.isVisible(), 'pin keeps the Dock visible');
+  await page.evaluate(() => { window.__petQa.drawerMinimumWidth = 900; window.__petQa.drawerInset = 50; });
+  await page.waitForFunction(() => {
+    const region = document.querySelector('[data-native-window-region]');
+    return document.querySelector('[data-window-host]')?.clientWidth === 900 && region?.clientWidth === 850;
+  });
+  assert.ok(await page.locator('.notch-backdrop').evaluate(el => getComputedStyle(el).clipPath.includes('path(')));
+  await page.locator('[data-window-host]').evaluate(el => {
+    const r=el.getBoundingClientRect(); window.__petQa.cursor={x:r.x+12,y:r.y+40};
+  });
+  await page.waitForFunction(() => window.__petQa.ignored === false);
+  // A host move masks only the unconfirmed strip. An occluder arriving while
+  // that IPC is in flight must seal the hole before the stale reply returns.
+  await page.locator('[data-window-host]').evaluate(el => {
+    const r=el.getBoundingClientRect(); window.__petQa.cursor={x:r.x+120,y:r.y+40};
+  });
+  await page.waitForFunction(() => window.__petQa.ignored === true);
+  await page.evaluate(() => {
+    const q=window.__petQa;
+    q.pendingDrawer=new Promise(done=>window.__finishDrawer=done);
+    q.drawerChanged(false,12,0);
+  });
+  await page.waitForFunction(() => document.querySelector('[data-native-window-region]')?.clientWidth === 838);
+  await page.evaluate(() => {const q=window.__petQa; q.drawerCovered=true; q.drawerChanged(true);});
+  await page.waitForSelector('[data-window-host]:not([data-presented])');
+  await page.waitForFunction(() => window.__petQa.ignored === false);
+  await page.evaluate(() => {window.__petQa.pendingDrawer=null; window.__finishDrawer();});
+  await page.waitForSelector('[data-window-host][data-covered]');
+  await page.waitForSelector('[data-window-host]:not([data-presented])');
+  await page.getByRole('button',{name:'激活便笺窗口'}).click();
+  await page.waitForSelector('[data-window-host][data-presented]');
+  assert.ok(await page.evaluate(() => window.__petQa.drawerCalls.includes('activate')));
+  await page.evaluate(point => { window.__petQa.cursor = point; }, {x:rect.x+rect.width/2,y:rect.y+16});
+  await page.waitForFunction(() => window.__petQa.ignored === true);
+  await page.getByRole('button', {name:'收起任务面板', exact:true}).click();
+  await settled('closed');
+  assert.ok(await page.evaluate(() => window.__petQa.drawerCalls.includes('park')));
+  // A quick macOS Dock click can complete between pointer samples.
+  await page.evaluate(() => {window.__petQa.cursor={x:-40,y:700,externalReleases:0};});
+  await page.waitForTimeout(180);
+  await page.evaluate(() => {window.__petQa.cursor={x:-40,y:700,externalReleases:1};});
+  await page.waitForFunction(() => window.__petQa.drawerCalls.includes('dockClick'));
+  await page.waitForSelector('[data-window-host][data-presented]');
+  await edge.hover({position:{x:4,y:10}});
+  const releaseWindow = page.getByRole('button', {name:'释放当前窗口', exact:true});
+  await page.locator('[data-window-host]').evaluate(el => {
+    const r=el.getBoundingClientRect(); window.__petQa.cursor={x:r.x+120,y:r.y+40};
+  });
+  await page.waitForFunction(() => window.__petQa.ignored === true);
+  const releases = await page.evaluate(() => {
+    const q=window.__petQa;
+    q.pendingCursorCapture=new Promise(resolve=>{window.__finishCursorCapture=resolve;});
+    q.pendingRelease=new Promise((_,reject)=>{window.__failRelease=()=>reject(new Error('QA restore failed'));});
+    return q.drawerCalls.filter(op=>op==='release').length;
+  });
+  await releaseWindow.click();
+  await page.waitForFunction(() => window.__petQa.cursorCaptureRequested);
+  // Allow the paint barrier to finish; only the held native acknowledgement remains.
+  await page.evaluate(() => new Promise(done=>requestAnimationFrame(()=>requestAnimationFrame(()=>requestAnimationFrame(done)))));
+  assert.equal(await page.locator('[data-native-window-region]').count(),0);
+  assert.equal(await page.evaluate(() => window.__petQa.drawerCalls.filter(op=>op==='release').length),releases);
+  await page.evaluate(() => {window.__petQa.pendingCursorCapture=null; window.__finishCursorCapture();});
+  await page.waitForFunction(count => window.__petQa.drawerCalls.filter(op=>op==='release').length>count, releases);
+  assert.equal(await page.locator('[data-window-host]').count(),1);
+  assert.equal(await page.locator('[data-window-host][data-presented], [data-native-window-region]').count(),0);
+  await page.evaluate(() => {window.__petQa.pendingRelease=null; window.__failRelease();});
+  await page.waitForSelector('[data-window-host][data-presented]');
+  await releaseWindow.click();
+  await page.waitForSelector('[data-window-host]', {state:'detached'});
+  assert.ok(await page.evaluate(() => window.__petQa.drawerCalls.includes('release')));
+  // Desktop folding survives a round trip through the notch. A new live task
+  // unfolds the desktop list without forcing the closed notch panel open.
+  await page.mouse.move(-20,-20);
+  await page.evaluate(() => {
+    const q=window.__petQa;
+    q.tasks=[{id:'fold',title:'桌面折叠回归',status:'running',providerId:'codex',updatedAt:Date.now()}];
+    q.cursor={x:-40,y:-20}; q.finishDrag(false);
+  });
+  await page.getByRole('button',{name:'收起任务列表',exact:true}).click();
+  await page.evaluate(() => window.__petQa.finishDrag(true));
+  await settled('closed');
+  await page.evaluate(() => window.__petQa.finishDrag(false));
+  await page.getByRole('button',{name:'展开任务列表',exact:true}).waitFor();
+  await page.evaluate(() => window.__petQa.finishDrag(true));
+  await settled('closed');
+  await page.evaluate(() => {
+    const q=window.__petQa;
+    q.tasks=[...q.tasks,{id:'new-fold',title:'新任务折叠回归',status:'running',providerId:'codex',updatedAt:Date.now()}];
+  });
+  await page.waitForFunction(() => document.querySelector('.latest-title')?.textContent==='新任务折叠回归');
+  // A longer title can resize the collapsed strip while aria-expanded stays false.
+  assert.equal(await page.locator('.notch-summary').getAttribute('aria-expanded'),'false');
+  await settled('closed');
+  await page.evaluate(() => window.__petQa.finishDrag(false));
+  await page.getByRole('button',{name:'收起任务列表',exact:true}).waitFor();
   console.log('Responsive display matrix:', JSON.stringify(matrix));
   assert.deepEqual(errors, []);
   console.log('Notch UI QA passed: compact/hover, keyboard/Escape, shared dismissals, imported atlas, detach/redock, responsive bounds, corners, live-first order, completed stacking/wheel cycling/toggle/resume, native expanded scrolling, capped scrolling and visible actions.');
