@@ -17,6 +17,7 @@
   export let maxHeight: number;
   export let pointer: DrawerPointer | null;
   export let pinned = false;
+  export let resizing = false;
   export let openPanel: () => void;
   export let failed: (error: unknown) => void;
   let windows: DrawerWindow[] = [];
@@ -165,6 +166,7 @@
     await coverBeforeMove();
     await drawerCommand('park');
     presented = false;
+    resizing = false;
   }
   export async function beforeCollapse() {
     suspended = true; epoch++; cancelCheck();
@@ -191,7 +193,9 @@
         if (disposed || suspended || busy || selected !== target) return;
         const op = activateNext ? 'activate' : 'show';
         activateNext = false;
-        const layout = await drawerCommand(op, target.id, rect);
+        const layout = await drawerCommand(op, target.id, {
+          x: rect.x, y: rect.y, width: rect.width, height: rect.height, maxWidth, maxHeight,
+        });
         if ('pending' in layout) {
           retryDelay = 16;
           if (op === 'activate') activateNext = true;
@@ -200,6 +204,21 @@
         }
         presented = true;
         if (disposed || busy || selected !== target || suspended || generation !== epoch) return;
+        resizing = layout.resizing;
+        if (resizing) {
+          const width = Math.min(Math.floor(maxWidth), Math.max(30,Math.ceil(layout.width)));
+          const height = Math.min(Math.floor(maxHeight), Math.max(30,Math.ceil(layout.height)));
+          if (Math.round(rect.width) === width && Math.round(rect.height) === height) aperture(rect,layout.visible);
+          else aperture();
+          if (width !== target.requiredWidth || height !== target.requiredHeight) {
+            const fitted = { ...target, requiredWidth: width, requiredHeight: height };
+            windows = windows.map(item => item.id === fitted.id ? fitted : item);
+            selected = fitted;
+          }
+          // A final check catches mouse-up even when the owner omits AXResized.
+          retryDelay = 50;
+          return;
+        }
         if (layout.width > maxWidth + 1 || layout.height > maxHeight + 1) {
           throw new Error(`${target.name}需要 ${Math.ceil(layout.width)} × ${Math.ceil(layout.height)} 点，当前展示区最多容纳 ${Math.floor(maxWidth)} × ${Math.floor(maxHeight)} 点。`);
         }
@@ -279,6 +298,7 @@
     if (selected?.id === id) {
       selected = null;
       presented = false;
+      resizing = false;
     }
   }
   async function release() {

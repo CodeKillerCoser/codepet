@@ -30,6 +30,8 @@ const qa = {
   drawerCovered: false,
   drawerAwaitingSurface: false,
   drawerMinimumWidth: 0,
+  drawerResize: null as {width: number; height: number} | null,
+  frameCaptures: 0,
   drawerChanged: (cover: boolean, dx=0, dy=0) => fire('pet-drawer-changed', {cover,dx,dy}),
   pendingCursorCapture: null as Promise<void> | null,
   cursorCaptureRequested: false,
@@ -100,9 +102,10 @@ mockIPC((command, args: any) => {
     if (args.operation === 'activate') qa.drawerCovered = false;
     if (args.operation === 'show' || args.operation === 'activate') {
       const {width,height} = args.region;
-      const result = {width:Math.max(width,qa.drawerMinimumWidth),height,awaitingSurface:qa.drawerAwaitingSurface,
+      const size = qa.drawerResize ?? {width:Math.max(width,qa.drawerMinimumWidth),height};
+      const result = {...size,resizing:!!qa.drawerResize,awaitingSurface:qa.drawerAwaitingSurface,
         visible:qa.drawerCovered || qa.drawerAwaitingSurface ? [] :
-        [{x:qa.drawerInset,y:0,width:width-qa.drawerInset,height}]};
+        [{x:qa.drawerInset,y:0,width:Math.min(width,size.width)-qa.drawerInset,height:Math.min(height,size.height)}]};
       return qa.pendingDrawer ? qa.pendingDrawer.then(() => result) : result;
     }
     return true;
@@ -116,7 +119,7 @@ mockIPC((command, args: any) => {
     return qa.beforeSnapshot ? qa.beforeSnapshot().then(response) : response();
   }
   if (command === "plugin:event|listen") { listeners.set(args.event, args.handler); return args.handler; }
-  if (command === 'pet_surface_begin_frame') return 0;
+  if (command === 'pet_surface_begin_frame') { qa.frameCaptures++; return 0; }
   if (command === 'pet_surface_end_frame') return;
   if (command === 'pet_surface_state') return qa.surface;
   if (command === 'pet_surface_pointer') return qa.cursorScreen

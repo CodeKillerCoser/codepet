@@ -4,11 +4,14 @@ use serde_json::Value;
 use tauri::WebviewWindow;
 
 #[derive(Deserialize, Default, Clone, Copy)]
+#[serde(rename_all = "camelCase")]
 pub struct Region {
     x: f64,
     y: f64,
     width: f64,
     height: f64,
+    max_width: f64,
+    max_height: f64,
 }
 
 #[cfg(target_os = "macos")]
@@ -42,6 +45,8 @@ fn call(operation: &str, id: &str, region: Region) -> Result<Value, String> {
             y: f64,
             w: f64,
             h: f64,
+            max_w: f64,
+            max_h: f64,
         ) -> *mut c_char;
     }
     let op = CString::new(operation).map_err(|e| e.to_string())?;
@@ -55,6 +60,8 @@ fn call(operation: &str, id: &str, region: Region) -> Result<Value, String> {
             region.y,
             region.width,
             region.height,
+            region.max_width.floor(),
+            region.max_height.floor(),
         )
     };
     if raw.is_null() {

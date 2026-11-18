@@ -534,6 +534,33 @@ try {
   await page.mouse.move(rect.x + rect.width / 2, rect.y + 16);
   await page.waitForTimeout(900);
   assert.ok(await drawerNav.isVisible(), 'pin keeps the Dock visible');
+  await page.getByRole('button',{name:'取消固定',exact:true}).click();
+  const captures = await page.evaluate(() => window.__petQa.frameCaptures);
+  for (const [width,height] of [[910,610],[680,420]]) {
+    await page.evaluate(size => {
+      const q = window.__petQa;
+      q.drawerResize = size; q.drawerChanged(false);
+    }, {width,height});
+    await page.waitForFunction(([w,h]) => {
+      const host = document.querySelector('[data-window-host][data-presented]');
+      return host?.clientWidth === w && host?.clientHeight === h;
+    }, [width,height]);
+  }
+  await page.mouse.move(0,700);
+  await page.evaluate(() => { window.__petQa.cursor={x:-30,y:700}; });
+  await page.waitForTimeout(1000);
+  assert.equal(await page.locator('[data-dock-frame]').getAttribute('data-phase'),'open');
+  assert.equal(await page.evaluate(() => window.__petQa.frameCaptures),captures,'live resize never starts a snapshot handoff');
+  await page.evaluate(() => { window.__petQa.cursor={x:100,y:20,pressed:false}; });
+  await page.evaluate(() => { const q=window.__petQa; q.drawerResize=null; q.drawerChanged(false); });
+  await page.getByRole('button',{name:'固定展开',exact:true}).click();
+  await page.getByRole('button',{name:'Code Pet 通知列表'}).click();
+  await page.waitForSelector('[data-window-host]', {state:'detached'});
+  await page.getByRole('button', {name:'Code Pet 通知列表'}).press('ArrowRight');
+  await page.waitForFunction(() => {
+    const host=document.querySelector('[data-window-host][data-presented]');
+    return host?.clientWidth===680 && host?.clientHeight===420;
+  });
   await page.evaluate(() => { window.__petQa.drawerMinimumWidth = 900; window.__petQa.drawerInset = 50; });
   await page.waitForFunction(() => {
     const region = document.querySelector('[data-native-window-region]');

@@ -32,6 +32,7 @@
   export let dismissActivity: (event: MouseEvent, task: Notice) => void;
   let dropReady = false;
   let drawerSupported = false, helpOpen = false, pinned = false;
+  let resizing = false;
   let visibleRects: DrawerRect[] = [];
   let selectedWindow: DrawerWindow | null = null;
   let dock: WindowDock;
@@ -136,7 +137,7 @@
   }
 </script>
 
-<DockPanel bind:this={panel} {controller} {surface} {pointer} sizing={panelSizing} {dragWindow} {failed}
+<DockPanel bind:this={panel} {controller} {surface} {pointer} {resizing} sizing={panelSizing} {dragWindow} {failed}
   holdOpen={pinned || helpOpen} beforeCollapse={selectedWindow ? () => dock.beforeCollapse() : undefined}
   prepareWindow={selectedWindow ? () => dock.prepareReveal() : undefined}
   onExpand={() => dock?.resumed()}
@@ -160,7 +161,7 @@
     {#if dropReady}<div class="drop-hint" role="status">松手钉住窗口</div>{/if}
   </svelte:fragment>
   <svelte:fragment slot="overlay" let:frame let:panel={shell} let:backdrop let:body>
-    {#if drawerSupported}<WindowDock {syncHitRegions} {frame} panel={shell} {backdrop} {body} host={windowHost} bind:this={dock} bind:dropReady bind:selected={selectedWindow} bind:helpOpen bind:visibleRects {maxWidth} {maxHeight} {failed} {pointer} {pinned} openPanel={() => panel.expandForWindow()}/>{/if}
+    {#if drawerSupported}<WindowDock {syncHitRegions} {frame} panel={shell} {backdrop} {body} host={windowHost} bind:this={dock} bind:dropReady bind:selected={selectedWindow} bind:helpOpen bind:visibleRects bind:resizing {maxWidth} {maxHeight} {failed} {pointer} {pinned} openPanel={() => panel.expandForWindow()}/>{/if}
   </svelte:fragment>
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div class="notch-task-list" bind:clientHeight={notificationHeight} class:hosting={selectedWindow} class:help-open={helpOpen} tabindex="0" role="region" aria-label="任务列表">

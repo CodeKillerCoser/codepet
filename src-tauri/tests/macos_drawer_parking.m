@@ -51,7 +51,7 @@ static void checkOcclusion(void) {
     assert(identifyWindow(@[target,sibling],1,slot) == kCGNullWindowID);
     CPDrawerEntry *entry = [CPDrawerEntry new];
     entry.pid = 1;
-    NSDictionary *negotiation = presentation(entry,clamped,slot);
+    NSDictionary *negotiation = presentation(entry,clamped,slot,NO);
     assert([negotiation[@"width"] intValue] == 920 && [negotiation[@"visible"] isEqual:@[]]);
     NSArray *all = visibleParts(@[target, finder], entry, slot, slot);
     assert(all.count == 1 && [all[0][@"width"] intValue] == 800);
@@ -87,7 +87,7 @@ static void checkClampedMinimum(MinimumWindow *fixture, CPDrawerEntry *entry, CG
     CGRect measured;
     assert(fitWindow(entry,slot,&measured));
     assert(needsMoreSpace(measured.size,slot.size) && measured.origin.x < slot.origin.x - 2);
-    NSDictionary *pending = presentation(entry,measured,slot);
+    NSDictionary *pending = presentation(entry,measured,slot,NO);
     assert([pending[@"visible"] isEqual:@[]] && [pending[@"width"] doubleValue] >= 880);
     CGRect larger = (CGRect){.origin=original.origin, .size=measured.size};
     assert(fitWindow(entry,larger,&measured) && nearFrame(larger,measured));
@@ -95,6 +95,39 @@ static void checkClampedMinimum(MinimumWindow *fixture, CPDrawerEntry *entry, CG
     fixture.enforcedMinimum = NSZeroSize;
     assert(place(entry,original));
 }
+static void checkHostedResize(MinimumWindow *fixture, CPDrawerEntry *entry, CGRect original) {
+    CGSize available = CGSizeMake(900,620);
+    CGRect slot = CGRectMake(120,100,800,560);
+    assert(place(entry,slot));
+    entry.original = original; entry.attached = YES;
+    entry.windowID = (CGWindowID)fixture.windowNumber;
+    lastFrame = lastActual = slot;
+    CPDrawerPress press = {.pid=entry.pid, .number=entry.windowID};
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.08]];
+    assert(boundsOf(windowInfo(entry.windowID),&press.original));
+    press.origin = CGPointMake(CGRectGetMaxX(press.original)-1,CGRectGetMaxY(press.original)-1);
+    // Resize from the left/top as well as right/bottom. During tracking
+    // both the new size and the owner's changing origin must survive a sync.
+    CGRect samples[] = {CGRectMake(80,80,860,600),CGRectMake(150,130,650,420),CGRectMake(75,75,940,680)};
+    for (int i = 0; i < 3; i++) {
+        CGRect measured = samples[i], after;
+        assert(place(entry,measured));
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.08]];
+        NSDictionary *layout = followPresentedWindow(entry,slot,available,YES,press);
+        assert([layout[@"resizing"] boolValue]);
+        // The compositor can include a focus border while tracking. AX
+        // below must converge to exact coordinates after release.
+        assert(fabs([layout[@"width"] doubleValue]-measured.size.width)<=6 &&
+               fabs([layout[@"height"] doubleValue]-measured.size.height)<=6);
+        assert(getFrame(entry,&after) && CGRectEqualToRect(after,measured));
+        slot.size = CGSizeMake(MIN(available.width,measured.size.width),MIN(available.height,measured.size.height));
+    }
+    assert(!followPresentedWindow(entry,slot,available,NO,press));
+    CGRect fitted;
+    assert(fitWindow(entry,slot,&fitted) && nearFrame(fitted,slot));
+    assert(restore(entry) && getFrame(entry,&fitted) && nearFrame(fitted,original));
+}
+
 // Deliver an event to the drawer callback, without moving the user's mouse.
 static void fixtureMouse(CGEventType type, CGWindowID number, CGPoint point, BOOL pet) {
     CGEventRef cg = CGEventCreateMouseEvent(NULL, type, point, kCGMouseButtonLeft);
@@ -212,6 +245,7 @@ int main(int argc, const char **argv) {
         CGRect original;
         assert(getFrame(entry, &original));
         checkClampedMinimum(fixture,entry,original);
+        checkHostedResize(fixture,entry,original);
         if (argc == 2 && !strcmp(argv[1],"--fit")) { [fixture orderOut:nil]; return 0; }
         assert([attribute(elementOf(entry), kAXSubroleAttribute) isEqual:@"AXDialog"]);
         assert(isDraggableWindow(entry.element));

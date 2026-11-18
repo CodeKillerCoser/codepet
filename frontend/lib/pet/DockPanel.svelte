@@ -14,6 +14,7 @@
   export let failed: (error: unknown) => void;
   export let prepareWindow: (() => Promise<void>) | undefined = undefined;
   export let holdOpen = false;
+  export let resizing = false;
   export let beforeCollapse: (() => Promise<void>) | undefined = undefined;
   export let onExpand: () => void = () => {};
   let preparingClose = false;
@@ -25,6 +26,7 @@
   let openTimer: ReturnType<typeof setTimeout>, closeTimer: ReturnType<typeof setTimeout>;
   let press: { x: number; y: number } | null = null;
   let dragged = false;
+  let trackingResize = false;
   let resize: ResizeObserver | undefined, mutations: MutationObserver | undefined;
   let refreshQueued = false;
   function refresh() {
@@ -35,7 +37,7 @@
       if (!mounted) return;
       frame.style.setProperty('--dock-status-width', `${status.getBoundingClientRect().width}px`);
       frame.style.setProperty('--dock-actions-width', `${actions.getBoundingClientRect().width}px`);
-      motion?.refresh();
+      motion?.refresh(resizing);
     });
   }
   export function expandForWindow() { send({ type: 'expand' }); }
@@ -65,6 +67,10 @@
   }
   $: if (surface !== state.surface) { send({ type: 'surface', surface }); refresh(); }
   $: if (surface.dragging) { dragged = true; press = null; }
+  $: if (resizing !== trackingResize) {
+    trackingResize = resizing;
+    send({ type: resizing ? 'press' : 'release' });
+  }
   $: if (mounted && controller && !motion) { motion = new DockPanelMotion(frame, controller, failed, () => prepareWindow); refresh(); }
   $: if (sizing) refresh();
   $: if (mounted && pointer && (!document.hasFocus() || beforeCollapse) && !surface.dragging) {

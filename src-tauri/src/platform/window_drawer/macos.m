@@ -9,6 +9,7 @@
 @property(nonatomic,copy) NSString *name, *title;
 @property CGRect original;
 @property BOOL attached;
+@property BOOL followingResize;
 @property CGSize requestedSize, acceptedSize;
 @property BOOL hasParkingPoint;
 @property CGPoint parkingPoint;
@@ -359,6 +360,7 @@ static CPDrawerPress capturedPress(BOOL consume) {
 }
 
 static BOOL movedWindow(CPDrawerPress press, CGPoint end, CGRect *actual) {
+    if (current && entries[current].windowID == press.number) return NO;
     NSDictionary *info = windowInfo(press.number);
     if (!info || [info[(__bridge id)kCGWindowOwnerPID] intValue] != press.pid || !boundsOf(info, actual)) return NO;
     if (!CGSizeEqualToSize(press.original.size, actual->size) &&
@@ -517,8 +519,8 @@ static BOOL rebindRetiredSurface(NSArray *stack, CPDrawerEntry *entry, CGRect ac
     return YES;
 }
 
-static NSDictionary *presentation(CPDrawerEntry *entry, CGRect actual, CGRect slot) {
-    BOOL grow = needsMoreSpace(actual.size,slot.size);
+static NSDictionary *presentation(CPDrawerEntry *entry, CGRect actual, CGRect slot, BOOL resizing) {
+    BOOL grow = !resizing && needsMoreSpace(actual.size,slot.size);
     NSArray *parts = nil;
     if (!grow) {
         NSArray *stack = windowStack();
@@ -526,9 +528,10 @@ static NSDictionary *presentation(CPDrawerEntry *entry, CGRect actual, CGRect sl
         if (!parts && rebindRetiredSurface(stack,entry,actual))
             parts = visibleParts(stack,entry,actual,slot);
     }
-    NSString *state = grow ? @"resize-panel" : !parts ? @"awaiting-surface" : parts.count ? @"visible" : @"covered";
+    NSString *state = resizing ? @"native-resize" : grow ? @"resize-panel" : !parts ? @"awaiting-surface" : parts.count ? @"visible" : @"covered";
     NSMutableDictionary *result = [@{@"width":@(actual.size.width), @"height":@(actual.size.height),
-                                     @"visible":parts ?: @[], @"awaitingSurface":@(!grow && !parts)} mutableCopy];
+                                     @"visible":parts ?: @[], @"awaitingSurface":@(!grow && !parts),
+                                     @"resizing":@(resizing)} mutableCopy];
     if (![state isEqual:entry.presentationState]) {
         entry.presentationState = state;
         result[@"diagnostic"] = [NSString stringWithFormat:@"%@ requested %.0fx%.0f measured %.0fx%.0f",
@@ -552,7 +555,43 @@ static void activateEntry(CPDrawerEntry *entry) {
 }
 
 static NSDictionary *failure(NSString *message) { return @{@"error":message}; }
-static id run(NSString *operation,NSString *key,CGRect rect) {
+// During an owner's resize loop its AX server can lag the compositor. Read
+// only the selected surface and leave both position and size to the owner.
+static NSDictionary *followPresentedWindow(CPDrawerEntry *entry, CGRect slot, CGSize limit, BOOL held, CPDrawerPress press) {
+    CGRect measured;
+    BOOL targetPress = held && !press.pet && entry.windowID && press.number == entry.windowID &&
+        !CGRectContainsPoint(CGRectInset(press.original,12,12),press.origin);
+    NSDictionary *row = targetPress ? windowInfo(entry.windowID) : nil;
+    BOOL liveFrame = row && [row[(__bridge id)kCGWindowOwnerPID] intValue] == entry.pid && boundsOf(row,&measured);
+    if (!liveFrame && !getFrame(entry,&measured))
+        return held && (targetPress || entry.followingResize) ? @{@"pending":@YES} : nil;
+    if (CGRectIsEmpty(measured)) return nil;
+    // Some owners report movement before their first resize event on the
+    // top/left edge. A position write here would interrupt the native drag.
+    if (liveFrame && !entry.followingResize && CGSizeEqualToSize(measured.size,press.original.size))
+        return presentation(entry,(CGRect){measured.origin,lastActual.size},slot,NO);
+    // A CG focus border may extend beyond the AX frame. Use movement relative
+    // to the press so a simple click does not change the preferred size.
+    if (liveFrame) {
+        CGFloat dx = lastActual.size.width - press.original.size.width;
+        CGFloat dy = lastActual.size.height - press.original.size.height;
+        if (fabs(dx)<=2) measured.size.width += dx;
+        if (fabs(dy)<=2) measured.size.height += dy;
+    }
+    if (CGSizeEqualToSize(slot.size,lastFrame.size) && !needsMoreSpace(lastActual.size,lastFrame.size) &&
+        !CGSizeEqualToSize(measured.size,lastActual.size)) entry.followingResize = YES;
+    if (entry.followingResize) {
+        CGSize desired = CGSizeMake(MIN(limit.width,MAX(30,ceil(measured.size.width))),
+                                    MIN(limit.height,MAX(30,ceil(measured.size.height))));
+        if (held || fabs(slot.size.width-desired.width)>0.5 || fabs(slot.size.height-desired.height)>0.5)
+            return presentation(entry,measured,slot,YES);
+        entry.followingResize = NO;
+    }
+    if (CGRectEqualToRect(slot,lastFrame) && CGRectEqualToRect(measured,lastActual))
+        return presentation(entry,measured,slot,NO);
+    return nil;
+}
+static id run(NSString *operation,NSString *key,CGRect rect,CGSize limit) {
     if (!entries) entries=[NSMutableDictionary new];
     if ([operation isEqual:@"reset"]) {
         capturedPress(YES);
@@ -584,6 +623,7 @@ static id run(NSString *operation,NSString *key,CGRect rect) {
         if (!current) return @YES;
         if (!park(entries[current])) return failure(@"此窗口无法停靠在屏幕下角，面板将保持展开。你可以释放窗口。");
         entries[current].presentationState=nil;
+        entries[current].followingResize=NO;
         current=nil; cp_drawer_watch(nil,0,0);
         return @YES;
     }
@@ -594,9 +634,10 @@ static id run(NSString *operation,NSString *key,CGRect rect) {
         if (!getFrame(entry,&original)) return failure(@"无法读取窗口位置。");
         entry.original=original; entry.attached=YES;
     }
-    if (!activating && [current isEqual:key] && CGRectEqualToRect(lastFrame,rect)) {
-        CGRect actual;
-        if (getFrame(entry,&actual) && CGRectEqualToRect(actual,lastActual)) return presentation(entry,actual,rect);
+    if (!activating && [current isEqual:key]) {
+        BOOL held = CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState,kCGMouseButtonLeft);
+        NSDictionary *layout = followPresentedWindow(entry,rect,limit,held,capturedPress(NO));
+        if (layout) return layout;
     }
     if (current && ![current isEqual:key]) return failure(@"请先收起当前窗口。");
     CGRect actual = CGRectZero;
@@ -615,7 +656,8 @@ static id run(NSString *operation,NSString *key,CGRect rect) {
     }
     if (![current isEqual:key]) cp_drawer_watch(entry.element,entry.pid,entry.windowID);
     current=[key copy]; lastFrame=rect; lastActual=actual;
-    NSDictionary *layout = presentation(entry,actual,rect);
+    entry.followingResize = NO;
+    NSDictionary *layout = presentation(entry,actual,rect,NO);
     // App activation and window ordering are separate WindowServer updates.
     // Retry the raise once during this reveal, only if focus belongs to the
     // target application. Passive visibility checks never change the order.
@@ -624,14 +666,14 @@ static id run(NSString *operation,NSString *key,CGRect rect) {
         if (NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier == entry.pid) {
             onAXOwner(elementOf(entry),^{ AXUIElementPerformAction(elementOf(entry),kAXRaiseAction); });
             entry.presentationState = nil;
-            return presentation(entry,actual,rect);
+            return presentation(entry,actual,rect,NO);
         }
     }
     return layout;
 }
-char *cp_drawer_call(const char *op,const char *key,double x,double y,double w,double h) {
+char *cp_drawer_call(const char *op,const char *key,double x,double y,double w,double h,double maxW,double maxH) {
     @autoreleasepool {
-        id result=run(@(op),@(key),CGRectMake(x,y,w,h));
+        id result=run(@(op),@(key),CGRectMake(x,y,w,h),CGSizeMake(maxW,maxH));
         NSData *json=[NSJSONSerialization dataWithJSONObject:result options:NSJSONWritingFragmentsAllowed error:NULL];
         return strdup([[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding].UTF8String ?: "null");
     }

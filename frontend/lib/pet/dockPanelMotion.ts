@@ -46,11 +46,17 @@ export class DockPanelMotion {
     return { layout, visual: { x: 0, width: layout.width, height: layout.height, progress: Number(expanded), inset } };
   }
 
-  refresh() {
+  refresh(resizing = false) {
     if (this.disposed) return;
     if (this.running) { this.dirty = true; return; }
     const target = this.measure(this.desired);
-    if (target && !closeEnough(this.visual, target.visual)) void this.request(this.desired);
+    if (!target || closeEnough(this.visual, target.visual)) return;
+    if (resizing && this.desired && this.frame.dataset.phase === 'open') {
+      // Native edge tracking already supplies intermediate frames. Let the
+      // surface coalesce these layouts without taking a snapshot per pixel.
+      this.paint(target.visual);
+      this.surface.schedule();
+    } else void this.request(this.desired);
   }
 
   async request(expanded: boolean) {
