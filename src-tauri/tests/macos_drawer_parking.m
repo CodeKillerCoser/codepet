@@ -53,30 +53,30 @@ static void checkOcclusion(void) {
     entry.pid = 1;
     NSDictionary *negotiation = presentation(entry,clamped,slot,NO);
     assert([negotiation[@"width"] intValue] == 920 && [negotiation[@"visible"] isEqual:@[]]);
-    NSArray *all = visibleParts(@[target, finder], entry, slot, slot);
+    NSArray *all = visibleParts(@[target, finder], entry, slot, slot, NULL);
     assert(all.count == 1 && [all[0][@"width"] intValue] == 800);
-    NSArray *parts = visibleParts(@[finder, target], entry, slot, slot);
+    NSArray *parts = visibleParts(@[finder, target], entry, slot, slot, NULL);
     double area = 0;
     for (NSDictionary *part in parts) area += [part[@"width"] doubleValue] * [part[@"height"] doubleValue];
     assert(area == 800*560 - 600*360);
-    assert(visibleParts(@[finder], entry, slot, slot) == nil);
-    assert(visibleParts(@[surface(1,CGRectOffset(slot,900,0))], entry, slot, slot) == nil);
-    assert([visibleParts(@[surface(2, slot), target], entry, slot, slot) isEqual:@[]]);
+    assert(visibleParts(@[finder], entry, slot, slot, NULL) == nil);
+    assert(visibleParts(@[surface(1,CGRectOffset(slot,900,0))], entry, slot, slot, NULL) == nil);
+    assert([visibleParts(@[surface(2, slot), target], entry, slot, slot, NULL) isEqual:@[]]);
     assert(isCursorOverlay(NSFloatingWindowLevel, @"com.openai.sky.CUAService"));
     assert(!isCursorOverlay(NSNormalWindowLevel, @"com.openai.sky.CUAService"));
     assert(!isCursorOverlay(NSFloatingWindowLevel, @"example.opaque-palette"));
     NSMutableDictionary *palette = [surface(2, slot) mutableCopy];
     palette[(__bridge id)kCGWindowLayer] = @(NSFloatingWindowLevel);
-    assert(visibleParts(@[palette, target], entry, slot, slot).count == 0);
+    assert(visibleParts(@[palette, target], entry, slot, slot, NULL).count == 0);
     // Exercise the identified cursor helper against the same overlapping stack
     // when it is installed and running. Only its public process identity is used.
     NSRunningApplication *helper = [NSRunningApplication runningApplicationsWithBundleIdentifier:@"com.openai.sky.CUAService"].firstObject;
     if (helper) {
         palette[(__bridge id)kCGWindowOwnerPID] = @(helper.processIdentifier);
-        assert([visibleParts(@[palette, target], entry, slot, slot) isEqual:all]);
+        assert([visibleParts(@[palette, target], entry, slot, slot, NULL) isEqual:all]);
     }
     CGRect snapped = CGRectMake(slot.origin.x, slot.origin.y, 800, 559);
-    NSArray *grid = visibleParts(@[surface(1,snapped)], entry, snapped, slot);
+    NSArray *grid = visibleParts(@[surface(1,snapped)], entry, snapped, slot, NULL);
     assert(grid.count == 1 && [grid[0][@"height"] intValue] == 559);
 }
 
@@ -166,7 +166,13 @@ static void checkNativeDrop(CPDrawerEntry *entry, CGRect original) {
     assert(place(entry, moved));
     [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
     assert(movedWindow(capturedPress(NO), end, &frame));
+    // No intervening pointer poll: a local NSWindow tracking loop can swallow
+    // mouseUp. It still publishes exactly one release when sampling resumes.
+    uint32_t before = releaseSerial;
+    CGPoint sampled;
+    assert(cp_drawer_sample_press(false, &sampled) == before + 1);
     fixtureMouse(kCGEventLeftMouseUp, number, end, NO);
+    assert(cp_drawer_sample_press(false, &sampled) == before + 1 && CGPointEqualToPoint(sampled,end));
     entries = [NSMutableDictionary new];
     NSDictionary *item = droppedWindow();
     assert([item isKindOfClass:NSDictionary.class] && item[@"id"]);
@@ -194,9 +200,14 @@ static void checkDrawerEvents(NSWindow *window, CPDrawerEntry *entry) {
     CPDrawerEntry *other = [CPDrawerEntry new]; other.pid = 1;
     NSMutableDictionary *host = [surface(getpid(),slot) mutableCopy];
     host[(__bridge id)kCGWindowNumber] = @(window.windowNumber);
-    assert(visibleParts(@[host,surface(1,slot)],other,slot,slot).count == 1);
+    assert(visibleParts(@[host,surface(1,slot)],other,slot,slot, NULL).count == 1);
+    NSDictionary *overlay = surface(2,slot), *target = surface(1,slot);
+    NSDictionary *firstCover = nil;
+    assert(visibleParts(@[overlay,host,target],other,slot,slot,&firstCover).count == 1 && !firstCover);
+    assert(!visibleParts(@[host,overlay,target],other,slot,slot,&firstCover).count && firstCover == overlay);
+    assert(!visibleParts(@[overlay,target,host],other,slot,slot,&firstCover).count && firstCover == overlay);
     host[(__bridge id)kCGWindowNumber] = @(window.windowNumber + 1);
-    assert([visibleParts(@[host,surface(1,slot)],other,slot,slot) isEqual:@[]]);
+    assert([visibleParts(@[host,surface(1,slot)],other,slot,slot, NULL) isEqual:@[]]);
     cp_drawer_watch(entry.element,entry.pid,(CGWindowID)window.windowNumber);
     pump();
     hostDX = 0;
@@ -262,7 +273,7 @@ int main(int argc, const char **argv) {
             CGRect cg; boundsOf(row,&cg); NSLog(@"Fixture CG %@ number %@", NSStringFromRect(cg),row[(__bridge id)kCGWindowNumber]);
         }
         assert(identifyWindow(stack, entry.pid, original) == (CGWindowID)fixture.windowNumber);
-        NSArray *onscreen = visibleParts(stack, entry, original, original);
+        NSArray *onscreen = visibleParts(stack, entry, original, original, NULL);
         assert(onscreen.count > 0);
         checkDrawerEvents(fixture,entry);
         checkNativeDrop(entry, original);

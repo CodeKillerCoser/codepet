@@ -19,6 +19,13 @@ static NSMutableArray *watchTokens;
 static BOOL wakeQueued, mustCover;
 
 void cp_drawer_connect(void *host, void (*notify)(bool,double,double)) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        [NSNotificationCenter.defaultCenter addObserverForName:NSWindowWillMoveNotification object:nil
+            queue:nil usingBlock:^(NSNotification *note) {
+                if (note.object != drawerHost) cp_drawer_will_move(note.object);
+            }];
+    });
     drawerHost = (__bridge NSWindow *)host;
     atomic_store(&hostNumber,(CGWindowID)drawerHost.windowNumber);
     notifyDrawer = notify;

@@ -619,10 +619,10 @@ pub async fn pet_surface_pointer(app: AppHandle) -> Result<PointerSample, String
             let unit = display_for(e.frame.center(), &e.displays)
                 .map(|d| d.unit)
                 .unwrap_or(1.);
-            platform::sample_drawer_press(e.pressed);
+            let (external_releases, release_point) = platform::sample_drawer_press(e.pressed);
             PointerSample {
-                external_releases: platform::external_releases(),
-                release_point: platform::external_release_point().zip(e.displays.first()).map(|(p, primary)| Point {
+                external_releases,
+                release_point: release_point.zip(e.displays.first()).map(|(p, primary)| Point {
                     x: (p.x - e.frame.x) / unit,
                     y: (p.y + primary.frame.y - e.frame.y) / unit,
                 }),

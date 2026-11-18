@@ -37,14 +37,10 @@ mod implementation {
         cell::RefCell,
         ptr::NonNull,
         rc::Rc,
-        sync::atomic::{AtomicBool, AtomicU32, Ordering},
+        sync::atomic::{AtomicBool, Ordering},
     };
     use tauri_nspanel::objc2_app_kit::{NSEventMask, NSEventType};
     static LEFT_DOWN: AtomicBool = AtomicBool::new(false);
-    static EXTERNAL_RELEASES: AtomicU32 = AtomicU32::new(0);
-    pub fn external_releases() -> u32 { EXTERNAL_RELEASES.load(Ordering::Relaxed) }
-    thread_local! { static RELEASE_POINT: std::cell::Cell<Option<Point>> = const { std::cell::Cell::new(None) }; }
-    pub fn external_release_point() -> Option<Point> { RELEASE_POINT.with(|p| p.get()) }
     thread_local! { static MONITORS: RefCell<Vec<Retained<AnyObject>>> = const { RefCell::new(Vec::new()) }; }
     use objc2_foundation::{NSPoint, NSRect, NSSize, NSString};
     use tauri_nspanel::{
@@ -54,11 +50,15 @@ mod implementation {
     unsafe extern "C" {
         fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
         fn cp_drawer_host_changed();
-        fn cp_drawer_sample_press(down: bool);
-        fn cp_drawer_mouse_event(event: *mut std::ffi::c_void, pet: bool) -> NSPoint;
+        fn cp_drawer_sample_press(down: bool, point: *mut NSPoint) -> u32;
+        fn cp_drawer_mouse_event(event: *mut std::ffi::c_void, pet: bool);
         fn CGEventSourceKeyState(state_id: i32, key: u16) -> bool;
     }
-    pub fn sample_drawer_press(down: bool) { unsafe { cp_drawer_sample_press(down) } }
+    pub fn sample_drawer_press(down: bool) -> (u32, Option<Point>) {
+        let mut point = NSPoint::new(0., 0.);
+        let serial = unsafe { cp_drawer_sample_press(down, &mut point) };
+        (serial, (serial != 0).then_some(Point { x: point.x, y: point.y }))
+    }
     fn rect(r: NSRect) -> Rect {
         Rect {
             x: r.origin.x,
@@ -195,12 +195,10 @@ mod implementation {
             raw.as_ptr()
         });
         let global = RcBlock::new(|event: NonNull<NSEvent>| {
-            let point = unsafe { cp_drawer_mouse_event(event.as_ptr().cast(), false) };
+            unsafe { cp_drawer_mouse_event(event.as_ptr().cast(), false) };
             let down = unsafe { event.as_ref() }.r#type() == NSEventType::LeftMouseDown;
             if !down {
-                RELEASE_POINT.with(|v| v.set(Some(Point { x: point.x, y: point.y })));
                 LEFT_DOWN.store(false, Ordering::Relaxed);
-                EXTERNAL_RELEASES.fetch_add(1, Ordering::Relaxed);
             }
         });
         MONITORS.with(|monitors| {
@@ -346,13 +344,9 @@ mod implementation {
     }
 }
 #[cfg(target_os = "macos")]
-pub use implementation::{drawer_frame, external_release_point, external_releases, install_drag_monitor, sample_drawer_press};
+pub use implementation::{drawer_frame, install_drag_monitor, sample_drawer_press};
 #[cfg(not(target_os = "macos"))]
-pub fn sample_drawer_press(_: bool) {}
-#[cfg(not(target_os = "macos"))]
-pub fn external_release_point() -> Option<Point> { None }
-#[cfg(not(target_os = "macos"))]
-pub fn external_releases() -> u32 { 0 }
+pub fn sample_drawer_press(_: bool) -> (u32, Option<Point>) { (0, None) }
 pub use implementation::{apply, read, show};
 #[cfg(not(target_os = "macos"))]
 pub fn install_drag_monitor(_: &AppHandle) {}

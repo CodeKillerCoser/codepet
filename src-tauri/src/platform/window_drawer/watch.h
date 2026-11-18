@@ -10,3 +10,5 @@ void cp_drawer_other_window_pressed(CGWindowID number);
 
 // May be called from the drawer worker. Passing nil removes the subscription.
 void cp_drawer_watch(id window, pid_t pid, CGWindowID number);
+
+void cp_drawer_will_move(NSWindow *window);

@@ -217,9 +217,13 @@ typedef struct {
     CGRect original;
     CGPoint origin;
     CGPoint release;
-    BOOL released, pet;
+    BOOL began, released, pet;
 } CPDrawerPress;
 static CPDrawerPress lastPress;
+// Both AppKit event monitors and physical sampling run on the main thread.
+// Keep the release available even after the worker consumes lastPress.
+static uint32_t releaseSerial;
+static CGPoint releasePoint;
 static NSUInteger useCounter;
 
 static CGPoint mousePoint(void) {
@@ -293,7 +297,7 @@ static NSDictionary *windowInfo(CGWindowID number) {
 }
 
 static CPDrawerPress sourceAt(CGWindowID number, CGPoint point, BOOL pet) {
-    CPDrawerPress press = {.origin = point, .pet = pet};
+    CPDrawerPress press = {.origin = point, .pet = pet, .began = YES};
     if (pet) return press;
     NSDictionary *info = windowInfo(number);
     if (!info) {
@@ -315,39 +319,64 @@ static CPDrawerPress sourceAt(CGWindowID number, CGPoint point, BOOL pet) {
     return press;
 }
 
-CGPoint cp_drawer_mouse_event(void *raw, bool pet) {
+// AppKit may start a Tauri title-bar drag in its own tracking loop before
+// either the local monitor or the WebView samples the initial press.
+void cp_drawer_will_move(NSWindow *window) {
+    if (!window || window.level != NSNormalWindowLevel ||
+        !CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState,kCGMouseButtonLeft)) return;
+    CGWindowID number = (CGWindowID)window.windowNumber;
+    @synchronized (CPDrawerEntry.class) {
+        if (lastPress.number == number && !lastPress.released) return;
+        CPDrawerPress press = sourceAt(number, mousePoint(), NO);
+        if (press.pid == getpid()) lastPress = press;
+    }
+}
+
+// Called under the press lock. A delayed mouseUp and its physical fallback
+// refer to the same gesture, including when AppKit consumed the local mouseUp.
+static void finishPress(CGPoint point) {
+    if (!lastPress.began) return;
+    if (!lastPress.pet) {
+        if (!lastPress.released) releaseSerial++;
+        releasePoint = point;
+    }
+    lastPress.release = point;
+    lastPress.released = YES;
+}
+
+void cp_drawer_mouse_event(void *raw, bool pet) {
     NSEvent *event = (__bridge NSEvent *)raw;
     CGEventRef cg = event.CGEvent;
-    if (!cg) return mousePoint();
-    CGPoint point = CGEventGetLocation(cg);
+    CGPoint point = cg ? CGEventGetLocation(cg) : mousePoint();
     if (event.type == NSEventTypeLeftMouseUp) {
-        @synchronized (CPDrawerEntry.class) {
-            lastPress.release = point;
-            lastPress.released = YES;
-        }
+        @synchronized (CPDrawerEntry.class) { finishPress(point); }
     } else {
-        CGWindowID number = (CGWindowID)CGEventGetIntegerValueField(cg, kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent);
-        if (!number) number = (CGWindowID)event.windowNumber;
+        // Local events identify the Tauri NSWindow which received the press.
+        // Global events may only have WindowServer's hit-test window number.
+        CGWindowID number = (CGWindowID)event.windowNumber;
+        if ((!number || ![NSApp windowWithWindowNumber:number]) && cg) {
+            CGWindowID hit = (CGWindowID)CGEventGetIntegerValueField(cg, kCGMouseEventWindowUnderMousePointerThatCanHandleThisEvent);
+            if (hit) number = hit;
+        }
         CPDrawerPress press = sourceAt(number, point, pet);
         @synchronized (CPDrawerEntry.class) { lastPress = press; }
         if (!pet) cp_drawer_other_window_pressed(press.number);
     }
-    return point;
 }
 
-// WindowServer may handle title-bar tracking outside the app event monitors.
-// Keep the first physical button transition as a fallback for those gestures.
-void cp_drawer_sample_press(bool down) {
+// Inspect an outstanding monitored press even if the WebView missed the
+// entire native tracking loop and never sampled the button while held.
+uint32_t cp_drawer_sample_press(bool down, CGPoint *release) {
     static BOOL held;
-    if (held == down) return;
-    held = down;
     @synchronized (CPDrawerEntry.class) {
-        if (down && (lastPress.released || (!lastPress.number && !lastPress.pet))) {
+        if (down && !held && (!lastPress.began || lastPress.released)) {
             lastPress = sourceAt(0, mousePoint(), NO);
-        } else if (!down && !lastPress.released) {
-            lastPress.release = mousePoint();
-            lastPress.released = YES;
+        } else if (!down && lastPress.began && !lastPress.released) {
+            finishPress(mousePoint());
         }
+        held = down;
+        *release = releasePoint;
+        return releaseSerial;
     }
 }
 
@@ -472,8 +501,10 @@ static BOOL isCursorOverlay(NSInteger layer, NSString *bundle) {
     return layer == NSFloatingWindowLevel && [bundle isEqual:@"com.openai.sky.CUAService"];
 }
 
-static NSArray *visibleParts(NSArray *stack, CPDrawerEntry *entry, CGRect actual, CGRect slot) {
+static NSArray *visibleParts(NSArray *stack, CPDrawerEntry *entry, CGRect actual, CGRect slot, NSDictionary **firstCover) {
+    if (firstCover) *firstCover = nil;
     if (!entry.windowID) entry.windowID = identifyWindow(stack, entry.pid, actual);
+    CGWindowID host = cp_drawer_host_number();
     NSMutableArray *covers = [NSMutableArray new];
     for (NSDictionary *info in stack) {
         pid_t pid = [info[(__bridge id)kCGWindowOwnerPID] intValue];
@@ -496,10 +527,19 @@ static NSArray *visibleParts(NSArray *stack, CPDrawerEntry *entry, CGRect actual
             return relative;
         }
         NSInteger layer = [info[(__bridge id)kCGWindowLayer] integerValue];
-        if (pid == getpid() && number == cp_drawer_host_number()) continue;
+        if (host && pid == getpid() && number == host) {
+            // Surfaces above the pet already overlay its opaque pixels too.
+            // Only a surface BETWEEN the pet and target can leak through a hole.
+            if (CGRectContainsRect(bounds, CGRectIntersection(actual, slot))) {
+                [covers removeAllObjects];
+                if (firstCover) *firstCover = nil;
+            }
+            continue;
+        }
         if (layer > 0 && (pid == getpid() || pid == entry.pid)) continue;
         if (layer == NSFloatingWindowLevel &&
             isCursorOverlay(layer, [NSRunningApplication runningApplicationWithProcessIdentifier:pid].bundleIdentifier)) continue;
+        if (firstCover && !*firstCover) *firstCover = info;
         [covers addObject:[NSValue valueWithRect:bounds]];
     }
     return nil; // The compositor has not confirmed the target at this location.
@@ -522,11 +562,12 @@ static BOOL rebindRetiredSurface(NSArray *stack, CPDrawerEntry *entry, CGRect ac
 static NSDictionary *presentation(CPDrawerEntry *entry, CGRect actual, CGRect slot, BOOL resizing) {
     BOOL grow = !resizing && needsMoreSpace(actual.size,slot.size);
     NSArray *parts = nil;
+    NSDictionary *firstCover = nil;
     if (!grow) {
         NSArray *stack = windowStack();
-        parts = visibleParts(stack,entry,actual,slot);
+        parts = visibleParts(stack,entry,actual,slot,&firstCover);
         if (!parts && rebindRetiredSurface(stack,entry,actual))
-            parts = visibleParts(stack,entry,actual,slot);
+            parts = visibleParts(stack,entry,actual,slot,&firstCover);
     }
     NSString *state = resizing ? @"native-resize" : grow ? @"resize-panel" : !parts ? @"awaiting-surface" : parts.count ? @"visible" : @"covered";
     NSMutableDictionary *result = [@{@"width":@(actual.size.width), @"height":@(actual.size.height),
@@ -536,6 +577,13 @@ static NSDictionary *presentation(CPDrawerEntry *entry, CGRect actual, CGRect sl
         entry.presentationState = state;
         result[@"diagnostic"] = [NSString stringWithFormat:@"%@ requested %.0fx%.0f measured %.0fx%.0f",
             state,slot.size.width,slot.size.height,actual.size.width,actual.size.height];
+        if ([state isEqual:@"covered"] && firstCover) {
+            pid_t pid = [firstCover[(__bridge id)kCGWindowOwnerPID] intValue];
+            NSString *owner = [NSRunningApplication runningApplicationWithProcessIdentifier:pid].bundleIdentifier;
+            result[@"diagnostic"] = [result[@"diagnostic"] stringByAppendingFormat:@" coverOwner=%@ layer=%@ window=%@ host=%u target=%u",
+                owner ?: @"system", firstCover[(__bridge id)kCGWindowLayer], firstCover[(__bridge id)kCGWindowNumber],
+                cp_drawer_host_number(), entry.windowID];
+        }
     }
     return result;
 }
@@ -543,7 +591,21 @@ static NSDictionary *presentation(CPDrawerEntry *entry, CGRect actual, CGRect sl
 static void activateEntry(CPDrawerEntry *entry) {
     NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:entry.pid];
     if (!app || (app.hidden && ![app unhide])) return;
-    [app activateWithOptions:0];
+    if (@available(macOS 14.0, *)) {
+        NSRunningApplication *source = NSRunningApplication.currentApplication;
+        if (source.active && entry.pid != getpid()) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                if (source.active) {
+                    [NSApp yieldActivationToApplication:app];
+                    [app activateFromApplication:source options:0];
+                }
+            });
+        } else {
+            [app activateWithOptions:0];
+        }
+    } else {
+        [app activateWithOptions:0];
+    }
     AXUIElementRef owner = AXUIElementCreateApplication(entry.pid);
     AXUIElementSetMessagingTimeout(owner, 0.15);
     id ownerElement = CFBridgingRelease(owner);
@@ -603,7 +665,14 @@ static id run(NSString *operation,NSString *key,CGRect rect,CGSize limit) {
         CGRect actual;
         return @(movedWindow(capturedPress(NO), mousePoint(), &actual));
     }
-    if (!AXIsProcessTrusted()) return failure(@"请在“系统设置 → 隐私与安全性 → 辅助功能”中允许 Code Pet，然后刷新。");
+    // AX can address this process's own windows without global access.
+    // External targets, the system Dock and the permission button still require it.
+    BOOL own = NO;
+    if ([operation isEqual:@"drop"]) own = capturedPress(NO).pid == getpid();
+    if ([operation isEqual:@"park"]) own = current && entries[current].pid == getpid();
+    if ([operation isEqual:@"show"] || [operation isEqual:@"activate"] || [operation isEqual:@"release"])
+        own = entries[key].pid == getpid();
+    if (!own && !AXIsProcessTrusted()) return failure(@"请在“系统设置 → 隐私与安全性 → 辅助功能”中允许 Code Pet，然后刷新。");
     if ([operation isEqual:@"dockClick"] || [operation isEqual:@"dragEnd"]) {
         CGPoint end;
         BOOL clicked = takeDockClick([operation isEqual:@"dragEnd"], &end);
