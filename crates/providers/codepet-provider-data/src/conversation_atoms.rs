@@ -208,10 +208,9 @@ impl ConversationAtoms {
 
     pub fn unread(&self, generation: &str, request: &ConversationUnreadListRequest) -> Result<ConversationUnreadListResponse, ProtocolError> {
         validate_scope(&request.reader_scope)?;
-        let state = SharedConversationStateStore::from_env()?;
         let binding = binding("unread", generation, request)?;
         let page = if let Some(cursor) = &request.cursor { self.unread.page(&binding, cursor, request.limit)? } else {
-            let rows = state.unread(&request.reader_scope, &request.route.provider_instance_id)?.into_iter().map(|(id, read_state)| ConversationUnreadEntry {
+            let rows = SharedConversationStateStore::from_env()?.unread(&request.reader_scope, &request.route.provider_instance_id)?.into_iter().map(|(id, read_state)| ConversationUnreadEntry {
                 conversation: resource(&request.route, id.native_resource_id), read_state,
             }).collect();
             self.unread.start(binding, rows, request.limit)?

@@ -221,10 +221,15 @@ impl CodexInstanceRuntime {
                 }
                 // Unknown schema/runtime behavior or a concurrent edit: certify
                 // every candidate natively rather than guessing a global order.
-                next.metadata_candidates += query.ids.len();
-                next.objects = self
-                    .ordered_objects(generation, &next, query.ids.clone())
-                    .await?;
+                // Uncertain candidates were already read (including exact
+                // misses). The current prefix was just verified too. Only
+                // untouched SQLite-ranked candidates still need a native read.
+                let remaining: Vec<_> = next.ranks[end..].iter()
+                    .filter(|(id, _)| !next.objects.contains_key(id))
+                    .map(|(id, _)| id.clone())
+                    .collect();
+                next.metadata_candidates += remaining.len();
+                next.objects.extend(self.ordered_objects(generation, &next, remaining).await?);
                 next.ranks = next
                     .objects
                     .iter()

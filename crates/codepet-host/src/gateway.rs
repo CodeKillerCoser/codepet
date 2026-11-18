@@ -498,7 +498,9 @@ impl ProviderGatewayService {
             gateway::ProtocolRequest::ConversationInputQueueResume { jsonrpc,id,params } => json_rpc_response(jsonrpc,id,self.input_queue_resume(caller_scope,params).await),
             gateway::ProtocolRequest::ConversationInputQueueAcknowledgeEdit { jsonrpc,id,params } => json_rpc_response(jsonrpc,id,self.input_queue_acknowledge_edit(caller_scope,params).await),
             gateway::ProtocolRequest::ConversationRecent { jsonrpc, id, params } => {
-                let result = self.conversation_recent_for_scope(caller_scope, params).await;
+                // Recent can concurrently enumerate two Provider streams. Keep
+                // those futures off the stack of every other RPC dispatcher.
+                let result = Box::pin(self.conversation_recent_for_scope(caller_scope, params)).await;
                 json_rpc_response(jsonrpc, id, result)
             }
             gateway::ProtocolRequest::TurnSend {

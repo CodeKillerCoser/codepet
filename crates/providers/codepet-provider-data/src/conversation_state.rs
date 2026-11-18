@@ -71,16 +71,16 @@ impl SharedConversationStateStore {
 
     pub fn open(path: impl AsRef<Path>) -> StateResult<Self> {
         let path = path.as_ref().to_path_buf();
-        let store = Self {
+        // Opening a handle is also on the Provider pagination path. Validate
+        // the schema without loading every conversation and reader into memory.
+        let db = crate::app_state::open_app_state(&path)?;
+        db.query_row("SELECT last_version FROM activity_scopes WHERE id='host'", [], |row| row.get::<_, u64>(0))
+            .map_err(crate::db_error)?;
+        Ok(Self {
             failures: crate::turn_failures::TurnFailureStore::at(path.clone()),
             path: Some(path),
             document: Mutex::new(ConversationStateSnapshot::default()),
-        };
-        // Validate the fresh schema and read state under a SQLite transaction.
-        {
-            let _guard = store.lock()?;
-        }
-        Ok(store)
+        })
     }
 
     /// No default home-directory store: it would silently discard Host scopes.
@@ -99,6 +99,24 @@ impl SharedConversationStateStore {
         caller_scope: &str,
         provider_id: &str,
     ) -> StateResult<Vec<(gateway::RoutedResourceId, gateway::ConversationReadState)>> {
+        if let Some(path) = &self.path {
+            let db = crate::app_state::open_app_state(path)?;
+            ensure_sql_reader(&db, caller_scope)?;
+            let mut statement = db.prepare(
+                "SELECT c.native_conversation_id, c.activity_version
+                 FROM conversations c
+                 JOIN reader_baselines b ON b.scope_id=c.activity_scope_id AND b.reader_id=?1
+                 LEFT JOIN conversation_reads r ON r.conversation_id=c.id AND r.reader_id=b.reader_id
+                 WHERE c.activity_scope_id='host' AND c.provider_instance_id=?2
+                   AND c.activity_version > COALESCE(r.read_version, b.baseline_version)
+                 ORDER BY c.native_conversation_id"
+            ).map_err(crate::db_error)?;
+            let rows = statement.query_map(params![caller_scope, provider_id], |row| {
+                Ok((gateway::RoutedResourceId { provider_id: provider_id.to_owned(), native_resource_id: row.get(0)? },
+                    gateway::ConversationReadState { unread: true, activity_version: activity_version(row.get(1)?) }))
+            }).map_err(crate::db_error)?;
+            return rows.collect::<Result<Vec<_>, _>>().map_err(crate::db_error);
+        }
         self.ensure_client(caller_scope)?;
         let document = self.lock()?;
         let client = document.clients.get(caller_scope).expect("client ensured");
@@ -127,6 +145,9 @@ impl SharedConversationStateStore {
     }
 
     pub fn ensure_client(&self, caller_scope: &str) -> StateResult<()> {
+        if let Some(path) = &self.path {
+            return ensure_sql_reader(&crate::app_state::open_app_state(path)?, caller_scope);
+        }
         let mut document = self.lock()?;
         if document.clients.contains_key(caller_scope) {
             return Ok(());
@@ -776,6 +797,13 @@ mod tests {
             .unwrap();
         assert!(second.unread("mobile", "codex-work").unwrap().is_empty());
         assert_eq!(second.unread("desktop", "codex-work").unwrap().len(), 1);
+        // An existing reader sees the committed snapshot while a separate
+        // SQLite connection holds an uncommitted activity write.
+        let writer = crate::app_state::open_app_state(&path).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE; UPDATE conversations SET activity_version=99").unwrap();
+        let concurrent = SharedConversationStateStore::open(&path).unwrap();
+        assert_eq!(concurrent.unread("desktop", "codex-work").unwrap()[0].1.activity_version, "activity-1");
+        writer.execute_batch("ROLLBACK").unwrap();
         drop(first);
         let reopened = open_store(&path).unwrap();
         assert!(reopened.unread("mobile", "codex-work").unwrap().is_empty());
@@ -1007,6 +1035,23 @@ fn write_state_document(db: &Connection, document: &ConversationStateSnapshot, o
                 ON CONFLICT(conversation_id,reader_id) DO UPDATE SET read_version=excluded.read_version,updated_at=excluded.updated_at WHERE read_version<excluded.read_version",
                 params![record.resource.provider_id,record.resource.native_resource_id,reader,version,now]).map_err(crate::db_error)?;
         }
+    }
+    Ok(())
+}
+
+// Readers usually already exist. Keep that path read-only even when a
+// Provider is writing activity. First registration captures the clock in the
+// same SQLite statement that installs the baseline, across all processes.
+fn ensure_sql_reader(db: &Connection, reader: &str) -> StateResult<()> {
+    let exists: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM reader_baselines WHERE scope_id='host' AND reader_id=?1)",
+        [reader], |row| row.get(0),
+    ).map_err(crate::db_error)?;
+    if !exists {
+        db.execute(
+            "INSERT OR IGNORE INTO reader_baselines(scope_id,reader_id,baseline_version)
+             SELECT id,?1,last_version FROM activity_scopes WHERE id='host'", [reader],
+        ).map_err(crate::db_error)?;
     }
     Ok(())
 }

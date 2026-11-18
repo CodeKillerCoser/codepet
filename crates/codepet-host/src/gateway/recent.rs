@@ -197,9 +197,10 @@ impl ProviderGatewayService {
         {
             return Ok(response(page));
         }
-        self.conversation_state
-            .ensure_client(scope)
-            .map_err(gateway_error)?;
+        let state = self.conversation_state.clone();
+        let reader = scope.to_owned();
+        tokio::task::spawn_blocking(move || state.ensure_client(&reader))
+            .await.map_err(|_| gateway_state_error())?.map_err(gateway_error)?;
         let _capacity = self
             .recent_concurrency
             .acquire()
@@ -309,8 +310,7 @@ impl ProviderGatewayService {
         ordered_ids: bool,
         resolved: &mut BuildSummaries,
     ) -> Result<(Vec<gateway::Conversation>, Option<u64>, Option<feed::RecentTail>), gateway::ProtocolError> {
-        let active = self.collect_active(route).await?;
-        let unread = self.collect_unread(route, scope).await?;
+        let (active, unread) = tokio::try_join!(self.collect_active(route), self.collect_unread(route, scope))?;
         if ordered_ids && active.len().max(unread.len()) <= 10000 {
             return self.collect_ordered_recent(route, scope, now, limit, active, unread, resolved).await;
         }

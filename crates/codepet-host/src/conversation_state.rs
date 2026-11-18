@@ -53,7 +53,12 @@ impl ConversationStateStore {
         self.path.as_deref()
     }
     pub(crate) fn ensure_client(&self, scope: &str) -> HostResult<()> {
-        for store in self.stores.lock().map_err(|_|HostError::new("conversation_state_unavailable","Store map poisoned"))?.values() { store.ensure_client(scope).map_err(HostError::from)?; }
+        let stores: Vec<_> = self.stores.lock()
+            .map_err(|_| HostError::new("conversation_state_unavailable", "Store map poisoned"))?
+            .values().cloned().collect();
+        for store in stores {
+            store.ensure_client(scope).map_err(HostError::from)?;
+        }
         self.shared.ensure_client(scope).map_err(HostError::from)
     }
     pub(crate) fn decorate(

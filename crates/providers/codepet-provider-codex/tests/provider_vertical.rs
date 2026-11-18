@@ -5151,6 +5151,30 @@ async fn ordered_ids_certifies_legacy_and_unpersisted_candidates_natively() {
     provider.instance_stop(InstanceStopRequest {route}).await.unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn ordered_rank_mismatch_does_not_rescan_missing_native_threads() {
+    let temp = tempfile::tempdir().unwrap();
+    let marker = temp.path().join("rank-mismatch");
+    let home = temp.path().join("codex-home");
+    std::fs::create_dir_all(&home).unwrap();
+    let db = rusqlite::Connection::open(home.join("state_5.sqlite")).unwrap();
+    db.execute_batch("CREATE TABLE threads(id TEXT PRIMARY KEY, archived INTEGER, updated_at INTEGER, updated_at_ms INTEGER, history_mode TEXT);
+        INSERT INTO threads VALUES('first',0,40,40000,'paginated'),('second',0,30,30000,'paginated')").unwrap();
+    std::fs::write(marker.with_extension("directory.json"), json!({
+        "rows":[], "metadataUpdatedAt":{"first":10,"second":30,"event-only":12}
+    }).to_string()).unwrap();
+    let (provider, route, _) = configured_direct_provider("union-directory", &marker).await;
+    let mut ids: Vec<_> = (0..128).map(|i| format!("missing-{i:03}")).collect();
+    ids.extend(["first","second","event-only"].map(str::to_owned));
+    let mut request = ids_list_request(&route, vec![]);
+    request.limit = Some(1);
+    request.query = Some(serde_json::from_value(json!({"kind":"ids","ids":ids,"orderByUpdatedAt":true})).unwrap());
+    let page = provider.conversation_list(request).await.unwrap();
+    assert_eq!(page.conversations[0].resource.native_resource_id, "second");
+    assert_eq!(metadata_read_count(&marker), ids.len());
+    provider.instance_stop(InstanceStopRequest {route}).await.unwrap();
+}
+
 async fn wait_for_metadata_reads(marker: &Path, count: usize) {
     tokio::time::timeout(Duration::from_secs(3), async {
         while metadata_read_count(marker) < count { tokio::time::sleep(Duration::from_millis(5)).await; }

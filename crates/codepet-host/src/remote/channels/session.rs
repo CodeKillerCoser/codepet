@@ -374,6 +374,7 @@ pub(crate) async fn run_gateway_channel(
         stop_tx.subscribe(),
         trace_links.clone(),
         admission.clone(),
+        control_diagnostic.clone(),
     ));
 
     let mut presence = None;
@@ -739,6 +740,12 @@ pub(crate) async fn run_gateway_channel(
             continue;
         }
 
+        if let gateway::ProtocolRequest::ConversationRecent { id, params, .. } = &request {
+            control_diagnostic.emit("recent.rpc.received", serde_json::json!({
+                "requestId": id, "providerId": params.provider_id, "limit": params.limit,
+                "continuation": params.cursor.is_some(),
+            }));
+        }
         match request_tx.try_send(GatewayRequestDelivery {
             request,
             trace_context,
@@ -799,11 +806,9 @@ async fn run_gateway_requests(
     mut stop: watch::Receiver<bool>,
     trace_links: Arc<Mutex<SessionTraceLinks>>,
     admission: Arc<Mutex<Arc<AtomicBool>>>,
+    diagnostic: Arc<super::webrtc::diagnostics::Diagnostic>,
 ) {
     let mut tasks = JoinSet::new();
-    // Unlike stderr-only trace spans, this sink reaches the installed app's
-    // rotating log even when macOS launches it with stderr=/dev/null.
-    let diagnostic = super::webrtc::diagnostics::Diagnostic::new(&uuid::Uuid::new_v4().to_string());
     loop {
         tokio::select! {
             biased;
@@ -851,6 +856,12 @@ async fn run_gateway_requests(
                     let trace_request = request.clone();
                     let method = request.method();
                     let request_id = request.id().clone();
+                    let recent = method == gateway::ProtocolMethod::ConversationRecent;
+                    if recent {
+                        request_diagnostic.emit("recent.rpc.started", serde_json::json!({
+                            "requestId": request_id, "queueMs": received_at.elapsed().as_millis(),
+                        }));
+                    }
                     let observe_interaction = matches!(method,
                         gateway::ProtocolMethod::ConversationAcquireInteraction |
                         gateway::ProtocolMethod::ConversationResume);
@@ -908,7 +919,20 @@ async fn run_gateway_requests(
                             return;
                         }
                     };
-                    if !enqueue_outbound(&request_outbound, GatewayFrame::text(text)).await {
+                    let queued = enqueue_outbound(&request_outbound, GatewayFrame::text(text)).await;
+                    if recent {
+                        let (returned, error_code) = match &response.response {
+                            gateway::JsonRpcResponsePayload::Ok { result } =>
+                                (result["conversations"].as_array().map(Vec::len), None),
+                            gateway::JsonRpcResponsePayload::Error { error } =>
+                                (None, error.data.as_ref().and_then(|d| d["code"].as_str())),
+                        };
+                        request_diagnostic.emit("recent.rpc.completed", serde_json::json!({
+                            "requestId": request_id, "returned": returned, "errorCode": error_code,
+                            "queuedForSend": queued, "elapsedMs": received_at.elapsed().as_millis(),
+                        }));
+                    }
+                    if !queued {
                         let _ = request_transport_failed.send(true);
                     }
                 });

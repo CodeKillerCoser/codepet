@@ -168,7 +168,7 @@ impl CodexInstanceRuntime {
         while next.returned.len() < target {
             let needed = target - next.returned.len();
             let rows = next.sorted();
-            let cutoff = rows.get(needed).map(|row| row.updated_at.unwrap_or_default() / 1000);
+            let cutoff = rows.get(needed - 1).map(|row| row.updated_at.unwrap_or_default() / 1000);
             let native_ready = next.native_done || cutoff.zip(next.native_frontier).is_some_and(|(cutoff, frontier)| frontier < cutoff);
             let db_ready = next.db_done || cutoff.zip(next.db_frontier).is_some_and(|(cutoff, frontier)| frontier < cutoff);
             if native_ready && db_ready {
