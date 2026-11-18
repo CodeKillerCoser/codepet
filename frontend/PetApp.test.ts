@@ -2,11 +2,11 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 describe("Pet window behavior", () => {
-  it("keeps the Pet Gateway source while grouping the original compact bubbles", () => {
+  it("loads Notices from the Gateway while grouping the compact bubbles", () => {
     const source = readFileSync(new URL("./PetApp.svelte", import.meta.url), "utf8");
     const data = readFileSync(new URL('./lib/pet/model.ts', import.meta.url), 'utf8');
     const desktop = readFileSync(new URL('./lib/pet/DesktopPet.svelte', import.meta.url), 'utf8');
-    expect(data).toContain("petSnapshot");
+    expect(data).toContain("await noticeList()");
     expect(desktop).toContain('bind:expanded={expandedGroups} dismiss={dismissActivity}');
     expect(source).toContain(".activity-group-toggle, .status-pill, .pet-action-button");
     expect(source).toContain('element.closest("[inert]")');
