@@ -15,7 +15,8 @@ async function until<T>(read:()=>T|undefined|false):Promise<T> {
   throw new Error('Native UI acceptance timed out');
 }
 async function run() {
-  const expected=await invoke<{workspace:string;threadId:string;projectId:string;gitEntries:number}>('qa_config');
+  const expected=await invoke<{workspace:string;threadId:string;projectId:string;gitEntries:number;mode?:string;taskId?:string}>('qa_config');
+  if(expected.mode==='tasks') { const {runTaskLedgerNativeQa}=await import('./task-ledger-native');await runTaskLedgerNativeQa(expected as {workspace:string;taskId:string});return; }
   const actual=await invoke<Snapshot>('codex_workbench_request',{request:{op:'scan',projectIds:[expected.projectId]}});
   document.getElementById('app')!.className=`main-theme ${themeClassNames('light')}`;
   mount(CodexWorkbench,{target:document.getElementById('app')!});
@@ -43,4 +44,4 @@ async function run() {
   await pause();
   await invoke('qa_report',{value:{success:true,mode:'native-production-component-and-ipc',workspace:target.path,threadId:expected.threadId,projectId:target.projectId,projectName:target.projectName,branch:target.git.branch,gitEntryCount:target.git.changes.length,gitBaselineCount:expected.gitEntries,dirtyLabel:gitLabel,detailSummary:summary,currentThreadAssociated:true,recheckWorked:true,relatedConversationCount:target.conversations.length,previewWorked,previewFile:change.path,codexHome:actual.sourceInfo?.codexHome,totalWorktrees:actual.worktrees.length,scanId:actual.scanId,changes:target.git.changes.map(c=>({path:c.path,status:c.status}))}});
 }
-run().catch(async error=>{await invoke('qa_report',{value:{success:false,error:String(error)}});});
+run().catch(async error=>{await invoke('qa_report',{value:{success:false,error:String(error),stack:error?.stack}});});

@@ -139,7 +139,7 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
-fn text_git(root: &Path, args: &[&str]) -> Result<String> {
+pub(crate) fn text_git(root: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&git(root, args)?).trim().into())
 }
 pub fn parse_status(bytes: &[u8]) -> Value {

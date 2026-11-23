@@ -15,3 +15,6 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 
 rusqlite = { version = "0.32", features = ["bundled"] }
 zstd = "0.13"
+codepet-paths = { path = "../codepet-paths" }
+uuid = { version = "1", features = ["v4"] }
+schemars = "1"

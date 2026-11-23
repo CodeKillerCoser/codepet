@@ -6,6 +6,7 @@ pub mod platform;
 pub mod runtime_gateway;
 mod task_lineage;
 mod codex_workbench;
+mod task_ledger;
 
 pub use activity::events;
 pub use activity::title_resolver;
@@ -471,6 +472,7 @@ pub fn run() {
             app::webcontent_reload::webcontent_info,
             app::webcontent_reload::load_latest_webcontent,
             codex_workbench::codex_workbench_request,
+            task_ledger::task_ledger_request,
             task_lineage::task_lineage_options,
             task_lineage::task_lineage_request,
             task_lineage::task_lineage_snapshot,

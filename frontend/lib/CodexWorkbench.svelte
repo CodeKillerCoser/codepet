@@ -5,6 +5,7 @@
   import { MergeView } from '@codemirror/merge';
   import { EditorView } from '@codemirror/view';
   import { EditorState } from '@codemirror/state';
+  import TaskLedger from './TaskLedger.svelte';
   import { workbenchRequest as api, activity, dirty, unpushed, filterRows, statusMatches, branchLabel, changeLabel, gitSummary, type SourceInfo, type Project, type Snapshot, type Worktree, type Change } from './codexWorkbench';
   let projects: Project[] = [], draft: string[] = [], projectSearch = '', pickerOpen = false;
   let snapshot: Snapshot | null = null, loading = false, catalogLoading = true, error = '', catalogWarnings: string[] = [];
@@ -15,6 +16,7 @@
   let mobileDetail = false, detailHeading: HTMLHeadingElement, selectedButton: HTMLButtonElement | undefined;
   let chatQuery = '', chatLimit = 30;
   let alive = true;
+  let view: 'code' | 'tasks' = 'code';
   let merge: MergeView | undefined, stop: (() => void) | undefined;
   $: base = filterRows(snapshot?.worktrees ?? [], { query, projects: filterProjects, related, period, date });
   $: rows = base.filter(r => statusMatches(r, status));
@@ -73,7 +75,8 @@
 </script>
 
 <section class="workbench" class:detail-open={mobileDetail} aria-label="Agent工作台" tabindex="-1">
-
+  <nav class="wb-tabs" aria-label="工作台视图"><button aria-pressed={view==='code'} on:click={()=>view='code'}>代码状态</button><button aria-pressed={view==='tasks'} on:click={()=>view='tasks'}>任务与验收</button></nav>
+  {#if view==='tasks'}<TaskLedger workspaceHint={selected?.path??''}/>{:else}
   <div class="wb-body">
     <div class="scope-heading"><div class="scope-caption"><strong>检查范围</strong><span>从 Codex 项目目录选择；确认后扫描 Git 与本地对话</span></div><div class="scope-tools"><span class="local"><i></i>本机 · 只读</span><button class="source-help" on:click={() => sourceDialog.showModal()}>数据来源</button></div></div><div class="scanbar">
       <div class="project-picker" on:focusout={(e) => { if (!(e.currentTarget.contains(e.relatedTarget as Node))) pickerOpen = false; }}>
@@ -126,6 +129,7 @@
       </aside>
     </div>
   </div>
+  {/if}
 </section>
 <dialog bind:this={sourceDialog} class="wb-dialog source-dialog"><header><h3>数据来源与检查范围</h3><button aria-label="关闭数据来源" on:click={() => sourceDialog.close()}>×</button></header>
   <dl><dt>项目</dt><dd>读取 Codex 保存的项目与根目录。{sourceInfo?.projectCatalog === 'globalState' ? '当前使用本地工作目录列表作为后备来源。' : '优先使用 Codex 项目数据库。'}</dd>
@@ -143,6 +147,7 @@
   button,input,select{border:1px solid var(--wb-border);border-radius:6px;background:var(--wb-panel)}button{padding:6px 10px}button:hover{border-color:var(--wb-border-strong)}
   :is(button,input,select,summary):focus-visible{outline:2px solid var(--color-focus-ring);outline-offset:2px}input,select{min-width:0}
   .workbench:focus{outline:none}.local{font-size:11px;color:var(--wb-muted);display:flex;align-items:center;gap:6px;white-space:nowrap}.source-help{font-size:12px;color:var(--wb-muted);background:transparent;border-color:transparent}
+  .wb-tabs{display:flex;gap:18px;width:min(1400px,92%);margin:auto;padding-top:12px;border-bottom:1px solid var(--wb-border)}.wb-tabs button{border:0;border-bottom:2px solid transparent;border-radius:0;background:transparent;padding:10px 2px;color:var(--wb-muted)}.wb-tabs button[aria-pressed="true"]{border-bottom-color:var(--wb-accent);color:var(--wb-text)}
 
   i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--wb-success);flex:none}i.amber{background:var(--wb-warning)}i.blue{background:var(--wb-info-text)}
   .wb-body{width:min(1400px,92%);margin:auto;padding:24px 0 28px}.scope-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.scope-caption{display:flex;align-items:baseline;gap:12px;min-width:0}.scope-tools{display:flex;align-items:center;gap:10px;flex:none}.scope-heading strong{font-size:13px}.scope-heading span{font-size:12px;color:var(--wb-muted)}

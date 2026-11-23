@@ -2,6 +2,7 @@
 members = [
     "codepet-paths",
     "codepet-task-lineage",
+    "codepet-task-mcp",
     "providers/codepet-provider-data",
     "providers/codepet-observation",
     "codepet-host",

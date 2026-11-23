@@ -1,0 +1,11 @@
+[package]
+name = "codepet-task-mcp"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+codepet-task-lineage = { path = "../codepet-task-lineage" }
+rmcp = { version = "3", default-features = false, features = ["server", "macros", "schemars", "transport-io"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "io-std", "macros"] }

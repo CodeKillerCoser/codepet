@@ -24,6 +24,8 @@ mod platform {
 }
 #[path = "../src/codex_workbench.rs"]
 mod codex_workbench;
+#[path = "../src/task_ledger.rs"]
+mod task_ledger;
 #[tauri::command]
 async fn qa_config() -> Value {
     eprintln!("native QA config requested");
@@ -85,10 +87,19 @@ fn main() {
         .tempdir()
         .unwrap();
     QA_DATA.set(data.path().to_owned()).unwrap();
-    let expected: Value = serde_json::from_str(
+    let mut expected: Value = serde_json::from_str(
         &std::env::var("CODEPET_QA_EXPECTED").expect("expected workspace/project/thread required"),
     )
     .unwrap();
+    if expected["mode"] == "tasks" {
+        use codepet_task_lineage::tasks::{Actor, Ledger, SaveInput};
+        let ledger=Ledger::new(data.path());
+        let input:SaveInput=serde_json::from_value(json!({"workspace":expected["workspace"],"title":"修复桌宠菜单点击失效","objective":"切换窗口后点击桌宠，菜单仍能稳定打开","description":"发布后出现的偶发问题，需要本地自测和实际安装后复验。","kind":"bug","plan":{"summary":"恢复窗口焦点切换后的点击事件","affectedAreas":["点击事件","菜单与焦点"],"criteria":[{"title":"切换窗口后点击","precondition":"应用运行十分钟","steps":"切换到其他窗口，再点击桌宠","expected":"菜单正常打开"}]}})).unwrap();
+        let created=ledger.save(input,Actor::Agent).unwrap();
+        let update:SaveInput=serde_json::from_value(json!({"taskId":created.task_id,"expectedRevision":created.revision,"phase":"published","delivery":"原生任务验收样例 · 1.2.0","note":"本地实现和自测已完成，等待发布验收","verification":{"planRevision":1,"stage":"local","target":"当前未提交工作区","environment":"macOS","results":[{"criterionId":created.criterion_ids[0],"result":"passed","evidence":"本地实际点击验证通过"}]}})).unwrap();
+        ledger.save(update,Actor::Agent).unwrap();
+        expected["taskId"]=json!(created.task_id);
+    }
     std::fs::write(
         data.path().join("codex-workbench-selection.json"),
         json!([expected["projectId"]]).to_string(),
@@ -106,6 +117,7 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             codex_workbench::codex_workbench_request,
+            task_ledger::task_ledger_request,
             qa_config,
             qa_trace,
             qa_report

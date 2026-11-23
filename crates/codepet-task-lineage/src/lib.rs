@@ -16,3 +16,4 @@ pub fn stable_id(value: impl AsRef<[u8]>) -> String {
 }
 
 pub mod workbench;
+pub mod tasks;

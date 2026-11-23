@@ -13,6 +13,19 @@ pub struct Store {
     _lock: File,
     writable: bool,
 }
+// Own the lock lifetime explicitly. A duplicated descriptor (including a concurrent
+// child process between spawn and exec) must not extend a finished operation's lease.
+pub(crate) struct ExtractionLease(File);
+impl Drop for ExtractionLease {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self.0);
+    }
+}
+impl Drop for Store {
+    fn drop(&mut self) {
+        let _ = fs2::FileExt::unlock(&self._lock);
+    }
+}
 impl Store {
     pub fn open(root: &Path) -> Result<Self> {
         if !root.is_absolute() {
@@ -151,7 +164,7 @@ impl Store {
             serde_json::to_value(value).map_err(|e| e.to_string())?,
         )])
     }
-    pub(crate) fn extraction_lease(&self) -> Result<File> {
+    pub(crate) fn extraction_lease(&self) -> Result<ExtractionLease> {
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
@@ -161,7 +174,7 @@ impl Store {
             .map_err(|e| e.to_string())?;
         fs2::FileExt::try_lock_exclusive(&lock)
             .map_err(|_| "Another extraction job is already running")?;
-        Ok(lock)
+        Ok(ExtractionLease(lock))
     }
     /// Long-running inference does not block readers or ingestion. Callers must revalidate revisions afterward.
     pub(crate) fn without_writer_lock<T>(
@@ -195,6 +208,19 @@ impl Store {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn operation_releases_locks_even_when_a_duplicate_descriptor_is_retained() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        let duplicate_writer = store._lock.try_clone().unwrap();
+        let lease = store.extraction_lease().unwrap();
+        let duplicate_lease = lease.0.try_clone().unwrap();
+        drop(lease);
+        assert!(store.extraction_lease().is_ok());
+        drop(store);
+        assert!(Store::open(dir.path()).is_ok());
+        drop((duplicate_writer, duplicate_lease));
+    }
     #[test]
     fn prepared_transaction_replays_after_restart_and_lock_is_exclusive() {
         let dir = tempfile::tempdir().unwrap();

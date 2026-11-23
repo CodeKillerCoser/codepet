@@ -80,12 +80,14 @@
   --wb-accent-border: var(--app-accent);
   --wb-info-bg: var(--blue-3);
   --wb-info-text: var(--blue-11);
+  --wb-info-strong-text: var(--blue-12);
   --wb-success: var(--grass-9);
   --wb-success-bg: var(--color-main-success-bg);
   --wb-success-text: var(--color-main-success-text);
   --wb-warning: var(--amber-9);
   --wb-warning-bg: var(--amber-3);
   --wb-warning-text: var(--amber-11);
+  --wb-warning-strong-text: var(--amber-12);
   --wb-warning-border: var(--amber-6);
   --wb-danger-bg: var(--color-main-danger-bg);
   --wb-danger-text: var(--color-main-danger-text);
