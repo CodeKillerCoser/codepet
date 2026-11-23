@@ -5,7 +5,7 @@
 // arrive on the main run loop; AX is best effort (some owners omit events).
 static __weak NSWindow *drawerHost;
 static _Atomic(CGWindowID) hostNumber;
-static void (*notifyDrawer)(bool,double,double);
+static void (*notifyDrawer)(CPDrawerChange,double,double);
 static NSRect hostFrame;
 static NSPoint displacement;
 static id watchedWindow;
@@ -16,9 +16,18 @@ static NSUInteger targetGeneration, frontGeneration, subscription;
 static id dragMonitor;
 static NSTimeInterval lastDragWake;
 static NSMutableArray *watchTokens;
-static BOOL wakeQueued, mustCover;
+static BOOL grouped;
+static NSInteger surfaceLevel;
 
-void cp_drawer_connect(void *host, void (*notify)(bool,double,double)) {
+void cp_drawer_set_level(void *host, NSInteger level) {
+    NSWindow *panel = (__bridge NSWindow *)host;
+    if (panel == drawerHost && grouped) surfaceLevel = level;
+    else if (panel.level != level) panel.level = level;
+}
+static BOOL wakeQueued;
+static CPDrawerChange pendingChange;
+
+void cp_drawer_connect(void *host, void (*notify)(CPDrawerChange,double,double)) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         [NSNotificationCenter.defaultCenter addObserverForName:NSWindowWillMoveNotification object:nil
@@ -33,19 +42,50 @@ void cp_drawer_connect(void *host, void (*notify)(bool,double,double)) {
 
 CGWindowID cp_drawer_host_number(void) { return atomic_load(&hostNumber); }
 
-static void wakeDrawer(BOOL cover) {
+static void wakeDrawer(CPDrawerChange change) {
     if (!watchedWindow || !notifyDrawer) return;
-    mustCover |= cover;
+    pendingChange = MAX(change,pendingChange);
     if (wakeQueued) return;
     wakeQueued = YES;
     NSUInteger generation = subscription;
     dispatch_async(dispatch_get_main_queue(), ^{
         if (subscription != generation) return;
-        BOOL seal = mustCover;
+        CPDrawerChange change = pendingChange;
         NSPoint delta = displacement; displacement = NSZeroPoint;
-        wakeQueued = NO; mustCover = NO;
-        if (watchedWindow) notifyDrawer(seal,delta.x,delta.y);
+        wakeQueued = NO; pendingChange = CPDrawerGeometry;
+        if (watchedWindow) notifyDrawer(change,delta.x,delta.y);
     });
+}
+
+// Keep ordinary windows on one side of the entire presentation. Only move
+// our own panel in z-order, never raise or activate the third-party app here.
+BOOL cp_drawer_order_with_target(CGWindowID number, NSInteger level) {
+    __block BOOL ordered = NO;
+    dispatch_block_t order = dispatch_block_create(0, ^{
+        if (!watchedWindow || watchedNumber != number || !drawerHost.visible ||
+            number == drawerHost.windowNumber || !number) return;
+        NSInteger previous = drawerHost.level;
+        if (!grouped) surfaceLevel = previous;
+        @try {
+            if (previous != level) drawerHost.level = level;
+            [drawerHost orderWindow:NSWindowAbove relativeTo:number];
+            grouped = YES;
+            ordered = YES;
+        } @catch (NSException *exception) {
+            // The target may have closed after the WindowServer sample.
+            if (![exception.name isEqual:NSInvalidArgumentException]) @throw;
+            drawerHost.level = previous;
+        }
+    });
+    if (NSThread.isMainThread) order();
+    else {
+        dispatch_async(dispatch_get_main_queue(),order);
+        if (dispatch_block_wait(order,dispatch_time(DISPATCH_TIME_NOW,80*NSEC_PER_MSEC))) {
+            dispatch_block_cancel(order);
+            return NO;
+        }
+    }
+    return ordered;
 }
 
 // Programmatic moves during panel dragging can precede NSWindowDidMove.
@@ -57,14 +97,16 @@ void cp_drawer_host_changed(void) {
     displacement.y += NSMaxY(hostFrame) - NSMaxY(next);
     BOOL resized = !NSEqualSizes(hostFrame.size,next.size);
     hostFrame = next;
-    wakeDrawer(resized);
+    wakeDrawer(resized ? CPDrawerSurfaceInvalid : CPDrawerGeometry);
 }
 
 static void axChanged(AXObserverRef __unused observer, AXUIElementRef element, CFStringRef name, void *__unused context) {
     // A focused sibling, newly opened window or another app may cover the slot.
     BOOL targetGeometry = watchedWindow && CFEqual((__bridge CFTypeRef)watchedWindow, element) &&
         (CFEqual(name,kAXMovedNotification) || CFEqual(name,kAXResizedNotification));
-    wakeDrawer(!targetGeometry);
+    BOOL lost = watchedWindow && CFEqual((__bridge CFTypeRef)watchedWindow,element) &&
+        (CFEqual(name,kAXUIElementDestroyedNotification) || CFEqual(name,kAXWindowMiniaturizedNotification));
+    wakeDrawer(lost ? CPDrawerSurfaceInvalid : targetGeometry ? CPDrawerGeometry : CPDrawerStackChanged);
 }
 
 static void removeObserver(AXObserverRef *observer) {
@@ -87,6 +129,8 @@ static AXObserverRef observeOwner(pid_t pid, id window) {
         AXUIElementRef el = (__bridge AXUIElementRef)window;
         AXObserverAddNotification(observer,el,kAXMovedNotification,NULL);
         AXObserverAddNotification(observer,el,kAXResizedNotification,NULL);
+        AXObserverAddNotification(observer,el,kAXUIElementDestroyedNotification,NULL);
+        AXObserverAddNotification(observer,el,kAXWindowMiniaturizedNotification,NULL);
     }
     CFRelease(app);
     return observer;
@@ -119,15 +163,19 @@ static void observeFront(void) {
 }
 
 void cp_drawer_other_window_pressed(CGWindowID number) {
-    if (number != watchedNumber) wakeDrawer(YES);
+    if (number != watchedNumber) wakeDrawer(CPDrawerStackChanged);
 }
 
 void cp_drawer_watch(id window, pid_t pid, CGWindowID number) {
     dispatch_async(dispatch_get_main_queue(), ^{
         if (watchedWindow == window) { watchedNumber = number; return; }
+        if (grouped) {
+            drawerHost.level = surfaceLevel;
+            grouped = NO;
+        }
         subscription++;
         wakeQueued = NO;
-        mustCover = NO;
+        pendingChange = CPDrawerGeometry;
         displacement = NSZeroPoint;
         for (NSArray *pair in watchTokens) [pair[0] removeObserver:pair[1]];
         watchTokens = nil; targetGeneration++; frontGeneration++;
@@ -139,8 +187,11 @@ void cp_drawer_watch(id window, pid_t pid, CGWindowID number) {
         NSNotificationCenter *workspace = NSWorkspace.sharedWorkspace.notificationCenter;
         for (NSString *name in @[NSWorkspaceDidActivateApplicationNotification,NSWorkspaceActiveSpaceDidChangeNotification,
             NSWorkspaceDidHideApplicationNotification,NSWorkspaceDidUnhideApplicationNotification]) {
-            id token = [workspace addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *__unused n) {
-                wakeDrawer(YES); observeFront();
+            id token = [workspace addObserverForName:name object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
+                NSRunningApplication *app = n.userInfo[NSWorkspaceApplicationKey];
+                BOOL lost = [n.name isEqual:NSWorkspaceActiveSpaceDidChangeNotification] ||
+                    ([n.name isEqual:NSWorkspaceDidHideApplicationNotification] && app.processIdentifier == watchedPid);
+                wakeDrawer(lost ? CPDrawerSurfaceInvalid : CPDrawerStackChanged); observeFront();
             }];
             [watchTokens addObject:@[workspace,token]];
         }
@@ -154,12 +205,12 @@ void cp_drawer_watch(id window, pid_t pid, CGWindowID number) {
         }
         id occlusion = [center addObserverForName:NSWindowDidChangeOcclusionStateNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n) {
             NSWindow *other = n.object;
-            if (other != drawerHost && other.windowNumber != watchedNumber && other.level <= NSFloatingWindowLevel) wakeDrawer(YES);
+            if (other != drawerHost && other.windowNumber != watchedNumber && other.level <= NSFloatingWindowLevel) wakeDrawer(CPDrawerStackChanged);
         }];
         [watchTokens addObject:@[center,occlusion]];
         // Covers apps that omit AX geometry notifications during live dragging.
         dragMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask:NSEventMaskLeftMouseDragged handler:^(NSEvent *e) {
-            if (e.timestamp-lastDragWake >= 1.0/60) { lastDragWake = e.timestamp; wakeDrawer(NO); }
+            if (e.timestamp-lastDragWake >= 1.0/60) { lastDragWake = e.timestamp; wakeDrawer(CPDrawerGeometry); }
         }];
         installObserver(pid,window,YES);
         observeFront();

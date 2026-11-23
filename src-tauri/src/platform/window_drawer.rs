@@ -19,12 +19,12 @@ fn connect(window: &WebviewWindow) -> Result<(), String> {
     use std::sync::OnceLock;
     use tauri::{AppHandle, Emitter, Manager};
     static APP: OnceLock<AppHandle> = OnceLock::new();
-    extern "C" fn changed(cover: bool, dx: f64, dy: f64) {
+    extern "C" fn changed(change: u8, dx: f64, dy: f64) {
         if let Some(app) = APP.get() {
-            let _ = app.emit_to("pet", "pet-drawer-changed", serde_json::json!({ "cover": cover, "dx": dx, "dy": dy }));
+            let _ = app.emit_to("pet", "pet-drawer-changed", serde_json::json!({ "cover": change != 0, "seal": change == 2, "dx": dx, "dy": dy }));
         }
     }
-    unsafe extern "C" { fn cp_drawer_connect(host: *mut std::ffi::c_void, notify: extern "C" fn(bool, f64, f64)); }
+    unsafe extern "C" { fn cp_drawer_connect(host: *mut std::ffi::c_void, notify: extern "C" fn(u8, f64, f64)); }
     let panel = window.clone();
     APP.get_or_init(|| window.app_handle().clone());
     window.run_on_main_thread(move || {

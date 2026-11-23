@@ -484,8 +484,16 @@ try {
     window.__petQa.cursor={x:-120,y:180,pressed:false,externalReleases:1,releasePoint:{x:r.x+4,y:r.y+4}};
   });
   await page.waitForSelector('[data-window-host][data-presented]');
+  // Drag-out relinquishes the identity and goes back to the notification page.
+  const releasesBeforeDetach = await page.evaluate(() => {
+    const q = window.__petQa;
+    q.drawerDetached = true; q.drawerChanged(false);
+    return q.drawerCalls.filter(op => op === 'release').length;
+  });
+  await page.waitForSelector('[data-window-host]', {state:'detached'});
   await page.getByRole('button', {name:'显示窗口 Dock', exact:true}).focus();
-  await page.getByRole('button', {name:'释放当前窗口',exact:true}).click();
+  assert.equal(await page.getByTitle('便笺 · QA', {exact:true}).count(),0);
+  assert.equal(await page.evaluate(() => window.__petQa.drawerCalls.filter(op => op === 'release').length), releasesBeforeDetach);
   await page.waitForSelector('[data-window-host]', {state:'detached'});
   // Exercise drop pinning, occlusion and activation with a simulated AX window.
   await page.getByRole('button', {name:'固定展开', exact:true}).click();
@@ -572,7 +580,7 @@ try {
   });
   await page.waitForFunction(() => window.__petQa.ignored === false);
   // A host move masks only the unconfirmed strip. An occluder arriving while
-  // that IPC is in flight must seal the hole before the stale reply returns.
+  // that IPC is in flight must revoke input without flashing the whole panel.
   await page.locator('[data-window-host]').evaluate(el => {
     const r=el.getBoundingClientRect(); window.__petQa.cursor={x:r.x+120,y:r.y+40};
   });
@@ -584,8 +592,11 @@ try {
   });
   await page.waitForFunction(() => document.querySelector('[data-native-window-region]')?.clientWidth === 838);
   await page.evaluate(() => {const q=window.__petQa; q.drawerCovered=true; q.drawerChanged(true);});
-  await page.waitForSelector('[data-window-host]:not([data-presented])');
+  await page.waitForFunction(() => !document.querySelector('[data-native-window-region]'));
+  assert.ok(await page.locator('.notch-backdrop').evaluate(el => el.style.clipPath.includes('path(')));
   await page.waitForFunction(() => window.__petQa.ignored === false);
+  await page.evaluate(() => window.__petQa.drawerChanged(true,0,0,true)); // Space/target disappeared.
+  await page.waitForSelector('[data-window-host]:not([data-presented])');
   await page.evaluate(() => {window.__petQa.pendingDrawer=null; window.__finishDrawer();});
   await page.waitForSelector('[data-window-host][data-covered]');
   await page.waitForSelector('[data-window-host]:not([data-presented])');

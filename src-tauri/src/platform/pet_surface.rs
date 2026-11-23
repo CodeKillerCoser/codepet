@@ -50,6 +50,7 @@ mod implementation {
     unsafe extern "C" {
         fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
         fn cp_drawer_host_changed();
+        fn cp_drawer_set_level(host: *mut std::ffi::c_void, level: isize);
         fn cp_drawer_sample_press(down: bool, point: *mut NSPoint) -> u32;
         fn cp_drawer_mouse_event(event: *mut std::ffi::c_void, pet: bool);
         fn CGEventSourceKeyState(state_id: i32, key: u16) -> bool;
@@ -241,7 +242,7 @@ mod implementation {
     pub fn apply(app: &AppHandle, frame: Rect, elevated: bool) -> Result<(), String> {
         let panel = app.get_webview_panel("pet").map_err(|e| format!("{e:?}"))?;
         let ns = panel.as_panel();
-        ns.setLevel(if elevated { 27 } else { 3 });
+        unsafe { cp_drawer_set_level(std::ptr::from_ref(ns).cast_mut().cast(), if elevated { 27 } else { 3 }) };
         let next = NSRect::new(
             NSPoint::new(frame.x, -frame.y - frame.height),
             NSSize::new(frame.width, frame.height),

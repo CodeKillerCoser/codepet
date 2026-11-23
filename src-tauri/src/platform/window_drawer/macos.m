@@ -10,6 +10,7 @@
 @property CGRect original;
 @property BOOL attached;
 @property BOOL followingResize;
+@property NSTimeInterval lastOrderAttempt;
 @property CGSize requestedSize, acceptedSize;
 @property BOOL hasParkingPoint;
 @property CGPoint parkingPoint;
@@ -217,9 +218,11 @@ typedef struct {
     CGRect original;
     CGPoint origin;
     CGPoint release;
-    BOOL began, released, pet;
+    BOOL began, released, pet, detached;
+    uint64_t sequence;
 } CPDrawerPress;
 static CPDrawerPress lastPress;
+static uint64_t pressSequence; // All writers run on the main thread.
 // Both AppKit event monitors and physical sampling run on the main thread.
 // Keep the release available even after the worker consumes lastPress.
 static uint32_t releaseSerial;
@@ -297,7 +300,7 @@ static NSDictionary *windowInfo(CGWindowID number) {
 }
 
 static CPDrawerPress sourceAt(CGWindowID number, CGPoint point, BOOL pet) {
-    CPDrawerPress press = {.origin = point, .pet = pet, .began = YES};
+    CPDrawerPress press = {.origin = point, .pet = pet, .began = YES, .sequence = ++pressSequence};
     if (pet) return press;
     NSDictionary *info = windowInfo(number);
     if (!info) {
@@ -389,7 +392,7 @@ static CPDrawerPress capturedPress(BOOL consume) {
 }
 
 static BOOL movedWindow(CPDrawerPress press, CGPoint end, CGRect *actual) {
-    if (current && entries[current].windowID == press.number) return NO;
+    if (press.detached || (current && entries[current].windowID == press.number)) return NO;
     NSDictionary *info = windowInfo(press.number);
     if (!info || [info[(__bridge id)kCGWindowOwnerPID] intValue] != press.pid || !boundsOf(info, actual)) return NO;
     if (!CGSizeEqualToSize(press.original.size, actual->size) &&
@@ -450,7 +453,7 @@ static id dockSelection(CGPoint point) {
 // missed mouse-up. A fast Dock click must use its recorded release point.
 static BOOL takeDockClick(BOOL tracked, CGPoint *end) {
     CPDrawerPress press = capturedPress(YES);
-    if (!press.released && !tracked) return NO;
+    if (press.detached || (!press.released && !tracked)) return NO;
     *end = press.released ? press.release : mousePoint();
     return !tracked || hypot(end->x - press.origin.x, end->y - press.origin.y) < 6;
 }
@@ -559,6 +562,32 @@ static BOOL rebindRetiredSurface(NSArray *stack, CPDrawerEntry *entry, CGRect ac
     return YES;
 }
 
+// A clip path can hide a foreign window, but that paints an opaque patch
+// over the target. Put the host immediately above the target at its level
+// and verify against the next compositor sample before opening the mask.
+static BOOL maintainWindowOrder(NSArray *stack, CPDrawerEntry *entry, BOOL intervening) {
+    CGWindowID host = cp_drawer_host_number();
+    if (!host || !entry.windowID || host == entry.windowID) return NO;
+    NSInteger hostIndex = -1, targetIndex = -1, targetLevel = 0;
+    for (NSUInteger i=0; i<stack.count; i++) {
+        NSDictionary *row = stack[i];
+        CGWindowID number = [row[(__bridge id)kCGWindowNumber] unsignedIntValue];
+        if (number == host) {
+            hostIndex = i;
+        } else if (number == entry.windowID) {
+            targetIndex = i;
+            targetLevel = [row[(__bridge id)kCGWindowLayer] integerValue];
+        }
+        if (hostIndex >= 0 && targetIndex >= 0) break;
+    }
+    if (hostIndex < 0 || targetIndex < 0 ||
+        (hostIndex < targetIndex && !intervening)) return NO;
+    NSTimeInterval now = NSProcessInfo.processInfo.systemUptime;
+    if (now - entry.lastOrderAttempt < 0.15) return NO;
+    entry.lastOrderAttempt = now;
+    return cp_drawer_order_with_target(entry.windowID,targetLevel);
+}
+
 static NSDictionary *presentation(CPDrawerEntry *entry, CGRect actual, CGRect slot, BOOL resizing) {
     BOOL grow = !resizing && needsMoreSpace(actual.size,slot.size);
     NSArray *parts = nil;
@@ -568,6 +597,8 @@ static NSDictionary *presentation(CPDrawerEntry *entry, CGRect actual, CGRect sl
         parts = visibleParts(stack,entry,actual,slot,&firstCover);
         if (!parts && rebindRetiredSurface(stack,entry,actual))
             parts = visibleParts(stack,entry,actual,slot,&firstCover);
+        if (parts && !resizing && maintainWindowOrder(stack,entry,firstCover != nil))
+            parts = visibleParts(windowStack(),entry,actual,slot,&firstCover);
     }
     NSString *state = resizing ? @"native-resize" : grow ? @"resize-panel" : !parts ? @"awaiting-surface" : parts.count ? @"visible" : @"covered";
     NSMutableDictionary *result = [@{@"width":@(actual.size.width), @"height":@(actual.size.height),
@@ -617,12 +648,38 @@ static void activateEntry(CPDrawerEntry *entry) {
 }
 
 static NSDictionary *failure(NSString *message) { return @{@"error":message}; }
+// Require movement of both the pointer and this exact WindowServer surface.
+// A selection drag, a panel move and a top-left resize must retain ownership.
+static NSDictionary *detachMovedWindow(CPDrawerPress press, CGPoint point) {
+    CPDrawerEntry *entry = current ? entries[current] : nil;
+    if (!entry || press.detached || press.pet || !press.number ||
+        press.number != entry.windowID || press.pid != entry.pid || entry.followingResize) return nil;
+    if (!CGRectContainsPoint(CGRectInset(lastActual,-6,-6),press.origin) ||
+        hypot(point.x-press.origin.x,point.y-press.origin.y) < 8) return nil;
+    CGRect frame;
+    NSDictionary *row = windowInfo(press.number);
+    if (!row || [row[(__bridge id)kCGWindowOwnerPID] intValue] != entry.pid || !boundsOf(row,&frame) ||
+        !CGSizeEqualToSize(frame.size,press.original.size) ||
+        hypot(frame.origin.x-press.original.origin.x,frame.origin.y-press.original.origin.y) < 8 ||
+        !CGRectContainsPoint(CGRectInset(frame,-6,-40),point)) return nil;
+    // The system may move an edge before publishing its first size change.
+    // For edge presses wait for the final geometry before classifying the drag.
+    if (!press.released && !CGRectContainsPoint(CGRectInset(press.original,6,6),press.origin)) return nil;
+    @synchronized (CPDrawerEntry.class) {
+        if (lastPress.sequence == press.sequence) lastPress.detached = YES;
+    }
+    NSString *token = current;
+    [entries removeObjectForKey:token];
+    current = nil;
+    cp_drawer_watch(nil,0,0);
+    return @{@"detached":token};
+}
 // During an owner's resize loop its AX server can lag the compositor. Read
 // only the selected surface and leave both position and size to the owner.
 static NSDictionary *followPresentedWindow(CPDrawerEntry *entry, CGRect slot, CGSize limit, BOOL held, CPDrawerPress press) {
     CGRect measured;
     BOOL targetPress = held && !press.pet && entry.windowID && press.number == entry.windowID &&
-        !CGRectContainsPoint(CGRectInset(press.original,12,12),press.origin);
+        press.pid == entry.pid;
     NSDictionary *row = targetPress ? windowInfo(entry.windowID) : nil;
     BOOL liveFrame = row && [row[(__bridge id)kCGWindowOwnerPID] intValue] == entry.pid && boundsOf(row,&measured);
     if (!liveFrame && !getFrame(entry,&measured))
@@ -656,7 +713,9 @@ static NSDictionary *followPresentedWindow(CPDrawerEntry *entry, CGRect slot, CG
 static id run(NSString *operation,NSString *key,CGRect rect,CGSize limit) {
     if (!entries) entries=[NSMutableDictionary new];
     if ([operation isEqual:@"reset"]) {
-        capturedPress(YES);
+        CPDrawerPress press = capturedPress(YES);
+        if (current && press.number)
+            detachMovedWindow(press,press.released ? press.release : mousePoint());
         for (NSString *token in entries.allKeys) if (restore(entries[token])) [entries removeObjectForKey:token];
         if (!entries[current ?: @""]) { current=nil; cp_drawer_watch(nil,0,0); }
         return entries.count ? failure(@"部分窗口尚未恢复，请检查辅助功能权限后重试。") : @YES;
@@ -664,6 +723,13 @@ static id run(NSString *operation,NSString *key,CGRect rect,CGSize limit) {
     if ([operation isEqual:@"dragProbe"]) {
         CGRect actual;
         return @(movedWindow(capturedPress(NO), mousePoint(), &actual));
+    }
+    if (current && ![operation isEqual:@"permission"] && ![operation isEqual:@"release"]) {
+        CPDrawerPress press = capturedPress(NO);
+        if (press.number == entries[current].windowID && press.number) {
+            NSDictionary *detached = detachMovedWindow(press,press.released ? press.release : mousePoint());
+            if (detached) return detached;
+        }
     }
     // AX can address this process's own windows without global access.
     // External targets, the system Dock and the permission button still require it.

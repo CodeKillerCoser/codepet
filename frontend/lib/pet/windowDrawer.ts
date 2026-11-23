@@ -5,6 +5,8 @@ export interface DrawerPointer { x: number; y: number; pressed?: boolean; extern
 export interface DrawerRect { x: number; y: number; width: number; height: number }
 export interface DrawerPresentation { width: number; height: number; visible: DrawerRect[]; awaitingSurface: boolean; resizing: boolean }
 
+export interface DetachedWindow { detached: string }
+
 export interface DrawerWindow {
   id: string;
   name: string;
@@ -18,11 +20,12 @@ export const defaultDrawerSize = { width: 800, height: 560 } as const;
 export type DrawerSelectionOperation = 'drop' | 'dragEnd' | 'dockClick';
 type DrawerSlot = DrawerRect & { maxWidth: number; maxHeight: number };
 
-export function drawerCommand(operation: 'supported' | 'dragProbe' | 'park' | 'reset' | 'permission'): Promise<boolean>;
+export function drawerCommand(operation: 'supported' | 'dragProbe' | 'reset' | 'permission'): Promise<boolean>;
+export function drawerCommand(operation: 'park'): Promise<boolean | DetachedWindow>;
 export function drawerCommand(operation: 'settings'): Promise<null>;
 export function drawerCommand(operation: 'release', id: string): Promise<boolean>;
-export function drawerCommand(operation: DrawerSelectionOperation): Promise<DrawerWindow | null>;
-export function drawerCommand(operation: 'activate' | 'show', id: string, region: DrawerSlot): Promise<DrawerPresentation | {pending: true}>;
+export function drawerCommand(operation: DrawerSelectionOperation): Promise<DrawerWindow | DetachedWindow | null>;
+export function drawerCommand(operation: 'activate' | 'show', id: string, region: DrawerSlot): Promise<DrawerPresentation | DetachedWindow | {pending: true}>;
 export function drawerCommand(operation: string, id?: string, region?: DrawerSlot) {
   return invoke('pet_window_drawer', {
     operation, id,

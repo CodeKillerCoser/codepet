@@ -28,11 +28,12 @@ const qa = {
   surface: { revision: 1, mode: 'floating' as 'floating' | 'docked', dragging: false, snapCandidate: false, canDock: true, availableHeight: 860, availableWidth: 1440, nativeDrag: true, physicalNotch: true, topInset: 0, notchWidth: 185 },
   drawerCalls: [] as string[],
   drawerCovered: false,
+  drawerDetached: false,
   drawerAwaitingSurface: false,
   drawerMinimumWidth: 0,
   drawerResize: null as {width: number; height: number} | null,
   frameCaptures: 0,
-  drawerChanged: (cover: boolean, dx=0, dy=0) => fire('pet-drawer-changed', {cover,dx,dy}),
+  drawerChanged: (cover: boolean, dx=0, dy=0, seal=false) => fire('pet-drawer-changed', {cover,dx,dy,seal}),
   pendingCursorCapture: null as Promise<void> | null,
   cursorCaptureRequested: false,
   pendingRelease: null as Promise<boolean> | null,
@@ -101,6 +102,7 @@ mockIPC((command, args: any) => {
     if (args.operation === 'release') return qa.pendingRelease ?? true;
     if (args.operation === 'activate') qa.drawerCovered = false;
     if (args.operation === 'show' || args.operation === 'activate') {
+      if (qa.drawerDetached) { qa.drawerDetached = false; return {detached:'notes'}; }
       const {width,height} = args.region;
       const size = qa.drawerResize ?? {width:Math.max(width,qa.drawerMinimumWidth),height};
       const result = {...size,resizing:!!qa.drawerResize,awaitingSurface:qa.drawerAwaitingSurface,

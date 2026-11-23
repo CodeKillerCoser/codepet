@@ -42,12 +42,20 @@
     immediateCheck = delay === 0;
     check = setTimeout(() => { check = undefined; immediateCheck = false; void sync(); }, delay);
   }
-  type DrawerChange = { cover: boolean; dx: number; dy: number };
-  function changed({cover, dx, dy}: DrawerChange) {
+  type DrawerChange = { cover: boolean; seal?: boolean; dx: number; dy: number };
+  function changed({cover, seal, dx, dy}: DrawerChange) {
     if (!selected || disposed || suspended) return;
     if (cover || dx || dy) epoch++;
-    if (cover) aperture();
-    else if ((dx || dy) && visibleRects.length) {
+    if (seal || (cover && (dx || dy))) aperture();
+    else if (cover) {
+      // A focus notification alone says nothing about which pixels changed.
+      // Revoke input until the stack is verified without flashing the backdrop.
+      if (visibleRects.length) {
+        visibleRects = [];
+        void tick().then(syncHitRegions).catch(failed);
+      }
+    }
+    else if (dx || dy) {
       // Until the AX move is confirmed, expose only the overlap between the
       // last verified pixels on screen and their destination in the panel.
       const rect = host?.getBoundingClientRect();
@@ -118,6 +126,7 @@
     void serializeDrawer(() => drawerCommand(operation))
       .then(async target => {
         if (!target || disposed) return;
+        if ('detached' in target) { forgetWindow(target.detached); return; }
         openPanel();
         await choose(target);
       }).catch(e => { if (reportFailure && !disposed) failed(e); });
@@ -164,7 +173,8 @@
   async function park() {
     if (!presented) { aperture(); return; }
     await coverBeforeMove();
-    await drawerCommand('park');
+    const result = await drawerCommand('park');
+    if (typeof result === 'object') forgetWindow(result.detached);
     presented = false;
     resizing = false;
   }
@@ -196,6 +206,10 @@
         const layout = await drawerCommand(op, target.id, {
           x: rect.x, y: rect.y, width: rect.width, height: rect.height, maxWidth, maxHeight,
         });
+        if ('detached' in layout) {
+          if (!disposed) forgetWindow(layout.detached);
+          return;
+        }
         if ('pending' in layout) {
           retryDelay = 16;
           if (op === 'activate') activateNext = true;
@@ -294,9 +308,14 @@
       await coverBeforeMove();
       await drawerCommand('release', id);
     });
+    forgetWindow(id);
+  }
+  function forgetWindow(id: string) {
     windows = windows.filter(item => item.id !== id);
     if (selected?.id === id) {
+      aperture();
       selected = null;
+      activateNext = false;
       presented = false;
       resizing = false;
     }

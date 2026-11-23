@@ -184,11 +184,49 @@ static void checkNativeDrop(CPDrawerEntry *entry, CGRect original) {
     assert([droppedWindow()[@"ignored"] isEqual:@"no-source-event"]); // Each release can be consumed only once.
 }
 
+// Replay both a fast release between polls and a drag observed while held.
+static void checkDragOut(CPDrawerEntry *entry, CGRect slot) {
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.08]];
+    assert(getFrame(entry,&slot));
+    entry.windowID = identifyWindow(windowStack(),entry.pid,slot);
+    assert(entry.windowID);
+    for (NSString *operation in @[@"park",@"dockClick",@"drop",@"show",@"reset"]) {
+        current = @"fixture";
+        entries = [@{current:entry} mutableCopy];
+        lastActual = lastFrame = slot;
+        CGRect startFrame;
+        assert(boundsOf(windowInfo(entry.windowID),&startFrame));
+        CGPoint start = CGPointMake(CGRectGetMidX(startFrame),CGRectGetMinY(startFrame)+18);
+        CGPoint end = CGPointMake(start.x-45,start.y+32);
+        fixtureMouse(kCGEventLeftMouseDown,entry.windowID,start,NO);
+        assert(!detachMovedWindow(capturedPress(NO),end)); // A content drag.
+        CGRect moved = CGRectOffset(slot,-45,32), after;
+        assert(place(entry,moved));
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.06]];
+        id reply;
+        if ([operation isEqual:@"show"]) {
+            reply = detachMovedWindow(capturedPress(NO),end);
+            fixtureMouse(kCGEventLeftMouseUp,entry.windowID,end,NO);
+        } else {
+            fixtureMouse(kCGEventLeftMouseUp,entry.windowID,end,NO);
+            reply = run(operation,current,slot,slot.size);
+        }
+        if ([operation isEqual:@"reset"]) assert([reply isEqual:@YES]);
+        else assert([reply[@"detached"] isEqual:@"fixture"]);
+        assert(!current && !entries.count);
+        assert(droppedWindow()[@"ignored"]); // Finishing this drag cannot re-pin.
+        assert([run(@"reset",nil,CGRectZero,CGSizeZero) isEqual:@YES]);
+        assert(getFrame(entry,&after) && nearFrame(after,moved));
+        assert(place(entry,slot));
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.06]];
+    }
+}
+
 static int drawerEvents;
-static BOOL covered;
+static CPDrawerChange observedChange;
 static CGFloat hostDX;
-static void notice(bool cover, double dx, double dy) {
-    drawerEvents++; covered |= cover; hostDX += dx;
+static void notice(CPDrawerChange change, double dx, double dy) {
+    drawerEvents++; observedChange = MAX(observedChange,change); hostDX += dx;
 }
 static void pump(void) {
     [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.06]];
@@ -215,14 +253,67 @@ static void checkDrawerEvents(NSWindow *window, CPDrawerEntry *entry) {
     cp_drawer_host_changed(); // A native drag and its AppKit notification coalesce.
     pump();
     assert(hostDX == 18);
-    covered = NO;
+    observedChange = CPDrawerGeometry;
     [NSWorkspace.sharedWorkspace.notificationCenter postNotificationName:NSWorkspaceActiveSpaceDidChangeNotification object:nil];
     pump();
-    assert(covered);
+    assert(observedChange == CPDrawerSurfaceInvalid);
     cp_drawer_watch(nil,0,0); pump();
     int stopped = drawerEvents;
     [window setFrameOrigin:origin]; cp_drawer_host_changed(); pump();
     assert(drawerEvents == stopped);
+}
+
+// The target lives in another process. Check WindowServer's actual ordering
+// before and after recovery, and restoration of the panel's requested level.
+static void checkGroupedWindows(NSWindow *host, const char *executable) {
+    NSTask *child = [NSTask new];
+    child.executableURL = [NSURL fileURLWithPath:@(executable)];
+    child.arguments = @[@"--order-target"];
+    NSPipe *pipe = [NSPipe pipe];
+    child.standardOutput = pipe;
+    assert([child launchAndReturnError:nil]);
+    NSData *data = [pipe.fileHandleForReading readDataOfLength:sizeof(CGWindowID)];
+    CGWindowID number = 0;
+    [data getBytes:&number length:sizeof(number)];
+    CPDrawerEntry *target = [CPDrawerEntry new];
+    target.pid = child.processIdentifier; target.windowID = number;
+    target.element = CFBridgingRelease(AXUIElementCreateApplication(target.pid));
+    CGRect slot;
+    pump();
+    assert(boundsOf(windowInfo(number),&slot));
+    NSWindow *cover = [[NSWindow alloc] initWithContentRect:NSInsetRect(host.frame,30,40)
+        styleMask:NSWindowStyleMaskBorderless backing:NSBackingStoreBuffered defer:NO];
+    [cover orderFrontRegardless];
+    host.level = NSStatusWindowLevel;
+    [host orderFrontRegardless];
+    cp_drawer_connect((__bridge void *)host,notice);
+    cp_drawer_watch(target.element,target.pid,number);
+    pump();
+    NSArray *(^stack)(void) = ^NSArray *{
+        NSSet *ids = [NSSet setWithArray:@[@(host.windowNumber),@(cover.windowNumber),@(number)]];
+        return [windowStack() filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *row, NSDictionary *_) {
+            return [ids containsObject:row[(__bridge id)kCGWindowNumber]];
+        }]];
+    };
+    NSDictionary *obstruction = nil;
+    NSArray *before = stack();
+    visibleParts(before,target,slot,slot,&obstruction);
+    assert(before.count == 3 && [obstruction[(__bridge id)kCGWindowNumber] integerValue] == cover.windowNumber);
+    maintainWindowOrder(before,target,YES);
+    pump();
+    NSArray *after = stack();
+    assert(after.count == 3);
+    assert([after[0][(__bridge id)kCGWindowNumber] integerValue] == cover.windowNumber);
+    assert([after[1][(__bridge id)kCGWindowNumber] integerValue] == host.windowNumber);
+    assert([after[2][(__bridge id)kCGWindowNumber] unsignedIntValue] == number);
+    NSArray *parts = visibleParts(after,target,slot,slot,&obstruction);
+    assert(!obstruction && parts.count == 1 && [parts[0][@"width"] doubleValue] == slot.size.width);
+    cp_drawer_set_level((__bridge void *)host,NSFloatingWindowLevel);
+    assert(host.level == NSNormalWindowLevel);
+    cp_drawer_watch(nil,0,0); pump();
+    assert(host.level == NSFloatingWindowLevel);
+    [cover orderOut:nil];
+    [child terminate]; [child waitUntilExit];
 }
 
 int main(int argc, const char **argv) {
@@ -238,6 +329,13 @@ int main(int argc, const char **argv) {
         [fixture center];
         [fixture orderFront:nil];
         [NSApp finishLaunching];
+        if (argc == 2 && !strcmp(argv[1],"--order-target")) {
+            CGWindowID number = (CGWindowID)fixture.windowNumber;
+            pump();
+            fwrite(&number,sizeof(number),1,stdout); fflush(stdout);
+            [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:10]];
+            return 0;
+        }
         AXUIElementRef app = AXUIElementCreateApplication(getpid());
         if (argc == 2 && !strcmp(argv[1],"--notifications")) {
             CPDrawerEntry *owner = [CPDrawerEntry new];
@@ -277,6 +375,8 @@ int main(int argc, const char **argv) {
         assert(onscreen.count > 0);
         checkDrawerEvents(fixture,entry);
         checkNativeDrop(entry, original);
+        checkDragOut(entry,original);
+        checkGroupedWindows(fixture,argv[0]);
         entry.original = original;
         entry.attached = YES;
         CGRect slot = CGRectMake(original.origin.x, original.origin.y, 800, 560);
