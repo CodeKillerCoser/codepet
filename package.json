@@ -36,6 +36,9 @@
     "sdk:export": "node scripts/export_provider_sdk.mjs"
   },
   "dependencies": {
+    "@codemirror/merge": "^6.12.3",
+    "@codemirror/state": "^6.7.6",
+    "@codemirror/view": "^6.43.15",
     "@lucide/svelte": "^1.16.0",
     "@radix-ui/colors": "^3.0.0",
     "@tauri-apps/api": "^2.0.0",

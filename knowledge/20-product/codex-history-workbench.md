@@ -1,0 +1,94 @@
+# Codex 历史对话检查工作台
+
+## 背景
+
+2026-11-24 用户要求将主窗口的任务及任务提取替换为本地历史对话检查，并提供 `implementation-plan.md` 和工作台截图。方案原本描述独立 Electron/React 桌面应用；本次目标是当前 Code Pet 内的替换，因此复用 Tauri/Svelte，落实其本地扫描、状态和界面行为。
+
+## 目标
+
+项目选择与扫描确认分离；按工作树检查 Git 状态，关联 Codex 主对话。参考图用于确定最初的信息区域；用户随后要求按真实用途优化，不再逐项复制。桌面保留范围选择、总览和工作树/详情双栏，强调分支、文件改动与待推送提交。窄屏使用列表→详情→返回列表的操作路径，避免把详情排在长列表末尾。
+
+## 当前入口与范围（2026-11-24）
+
+左侧导航名称为“Agent工作台”。用户要求去掉内容页重复的大标题区，内容从检查范围直接开始；“本机 · 只读”和“数据来源”入口收纳到检查范围行。页面返回时聚焦带名称的工作台 region，避免焦点落到已移除的标题。
+
+本阶段仅支持 Codex：扫描器不再读取其他 Agent 历史，来源说明、恢复命令和测试样本同步收敛。数据来源弹窗只显示实际 Codex 目录；仍保留 Git 检测、会话关联、归档、筛选与预览。验证包含 6 项 Rust 定向测试、36 项前端测试、桌面与窄屏布局、数据来源弹窗和后退焦点恢复，以及 Tauri 集成检查和生产前端构建。
+
+## 非目标
+
+不另建 Electron 安装包，不迁移现有历史抽取结果，不自动提取任务或调用模型。Git 不进行 fetch、提交、推送或工作区修改。旧任务领域代码与存储保留供兼容及独立测试使用。
+
+## 现状理解
+
+本地 `state_5.sqlite` 存在 `projects` / `project_roots` / `threads`。只读实测发现 4 个项目；Code Pet 范围枚举 15 棵工作树、13 条关联对话，其中 5 棵 Git 读取失败。这是当前机器的观测，不作为固定产品数字。用户截图和文档中的原型源码未随附件提供，视觉按截图重新实现。
+
+## 实现路径
+
+Rust 扫描器只读打开 SQLite，保留 WAL 可见性。项目索引失败时读取 global state；标题优先读取 session index，仅为缺失索引 ID 读取普通或 Zstd rollout 的有界头部。支持时间秒/毫秒、归档、子 Agent 排除。当前只扫描 Codex，不读取其他 Agent 的历史目录；子目录通过 Git 顶层核实，并缓存相同 cwd。
+
+Git 使用 porcelain v2 和 NUL 分隔，保留改名、路径中的空格/换行、冲突、游离 HEAD、ahead/behind、无上游和失效登记。状态检查最多四路并发，单命令 30 秒超时。新扫描或取消提升 generation；旧任务停止后续工作，已启动 Git 命令完成或超时，旧结果不可写入新快照。项目草稿只写应用自身数据目录，启动后等待确认。
+
+筛选按项目、关键词、活动日期、关联对话组合计算基础范围，总览在此范围汇总，提交状态进一步筛选列表。归档开关仅控制详情显示。工作树共享 Git 改动，不对单条会话分摊。单卡重检重新参与汇总和筛选。
+
+系统动作与预览从当前 scan ID 和条目 ID 解析路径，限制主窗口调用；路径重新校验，拒绝越界与外部符号链接。文件按快照 HEAD 比较实时工作区或暂存区，限制 256 KiB UTF-8。CodeMirror 提供只读并排差异、相同行折叠，版本切换丢弃旧响应，关闭销毁编辑器。Codex 使用有效 UUID 深链。
+
+## App 主题接入（2026-11-24）
+
+首轮工作台在组件内固定暗色和 `color-scheme: dark`，还重写了 `--app-*`，导致浅色 App 中仍显示暗色工作台。现在 `theme/main-window.css` 用 `--wb-*` 别名引用 App 表面、正文、边框、强调色和状态色；组件与主窗口背景不再固定颜色，也不覆盖 App token。浅色、暗色及跟随系统均由现有 App 主题 class 驱动。
+
+原生 dialog 位于工作台 section 外，因此别名定义在 `.main-theme` 上，让弹窗、遮罩、原生控件和 CodeMirror 同时继承。差异行、差异文本、gutter 和折叠行也使用主题变量，切换时保持现有编辑器和扫描结果。布局尺寸未调整。
+
+验证：`frontend/styles.test.ts` 纳入工作台源码的禁硬编码颜色检查；34 项样式、筛选和导航测试通过。界面 QA 验证浅/暗截图、窄屏焦点与溢出、打开预览时换色且编辑器身份不变、App 跟随系统亮→暗→亮，以及切换前后网格尺寸一致。生产构建通过。该次主题接入仅涉及前端样式、主题库、QA 和文档；后续数据语义修复的验证见下节。
+
+## 按真实检查流程优化（2026-11-24）
+
+用户要求核对数据用途与功能完成度。源码检查发现：数据库不可读的后备循环使用变化中的结果集判断是否继续读取，第一份 rollout 成功后可能漏掉其他未入标题索引的文件；Git 配置上游但缺少 `branch.ab` 比较结果时，曾被当成可比较上游。已修复，并在工作台 Rust 样本中覆盖。
+
+界面默认显示全部工作树，包括无关联对话的待检查目录。三张数字卡的单位明确为工作树；详情区区分文件条目、待推送提交、落后提交和无可比较上游，不把这些数字解释为任务完成度。失败提示提供独立筛选。重新检测只更新当前工作树 Git 状态，新增会话或工作树仍须重新扫描。
+
+新增“数据来源”说明，展示后端返回的实际 Codex 目录和项目目录来源。最新活动指关联主对话的更新时间，含归档，并非文件最近修改时间。归档开关只影响详情显示；详情可搜索标题，每批显示 30 条。桌面列表突出分支，重复来源采用次要文本，选中行使用中性背景与侧边标记；窄屏进入详情后收起范围和总览，并支持返回及恢复原行焦点。浅/暗与跟随系统沿用 App token。
+
+当前功能状态：核心只读扫描、筛选、重检和预览已完成；真实本机探针读取 4 个项目，Code Pet 范围 15 棵工作树、13 条关联对话、5 棵读取失败。6 项工作台 Rust 定向测试与 36 项前端样式/筛选/导航测试通过，界面 QA 覆盖失败目录、无对话目录、预览竞态、会话搜索/分批、归档、窄屏详情导航与主题。`npm run build` 与 `npm run build:bin -- --debug` 通过，原生可执行文件位于 `src-tauri/target/debug/code-pet`；Tauri CLI 为本机构建临时添加的 manifest feature 已恢复，未改变仓库跨平台配置。
+
+尚未完成的是安装包与真实系统入口验收；原生构建成功不能替代 Finder、终端工作目录和正确 Codex 会话跳转的验证。详见 [数据溯源与验收](../40-runbooks/codex-workbench-data-trace.md)。
+
+## 涉及模块
+
+- `frontend/lib/CodexWorkbench.svelte`、`codexWorkbench.ts`：截图布局、交互状态、筛选及预览生命周期。
+- `frontend/App.svelte`、导航与 `main-window.css`：替换入口，移除抽取设置导航，兼容旧 extraction 路由，调整主窗口内容行与导航焦点。
+- `crates/codepet-task-lineage/src/workbench.rs`：独立于 Provider 的只读扫描、Git 解析和文件边界。
+- `src-tauri/src/codex_workbench.rs`：扫描版本、当前快照、偏好与 IPC；`platform/workbench_actions.rs`：统一系统动作接口及平台实现。
+- `src-tauri/src/task_lineage.rs`、`lib.rs`：停止旧后台自动提取，注册新命令。
+- `webcontent-contract.json`：后端 API 升至 23（主干的桌宠窗口修复已占用 22），防止旧二进制热加载需要新命令的前端。
+
+## 当前对话原生验收（2026-11-24）
+
+使用生产组件与生产 IPC 的隔离原生窗口完成真实本机验收：当前 `a1e0/codepet` 工作树被找到，Git 独立基线和生产扫描均为 38 项改动；界面显示未提交，且当前对话 ID 正确关联。单树重检和真实文件预览通过，已保留 WKWebView 截图与 JSON 报告。完整复现命令和当前安装包 API 20 / 最终开发版 API 23 的区分见 [数据溯源与验收](../40-runbooks/codex-workbench-data-trace.md)。系统打开动作及正式安装包仍未验收。
+
+## 风险
+
+- 索引损坏、WAL 或来源缺失：用只读 WAL、压缩头和后备项目样本验证，并显示可查看的失败列表。
+- 状态误判及路径混淆：用真实 Git 仓库验证暂存、未跟踪、改名、删除、分叉、落后、游离 HEAD、缺失工作树及越界路径。
+- 旧响应覆盖及焦点回退：浏览器 QA 覆盖快速预览切换、关闭销毁、草稿不触发扫描、单树重检、主窗口导航焦点和窄屏布局。
+- 原生动作和发布差异：需要在打包应用实测 Finder、终端和 Codex 深链；当前自动化不等同于这些系统动作已通过。
+
+## 测试计划与结果
+
+- `cargo test --manifest-path crates/Cargo.toml -p codepet-task-lineage --lib -- --test-threads=1`：29 项通过，覆盖领域与工作台样本。并发运行曾触发旧 `management::tests::job_admission_is_idempotent_and_restart_requires_explicit_retry` 的租约失败，使用串行完整回归确认；未修改该测试或抽取领域行为。
+- `npx vitest run frontend/lib/navigation.test.ts frontend/lib/codexWorkbench.test.ts`：7 项通过，覆盖导航及组合筛选。
+- `node scripts/codex_workbench_ui_qa.mjs`：通过；覆盖固定样本及实际 App 壳，801 / 1440 / 786 / 780 / 460 / 390 px 截图、筛选、重检、预览竞态、归档、焦点与溢出。
+- `cargo run --manifest-path crates/Cargo.toml -p codepet-task-lineage --example workbench_probe`：真实本机只读扫描，仅输出计数。
+- `npm run build`：生产前端及 API 23 资源清单。
+- 原始 `cargo check` 被已有 macOS target feature 与 Tauri allowlist 不一致、未准备的 `resources/provider-sdk` 阻断。使用临时环境覆盖 `TAURI_CONFIG='{"app":{"macOSPrivateApi":false},"bundle":{"resources":[]}}' cargo check --manifest-path src-tauri/Cargo.toml --lib` 验证 Rust 集成；此覆盖不写配置文件，也不代表安装包验收。
+
+## 合入与打包准备（2026-11-24）
+
+工作台提交以最新主干 `9eba9d3e` 的桌宠窗口修复为基线。该修复已使用后端 API 22，因此工作台最终使用 API 23，避免仅含桌宠修复的旧二进制误加载需要工作台 IPC 的新前端。本次沿用基础版本 `0.3.11-beta`，交由 Build 工作流派生 commit 后缀，构建 macOS / Windows 两个平台。
+
+## 知识沉淀
+
+本页取代旧任务谱系接入文档作为当前主窗口功能说明；旧抽取文档保留历史背景。只读状态和快照身份约束另记 `knowledge/60-rules/codex-workbench-readonly-snapshots.md`。
+
+## 未知项
+
+已构建 macOS 开发可执行文件，尚未生成、安装和实测本次改动的 macOS 安装包；未实际打开 Finder、终端或 Codex 会话。Windows / Linux 原生行为未实测，Linux 终端入口明确返回不支持。

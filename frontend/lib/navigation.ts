@@ -11,14 +11,13 @@ export const settingsRoutes = [
   { route: "appearance", label: "外观与桌宠" },
   { route: "notifications", label: "通知" },
   { route: "permissions", label: "权限" },
-  { route: "extraction", label: "任务抽取" },
   { route: "events", label: "诊断" },
   { route: "about", label: "关于" },
 ] as const;
 export const isSettingsRoute = (route: AppRoute) => settingsRoutes.some(entry => entry.route === route);
 export const isConnectionRoute = (route: AppRoute) => connectionRoutes.some(entry => entry.route === route);
 export const routeTitle = (route: AppRoute) => settingsRoutes.find(entry => entry.route === route)?.label
-  ?? (isConnectionRoute(route) ? "连接接入" : route === "tasks" ? "任务管理" : route === "usage" ? "用量" : "宠物制作");
+  ?? (isConnectionRoute(route) ? "连接接入" : (route === "tasks" || route === "extraction") ? "Agent工作台" : route === "usage" ? "用量" : "宠物制作");
 
 export function createNavigation(initial: AppRoute = "tasks") {
   const state = writable<{ entries: AppRoute[]; index: number }>({ entries: [initial], index: 0 });

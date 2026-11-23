@@ -1061,10 +1061,12 @@ dependencies = [
  "chrono",
  "codepet-provider-sdk",
  "fs2",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "tempfile",
+ "zstd",
 ]
 
 [[package]]

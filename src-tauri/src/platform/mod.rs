@@ -12,3 +12,5 @@ pub mod power;
 
 pub mod notice_activation;
 pub mod window_drawer;
+
+pub(crate) mod workbench_actions;

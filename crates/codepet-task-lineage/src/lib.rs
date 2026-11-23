@@ -14,3 +14,5 @@ pub fn stable_id(value: impl AsRef<[u8]>) -> String {
     use sha2::{Digest, Sha256};
     format!("{:x}", Sha256::digest(value.as_ref()))
 }
+
+pub mod workbench;

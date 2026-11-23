@@ -16,12 +16,12 @@ use codepet_task_lineage::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     path::PathBuf,
     sync::{LazyLock, Mutex},
     time::Duration,
 };
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 
 mod provider_executor;
 use provider_executor::ProviderExecutor;
@@ -352,97 +352,6 @@ pub(crate) async fn task_lineage_watch(
     tauri::async_runtime::spawn_blocking(move || watch::configure(&Store::open(&root)?, config))
         .await
         .map_err(|e| e.to_string())?
-}
-pub(crate) fn start_background(app: tauri::AppHandle) {
-    tauri::async_runtime::spawn(async move {
-        let mut deadlines = HashMap::<String, (std::time::Instant, u64, u64)>::new();
-        loop {
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            let host = app.state::<ProviderHostState>().inner().clone();
-            for (id, _, data) in local::contexts() {
-                let Ok(root) = directory(&id) else {
-                    continue;
-                };
-                let loaded = (|| -> Result<_, String> {
-                    let store = Store::read_only(&root)?;
-                    Ok((watch::read(&store)?, management::settings(&store)?))
-                })();
-                let Ok((watch, config)) = loaded else {
-                    continue;
-                };
-                if !watch.enabled {
-                    deadlines.remove(&id);
-                    continue;
-                }
-                if deadlines
-                    .get(&id)
-                    .is_some_and(|(time, settings_revision, watch_revision)| {
-                        *time > std::time::Instant::now()
-                            && *settings_revision == config.revision
-                            && *watch_revision == watch.revision
-                    })
-                {
-                    continue;
-                }
-                deadlines.insert(
-                    id.clone(),
-                    (
-                        std::time::Instant::now() + Duration::from_secs(config.interval_seconds),
-                        config.revision,
-                        watch.revision,
-                    ),
-                );
-                let Ok(home) = codex::data_directory(&data) else {
-                    continue;
-                };
-                let runtime = if watch.extract && (watch.continuous || watch.remaining_jobs > 0) {
-                    make_extractor(&host, &id).await.map(Some)
-                } else {
-                    Ok(None)
-                };
-                let runtime_error = runtime.as_ref().err().cloned();
-                let extractor = runtime.ok().flatten();
-                let tick_root = root.clone();
-                let result = tauri::async_runtime::spawn_blocking(move || {
-                    watch::tick(
-                        &Store::open(&tick_root)?,
-                        &CodexSource { home },
-                        extractor
-                            .as_ref()
-                            .map(|e| e as &dyn codepet_task_lineage::extraction::TaskExtractor),
-                    )
-                })
-                .await;
-                let error = match result {
-                    Ok(Ok(_)) => None,
-                    Ok(Err(e)) => Some(runtime_error.unwrap_or(e)),
-                    Err(e) => Some(e.to_string()),
-                };
-                if let Ok(store) = Store::open(&root) {
-                    if let Ok(mut current) = watch::read(&store) {
-                        if error.is_some() && current.revision == watch.revision {
-                            current.last_error = error.clone();
-                            current.extract = false;
-                            let _ = store.write("watch.json", &current);
-                        }
-                        deadlines.insert(
-                            id.clone(),
-                            (
-                                std::time::Instant::now()
-                                    + Duration::from_secs(config.interval_seconds),
-                                config.revision,
-                                current.revision,
-                            ),
-                        );
-                    }
-                }
-                let _ = app.emit(
-                    "task-lineage-updated",
-                    json!({"providerId":id,"error":error}),
-                );
-            }
-        }
-    });
 }
 #[tauri::command]
 pub(crate) async fn task_lineage_messages(

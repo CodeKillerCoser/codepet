@@ -1,0 +1,52 @@
+import { chromium } from 'playwright';
+import { mkdir } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import assert from 'node:assert/strict';
+import { createServer } from 'vite';
+const output=resolve('artifacts/codex-workbench-qa');await mkdir(output,{recursive:true});
+const server=await createServer({server:{host:'127.0.0.1',port:1437,strictPort:true}});await server.listen();
+const browser=await chromium.launch({headless:true});
+try {
+ const page=await browser.newPage({viewport:{width:1200,height:955},timezoneId:'Asia/Shanghai'});const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('http://127.0.0.1:1437/frontend/qa/codex-workbench.html');
+ await page.getByRole('button',{name:'确认并扫描',exact:true}).waitFor();assert.equal(await page.locator('.worktree-row').count(),0);
+ await page.getByRole('button',{name:'数据来源',exact:true}).click();await page.getByText('/fixture/.codex',{exact:true}).waitFor();await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'确认并扫描',exact:true}).click();await page.locator('.worktree-row').first().waitFor();assert.equal(await page.locator('.worktree-row').count(),8,'Unlinked trees are included by default');
+ assert.equal(await page.locator('.overview button').nth(0).locator('strong').innerText(),'4');assert.equal(await page.locator('.overview button').nth(1).locator('strong').innerText(),'1');
+ await page.getByRole('button',{name:'查看详情',exact:true}).click();await page.getByRole('dialog').getByText(/目录已不存在/).waitFor();await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'仅看失败工作树',exact:true}).click();assert.equal(await page.locator('.worktree-row').count(),1);assert.ok((await page.locator('.worktree-row').innerText()).includes('读取失败'));await page.getByRole('button',{name:'重置',exact:true}).click();
+ await page.getByLabel('搜索工作树与对话').fill('provider-retry');assert.equal(await page.locator('.worktree-row').count(),1);await page.getByRole('button',{name:'重置',exact:true}).click();
+ await page.getByLabel('仅有关联对话',{exact:true}).check();assert.equal(await page.locator('.worktree-row').count(),6);await page.getByRole('button',{name:'重置',exact:true}).click();
+ await page.getByLabel('提交状态',{exact:true}).selectOption('unpushed');assert.equal(await page.locator('.worktree-row').count(),1);assert.equal(await page.locator('.overview button').nth(2).locator('strong').innerText(),'8');await page.getByRole('button',{name:'重置',exact:true}).click();
+ const mainRow=page.locator('.row-select').filter({hasText:'codex/history-workbench'});
+ await mainRow.click();await page.getByRole('button',{name:'预览 src/history.ts',exact:true}).click();
+ await page.getByRole('button',{name:'暂存区',exact:true}).click();await page.locator('.cm-mergeView').waitFor();assert.ok((await page.locator('.cm-mergeView').innerText()).includes('index'));await page.waitForTimeout(180);assert.ok(!(await page.locator('.cm-mergeView').innerText()).includes('workspace'));await page.keyboard.press('Escape');assert.equal(await page.locator('.cm-mergeView').count(),0);
+ await page.getByRole('button',{name:'预览 src/history.ts',exact:true}).click();await page.locator('.cm-mergeView').waitFor();const editor=await page.locator('.cm-editor').first().elementHandle();const lightBg=await page.locator('.workbench').evaluate(e=>getComputedStyle(e).backgroundColor);
+ for(const mode of ['dark','light']){
+   await page.evaluate(mode=>window.__setWorkbenchTheme(mode),mode);assert.equal(await page.locator('.wb-dialog[open]').evaluate(e=>getComputedStyle(e).colorScheme),mode);assert.equal(await editor.evaluate(e=>e===document.querySelector('.cm-editor')),true);assert.equal(await page.locator('.cm-editor').first().evaluate(e=>getComputedStyle(e).color),await page.locator('.workbench').evaluate(e=>getComputedStyle(e).color));
+   await page.screenshot({path:resolve(output,`preview-${mode}.png`)});if(mode==='dark')assert.notEqual(await page.locator('.workbench').evaluate(e=>getComputedStyle(e).backgroundColor),lightBg);
+ }
+ await page.keyboard.press('Escape');
+ assert.equal(await page.locator('.chats article').count(),30,'Large history is shown progressively');await page.getByRole('button',{name:/再显示 30 条对话/}).click();assert.equal(await page.locator('.chats article').count(),60);
+ await page.getByLabel('含归档',{exact:true}).check();assert.ok((await page.locator('.chat-heading strong').innerText()).includes('66 条'));
+ await page.getByLabel('搜索关联对话').fill('工作树改名');assert.ok(await page.locator('.chats article').count()<30);await page.getByLabel('搜索关联对话').fill('');
+ for(const mode of ['light','dark']){
+   await page.evaluate(mode=>window.__setWorkbenchTheme(mode),mode);await page.screenshot({path:resolve(output,`theme-${mode}.png`),fullPage:true});
+   await page.setViewportSize({width:390,height:955});await page.getByRole('button',{name:'← 返回工作树列表',exact:true}).click();assert.ok(await page.locator('.results').isVisible());assert.ok(await page.locator('.detail').isHidden());
+   await mainRow.click();assert.ok(await page.locator('.detail').isVisible());assert.ok(await page.locator('.results').isHidden());assert.ok(await page.locator('.detail h3').evaluate(e=>e===document.activeElement));
+   await page.screenshot({path:resolve(output,`theme-${mode}-390-detail.png`),fullPage:true});await page.getByRole('button',{name:'← 返回工作树列表',exact:true}).click();assert.ok(await mainRow.evaluate(e=>e===document.activeElement));
+   await page.screenshot({path:resolve(output,`theme-${mode}-390.png`),fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.setViewportSize({width:1200,height:955});await mainRow.click();
+ }
+ await page.evaluate(()=>window.__setWorkbenchTheme('light'));
+ await page.getByLabel('搜索并选择项目').focus();await page.getByRole('button',{name:'Other project',exact:false}).click();assert.equal(await page.locator('.worktree-row').count(),8);assert.equal((await page.evaluate(()=>window.__workbenchCalls)).filter(r=>r.op==='scan').length,1);
+ await page.getByLabel('刷新项目列表',{exact:true}).click();assert.equal((await page.evaluate(()=>window.__workbenchCalls)).filter(r=>r.op==='scan').length,1);
+ await page.locator('.worktree-row').filter({hasText:'codex/history-workbench'}).getByRole('button',{name:'重新检测',exact:true}).click();await page.getByLabel('提交状态',{exact:true}).selectOption('unpushed');await page.getByText('没有符合条件的工作树').waitFor();await page.getByRole('button',{name:'重置',exact:true}).click();
+ for(const width of [1440,801,780,460,390]){
+   await page.setViewportSize({width,height:955});if(await page.getByRole('button',{name:'← 返回工作树列表',exact:true}).isVisible())await page.getByRole('button',{name:'← 返回工作树列表',exact:true}).click();
+   await page.screenshot({path:resolve(output,`width-${width}.png`),fullPage:true});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),`No overflow at ${width}`);await page.getByLabel('搜索工作树与对话').focus();assert.ok(await page.getByLabel('搜索工作树与对话').evaluate(e=>e===document.activeElement));
+ }
+ await page.setViewportSize({width:1200,height:900});await page.goto('http://127.0.0.1:1437/frontend/qa/main-window.html');await page.getByRole('button',{name:'确认并扫描',exact:true}).click();await page.locator('.worktree-row').waitFor();await page.screenshot({path:resolve(output,'app-shell.png')});assert.ok(await page.locator('.content').evaluate(e=>e.clientHeight>400));
+ await page.getByRole('button',{name:'设置',exact:true}).click();assert.equal(await page.getByRole('button',{name:'任务抽取',exact:true}).count(),0);await page.getByRole('button',{name:'后退',exact:true}).click();await page.getByRole('region',{name:'Agent工作台',exact:true}).waitFor();assert.ok(await page.locator('.workbench').evaluate(e=>e===document.activeElement));assert.equal(await page.locator('.wb-header').count(),0);await page.getByRole('navigation',{name:'主导航'}).getByRole('button',{name:'Agent工作台',exact:true}).waitFor();
+ await page.emulateMedia({colorScheme:'light'});await page.goto('http://127.0.0.1:1437/frontend/qa/main-window.html?theme=system');await page.getByRole('button',{name:'确认并扫描',exact:true}).waitFor();await page.waitForFunction(()=>getComputedStyle(document.querySelector('.workbench')).colorScheme==='light');await page.emulateMedia({colorScheme:'dark'});await page.waitForFunction(()=>getComputedStyle(document.querySelector('.workbench')).colorScheme==='dark');await page.screenshot({path:resolve(output,'app-shell-system-dark.png')});await page.emulateMedia({colorScheme:'light'});await page.waitForFunction(()=>getComputedStyle(document.querySelector('.workbench')).colorScheme==='light');
+ assert.deepEqual(errors,[]);console.log('Workbench UI passed: real-source explanations, unlinked/failed trees, filtering, recheck, preview races, archive/search/pagination, mobile drill-down/focus, themes and responsive shell.');
+} finally {await browser.close();await server.close();}

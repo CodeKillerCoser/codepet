@@ -1,0 +1,11 @@
+{
+  "productName": "Agent Workbench Acceptance",
+  "version": "0.0.0",
+  "identifier": "com.codepet.workbench-acceptance",
+  "build": { "frontendDist": "../../../artifacts/codex-workbench-qa/native/site" },
+  "app": {
+    "windows": [{ "label": "main", "title": "Agent工作台 · 本机真实数据验收", "url": "frontend/qa/codex-workbench-native.html", "width": 1280, "height": 940 }],
+    "security": { "csp": null, "capabilities": [{ "identifier": "workbench-acceptance", "windows": ["main"], "permissions": ["core:default"] }] }
+  },
+  "bundle": { "active": false, "icon": ["../../icons/icon.png"] }
+}

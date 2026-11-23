@@ -63,3 +63,38 @@
   --color-main-divider: #ffffff0a;
   --app-shadow: #00000040;
 }
+
+/* History workbench aliases inherit the app's light/dark/system palette. */
+.main-theme {
+  --wb-bg: var(--app-bg);
+  --wb-panel: var(--app-surface);
+  --wb-control: var(--app-surface-soft);
+  --wb-border: var(--app-border);
+  --wb-border-strong: var(--app-border-strong);
+  --wb-text: var(--app-text);
+  --wb-muted: var(--app-muted);
+  --wb-accent: var(--app-accent);
+  --wb-accent-bg: var(--color-main-selected);
+  --wb-accent-border: var(--app-accent);
+  --wb-info-bg: var(--blue-3);
+  --wb-info-text: var(--blue-11);
+  --wb-success: var(--grass-9);
+  --wb-success-bg: var(--color-main-success-bg);
+  --wb-success-text: var(--color-main-success-text);
+  --wb-warning: var(--amber-9);
+  --wb-warning-bg: var(--amber-3);
+  --wb-warning-text: var(--amber-11);
+  --wb-warning-border: var(--amber-6);
+  --wb-danger-bg: var(--color-main-danger-bg);
+  --wb-danger-text: var(--color-main-danger-text);
+  --wb-primary: var(--color-main-accent-solid);
+  --wb-on-primary: var(--color-main-on-accent);
+  --wb-neutral-bg: var(--sand-4);
+  --wb-neutral-text: var(--sand-11);
+  --wb-shadow: var(--app-shadow);
+  --wb-scrim: var(--color-main-scrim);
+  --wb-sheen: color-mix(in srgb, var(--app-text) 3%, transparent);
+  --wb-glow: color-mix(in srgb, var(--app-accent) 12%, transparent);
+  --wb-deleted-text: var(--red-5);
+  --wb-inserted-text: var(--grass-5);
+}

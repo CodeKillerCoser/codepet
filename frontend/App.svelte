@@ -5,8 +5,7 @@
   import PermissionSettings from "./lib/PermissionSettings.svelte";
   import { consumeReloadNotice, webcontentReloading } from "./lib/webcontent";
   import EventJournal from "./lib/EventJournal.svelte";
-  import TaskLineage from "./lib/TaskLineage.svelte";
-  import TaskSettingsPage from "./lib/TaskSettingsPage.svelte";
+  import CodexWorkbench from "./lib/CodexWorkbench.svelte";
   import MainNavigation from "./lib/MainNavigation.svelte";
   import { createNavigation, connectionRoutes, isConnectionRoute, isSettingsRoute, routeTitle, type AppRoute } from "./lib/navigation";
   import WindowToolbar from "./lib/WindowToolbar.svelte";
@@ -74,16 +73,17 @@
   $: tab = $navigation.current;
   $: if (tab === "devices") void refreshRemoteAccess();
   let sidebarCollapsed = false;
-  let extractionVisited = false;
   let contentElement: HTMLDivElement;
   let pageHeading: HTMLHeadingElement;
   let renderedRoute: AppRoute = "tasks";
-  $: if (tab === "extraction") extractionVisited = true;
   $: if (tab !== renderedRoute) {
     renderedRoute = tab;
     void tick().then(() => {
       contentElement?.scrollTo({ top: 0 });
-      if (!document.activeElement?.closest('[role="tablist"]')) pageHeading?.focus({ preventScroll: true });
+      if (!document.activeElement?.closest('[role="tablist"]')) {
+        const heading = tab === "tasks" || tab === "extraction" ? contentElement?.querySelector<HTMLElement>(".workbench") : pageHeading;
+        heading?.focus({ preventScroll: true });
+      }
     });
   }
   let petSources: NoticeSource[] = [];
@@ -1707,8 +1707,6 @@
   $: recentVisibleEvents = events.slice(-5).reverse();
   $: enabledSources = petSources.filter(source => source.enabled);
   $: receivingSources = petSources.filter(source => source.connected);
-  let taskProviderId = "";
-  let taskLineage: TaskLineage | undefined;
   $: pageTitle = routeTitle(tab);
   $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
 </script>
@@ -1719,13 +1717,13 @@
     <MainNavigation current={tab} onNavigate={navigation.navigate} />
   </aside>
 
-  <section class="content-pane">
-    <header class="topbar">
+  <section class="content-pane" class:history-workbench={tab === "tasks" || tab === "extraction"}>
+    {#if tab !== "tasks" && tab !== "extraction"}<header class="topbar">
       <div>
-        <div class="page-heading-row"><h2 bind:this={pageHeading} tabindex="-1">{pageTitle}</h2>{#if tab === "tasks"}<button class="secondary" on:click={() => taskLineage?.openHistory()} aria-haspopup="dialog">抽取历史</button>{/if}</div>
+        <div class="page-heading-row"><h2 bind:this={pageHeading} tabindex="-1">{pageTitle}</h2></div>
         {#if error}<p class="error">{error}</p>{/if}
       </div>
-    </header>
+    </header>{/if}
 
     <div class="content" bind:this={contentElement}>
     {#if isConnectionRoute(tab)}
@@ -1734,13 +1732,8 @@
     <!-- The panel is focusable only while it has the tabpanel role. -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div id={isConnectionRoute(tab) ? "connection-panel" : undefined} role={isConnectionRoute(tab) ? "tabpanel" : undefined} aria-labelledby={isConnectionRoute(tab) ? `tab-${tab}` : undefined} tabindex={isConnectionRoute(tab) ? 0 : undefined}>
-    {#if extractionVisited}
-      <div hidden={tab !== "extraction"}>
-        <TaskSettingsPage active={tab === "extraction"} bind:providerId={taskProviderId} onConnections={() => navigation.navigate("runtimes")} />
-      </div>
-    {/if}
-    {#if tab === "tasks"}
-      <TaskLineage bind:this={taskLineage} bind:providerId={taskProviderId} onSettings={() => navigation.navigate("extraction")} />
+    {#if tab === "tasks" || tab === "extraction"}
+      <CodexWorkbench />
     {:else if tab === "connections"}
       <div class="agent-workspace">
         <section class="overview-grid" aria-label="运行概览">

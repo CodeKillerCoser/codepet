@@ -22,3 +22,5 @@ sdk/dart/**/pubspec.lock
 
 artifacts/pet-module-qa/
 artifacts/pet-notch-qa/
+
+artifacts/codex-workbench-qa/

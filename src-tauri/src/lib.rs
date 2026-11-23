@@ -5,6 +5,7 @@ pub mod pet;
 pub mod platform;
 pub mod runtime_gateway;
 mod task_lineage;
+mod codex_workbench;
 
 pub use activity::events;
 pub use activity::title_resolver;
@@ -450,7 +451,7 @@ pub fn run() {
                 );
             }
             provider_host_state.start_in_background();
-            task_lineage::start_background(handle.clone());
+            // History inspection does not run model extraction in the background.
             provider_host_state.start_notice_observation();
             remote_access_runtime.start_in_background();
             if let Err(error) = install_tray_icon(&handle) {
@@ -469,6 +470,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             app::webcontent_reload::webcontent_info,
             app::webcontent_reload::load_latest_webcontent,
+            codex_workbench::codex_workbench_request,
             task_lineage::task_lineage_options,
             task_lineage::task_lineage_request,
             task_lineage::task_lineage_snapshot,

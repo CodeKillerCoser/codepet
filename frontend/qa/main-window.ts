@@ -33,7 +33,7 @@ const history: LineageMessage[] = [
 ].map(([id, threadId, role, text], index) => ({ evidence: { eventId: id, file: `/fixture/${threadId}.jsonl`, byteOffset: index * 200, generation: 0 }, threadId, role, text, timestamp, turnId: id }));
 mockWindows("main");
 let appSettings: any = {
-  data: {}, appearance: {theme: "light", runningBubble: {...defaultRunningBubbleSettings}},
+  data: {}, appearance: {theme: new URLSearchParams(location.search).get("theme") ?? "light", runningBubble: {...defaultRunningBubbleSettings}},
   pet: {selectedPetId: "default", kind: "builtin", scale: 3, opacity: 1, whipReactionSound: "none"},
   petLibrary: {selectedPetId: "default", dataDirectory: "/fixture/pets", pets: [{id:"default", name:"橘猫", kind:"builtin"}]},
   notifications: {sound:"blip", ringOnPermission:true, ringOnFailure:true, ringOnDone:true, repeatSeconds:30, quietHoursEnabled:false, quietHoursStart:"22:00", quietHoursEnd:"08:00"},
@@ -60,6 +60,13 @@ let runtimeInventory = runtimeCase === "missing" ? [...absentRuntimes, missingRu
   ] : [runtime];
 const runtimeConnections = () => runtimeInventory.map((item) => ({providerId:item.providerId,displayName:item.displayName,icon:"https://avatars.githubusercontent.com/u/14957082?s=200&v=4",version:"0.1.0",defaultWorkspaceRoot:"/Users/wangxin/.codepet/remote_workspace/codex",connectionStatus:"online",generation:1,instances:[{id:item.providerId,status:"ready"}]}));
 mockIPC((command, raw) => {
+  if (command === "codex_workbench_request") {
+    const request = (raw as any).request;
+    if (request.op === "projects") return { projects: [{ id: "qa", name: "Code Pet", roots: ["/fixture/codepet"] }], warnings: [] };
+    if (request.op === "preferences") return ["qa"];
+    if (request.op === "scan") return { scanId: 1, projects: [{ id: "qa", name: "Code Pet", roots: ["/fixture/codepet"] }], worktrees: [{ id: "w", projectId: "qa", projectName: "Code Pet", path: "/fixture/codepet", main: true, conversations: [{id:"c",source:"Codex",title:"检查历史对话",cwd:"/fixture/codepet",updatedAt:Date.now(),archived:false}], git: { branch:"main", head:"a1b2c3", upstream:false, ahead:0, behind:0, changes:[] } }], warnings: [], scannedAt: Date.now() };
+    return null;
+  }
   const permissionScenario = new URLSearchParams(location.search);
   if (command === "get_system_permission_settings") {
     if (permissionScenario.has("permissionLoadError")) throw new Error("Simulated old backend");

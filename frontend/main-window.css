@@ -306,3 +306,7 @@
 .main-theme .runtime-operation-error, .main-theme .runtime-operation-notice { margin: 0; padding: 12px 14px; border-radius: 8px; font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .main-theme .runtime-operation-error { color: var(--app-danger); background: color-mix(in srgb, var(--app-danger) 6%, var(--app-surface)); }
 .main-theme .runtime-operation-notice { color: var(--color-success); background: var(--app-surface-soft); }
+
+/* The history workbench owns its screenshot-aligned header and content spacing. */
+.main-theme .content-pane.history-workbench { grid-template-rows: minmax(0, 1fr); background: var(--app-bg); }
+.main-theme .history-workbench > .content { padding: 0; scrollbar-gutter: auto; overflow-anchor: none; }
