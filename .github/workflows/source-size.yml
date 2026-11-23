@@ -1,0 +1,21 @@
+name: Source size
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source-size:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/check_source_size.mjs
+        env:
+          CODEPET_SIZE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}

@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { readProjectStyles } from "./testSources";
 
 describe("Pet window behavior", () => {
   it("loads Notices from the Gateway while grouping the compact bubbles", () => {
@@ -79,7 +80,7 @@ describe("Pet window behavior", () => {
 
   it("lets CSS size the activity stack naturally up to a max height", () => {
     const source = readFileSync(new URL("./lib/pet/DesktopPet.svelte", import.meta.url), "utf8");
-    const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+    const styles = readProjectStyles(new URL(".", import.meta.url).pathname);
     const stackRule = styles.slice(styles.indexOf(".activity-stack"), styles.indexOf(".activity-stack::-webkit-scrollbar"));
 
     expect(source).toContain('style={`--pet-activity-stack-max-height: ${activityStackHeightLimit}px`}');

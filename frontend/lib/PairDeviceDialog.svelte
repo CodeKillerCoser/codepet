@@ -1,7 +1,7 @@
 <script lang="ts">
+  import { Button } from "./ui/button/index";
   import { Check, CheckCircle2, Clock3, Copy, QrCode, RotateCcw, X } from "@lucide/svelte";
-  import { tick } from "svelte";
-  import { wrappedDialogFocusIndex } from "./dialogFocus";
+  import * as Dialog from "./ui/dialog/index";
   import { pairingCountdownLabel, type PairingCopyStatus, type PairingDisplayState } from "./remoteDevices";
 
   export let open = false;
@@ -13,49 +13,7 @@
   export let copyMessage: string | null = null;
   export let onCopyPairingJson: (() => void | Promise<void>) | undefined = undefined;
 
-  let dialogElement: HTMLDialogElement | null = null;
   let closeButton: HTMLButtonElement | null = null;
-
-  $: if (open && dialogElement && !dialogElement.open) {
-    dialogElement.showModal();
-    void focusCloseButton();
-  }
-
-  $: if (!open && dialogElement && dialogElement.open) {
-    dialogElement.close();
-  }
-
-  async function focusCloseButton() {
-    await tick();
-    closeButton?.focus();
-  }
-
-  function handleCancel(event: Event) {
-    event.preventDefault();
-    onClose();
-  }
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      onClose();
-      return;
-    }
-
-    if (event.key !== "Tab" || !dialogElement) return;
-
-    const focusableElements = Array.from(
-      dialogElement.querySelectorAll<HTMLElement>(
-        'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-      ),
-    );
-    const activeIndex = focusableElements.indexOf(document.activeElement as HTMLElement);
-    const targetIndex = wrappedDialogFocusIndex(activeIndex, focusableElements.length, event.shiftKey);
-    if (targetIndex === null) return;
-
-    event.preventDefault();
-    focusableElements[targetIndex]?.focus();
-  }
 
   function retry() {
     if (onRetry) void onRetry();
@@ -84,25 +42,22 @@
           : "配对 JSON 不可用";
 </script>
 
-<dialog
-  bind:this={dialogElement}
-  class="pair-device-dialog pixel-panel"
-  aria-labelledby="pair-device-dialog-title"
-  aria-describedby="pair-device-dialog-description"
-  on:cancel={handleCancel}
-  on:keydown={handleKeydown}
->
+<Dialog.Root {open} onOpenChange={(next) => { if (!next && open) onClose(); }}>
+<Dialog.Content class="pair-device-dialog pixel-panel" showCloseButton={false}
+  interactOutsideBehavior="ignore"
+  onOpenAutoFocus={(event) => { event.preventDefault(); closeButton?.focus(); }}
+  onCloseAutoFocus={(event) => event.preventDefault()}>
   <header class="panel-head">
     <div>
       <span class="agent-kicker">REMOTE CLIENT</span>
-      <h3 id="pair-device-dialog-title">添加设备</h3>
+      <Dialog.Title id="pair-device-dialog-title">添加设备</Dialog.Title>
     </div>
-    <button bind:this={closeButton} class="icon-button" type="button" on:click={onClose} aria-label="关闭添加设备对话框">
+    <Button bind:ref={closeButton} class="icon-button" type="button" onclick={onClose} aria-label="关闭添加设备对话框">
       <X size={17} />
-    </button>
+    </Button>
   </header>
 
-  <p id="pair-device-dialog-description">使用 Remote 客户端扫描二维码，安全连接这台电脑。</p>
+  <Dialog.Description id="pair-device-dialog-description">使用 Remote 客户端扫描二维码，安全连接这台电脑。</Dialog.Description>
 
   {#if display.phase === "success"}
     <div class="pair-device-success" role="status">
@@ -162,12 +117,12 @@
   {/if}
 
   <div class="row-actions pair-device-dialog-actions">
-    <button
-      class="pair-device-copy-button"
-      class:copied={copyStatus === "copied"}
+    <Button class={["pair-device-copy-button", (copyStatus === "copied") ? "copied" : ''].filter(Boolean).join(' ')}
+
+
       type="button"
       disabled={!canCopyPairingJson || copyStatus === "copying" || copyStatus === "unavailable"}
-      on:click={copyPairingJson}
+      onclick={copyPairingJson}
     >
       {#if copyStatus === "copied" && display.phase === "waiting"}
         <Check size={16} />
@@ -175,10 +130,11 @@
         <Copy size={16} />
       {/if}
       {copyButtonLabel}
-    </button>
+    </Button>
     {#if (display.phase === "expired" || display.phase === "cancelled" || display.phase === "error") && onRetry}
-      <button type="button" on:click={retry}><RotateCcw size={16} /> 重新生成</button>
+      <Button type="button" onclick={retry}><RotateCcw size={16} /> 重新生成</Button>
     {/if}
-    <button type="button" on:click={onClose}>{display.phase === "success" ? "完成" : "关闭"}</button>
+    <Button type="button" onclick={onClose}>{display.phase === "success" ? "完成" : "关闭"}</Button>
   </div>
-</dialog>
+</Dialog.Content>
+</Dialog.Root>

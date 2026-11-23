@@ -1,0 +1,160 @@
+@media (prefers-reduced-motion: reduce) {
+  .status-pill.active-status,
+  .status-pill.active-breath,
+  .status-pill.active-marquee,
+  .whip-animation,
+  .whip-animation.active .rope-shadow,
+  .whip-animation.active .rope-core,
+  .whip-animation.active .rope-strand,
+  .whip-animation.active .tail-line,
+  .whip-animation.active .tail-knot,
+  .whip-animation.active .motion-ghost,
+  .whip-animation.active .crack,
+  .tabs button,
+  .icon-button,
+  .power-button,
+  .row-actions button,
+  .segmented button {
+    animation: none;
+    transition: none;
+  }
+}
+
+@media (max-width: 1120px) {
+  .personal-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .usage-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+}
+
+@media (max-width: 840px) {
+  .app-shell,
+  .personal-grid,
+  .overview-grid,
+  .usage-summary-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .app-shell {
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--app-border);
+  }
+
+  .content {
+    padding: 22px;
+  }
+
+  .agent-card {
+    grid-template-areas:
+      "title"
+      "meta"
+      "events"
+      "filters"
+      "controls";
+    grid-template-columns: 1fr;
+  }
+
+  .agent-controls {
+    justify-self: start;
+  }
+
+  .connection-section-head,
+  .runtime-section-head,
+  .runtime-card-head {
+    display: grid;
+  }
+
+  .connection-primary-button {
+    justify-self: start;
+  }
+
+  .remote-access-summary {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .remote-access-summary > .status-chip {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .remote-access-diagnostic {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .remote-access-diagnostic button {
+    grid-column: 1 / -1;
+    justify-self: start;
+  }
+
+  .remote-device-row {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .remote-device-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .runtime-meta {
+    grid-template-columns: 1fr;
+  }
+
+  .event-item {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .robot-trigger-grid,
+  .robot-field-grid,
+  .robot-template-grid,
+  .robot-channel-head {
+    grid-template-columns: 1fr;
+  }
+
+  .robot-channel-actions {
+    justify-content: flex-start;
+  }
+
+  .event-provider,
+  .event-kind,
+  .event-time {
+    justify-content: flex-start;
+    width: fit-content;
+  }
+
+  .pet-summary {
+    grid-template-columns: 1fr;
+  }
+
+}
+
+/* Group expansion reveals sibling bubbles, never the full message detail. */
+.activity-group .status-message.markdown-message.compact {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+  max-height: 1lh;
+  overflow: hidden;
+  line-height: var(--line-height-message);
+  cursor: inherit;
+}
+.markdown-message.compact :is(p, ul, ol, blockquote, pre, table, h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+.markdown-message.compact :is(pre, table) { overflow: hidden; }
+.markdown-message.compact pre { padding: 0; }
+.markdown-message.compact pre code { white-space: pre-wrap; overflow-wrap: anywhere; }

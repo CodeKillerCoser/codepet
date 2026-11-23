@@ -17,9 +17,9 @@ describe("connections workspace", () => {
     expect(navigationSource).toContain('route: "connections", label: "连接接入", icon: Cable');
     expect(connectionSource.indexOf('<h3>设备</h3>')).toBeGreaterThan(-1);
     expect(connectionSource.indexOf('<h3>设备</h3>')).toBeLessThan(connectionSource.indexOf('class="runtime-list"'));
-    expect(connectionSource).toContain("on:click={refreshRuntimes}");
+    expect(connectionSource).toContain("onclick={refreshRuntimes}");
     expect(connectionSource).not.toContain("检测其他运行时");
-    expect(connectionSource.match(/on:click=\{refreshRuntimes\}/g)).toHaveLength(1);
+    expect(connectionSource.match(/onclick=\{refreshRuntimes\}/g)).toHaveLength(1);
     expect(runtimeSource).toContain("src={connection.icon}");
     expect(runtimeSource).toContain("connection?.displayName || runtime.displayName");
     expect(runtimeSource).toContain('on:change={(event) => onSelect(runtime, event.currentTarget.value)}');
@@ -84,12 +84,11 @@ describe("connections workspace", () => {
     expect(appSource).toContain("qrImageUrl: null");
   });
 
-  it("opens as a native modal and handles both Tab directions inside it", () => {
-    expect(pairDialogSource).toContain("<dialog");
-    expect(pairDialogSource).toContain("dialogElement.showModal()");
-    expect(pairDialogSource).toContain("on:cancel={handleCancel}");
-    expect(pairDialogSource).toContain("wrappedDialogFocusIndex(activeIndex, focusableElements.length, event.shiftKey)");
-    expect(pairDialogSource).toContain('if (event.key === "Escape")');
+  it("delegates modal focus and dismissal to the shared Dialog while preserving pairing cleanup", () => {
+    expect(pairDialogSource).toContain("<Dialog.Root");
+    expect(pairDialogSource).toContain("<Dialog.Content");
+    expect(pairDialogSource).toContain("onOpenAutoFocus=");
+    expect(pairDialogSource).not.toContain("wrappedDialogFocusIndex");
     expect(appSource).toContain("addDeviceButton?.focus()");
   });
 

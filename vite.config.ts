@@ -1,4 +1,5 @@
 import { svelte } from "@sveltejs/vite-plugin-svelte";
+import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
 import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
@@ -17,7 +18,7 @@ export default defineConfig(({ command }) => {
     // Component tests run in jsdom and need Svelte's client lifecycle exports.
     resolve: process.env.VITEST ? { conditions: ["browser"] } : undefined,
     define: { __WEB_BUILD_AT__: JSON.stringify(builtAt) },
-    plugins: [svelte(), {
+    plugins: [tailwindcss(), svelte(), {
       name: "webcontent-build-info",
       generateBundle() {
         this.emitFile({ type: "asset", fileName: "build-info.json", source: JSON.stringify({ version, builtAt }) });

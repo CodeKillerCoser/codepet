@@ -284,7 +284,8 @@
     busy = true;
     try {
       if (target) {
-        const existing = windows.find(item => item.id === target.id);
+        const targetId = target.id;
+        const existing = windows.find(item => item.id === targetId);
         if (existing) target = existing;
         else windows = [...windows, target];
       }

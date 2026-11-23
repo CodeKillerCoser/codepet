@@ -1,4 +1,5 @@
 @import "./lib/theme/main-window.css";
+@import "./lib/ui/ui.css";
 
 /* Shared shell: product content retains its own DOM, controls and ordering. */
 .main-theme.app-shell {
@@ -176,8 +177,6 @@
 }
 .main-theme :is(input, select, textarea) { accent-color: var(--color-main-accent-solid); }
 .main-theme :is(code, pre, .path) { font-family: var(--font-family-code); font-size: var(--font-size-sm); }
-.main-theme :is(.modal-scrim, .pair-device-dialog)::backdrop { background: var(--color-main-scrim); }
-.main-theme .modal-scrim { background: var(--color-main-scrim); }
 .main-theme :is(.update-dialog, .pair-device-dialog) { background: var(--app-surface); backdrop-filter: none; border: 1px solid var(--app-border); border-radius: 10px; box-shadow: 0 12px 40px var(--app-shadow); }
 .main-theme svg.lucide { stroke-width: 1.75; }
 .main-theme .status-chip.online { background: var(--color-main-success-bg); color: var(--color-main-success-text); }

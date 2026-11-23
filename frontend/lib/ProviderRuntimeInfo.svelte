@@ -13,6 +13,7 @@
   export let onSelect: (runtime: AgentRuntime, path: string) => void;
   export let onRemove: ((runtime: AgentRuntime) => void) | undefined = undefined;
   export let kind: ProviderKind | undefined = undefined;
+  let displayKind: ProviderKind | undefined;
   $: displayKinds = kind ? [kind] : providerKindsFromFeatures(connection?.features);
   $: displayKind = displayKinds.includes('agent') ? 'agent' : displayKinds.includes('observation') ? 'observation' : undefined;
   $: showRuntime = connection?.features?.includes('runtimeInventory') ?? false;

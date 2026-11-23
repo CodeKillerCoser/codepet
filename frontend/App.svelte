@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { Button } from "./lib/ui/button/index";
+  import { Switch } from "./lib/ui/switch/index";
+  import UpdateDialog from "./lib/settings/UpdateDialog.svelte";
   import HorizontalTabs from "./lib/HorizontalTabs.svelte";
   import SettingsRow from "./lib/SettingsRow.svelte";
   import AboutSettings from "./lib/AboutSettings.svelte";
@@ -16,56 +19,28 @@
   import { LogicalPosition } from "@tauri-apps/api/dpi";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import {
-    Activity,
-    BarChart3,
-    Bell,
-    Bot,
-    Cable,
-    Check,
-    Clock3,
-    Cpu,
-    Download,
-    Filter,
-    FolderCog,
-    FolderOpen,
-    ImagePlus,
-    Moon,
-    Palette,
-    PlugZap,
-    Plus,
-    Power,
-    RefreshCw,
-    RotateCcw,
-    ShieldAlert,
-    Sun,
-    Trash2,
-    X,
-    Volume2,
-  } from "@lucide/svelte";
+  import { Activity, FolderCog, PlugZap, Plus, RefreshCw, ShieldAlert } from "@lucide/svelte";
   import { onMount, tick } from "svelte";
-  import ProviderConnectionStatus from "./lib/ProviderConnectionStatus.svelte";
   import ProviderRuntimeInfo from "./lib/ProviderRuntimeInfo.svelte";
   import { shouldShowRuntime, isBuiltinProvider } from "./lib/agentRuntime";
   import { observeProviderRuntimes, type ProviderConnectionState } from "./lib/providerRuntimes";
-  import { getAppPaths, removeProviderPlugin, importProviderPlugin, type AppPaths, checkAppUpdate, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, sendTestRobotNotification, setAgentRuntimeExecutable, setPathManagerData, setLaunchAtLoginEnabled, setPathManagerPets, updateAppSettings, importPetPackage } from "./lib/api";
-  import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "./lib/bubbleColorSettings";
+  import { getAppPaths, removeProviderPlugin, importProviderPlugin, type AppPaths, checkAppUpdate, cutOutImageSubject, deletePet, getAppSettings, getLaunchAtLoginEnabled, importPetImage, installAppUpdate, listPets, recentEvents, recordPerfEvent, refreshAgentRuntimes, selectPet, setAgentRuntimeExecutable, setPathManagerData, setLaunchAtLoginEnabled, setPathManagerPets, updateAppSettings, importPetPackage } from "./lib/api";
   import { mergeEventFeed } from "./lib/eventFeed";
-  import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "./lib/gradientColor";
   import PetLibraryPanel from "./lib/pet/PetLibraryPanel.svelte";
   import PairDeviceDialog from "./lib/PairDeviceDialog.svelte";
   import RemoteDeviceList from "./lib/RemoteDeviceList.svelte";
   import { cancelRemotePairing, copyRemotePairingJson, getRemoteAccessStatus, getRemotePairingStatus, listRemoteClients, listRemotePairingRequests, remoteCommandDiagnostic, resolveRemotePairingRequest, retryRemoteAccess, revokeRemoteCredential, deleteRemoteClient, startRemotePairing, type RemoteAccessDiagnostic, type RemoteAccessStatus } from "./lib/remoteAccess";
   import { pairingJsonCanBeCopied, pairingPhaseForStatus, pairingRemainingSeconds, remoteDeviceFromClient, type PairingCopyStatus, type PairingDisplayState, type RemoteDevice } from "./lib/remoteDevices";
-  import { playNotificationSound, playWhipReactionSound } from "./lib/sound";
-  import { defaultRunningBubbleSettings, themeClassNames } from "./lib/theme";
+  import { themeClassNames } from "./lib/theme";
   import { ignoredUpdateSettings, shouldPromptForUpdate, type UpdateCheckMode } from "./lib/updates";
   import UsagePanel from "./lib/UsagePanel.svelte";
-  import type { ActivityKeywordFilterSettings, AgentId, AgentRuntime, AgentView, AppSettings, AppUpdate, DingTalkRobotChannel, PetEvent, PetLibraryView, RobotNotificationChannel } from "./lib/types";
+  import type { AgentRuntime, AppSettings, AppUpdate, PetEvent, PetLibraryView } from "./lib/types";
   import SignalingServiceSettings from "./lib/SignalingServiceSettings.svelte";
   import { configureSignalingService } from "./lib/api";
 
-  type ActivityFilterKind = keyof ActivityKeywordFilterSettings;
+  import AppearanceSettings from "./lib/settings/AppearanceSettings.svelte";
+  import NotificationSettings from "./lib/settings/NotificationSettings.svelte";
+  import { normalizeSettings } from "./lib/settings/model";
 
   const resourceReloaded = consumeReloadNotice();
   const navigation = createNavigation(resourceReloaded ? "about" : "tasks");
@@ -134,7 +109,6 @@
   let busyLaunchAtLogin = false;
   let busyRobotChannel = "";
   let error = "";
-  let robotNotificationResult = "";
   let launchAtLogin = false;
   let systemDark = false;
   let eventPollTimer: number | null = null;
@@ -150,75 +124,9 @@
   let updateInstallBusy = false;
   let updateMessage = "";
   let updateError = "";
-  let runningBubbleSaveToken = 0;
-  let runningBubbleSaveTimer: number | null = null;
-  let selectedBubbleColorStop: Record<RunningBubbleColorKey, number> = {
-    backgroundColor: 0,
-    borderColor: 0,
-  };
-  const agentOrder: AgentId[] = ["codex", "claude", "qoder", "cursor"];
-  let filterDrafts: Record<AgentId, Record<ActivityFilterKind, string>> = createFilterDrafts();
-  const whipReactionSounds: Array<{ value: AppSettings["pet"]["whipReactionSound"]; label: string }> = [
-    { value: "none", label: "无" },
-    { value: "pa", label: "啪" },
-    { value: "scream", label: "啊啊啊" },
-    { value: "custom", label: "自定义" },
-  ];
-  const runningBubbleDefaults = defaultRunningBubbleSettings;
-  const agentActivityFilterDefaults: ActivityKeywordFilterSettings = {
-    titleKeywords: [],
-    messageKeywords: [],
-  };
-  const activityFilterDefaults: AppSettings["activityFilters"] = {
-    titleKeywords: [],
-    messageKeywords: [],
-    byAgent: {},
-  };
-  const agentSettingsDefaults: AppSettings["agents"] = {
-    byAgent: {},
-  };
-  const agentRuntimeSettingsDefaults: AppSettings["agentRuntimes"] = {
-    byProvider: {},
-  };
-  const robotNotificationDefaults: AppSettings["notifications"]["robot"] = {
-    enabled: false,
-    triggers: {
-      waitingApproval: true,
-      taskFailed: true,
-      taskDone: true,
-    },
-    template: {
-      title: "{{statusIcon}} Code Pet | {{status}}",
-      header: "{{statusIcon}} {{status}} · {{agent}}",
-      primary: "**{{task}}**\n{{contentBlock}}",
-      secondary: "{{cwdLine}}\n{{toolLine}}\n{{sessionLine}}",
-      footer: "{{time}}",
-    },
-    channels: [],
-  };
-  const robotTemplateFields = [
-    { key: "title", label: "标题", rows: 1 },
-    { key: "header", label: "摘要", rows: 1 },
-    { key: "primary", label: "一级内容", rows: 3 },
-    { key: "secondary", label: "二级内容", rows: 3 },
-    { key: "footer", label: "页脚", rows: 1 },
-  ] as const;
-  const robotTemplateVariables = "{{statusIcon}} {{status}} {{agent}} {{task}} {{contentBlock}} {{cwdLine}} {{toolLine}} {{sessionLine}} {{time}}";
-  const robotTriggerOptions = [
-    { key: "waitingApproval", label: "等待审批或输入" },
-    { key: "taskFailed", label: "任务失败" },
-    { key: "taskDone", label: "任务完成" },
-  ] as const;
-  const activityFilterGroups = [
-    { key: "titleKeywords", label: "标题", placeholder: "添加标题关键字" },
-    { key: "messageKeywords", label: "内容", placeholder: "添加内容关键字" },
-  ] as const;
-  const bubbleColorConfigs = [
-    { key: "backgroundColor", label: "背景色", fallback: runningBubbleDefaults.backgroundColor, directional: true },
-    { key: "borderColor", label: "边框色", fallback: runningBubbleDefaults.borderColor, directional: false },
-  ] as const;
-  const defaultPetOpacity = 1;
-  const minPetOpacity = 0.25;
+  let appearancePending = false;
+  let appearanceVisited = false;
+  $: if (tab === "appearance") appearanceVisited = true;
   const updateAutoIntervalMs = 6 * 60 * 60 * 1000;
   const remoteAccessPollIntervalMs = 1_000;
   const remotePairingRequestPollIntervalMs = 2_000;
@@ -286,7 +194,6 @@
       unlistenSettings?.();
       clearEventPoll();
       clearUpdatePoll();
-      clearRunningBubbleSaveTimer();
       clearRemoteAccessPoll();
       clearRemoteDeviceClock();
       clearPairingTimers();
@@ -892,6 +799,11 @@
     }
   }
 
+  async function persistSettings(nextSettings: AppSettings) {
+    settings = nextSettings;
+    await saveSettings();
+  }
+
   async function saveSettings() {
     if (!settings) return;
     pendingSettingsSaves += 1;
@@ -905,12 +817,6 @@
         pets: settings.petLibrary.pets,
       };
     } finally { pendingSettingsSaves -= 1; }
-  }
-
-  async function setTheme(theme: AppSettings["appearance"]["theme"]) {
-    if (!settings) return;
-    settings.appearance.theme = theme;
-    await saveSettings();
   }
 
   async function toggleLaunchAtLogin() {
@@ -998,32 +904,6 @@
     } catch (currentError) {
       updateInstallBusy = false;
       updateError = String(currentError);
-    }
-  }
-
-  async function pickCustomSound() {
-    if (!settings) return;
-    const selected = await open({
-      multiple: false,
-      filters: [{ name: "Audio", extensions: ["mp3", "wav", "m4a", "aac", "ogg"] }],
-    });
-    if (typeof selected === "string") {
-      settings.notifications.customSoundPath = selected;
-      settings.notifications.sound = "custom";
-      await saveSettings();
-    }
-  }
-
-  async function pickCustomWhipReactionSound() {
-    if (!settings) return;
-    const selected = await open({
-      multiple: false,
-      filters: [{ name: "Audio", extensions: ["mp3", "wav", "m4a", "aac", "ogg"] }],
-    });
-    if (typeof selected === "string") {
-      settings.pet.customWhipReactionSoundPath = selected;
-      settings.pet.whipReactionSound = "custom";
-      await saveSettings();
     }
   }
 
@@ -1136,497 +1016,6 @@
     selected.imagePath = settings.pet.imagePath;
   }
 
-  function normalizeSettings(nextSettings: AppSettings) {
-    nextSettings.data = {
-      ...(nextSettings.data ?? {}),
-    };
-    nextSettings.appearance.runningBubble = {
-      ...runningBubbleDefaults,
-      ...(nextSettings.appearance.runningBubble ?? {}),
-    };
-    nextSettings.appearance.runningBubble.animationMs = clampRunningBubbleAnimationMs(nextSettings.appearance.runningBubble.animationMs);
-    nextSettings.appearance.runningBubble.borderWidth = clampRunningBubbleBorderWidth(nextSettings.appearance.runningBubble.borderWidth);
-    nextSettings.pet.opacity = clampPetOpacity(nextSettings.pet.opacity ?? defaultPetOpacity);
-    nextSettings.pet.whipReactionSound = nextSettings.pet.whipReactionSound ?? "none";
-    nextSettings.pet.customWhipReactionSoundPath = nextSettings.pet.customWhipReactionSoundPath ?? null;
-    nextSettings.notifications.robot = normalizeRobotNotificationSettings(nextSettings.notifications.robot);
-    nextSettings.activityFilters = normalizeActivityFilters(nextSettings.activityFilters);
-    nextSettings.agents = normalizeAgentSettings(nextSettings.agents);
-    nextSettings.agentRuntimes = {
-      byProvider: {
-        ...agentRuntimeSettingsDefaults.byProvider,
-        ...(nextSettings.agentRuntimes?.byProvider ?? {}),
-      },
-    };
-    nextSettings.providerPlugins = {
-      directories: [...nextSettings.providerPlugins.directories],
-    };
-    nextSettings.updates = {
-      ignoredVersion: nextSettings.updates?.ignoredVersion ?? null,
-    };
-    return nextSettings;
-  }
-
-  function normalizeRobotNotificationSettings(robot: Partial<AppSettings["notifications"]["robot"]> | null | undefined): AppSettings["notifications"]["robot"] {
-    return {
-      enabled: Boolean(robot?.enabled),
-      triggers: {
-        ...robotNotificationDefaults.triggers,
-        ...(robot?.triggers ?? {}),
-      },
-      template: normalizeRobotTemplate(robot?.template),
-      channels: (robot?.channels ?? []).map(normalizeRobotChannel).filter((channel): channel is RobotNotificationChannel => Boolean(channel)),
-    };
-  }
-
-  function normalizeRobotTemplate(template: Partial<AppSettings["notifications"]["robot"]["template"]> | null | undefined): AppSettings["notifications"]["robot"]["template"] {
-    return {
-      ...robotNotificationDefaults.template,
-      ...(template ?? {}),
-    };
-  }
-
-  function normalizeRobotChannel(channel: Partial<RobotNotificationChannel> | null | undefined): RobotNotificationChannel | null {
-    if (!channel) return null;
-    if (channel.provider === "feishu") {
-      const feishu = channel;
-      return {
-        provider: "feishu",
-        id: feishu.id || robotChannelId("feishu"),
-        name: feishu.name || "飞书机器人",
-        enabled: feishu.enabled ?? true,
-        webhookUrl: feishu.webhookUrl ?? "",
-        webhookSecret: feishu.webhookSecret ?? "",
-      };
-    }
-    if (channel.provider === "dingtalk") {
-      const dingtalk = channel;
-      return {
-        provider: "dingtalk",
-        id: dingtalk.id || robotChannelId("dingtalk"),
-        name: dingtalk.name || "钉钉机器人",
-        enabled: dingtalk.enabled ?? true,
-        authMode: dingtalk.authMode ?? "enterprise-robot",
-        targetType: dingtalk.targetType ?? "user-ids",
-        robotCode: dingtalk.robotCode ?? "",
-        clientId: dingtalk.clientId ?? "",
-        clientSecret: dingtalk.clientSecret ?? "",
-        userIds: normalizeRobotList(dingtalk.userIds),
-        openConversationId: dingtalk.openConversationId ?? "",
-        webhookUrl: dingtalk.webhookUrl ?? "",
-        webhookSecret: dingtalk.webhookSecret ?? "",
-      };
-    }
-    return null;
-  }
-
-  function robotChannelId(provider: RobotNotificationChannel["provider"]) {
-    return `${provider}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-  }
-
-  function createRobotChannel(provider: RobotNotificationChannel["provider"]): RobotNotificationChannel {
-    if (provider === "feishu") {
-      return {
-        provider,
-        id: robotChannelId(provider),
-        name: "飞书机器人",
-        enabled: true,
-        webhookUrl: "",
-        webhookSecret: "",
-      };
-    }
-    return {
-      provider,
-      id: robotChannelId(provider),
-      name: "钉钉机器人",
-      enabled: true,
-      authMode: "enterprise-robot",
-      targetType: "user-ids",
-      robotCode: "",
-      clientId: "",
-      clientSecret: "",
-      userIds: [],
-      openConversationId: "",
-      webhookUrl: "",
-      webhookSecret: "",
-    };
-  }
-
-  async function addRobotChannel(provider: RobotNotificationChannel["provider"]) {
-    if (!settings) return;
-    settings.notifications.robot = normalizeRobotNotificationSettings({
-      ...settings.notifications.robot,
-      enabled: true,
-      channels: [...settings.notifications.robot.channels, createRobotChannel(provider)],
-    });
-    robotNotificationResult = "";
-    await saveSettings();
-  }
-
-  async function removeRobotChannel(channelId: string) {
-    if (!settings) return;
-    settings.notifications.robot.channels = settings.notifications.robot.channels.filter((channel) => channel.id !== channelId);
-    robotNotificationResult = "";
-    await saveSettings();
-  }
-
-  async function testRobotChannel(channelId: string) {
-    if (!settings) return;
-    busyRobotChannel = channelId;
-    robotNotificationResult = "";
-    error = "";
-    try {
-      await saveSettings();
-      robotNotificationResult = await sendTestRobotNotification(channelId);
-    } catch (currentError) {
-      error = String(currentError);
-    } finally {
-      busyRobotChannel = "";
-    }
-  }
-
-  function robotChannelLabel(channel: RobotNotificationChannel) {
-    if (channel.provider === "feishu") {
-      return channel.name || "飞书机器人";
-    }
-    return channel.name || (channel.authMode === "webhook" ? "钉钉 webhook" : "钉钉企业机器人");
-  }
-
-  function robotChannelMeta(channel: RobotNotificationChannel) {
-    if (channel.provider === "feishu") {
-      return "飞书 webhook";
-    }
-    return channel.authMode === "webhook"
-      ? "钉钉 webhook"
-      : channel.targetType === "open-conversation-id"
-        ? "钉钉企业机器人 · 群"
-        : "钉钉企业机器人 · 用户";
-  }
-
-  function dingTalkUserIdsValue(channel: DingTalkRobotChannel) {
-    return normalizeRobotList(channel.userIds).join(", ");
-  }
-
-  function updateDingTalkUserIds(channel: DingTalkRobotChannel, value: string) {
-    channel.userIds = normalizeRobotList(value.split(/[,\n，\s]+/));
-  }
-
-  async function updateRobotTemplateField(key: keyof AppSettings["notifications"]["robot"]["template"], value: string) {
-    if (!settings) return;
-    settings.notifications.robot.template = normalizeRobotTemplate({
-      ...settings.notifications.robot.template,
-      [key]: value,
-    });
-    await saveSettings();
-  }
-
-  async function resetRobotTemplate() {
-    if (!settings) return;
-    settings.notifications.robot.template = normalizeRobotTemplate(null);
-    await saveSettings();
-  }
-
-  function normalizeRobotList(values: Array<string | null | undefined> | null | undefined): string[] {
-    const seen = new Set<string>();
-    const normalized: string[] = [];
-    for (const rawValue of values ?? []) {
-      const value = (rawValue ?? "").trim();
-      if (!value || seen.has(value)) {
-        continue;
-      }
-      seen.add(value);
-      normalized.push(value);
-    }
-    return normalized;
-  }
-
-  function normalizeActivityFilters(filters: Partial<AppSettings["activityFilters"]> | null | undefined): AppSettings["activityFilters"] {
-    const legacyFilters = normalizeAgentActivityFilters(filters);
-    const rawByAgent = filters?.byAgent ?? {};
-    const hasAgentFilters = Object.keys(rawByAgent).length > 0;
-    const byAgent = agentOrder.reduce<AppSettings["activityFilters"]["byAgent"]>((nextByAgent, agentId) => {
-      nextByAgent[agentId] = normalizeAgentActivityFilters(rawByAgent[agentId] ?? (!hasAgentFilters ? legacyFilters : undefined));
-      return nextByAgent;
-    }, {});
-
-    return {
-      titleKeywords: [],
-      messageKeywords: [],
-      byAgent,
-    };
-  }
-
-  function normalizeAgentActivityFilters(filters: Partial<ActivityKeywordFilterSettings> | null | undefined): ActivityKeywordFilterSettings {
-    return {
-      titleKeywords: normalizeFilterKeywords(filters?.titleKeywords),
-      messageKeywords: normalizeFilterKeywords(filters?.messageKeywords),
-    };
-  }
-
-  function normalizeAgentSettings(agentSettings: Partial<AppSettings["agents"]> | null | undefined): AppSettings["agents"] {
-    return { byAgent: {} };
-  }
-
-  function normalizeFilterKeywords(keywords: string[] | null | undefined): string[] {
-    const seen = new Set<string>();
-    const normalized: string[] = [];
-    for (const keyword of keywords ?? []) {
-      const value = keyword.trim();
-      const key = value.toLocaleLowerCase();
-      if (!value || seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      normalized.push(value);
-    }
-    return normalized;
-  }
-
-  function createFilterDrafts(): Record<AgentId, Record<ActivityFilterKind, string>> {
-    return agentOrder.reduce<Record<AgentId, Record<ActivityFilterKind, string>>>((drafts, agentId) => {
-      drafts[agentId] = {
-        titleKeywords: "",
-        messageKeywords: "",
-      };
-      return drafts;
-    }, {} as Record<AgentId, Record<ActivityFilterKind, string>>);
-  }
-
-  function agentActivityFilters(agentId: AgentId): ActivityKeywordFilterSettings {
-    return settings?.activityFilters.byAgent?.[agentId] ?? agentActivityFilterDefaults;
-  }
-
-  function updateFilterDraft(agentId: AgentId, kind: ActivityFilterKind, value: string) {
-    filterDrafts = {
-      ...filterDrafts,
-      [agentId]: {
-        ...filterDrafts[agentId],
-        [kind]: value,
-      },
-    };
-  }
-
-  async function addFilterKeyword(agentId: AgentId, kind: ActivityFilterKind) {
-    if (!settings) return;
-    const value = filterDrafts[agentId][kind].trim();
-    if (!value) {
-      return;
-    }
-    await updateActivityFilterKeywords(agentId, kind, [...agentActivityFilters(agentId)[kind], value]);
-    updateFilterDraft(agentId, kind, "");
-  }
-
-  async function removeFilterKeyword(agentId: AgentId, kind: ActivityFilterKind, keyword: string) {
-    if (!settings) return;
-    const target = keyword.toLocaleLowerCase();
-    await updateActivityFilterKeywords(agentId, kind, agentActivityFilters(agentId)[kind].filter((item) => item.toLocaleLowerCase() !== target));
-  }
-
-  async function updateActivityFilterKeywords(agentId: AgentId, kind: ActivityFilterKind, keywords: string[]) {
-    if (!settings) return;
-    const agentFilters = {
-      ...agentActivityFilterDefaults,
-      ...agentActivityFilters(agentId),
-      [kind]: normalizeFilterKeywords(keywords),
-    };
-    settings = {
-      ...settings,
-      activityFilters: {
-        ...activityFilterDefaults,
-        ...settings.activityFilters,
-        titleKeywords: [],
-        messageKeywords: [],
-        byAgent: {
-          ...settings.activityFilters.byAgent,
-          [agentId]: agentFilters,
-        },
-      },
-    };
-    await saveSettings();
-  }
-
-  function handleFilterDraftKeydown(event: KeyboardEvent, agentId: AgentId, kind: ActivityFilterKind) {
-    if (event.key !== "Enter") {
-      return;
-    }
-    event.preventDefault();
-    void addFilterKeyword(agentId, kind);
-  }
-
-  async function clearAgentActivityFilters(agentId: AgentId) {
-    if (!settings) return;
-    settings = {
-      ...settings,
-      activityFilters: {
-        ...activityFilterDefaults,
-        ...settings.activityFilters,
-        titleKeywords: [],
-        messageKeywords: [],
-        byAgent: {
-          ...settings.activityFilters.byAgent,
-          [agentId]: { ...agentActivityFilterDefaults },
-        },
-      },
-    };
-    await saveSettings();
-  }
-
-  function agentActivityFilterCount(filters: ActivityKeywordFilterSettings | null | undefined) {
-    return normalizeFilterKeywords(filters?.titleKeywords).length + normalizeFilterKeywords(filters?.messageKeywords).length;
-  }
-
-  function clampPetOpacity(value: number | null | undefined) {
-    const numericValue = Number(value);
-    if (!Number.isFinite(numericValue)) {
-      return defaultPetOpacity;
-    }
-    return Math.min(defaultPetOpacity, Math.max(minPetOpacity, numericValue));
-  }
-
-  function petOpacityLabel(value: number | null | undefined) {
-    return `${Math.round(clampPetOpacity(value) * 100)}%`;
-  }
-
-  function clampRunningBubbleAnimationMs(value: number) {
-    return Math.min(4000, Math.max(600, Math.round(value || runningBubbleDefaults.animationMs)));
-  }
-
-  function runningBubbleSpeedLabel(value: number) {
-    return `${(clampRunningBubbleAnimationMs(value) / 1000).toFixed(1)}s`;
-  }
-
-  function clampRunningBubbleBorderWidth(value: number) {
-    return Math.min(8, Math.max(1, Math.round(value || runningBubbleDefaults.borderWidth)));
-  }
-
-  function runningBubbleBorderWidthLabel(value: number) {
-    return `${clampRunningBubbleBorderWidth(value)}px`;
-  }
-
-  function bubbleColorEditor(value: string | null | undefined, fallback: string) {
-    return gradientEditorFromCss(value, fallback);
-  }
-
-  function currentBubbleColorEditor(key: RunningBubbleColorKey, fallback: string) {
-    return bubbleColorEditor(settings?.appearance.runningBubble[key], fallback);
-  }
-
-  function updateBubbleColor(
-    key: RunningBubbleColorKey,
-    fallback: string,
-    patch: Partial<GradientEditorValue>,
-  ) {
-    if (!settings) return;
-    settings = updateRunningBubbleColorSetting(settings, key, fallback, patch);
-    scheduleRunningBubbleSettingsSave();
-  }
-
-  function updateBubbleColorStop(
-    key: RunningBubbleColorKey,
-    fallback: string,
-    index: number,
-    color: string,
-  ) {
-    const editor = currentBubbleColorEditor(key, fallback);
-    const colors = [...editor.colors];
-    colors[index] = color;
-    updateBubbleColor(key, fallback, { colors });
-  }
-
-  function setSelectedBubbleColorStop(key: RunningBubbleColorKey, index: number) {
-    selectedBubbleColorStop = {
-      ...selectedBubbleColorStop,
-      [key]: Math.max(0, index),
-    };
-  }
-
-  function addBubbleColorStop(key: RunningBubbleColorKey, fallback: string) {
-    const editor = currentBubbleColorEditor(key, fallback);
-    const nextColors = [...editor.colors, nextGradientStopColor(editor.colors)];
-    setSelectedBubbleColorStop(key, nextColors.length - 1);
-    updateBubbleColor(key, fallback, { colors: nextColors });
-  }
-
-  function removeBubbleColorStop(key: RunningBubbleColorKey, fallback: string, index: number) {
-    const editor = currentBubbleColorEditor(key, fallback);
-    const colors = editor.colors.filter((_, colorIndex) => colorIndex !== index);
-    setSelectedBubbleColorStop(key, Math.max(0, Math.min(selectedBubbleColorStop[key], colors.length - 1)));
-    updateBubbleColor(key, fallback, { colors: colors.length ? colors : [fallback] });
-  }
-
-  function selectedBubbleColorIndex(selectedIndex: number | undefined, count: number) {
-    return Math.max(0, Math.min(selectedIndex ?? 0, Math.max(count - 1, 0)));
-  }
-
-  function selectPreviousBubbleColorStop(key: RunningBubbleColorKey, count: number) {
-    setSelectedBubbleColorStop(key, Math.max(0, selectedBubbleColorIndex(selectedBubbleColorStop[key], count) - 1));
-  }
-
-  function selectNextBubbleColorStop(key: RunningBubbleColorKey, count: number) {
-    setSelectedBubbleColorStop(key, Math.min(Math.max(count - 1, 0), selectedBubbleColorIndex(selectedBubbleColorStop[key], count) + 1));
-  }
-
-  function selectBubbleColorStopFromBand(key: RunningBubbleColorKey, count: number, event: MouseEvent) {
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    setSelectedBubbleColorStop(key, colorStopIndexFromBand(count, event.clientX - rect.left, rect.width));
-  }
-
-  function inputValue(event: Event) {
-    return (event.currentTarget as HTMLInputElement).value;
-  }
-
-  function inputNumber(event: Event) {
-    return Number((event.currentTarget as HTMLInputElement).value);
-  }
-
-  function scheduleRunningBubbleSettingsSave() {
-    runningBubbleSaveToken += 1;
-    clearRunningBubbleSaveTimer();
-    runningBubbleSaveTimer = window.setTimeout(() => {
-      runningBubbleSaveTimer = null;
-      void saveRunningBubbleSettings();
-    }, 250);
-  }
-
-  function clearRunningBubbleSaveTimer() {
-    if (runningBubbleSaveTimer) {
-      window.clearTimeout(runningBubbleSaveTimer);
-      runningBubbleSaveTimer = null;
-    }
-  }
-
-  async function saveRunningBubbleSettings() {
-    if (!settings) return;
-    const saveToken = runningBubbleSaveToken;
-    const snapshot: AppSettings = {
-      ...settings,
-      appearance: {
-        ...settings.appearance,
-        runningBubble: {
-          ...settings.appearance.runningBubble,
-          animationMs: clampRunningBubbleAnimationMs(settings.appearance.runningBubble.animationMs),
-          borderWidth: clampRunningBubbleBorderWidth(settings.appearance.runningBubble.borderWidth),
-        },
-      },
-    };
-
-    try {
-      const savedSettings = normalizeSettings(await updateAppSettings(snapshot));
-      if (saveToken !== runningBubbleSaveToken || !settings) return;
-      settings = {
-        ...settings,
-        appearance: {
-          ...settings.appearance,
-          runningBubble: savedSettings.appearance.runningBubble,
-        },
-      };
-    } catch (currentError) {
-      if (saveToken === runningBubbleSaveToken) {
-        error = String(currentError);
-      }
-    }
-  }
-
   async function importAnimatedPet() {
     const selected = await open({ multiple: false, filters: [{ name: "Pet manifest", extensions: ["json"] }] });
     if (typeof selected !== "string") return;
@@ -1643,64 +1032,6 @@
     if (!settings) return;
     settings.pet.scale = Math.min(5, Math.max(2, scale));
     await saveSettings();
-  }
-
-  async function savePetOpacity() {
-    if (!settings) return;
-    settings.pet.opacity = clampPetOpacity(settings.pet.opacity);
-    await saveSettings();
-  }
-
-  function statusLabel(status: PetEvent["status"]) {
-    return {
-      idle: "待命",
-      thinking: "正在思考",
-      running: "正在执行",
-      "waiting-approval": "等待审批或输入",
-      failed: "任务失败",
-      done: "任务完成",
-    }[status];
-  }
-
-  function kindLabel(kind: PetEvent["kind"]) {
-    return {
-      "task-started": "任务开始",
-      "task-updated": "任务更新",
-      "tool-started": "工具调用",
-      "permission-requested": "授权请求",
-      message: "消息",
-      "task-failed": "任务失败",
-      "task-completed": "任务完成",
-    }[kind];
-  }
-
-  function shortTime(value: string) {
-    const date = new Date(value);
-    if (Number.isNaN(date.valueOf())) return "";
-    return date.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
-  }
-
-  function soundLabel(sound: AppSettings["notifications"]["sound"]) {
-    return {
-      blip: "Blip",
-      chime: "Chime",
-      bell: "Bell",
-      custom: "自定义",
-      silent: "静音",
-    }[sound];
-  }
-
-  function whipReactionSoundLabel(sound: AppSettings["pet"]["whipReactionSound"]) {
-    return whipReactionSounds.find((option) => option.value === sound)?.label ?? "无";
-  }
-
-  function agentLabel(agentId: AgentView["id"]) {
-    return {
-      codex: "Codex",
-      claude: "Claude Code",
-      qoder: "Qoder",
-      cursor: "Cursor",
-    }[agentId];
   }
 
   $: latest = events.at(-1);
@@ -1732,6 +1063,9 @@
     <!-- The panel is focusable only while it has the tabpanel role. -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
     <div id={isConnectionRoute(tab) ? "connection-panel" : undefined} role={isConnectionRoute(tab) ? "tabpanel" : undefined} aria-labelledby={isConnectionRoute(tab) ? `tab-${tab}` : undefined} tabindex={isConnectionRoute(tab) ? 0 : undefined}>
+    {#if appearanceVisited && settings}
+      <div hidden={tab !== "appearance"}><AppearanceSettings {settings} bind:pending={appearancePending} onChange={(next) => settings = next} onSave={persistSettings} /></div>
+    {/if}
     {#if tab === "tasks" || tab === "extraction"}
       <CodexWorkbench />
     {:else if tab === "connections"}
@@ -1775,9 +1109,9 @@
               <h3>设备</h3>
               <p>管理已配对的 Remote 客户端及其访问权限。</p>
             </div>
-            <button bind:this={addDeviceButton} class="connection-primary-button" type="button" disabled={remoteRuntimeStatus?.phase !== "available" || pairDeviceDialogOpen} on:click={openPairDeviceDialog}>
+            <Button bind:ref={addDeviceButton} class="connection-primary-button" type="button" disabled={remoteRuntimeStatus?.phase !== "available" || pairDeviceDialogOpen} onclick={openPairDeviceDialog}>
               <Plus size={17} /> 添加设备
-            </button>
+            </Button>
           </header>
 
           <div class="remote-access-summary" role="status">
@@ -1806,9 +1140,9 @@
                 <p>{visibleRemoteDiagnostic.message}</p>
               </div>
               {#if remoteAccessCanRetry()}
-                <button type="button" disabled={remoteRetryBusy} on:click={retryRemoteAccessRuntime}>
+                <Button type="button" disabled={remoteRetryBusy} onclick={retryRemoteAccessRuntime}>
                   <RefreshCw size={16} /> {remoteRetryBusy ? "重试中" : "重试"}
-                </button>
+                </Button>
               {/if}
             </div>
           {/if}
@@ -1840,7 +1174,7 @@
               {/each}
             </div>
             <div class="runtime-actions">
-              <button type="button" disabled={busyRuntime !== null || providerImportBusy} on:click={refreshRuntimes}><RefreshCw size={16} /> {busyRuntime === "all" ? "检测中…" : "重新检测"}</button>
+              <Button type="button" disabled={busyRuntime !== null || providerImportBusy} onclick={refreshRuntimes}><RefreshCw size={16} /> {busyRuntime === "all" ? "检测中…" : "重新检测"}</Button>
             </div>
           </div>
           {#if agentRuntimes.some((runtime) => !isBuiltinProvider(runtime.providerId))}
@@ -1855,7 +1189,7 @@
           {/if}
           <div class="runtime-custom-provider">
             <h3>添加自定义 Provider</h3>
-            <button bind:this={providerAddButton} class="runtime-add-provider" type="button" aria-label="添加自定义 Provider" title="选择 Provider manifest" disabled={providerImportBusy} on:click={addCustomProvider}><Plus size={24} aria-hidden="true" /></button>
+            <Button bind:ref={providerAddButton} class="runtime-add-provider" type="button" aria-label="添加自定义 Provider" title="选择 Provider manifest" disabled={providerImportBusy} onclick={addCustomProvider}><Plus size={24} aria-hidden="true" /></Button>
           </div>
         </section>
       </div>
@@ -1864,147 +1198,10 @@
     {:else if tab === "personalize" && settings}
       <div class="settings-workspace pet-creation">
         <PetLibraryPanel {settings} library={petLibrary} busy={busyPet} onSelect={activatePet} onRemove={removePet} onImportImage={importImagePet} onImportPackage={importAnimatedPet} onScale={savePetScale} />
-        <button class="context-link" on:click={() => navigation.navigate("appearance")}>调整主题、透明度与桌宠效果</button>
+        <Button class="context-link" onclick={() => navigation.navigate("appearance")}>调整主题、透明度与桌宠效果</Button>
       </div>
     {:else if tab === "appearance" && settings}
-      <div class="settings-workspace">
-          <section class="appearance-editor pixel-panel">
-            <header class="panel-head">
-              <h3>主题</h3>
-            </header><div class="settings-card">
-            <SettingsRow label="主题模式"><section class="theme-switcher" aria-label="主题模式">
-              <button class:active={settings.appearance.theme === "light"} on:click={() => setTheme("light")} aria-label="浅色模式">
-                <Sun size={16} /> Light
-              </button>
-              <button class:active={settings.appearance.theme === "dark"} on:click={() => setTheme("dark")} aria-label="深色模式">
-                <Moon size={16} /> Dark
-              </button>
-              <button class:active={settings.appearance.theme === "system"} on:click={() => setTheme("system")} aria-label="跟随系统">
-                Auto
-              </button>
-            </section></SettingsRow>
-          </div></section>
-
-          <section class="bubble-editor pixel-panel">
-            <header class="panel-head">
-              <h3>任务气泡</h3>
-            </header><div class="settings-card">
-            <div class="bubble-toggle-grid">
-              <label class="check">
-                <input type="checkbox" bind:checked={settings.appearance.runningBubble.backgroundBreathing} on:change={saveRunningBubbleSettings} />
-                背景色呼吸灯
-              </label>
-              <label class="check">
-                <input type="checkbox" bind:checked={settings.appearance.runningBubble.borderMarquee} on:change={saveRunningBubbleSettings} />
-                边框跑马灯
-              </label>
-            </div>
-            <div class="bubble-color-grid">
-              {#each bubbleColorConfigs as colorConfig}
-                {@const editor = bubbleColorEditor(settings.appearance.runningBubble[colorConfig.key], colorConfig.fallback)}
-                {@const selectedColorIndex = selectedBubbleColorIndex(selectedBubbleColorStop[colorConfig.key], editor.colors.length)}
-                <section class="gradient-editor" aria-label={colorConfig.label}>
-                  <div class="gradient-editor-head">
-                    <strong>{colorConfig.label}</strong>
-                  </div>
-                  <button
-                    class="color-band-preview"
-                    type="button"
-                    aria-label={`选择${colorConfig.label}色段`}
-                    style={`background: ${gradientSegmentCss(editor.colors)}`}
-                    on:click={(event) => selectBubbleColorStopFromBand(colorConfig.key, editor.colors.length, event)}
-                  ></button>
-                  <div class="color-stop-editor" aria-label={`${colorConfig.label}当前颜色`}>
-                    <button type="button" aria-label="上一个颜色" disabled={selectedColorIndex === 0} on:click={() => selectPreviousBubbleColorStop(colorConfig.key, editor.colors.length)}>‹</button>
-                    <label class="color-stop">
-                      {#key `${colorConfig.key}-${selectedColorIndex}-${editor.colors[selectedColorIndex]}`}
-                        <input type="color" value={editor.colors[selectedColorIndex]} on:input={(event) => updateBubbleColorStop(colorConfig.key, colorConfig.fallback, selectedColorIndex, inputValue(event))} />
-                      {/key}
-                    </label>
-                    <button type="button" aria-label="下一个颜色" disabled={selectedColorIndex >= editor.colors.length - 1} on:click={() => selectNextBubbleColorStop(colorConfig.key, editor.colors.length)}>›</button>
-                    <span>{selectedColorIndex + 1}/{editor.colors.length}</span>
-                    <button class="add-color-stop" type="button" on:click={() => addBubbleColorStop(colorConfig.key, colorConfig.fallback)}>添加颜色</button>
-                    {#if editor.colors.length > 1}
-                      <button class="remove-color-stop" type="button" aria-label={`移除当前 ${colorConfig.label}颜色`} on:click={() => removeBubbleColorStop(colorConfig.key, colorConfig.fallback, selectedColorIndex)}>移除</button>
-                    {/if}
-                  </div>
-                  {#if colorConfig.directional}
-                    <label>
-                      角度 <strong>{editor.angle}deg</strong>
-                      <input type="range" min="0" max="360" step="5" value={editor.angle} on:input={(event) => updateBubbleColor(colorConfig.key, colorConfig.fallback, { angle: inputNumber(event) })} />
-                    </label>
-                  {/if}
-                </section>
-              {/each}
-            </div>
-            <label>
-              边框宽度 <strong>{runningBubbleBorderWidthLabel(settings.appearance.runningBubble.borderWidth)}</strong>
-              <input
-                type="range"
-                min="1"
-                max="8"
-                step="1"
-                bind:value={settings.appearance.runningBubble.borderWidth}
-                on:change={saveRunningBubbleSettings}
-              />
-            </label>
-            <label>
-              动画速率 <strong>{runningBubbleSpeedLabel(settings.appearance.runningBubble.animationMs)}</strong>
-              <input
-                type="range"
-                min="600"
-                max="4000"
-                step="100"
-                bind:value={settings.appearance.runningBubble.animationMs}
-                on:change={saveRunningBubbleSettings}
-              />
-            </label>
-          </div></section>
-
-
-        <section class="appearance-editor pixel-panel"><h3>窗口与互动</h3><div class="settings-card">
-          <label class="pet-opacity-control">
-            <span>
-              <span>窗口不透明度</span>
-              <strong>{petOpacityLabel(settings.pet.opacity)}</strong>
-            </span>
-            <input
-              type="range"
-              min={minPetOpacity}
-              max="1"
-              step="0.05"
-              bind:value={settings.pet.opacity}
-              on:input={(event) => (settings.pet.opacity = clampPetOpacity(inputNumber(event)))}
-              on:change={savePetOpacity}
-            />
-          </label>
-            <SettingsRow label="互动反应音"><div class="settings-control-stack">
-            <div class="segmented">
-              {#each whipReactionSounds as reaction}
-                <button
-                  class:active={settings.pet.whipReactionSound === reaction.value}
-                  on:click={async () => {
-                    settings.pet.whipReactionSound = reaction.value;
-                    await saveSettings();
-                  }}
-                >
-                  {reaction.label}
-                </button>
-              {/each}
-            </div>
-            <div class="row-actions">
-              <button on:click={() => playWhipReactionSound(settings.pet.whipReactionSound, settings.pet.customWhipReactionSoundPath)}>
-                <Volume2 size={17} /> 试听反应
-              </button>
-              <button on:click={pickCustomWhipReactionSound}>
-                <FolderOpen size={17} /> 选择反应音频
-              </button>
-            </div>
-            {#if settings.pet.customWhipReactionSoundPath}
-              <p class="path">{settings.pet.customWhipReactionSoundPath}</p>
-            {/if}</div></SettingsRow>
-        </div></section>
-      </div>
+      <!-- AppearanceSettings remains mounted below while a delayed save settles. -->
     {:else if tab === "settings" && settings}
       <div class="settings-workspace">
         <SignalingServiceSettings value={settings.connection?.signalingService ?? null}
@@ -2017,7 +1214,7 @@
           }} />
         <section class="appearance-editor pixel-panel"><h3>启动</h3><div class="settings-card">
             <label class="check">
-              <input type="checkbox" checked={launchAtLogin} disabled={busyLaunchAtLogin} on:change={toggleLaunchAtLogin} />
+              <Switch checked={launchAtLogin} disabled={busyLaunchAtLogin} onCheckedChange={toggleLaunchAtLogin} />
               开机自启动
             </label>
         </div></section>
@@ -2032,270 +1229,25 @@
             <SettingsRow label="数据目录" description={appDataRestartPending ? "已保存路径配置，重启后生效。" : "更改只切换数据目录，不复制或清空已有数据，保存后请重启。"}>
               <span class="path">{managedPaths?.data ?? "正在读取路径…"}</span>
               <div class="directory-actions">
-                <button disabled={busyAppDataDirectory} on:click={chooseAppDataDirectory}>修改</button>
-                <button disabled={busyAppDataDirectory || !settings.data.dataDirectory} on:click={resetAppDataDirectory} aria-label="恢复默认数据目录">默认</button>
+                <Button disabled={busyAppDataDirectory} onclick={chooseAppDataDirectory}>修改</Button>
+                <Button disabled={busyAppDataDirectory || !settings.data.dataDirectory} onclick={resetAppDataDirectory} aria-label="恢复默认数据目录">默认</Button>
               </div>
             </SettingsRow>
             <SettingsRow label="宠物资源目录">
               <span class="path">{petLibrary?.dataDirectory ?? settings.petLibrary.dataDirectory ?? "正在读取路径…"}</span>
-              <button disabled={busyPet === "directory"} on:click={choosePetDataDirectory}>修改</button>
+              <Button disabled={busyPet === "directory"} onclick={choosePetDataDirectory}>修改</Button>
             </SettingsRow>
           </div></section>
 
-
       </div>
     {:else if tab === "notifications" && settings}
-      <div class="settings-workspace">
-          <section class="sound-editor pixel-panel">
-            <header class="panel-head">
-              <div>
-                <h3><Bell size={18} /> 通知声音</h3>
-              </div>
-            </header><div class="settings-card">
-            <SettingsRow label="通知音色"><div class="settings-control-stack">
-            <div class="segmented">
-              {#each ["blip", "chime", "bell", "custom", "silent"] as sound}
-                <button
-                  class:active={settings.notifications.sound === sound}
-                  on:click={async () => {
-                    settings.notifications.sound = sound as AppSettings["notifications"]["sound"];
-                    await saveSettings();
-                  }}
-                >
-                  {sound}
-                </button>
-              {/each}
-            </div>
-            <div class="row-actions">
-              <button on:click={() => playNotificationSound(settings)}>
-                <Volume2 size={17} /> 试听
-              </button>
-              <button on:click={pickCustomSound}>
-                <FolderOpen size={17} /> 选择音频
-              </button>
-            </div>
-            {#if settings.notifications.customSoundPath}
-              <p class="path">{settings.notifications.customSoundPath}</p>
-            {/if}</div></SettingsRow>
-            <label class="check">
-              <input type="checkbox" bind:checked={settings.notifications.ringOnPermission} on:change={saveSettings} />
-              授权时响铃
-            </label>
-            <label class="check">
-              <input type="checkbox" bind:checked={settings.notifications.ringOnFailure} on:change={saveSettings} />
-              失败时响铃
-            </label>
-            <label class="check">
-              <input type="checkbox" bind:checked={settings.notifications.ringOnDone} on:change={saveSettings} />
-              任务结束时响铃
-            </label>
-            <label>
-              重复提醒（秒）
-              <input type="number" min="5" max="300" bind:value={settings.notifications.repeatSeconds} on:change={saveSettings} />
-            </label>
-            <label class="check">
-              <input type="checkbox" bind:checked={settings.notifications.quietHoursEnabled} on:change={saveSettings} />
-              静音时段
-            </label>
-            <SettingsRow label="静音时间"><div class="time-row">
-              <input aria-label="静音开始时间" type="time" bind:value={settings.notifications.quietHoursStart} on:change={saveSettings} />
-              <input aria-label="静音结束时间" type="time" bind:value={settings.notifications.quietHoursEnd} on:change={saveSettings} />
-            </div></SettingsRow>
-          </div></section>
-
-          <section class="robot-editor pixel-panel">
-            <header class="panel-head">
-              <div>
-                <h3><Bot size={18} /> 通知机器人</h3>
-              </div>
-            </header><div class="settings-card">
-              <label class="switch-check">
-                <input type="checkbox" bind:checked={settings.notifications.robot.enabled} on:change={saveSettings} />
-                启用机器人通知
-              </label>
-
-            <div class="robot-trigger-grid" aria-label="机器人触发事件">
-              {#each robotTriggerOptions as trigger}
-                <label class="check">
-                  <input type="checkbox" bind:checked={settings.notifications.robot.triggers[trigger.key]} on:change={saveSettings} />
-                  {trigger.label}
-                </label>
-              {/each}
-            </div>
-
-            <details class="robot-template-panel">
-              <summary>自定义消息模板</summary>
-              <div class="robot-template-head">
-                <strong>消息模板</strong>
-                <button type="button" on:click={resetRobotTemplate}>恢复默认</button>
-              </div>
-              <code>{robotTemplateVariables}</code>
-              <div class="robot-template-grid">
-                {#each robotTemplateFields as field}
-                  <label>
-                    {field.label}
-                    <textarea
-                      rows={field.rows}
-                      value={settings.notifications.robot.template[field.key]}
-                      on:change={(event) => updateRobotTemplateField(field.key, inputValue(event))}
-                    ></textarea>
-                  </label>
-                {/each}
-              </div>
-            </details>
-
-            <div class="row-actions">
-              <button on:click={() => addRobotChannel("dingtalk")}>
-                <Bot size={17} /> 钉钉
-              </button>
-              <button on:click={() => addRobotChannel("feishu")}>
-                <Bot size={17} /> 飞书
-              </button>
-            </div>
-
-            {#if robotNotificationResult}
-              <p class="setting-note robot-result">{robotNotificationResult}</p>
-            {/if}
-
-            <div class="robot-channel-list" aria-label="机器人通知渠道">
-              {#if settings.notifications.robot.channels.length}
-                {#each settings.notifications.robot.channels as channel (channel.id)}
-                  <article class="robot-channel-card">
-                    <div class="robot-channel-head">
-                      <span class={`robot-provider ${channel.provider}`}>{channel.provider === "dingtalk" ? "钉" : "飞"}</span>
-                      <div>
-                        <strong>{robotChannelLabel(channel)}</strong>
-                        <em>{robotChannelMeta(channel)}</em>
-                      </div>
-                      <label class="switch-check compact">
-                        <input type="checkbox" bind:checked={channel.enabled} on:change={saveSettings} />
-                        启用
-                      </label>
-                    </div>
-
-                    <label>
-                      名称
-                      <input type="text" bind:value={channel.name} on:change={saveSettings} />
-                    </label>
-
-                    {#if channel.provider === "dingtalk"}
-                      <div class="segmented">
-                        <button
-                          class:active={channel.authMode === "enterprise-robot"}
-                          on:click={async () => {
-                            channel.authMode = "enterprise-robot";
-                            await saveSettings();
-                          }}
-                        >
-                          企业机器人
-                        </button>
-                        <button
-                          class:active={channel.authMode === "webhook"}
-                          on:click={async () => {
-                            channel.authMode = "webhook";
-                            await saveSettings();
-                          }}
-                        >
-                          Webhook
-                        </button>
-                      </div>
-
-                      {#if channel.authMode === "enterprise-robot"}
-                        <div class="robot-field-grid">
-                          <label>
-                            robotCode
-                            <input type="text" bind:value={channel.robotCode} on:change={saveSettings} />
-                          </label>
-                          <label>
-                            clientId
-                            <input type="text" bind:value={channel.clientId} on:change={saveSettings} />
-                          </label>
-                        </div>
-                        <label>
-                          clientSecret
-                          <input type="password" bind:value={channel.clientSecret} on:change={saveSettings} />
-                        </label>
-                        <div class="segmented">
-                          <button
-                            class:active={channel.targetType === "user-ids"}
-                            on:click={async () => {
-                              channel.targetType = "user-ids";
-                              await saveSettings();
-                            }}
-                          >
-                            用户
-                          </button>
-                          <button
-                            class:active={channel.targetType === "open-conversation-id"}
-                            on:click={async () => {
-                              channel.targetType = "open-conversation-id";
-                              await saveSettings();
-                            }}
-                          >
-                            群
-                          </button>
-                        </div>
-                        {#if channel.targetType === "user-ids"}
-                          <label>
-                            userId
-                            <textarea rows="2" value={dingTalkUserIdsValue(channel)} on:change={(event) => {
-                              updateDingTalkUserIds(channel, inputValue(event));
-                              void saveSettings();
-                            }}></textarea>
-                          </label>
-                        {:else}
-                          <label>
-                            openConversationId
-                            <input type="text" bind:value={channel.openConversationId} on:change={saveSettings} />
-                          </label>
-                        {/if}
-                      {:else}
-                        <label>
-                          webhook
-                          <input type="url" bind:value={channel.webhookUrl} on:change={saveSettings} />
-                        </label>
-                        <label>
-                          加签密钥
-                          <input type="password" bind:value={channel.webhookSecret} on:change={saveSettings} />
-                        </label>
-                      {/if}
-                    {:else}
-                      <label>
-                        webhook
-                        <input type="url" bind:value={channel.webhookUrl} on:change={saveSettings} />
-                      </label>
-                      <label>
-                        签名密钥
-                        <input type="password" bind:value={channel.webhookSecret} on:change={saveSettings} />
-                      </label>
-                    {/if}
-
-                    <div class="robot-channel-actions">
-                      <button disabled={busyRobotChannel === channel.id} on:click={() => testRobotChannel(channel.id)}>
-                        <PlugZap size={17} /> 测试
-                      </button>
-                      <button class="danger-action" on:click={() => removeRobotChannel(channel.id)} aria-label={`删除 ${robotChannelLabel(channel)}`}>
-                        <Trash2 size={17} /> 删除
-                      </button>
-                    </div>
-                  </article>
-                {/each}
-              {:else}
-                <div class="empty-state compact">
-                  <Bot size={20} />
-                  <strong>未配置机器人</strong>
-                  <p>添加一个钉钉或飞书渠道后，任务状态会按上面的事件发送。</p>
-                </div>
-              {/if}
-            </div>
-          </div></section>
-      </div>
+      <NotificationSettings {settings} bind:busyRobotChannel onSave={persistSettings} />
     {:else if tab === "permissions"}
       <PermissionSettings />
     {:else if tab === "about"}
       <AboutSettings checking={!!updateCheckMode || updateInstallBusy} message={updateMessage} error={updateError} ignoredVersion={settings?.updates.ignoredVersion ?? null} onCheck={() => checkForUpdates("manual")}
         reloaded={resourceReloaded} onExtraction={() => navigation.navigate("extraction")}
-        reloadBlocked={!!(pendingSettingsSaves || runningBubbleSaveTimer || busyRuntime || busyPet || busyAppDataDirectory || busyLaunchAtLogin || busyRobotChannel || updateInstallBusy || availableUpdate || pairDeviceDialogOpen)} />
+        reloadBlocked={!!(pendingSettingsSaves || appearancePending || busyRuntime || busyPet || busyAppDataDirectory || busyLaunchAtLogin || busyRobotChannel || updateInstallBusy || availableUpdate || pairDeviceDialogOpen)} />
     {:else if tab === "events"}
       <p class="section-description">事件日志：查看活动来源与运行时事件，排查接入问题。</p>
       <EventJournal />
@@ -2314,30 +1266,6 @@
     onClose={closePairDeviceDialog}
     onRetry={retryRemotePairing}
   />
-{#if availableUpdate}
-  <div class="modal-scrim">
-    <div class="update-dialog pixel-panel" role="dialog" aria-modal="true" aria-labelledby="update-dialog-title">
-      <header class="panel-head">
-        <div>
-          <h3 id="update-dialog-title"><Download size={18} /> 发现新版本</h3>
-        </div>
-        <button class="icon-button" type="button" disabled={updateInstallBusy} on:click={dismissAvailableUpdate} aria-label="取消更新">
-          <X size={17} />
-        </button>
-      </header>
-      <p>发现 Code Pet {availableUpdate.version}，当前版本为 {availableUpdate.currentVersion}。</p>
-      {#if availableUpdate.manualDownload}<p>此版本通过 DMG 安装。点击下载后，请打开安装包手动安装。</p>{/if}
-      {#if updateError}
-        <p class="error">{updateError}</p>
-      {/if}
-      <div class="row-actions">
-        <button type="button" disabled={updateInstallBusy} on:click={dismissAvailableUpdate}>取消</button>
-        <button class="primary-action" type="button" disabled={updateInstallBusy} on:click={installAvailableUpdate}>
-          <Download size={17} /> {availableUpdate.manualDownload ? (updateInstallBusy ? "正在打开…" : "下载 DMG") : (updateInstallBusy ? "正在安装…" : "立即升级")}
-        </button>
-      </div>
-    </div>
-  </div>
-{/if}
+<UpdateDialog update={availableUpdate} busy={updateInstallBusy} error={updateError} onDismiss={dismissAvailableUpdate} onInstall={installAvailableUpdate} />
 </main>
 {#if $webcontentReloading}<div class={`webcontent-reload-overlay main-theme ${appTheme}`} role="status" aria-live="polite">正在校验并加载前端资源…</div>{/if}

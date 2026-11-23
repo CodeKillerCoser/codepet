@@ -1,10 +1,12 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
+import { readProjectStyles } from "./testSources";
 
-const styles = readFileSync(resolve(__dirname, "styles.css"), "utf8");
+const styles = readProjectStyles(__dirname);
 const themeTokens = readFileSync(resolve(__dirname, "lib/theme/tokens.css"), "utf8");
-const appSource = readFileSync(resolve(__dirname, "App.svelte"), "utf8");
+const appearanceSource = readFileSync(resolve(__dirname, "lib/settings/AppearanceSettings.svelte"), "utf8");
+const appSource = readFileSync(resolve(__dirname, "App.svelte"), "utf8") + "\n" + appearanceSource;
 const petAppSource = readFileSync(resolve(__dirname, "PetApp.svelte"), "utf8");
 const petAvatarSource = readFileSync(resolve(__dirname, "lib/pet/PetAvatar.svelte"), "utf8");
 const pairDeviceDialogSource = readFileSync(resolve(__dirname, "lib/PairDeviceDialog.svelte"), "utf8");
@@ -148,7 +150,7 @@ describe("pet message bubble activity", () => {
   });
 
   test("keeps newer bubble edits from being overwritten by older saves", () => {
-    const saveScript = appSource.slice(appSource.indexOf("async function saveRunningBubbleSettings()"), appSource.indexOf("async function importAnimatedPet()"));
+    const saveScript = appearanceSource.slice(appearanceSource.indexOf("async function saveRunningBubbleSettings()"), appearanceSource.indexOf("async function savePetOpacity()"));
 
     expect(saveScript).toContain("runningBubbleSaveToken");
     expect(saveScript).toContain("saveToken !== runningBubbleSaveToken");

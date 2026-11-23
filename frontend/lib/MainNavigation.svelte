@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Button } from "./ui/button/index";
   import { Activity, Cable, BarChart3, Palette, Settings, Bell, ListTree, Wrench, Info, ShieldCheck } from "@lucide/svelte";
   import { isConnectionRoute, isSettingsRoute, settingsRoutes, type AppRoute } from "./navigation";
   export let current: AppRoute;
@@ -17,14 +18,14 @@
 {#if inSettings}
   <nav class="tabs" aria-label="设置分区">
     {#each settingsRoutes as entry}
-      <button class:active={current === entry.route} aria-current={current === entry.route ? "page" : undefined} on:click={() => onNavigate(entry.route)}><svelte:component this={settingIcons[entry.route]} size={18} />{entry.label}</button>
+      <Button class={[(current === entry.route) ? "active" : ''].filter(Boolean).join(' ')}  aria-current={current === entry.route ? "page" : undefined} onclick={() => onNavigate(entry.route)}><svelte:component this={settingIcons[entry.route]} size={18} />{entry.label}</Button>
     {/each}
   </nav>
 {:else}
   <nav class="tabs" aria-label="主导航">
     {#each entries as entry}
       {@const active = current === entry.route || (entry.route === "connections" && isConnectionRoute(current))}
-      <button class:active aria-current={active ? "page" : undefined} on:click={() => onNavigate(entry.route)}><svelte:component this={entry.icon} size={18} />{entry.label}</button>
+      <Button class={[(active) ? "active" : ''].filter(Boolean).join(' ')}  aria-current={active ? "page" : undefined} onclick={() => onNavigate(entry.route)}><svelte:component this={entry.icon} size={18} />{entry.label}</Button>
     {/each}
   </nav>
 {/if}

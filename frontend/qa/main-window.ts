@@ -3,6 +3,7 @@ import { emit } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
 import { mount } from "svelte";
 import App from "../App.svelte";
+import ExtractionHistory from "../lib/settings/ExtractionHistory.svelte";
 import { frontendBuild } from "../lib/webcontent";
 import { defaultRunningBubbleSettings } from "../lib/theme";
 import "../styles.css";
@@ -39,6 +40,16 @@ let appSettings: any = {
   notifications: {sound:"blip", ringOnPermission:true, ringOnFailure:true, ringOnDone:true, repeatSeconds:30, quietHoursEnabled:false, quietHoursStart:"22:00", quietHoursEnd:"08:00"},
   providerPlugins: {directories: []}, updates: {},
 };
+const settingsWrites: any[] = [];
+Object.assign(window, {
+  __settingsWrites: settingsWrites,
+  __getAppSettings: () => structuredClone(appSettings),
+  __pairingCancellations: [] as string[],
+});
+let launchAtLogin = false;
+let pairingId = 0;
+const pairingExpiry = Date.now() + 120_000;
+const pairingQr = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><path d="M20 20h60v60H20zm100 0h60v60h-60zM20 120h60v60H20zm100 0h60v60h-60z"/></svg>');
 const runtime = {providerId:"dev.codepet.claude", displayName:"Claude", status:"ready", source:"configured", resolvedExecutable:"D:/Software/Claude/claude.exe", configuredExecutable:"D:/Software/Claude/claude.exe", version:"2.1.263", installed:[]};
 // Inventory scenarios exercise visibility without accessing installed tools.
 const runtimeCase = new URLSearchParams(location.search).get("runtimeCase");
@@ -87,9 +98,15 @@ mockIPC((command, raw) => {
   const args = (raw ?? {}) as Record<string, any>;
   if (command === "plugin:window|outer_position") return {x:0,y:0};
   if (command === "get_app_settings") return structuredClone(appSettings);
-  if (command === "update_app_settings") { appSettings=structuredClone(args.settings); return structuredClone(appSettings); }
+  if (command === "update_app_settings") {
+    appSettings = structuredClone(args.settings);
+    settingsWrites.push(structuredClone(appSettings));
+    return structuredClone(appSettings);
+  }
   if (command === "list_pets") return {...appSettings.petLibrary, dataDirectory:"/fixture/pets"};
-  if (command === "get_launch_at_login_enabled") return false;
+  if (command === "get_launch_at_login_enabled") return launchAtLogin;
+  if (command === "set_launch_at_login_enabled") { launchAtLogin = args.enabled; return launchAtLogin; }
+  if (command === "send_test_robot_notification") return "测试通知已发送";
   if (command === "path_manager_get") return {install:"/fixture/install",data:"/fixture/data",workspace:"/fixture/workspace"};
   if (["recent_events", "list_remote_clients", "list_remote_pairing_requests"].includes(command)) return [];
   if (command === "check_app_update") {
@@ -121,6 +138,13 @@ mockIPC((command, raw) => {
   if (command === "provider_connection_status") return runtimeConnections();
   if (command === "list_agent_runtimes" || command === "refresh_agent_runtimes") return runtimeInventory;
   if (command === "remote_access_status") return {phase:"available",activeSessionCount:0,pairingAvailable:true,displayName:"QA desktop",diagnostic:null};
+  if (command === "start_remote_pairing") return { pairingId: `qa-pair-${++pairingId}`, expiresAt: pairingExpiry, qrSvgDataUrl: pairingQr };
+  if (command === "get_remote_pairing_status") return { pairingId: args.pairingId, state: "active", expiresAt: pairingExpiry, qrSvgDataUrl: pairingQr };
+  if (command === "copy_remote_pairing_json") return;
+  if (command === "cancel_remote_pairing") {
+    (window as any).__pairingCancellations.push(args.pairingId);
+    return { pairingId: args.pairingId, state: "cancelled", expiresAt: pairingExpiry };
+  }
   if (command === "query_event_journal") return {events:[],cursor:0,hasMore:false,dropped:0};
   if (command === "pet_gateway_request") { const r=args.request; return {id:r.id,method:r.method,protocolVersion:r.protocolVersion,response:{status:"ok",result:{snapshot:{sources:[{id:"codex",displayName:"Codex",enabled:true,status:"receiving"},{id:"claude",displayName:"Claude Code",enabled:true,status:"installed"},{id:"opencode",displayName:"OpenCode",enabled:false,status:"disabled"}],tasks:[]}}}}; }
   if (command === "task_lineage_options") return { sources: [{ id: "local:codex", name: "Codex（本地）", agent: "codex", connectionProviderId: new URLSearchParams(location.search).has("disconnected") ? null : "codex-fixture", directory: "/fixture", watch, extraction: config }], claudeExecutable: "/fixture/claude", defaultModel: "haiku", budgetUsd: 0.25, instances: [{ id: "claude", name: "本机 Claude", harness: "claude", controls: {modelCatalog: {kind: "flat", models: [{id: "haiku", displayName: "Haiku"}]}, reasoningEffort: {options: ["low", "medium", "high"].map(id => ({id, displayName: id}))}}}], layout: {root: "/fixture/.codepair", skills: "/fixture/.codepair/skills", extractionWorkspaces: "/fixture/.codepair/workspaces/task-extraction", taskWorkspaces: "/fixture/.codepair/workspaces/tasks"} };
@@ -154,4 +178,10 @@ mockIPC((command, raw) => {
   }
   throw new Error(`Unhandled fixture command: ${command}`);
 }, { shouldMockEvents: true });
-mount(App, { target: document.getElementById("app")! });
+const target = document.getElementById("app")!;
+if (new URLSearchParams(location.search).has("uiHistory")) {
+  target.className = "main-theme light";
+  mount(ExtractionHistory, { target, props: { open: true, sourceName: "QA", jobs: [], dirty: [], threads: [] } });
+} else {
+  mount(App, { target });
+}

@@ -1,0 +1,62 @@
+
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  color: var(--color-text-primary);
+  background: transparent;
+  font-family: var(--font-family-ui);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+html {
+  height: 100%;
+  background: transparent;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: transparent;
+}
+
+#app {
+  height: 100%;
+  min-height: 0;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+
+@property --pet-marquee-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@property --pet-running-bubble-surface {
+  syntax: "<color>";
+  inherits: false;
+  initial-value: transparent;
+}

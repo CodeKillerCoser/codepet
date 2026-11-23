@@ -28,6 +28,8 @@
   --color-main-accent-solid: var(--amber-9);
   --color-main-on-accent: #21201c;
   --color-main-scrim: #00000038;
+  --color-history-scrim: #0004;
+  --color-history-drawer-shadow: #0002;
   --color-main-close-hover: #c42b1c;
   --color-main-on-close: #ffffff;
   --color-main-success-bg: var(--grass-3);

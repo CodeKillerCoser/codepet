@@ -1,0 +1,70 @@
+/* Only generate utilities used by the vendored UI layer. No global reset. */
+@import "tailwindcss/utilities.css" layer(utilities) source(none);
+@source "./";
+
+@theme inline {
+  --color-background: var(--app-bg);
+  --color-foreground: var(--app-text);
+  --color-muted: var(--app-surface-soft);
+  --color-muted-foreground: var(--app-muted);
+  --color-border: var(--app-border);
+  --color-ring: var(--color-focus-ring);
+}
+
+.cn-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: var(--color-main-scrim);
+  backdrop-filter: blur(10px);
+}
+.cn-dialog-content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 1001;
+  display: grid;
+  transform: translate(-50%, -50%);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  outline: none;
+}
+.cn-dialog-content[data-state="closed"],
+.cn-dialog-overlay[data-state="closed"] { display: none; }
+.cn-dialog-overlay.history-overlay { background: var(--color-history-scrim); backdrop-filter: none; }
+
+/* Match the switches already drawn by main-window.css. */
+.main-theme .settings-card label > .cn-switch {
+  display: inline-flex;
+  align-items: center;
+  order: 2;
+  width: 34px;
+  height: 20px;
+  min-height: 20px;
+  flex: 0 0 auto;
+  margin: 0 0 0 auto;
+  padding: 2px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--app-border-strong);
+  cursor: pointer;
+}
+.main-theme .settings-card label > .cn-switch[data-state="checked"] {
+  background: var(--color-main-accent-solid);
+}
+.cn-switch-thumb {
+  display: block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--app-surface);
+  pointer-events: none;
+}
+.cn-switch-thumb[data-state="checked"] { transform: translateX(14px); }
+.main-theme .settings-card label > .cn-switch:disabled { opacity: .5; cursor: not-allowed; }
+
+.horizontal-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--app-border); margin-bottom: 24px; overflow-x: auto; flex-shrink: 0; }
+.horizontal-tabs button { position: relative; flex-shrink: 0; border: 0; border-radius: 0; background: transparent; color: var(--app-muted); font: inherit; padding: 12px 0 14px; box-shadow: none; }
+.horizontal-tabs button[aria-selected="true"] { color: var(--app-text); font-weight: 600; }
+.horizontal-tabs button[aria-selected="true"]::after { content: ""; position: absolute; bottom: 0; left: 0; right: 0; height: 2px; background: var(--app-text); border-radius: 2px; }
+.horizontal-tabs button:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -3px; }

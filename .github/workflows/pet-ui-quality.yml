@@ -21,11 +21,13 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - run: npm run check:frontend
       - run: npx playwright install --with-deps chromium
       - run: npm run test:pet
       - run: npm run test:pet:ui
       - run: npm run test:pet:motion
       - run: npm run test:pet:stack
+      - run: npm run test:ui
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -46,3 +48,5 @@ jobs:
             artifacts/pet-plane-stack-qa/*.gif
             artifacts/pet-plane-stack-qa/*.jpg
             artifacts/pet-plane-stack-qa/*.html
+            artifacts/ui-refactor/after/*.png
+            artifacts/ui-refactor/results.json
