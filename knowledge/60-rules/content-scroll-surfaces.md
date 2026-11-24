@@ -17,7 +17,7 @@ AppContentPane 的固定导航与滚动内容、任务列表/详情、运行卡�
 - 框架内容导航之外的顶部留白由 `main-window.css` 管理，导航后的内容 padding-top 为 12px，不在业务页另加空白块。
 - 主题滚动条使用 `theme/main-window.css` 的浅色 thumb/hover token，主窗口统一标准属性与 WebKit 伪元素。
 - TaskRunDetail 导航不使用负外边距，运行卡片可换行；卡片标题/子项显式 min-width:0，焦点环内收。任务列表标题单行省略并保留完整 title。
-- taskLedger.css 的详情使用 overflow-y:auto、scrollbar-width:none 和 WebKit 隐藏规则；overflow-x:hidden 是兜底，必须另验 scrollWidth 不超 clientWidth。隐藏不代表禁止滚动。
+- TaskRunDetail 的 .task-run-scroll 使用 overflow-y:auto、scrollbar-width:none 和 WebKit 隐藏规则，.task-detail 仅负责布局、overflow:hidden；overflow-x:hidden 是兜底，必须另验 scrollWidth 不超 clientWidth。隐藏不代表禁止滚动。
 
 ## 验证方式
 
@@ -30,3 +30,11 @@ AppContentPane 的固定导航与滚动内容、任务列表/详情、运行卡�
 2026-11-25 用户反馈多个滚动条均未通过。实际 App URL 的 builtAt=1795536216571（v19），原生截图同时显示粗深纵向条与底部横向条，搜索框和长标题也回到旧布局。v19 样式不包含本规则的隐藏/细浅样式；构建工作区仍停在 a7b05b6c，加上未提交的抽屉调宽改动，缺少主干 d61ff23b。v17 自测通过不能作为 v19 的验收证据。
 
 替换前核对 origin/main、构建工作区 HEAD 与未提交差异，并记录源码组合；独立工作区的新功能不得覆盖已交付修复。本次用 d61ff23b 加只读导出的抽屉差异，在隔离目录构建，保留两边工作区原状。合并包需同时跑任务滚动和抽屉调宽回归。安装后核对实际 URL builtAt，并在运行中的 App 检查外层、详情、横向三处滚动；人工失败保留在同一次执行，后续自测不覆盖用户结论。
+
+## 固定任务信息与局部分栏（2026-11-25）
+
+用户截图要求任务标题、描述、基本信息不随执行正文滚动。TaskRunDetail 的 task-info 与 task-run-scroll 是并列区域，只有后者承担执行滚动；框架 content 在任务视图不再承担外层滚动，列表单独滚动。不能只给标题加 sticky，仍让背景和项目时间被卷走。长背景展开时限制头部高度并允许独立读取，不能挤掉正文；切换任务或执行后正文回顶，保留原有键盘滚动和隐藏滚动条。
+
+左侧列表默认 280 px，可调范围 220～440 px，并根据内容区宽度进一步限制，为详情保留空间；小于 700 px 维持已有单栏返回行为。分隔条支持鼠标/触屏、键盘、双击复位、Escape/pointercancel/失焦/卸载取消。宽度只在当前 App 会话保留，临时变窄不覆盖偏好。
+
+回归用 task_ledger_refinement_qa.mjs 的真实 pointer、Home/End/方向键、取消、窄屏来回及头部矩形不变检查；完整 App 短窗口还要检查页签、筛选、任务信息三处位置和 content.scrollTop=0，不再用“外层能滚动”作为通过条件。

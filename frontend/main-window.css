@@ -339,3 +339,8 @@
 }
 
 .main-theme.app-shell.resizing-side-panel { transition: none; user-select: none; cursor: col-resize; }
+
+/* Task panes own their list/body scroll surfaces; the framework keeps navigation fixed. */
+.main-theme .history-workbench > .content:has(.task-ledger) {display:flex;flex-direction:column;overflow:hidden;}
+.main-theme .history-workbench > .content:has(.task-ledger) > #codex-workbench-panel {flex:1;min-height:0;display:flex;flex-direction:column;}
+.main-theme .workbench:has(> .task-ledger) {height:100%;flex:1;min-height:0;display:flex;flex-direction:column;}

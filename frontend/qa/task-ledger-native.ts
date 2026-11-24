@@ -14,7 +14,7 @@ async function until<T>(read: () => T | undefined | false): Promise<T> {
 function check(value: unknown, message: string) { if (!value) throw Error(message); }
 async function button(name: string, parent: ParentNode = document) {
   await tick();
-  const b = [...parent.querySelectorAll<HTMLButtonElement>('button')].find(b => b.textContent?.trim() === name);
+  const b = [...parent.querySelectorAll<HTMLButtonElement>('button')].find(b => (b.getAttribute('aria-label')??b.textContent?.trim()) === name);
   if (!b) throw Error(`Missing button: ${name}`);
   b.click(); await tick();
 }

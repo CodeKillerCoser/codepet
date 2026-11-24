@@ -1,10 +1,15 @@
 <script lang="ts">
-  import {onMount, tick} from 'svelte';
+  import {onMount, onDestroy, tick} from 'svelte';
   import {open} from '@tauri-apps/plugin-dialog';
   import {Ellipsis} from '@lucide/svelte';
   import * as Dialog from './ui/dialog/index';
   import TaskRunDetail from './TaskRunDetail.svelte';
   import TaskAgentSetup from './TaskAgentSetup.svelte';
+  import TaskListResizeHandle from './TaskListResizeHandle.svelte';
+  import TaskRunChanges from './TaskRunChanges.svelte';
+  import AppSidePanel from './shell/AppSidePanel.svelte';
+  import {projectRunChanges,type CommitChange} from './taskChanges';
+  import {workbenchSession} from './codexWorkbenchSession';
   import {
     taskRequest as api, currentRun, taskStatus, statuses, kinds, scopes, results,
     filterTasks, verificationContext, formatTaskTime as fmt,
@@ -14,6 +19,11 @@
 
   export let workspaceHint = '';
   let tasks: Task[] = [], query = '', project = '', status = 'all', selectedId = '', runId = '';
+  let layoutWidth=0, preferredListWidth=workbenchSession.page.taskListWidth;
+  let changesOpen=false, changesTrigger:HTMLElement|undefined, changesKey='', changesSequence=0;
+  let commits:CommitChange[]=[], changesLoading=false, changesError='';
+  $: maxListWidth=Math.max(220,Math.min(440,Math.floor(layoutWidth*.45),layoutWidth-368));
+  $: listWidth=Math.min(preferredListWidth,maxListWidth);
   let loading = true, busy = false, error = '', message = '', mobileDetail = false;
   let detail: TaskRunDetail, lastButton: HTMLButtonElement | undefined;
   let taskDialog: Dialog.ModalHandle, runDialog: Dialog.ModalHandle, verifyDialog: Dialog.ModalHandle;
@@ -30,6 +40,24 @@
   $: selected = filtered.find(t => t.id === selectedId) ?? filtered[0];
   $: run = selected?.runs.find(r => r.id === runId) ?? (selected && currentRun(selected));
   $: projects = [...new Map(tasks.map(t => [t.projectId, t.projectName])).entries()];
+  $: changes=run?projectRunChanges(run.agentWorkspace,commits):undefined;
+  $: if(selected&&run)void prepareChanges(selected,run);
+  else {changesOpen=false;changesKey='';++changesSequence;}
+  async function prepareChanges(task:Task,record:TaskRun){
+    const key=[task.id,record.id,record.agentWorkspace.observedAt,...record.agentWorkspace.relatedCommits].join('|');
+    if(key===changesKey)return;
+    if(!changesKey.startsWith(`${task.id}|${record.id}|`))changesOpen=false;
+    changesKey=key;const sequence=++changesSequence;
+    commits=record.agentWorkspace.commitChanges??[];changesError='';changesLoading=false;
+    if(record.agentWorkspace.relatedCommits.every(sha=>commits.some(c=>c.commit===sha&&!c.error)))return;
+    changesLoading=true;
+    try {const result=await api<CommitChange[]>('commit-files',{taskId:task.id,runId:record.id});if(sequence===changesSequence)commits=result;}
+    catch(e){if(sequence===changesSequence)changesError=String(e);}
+    finally{if(sequence===changesSequence)changesLoading=false;}
+  }
+  function openChanges(button:HTMLButtonElement){mobileDetail=true;changesTrigger=button;changesOpen=!changesOpen;}
+  onDestroy(()=>{++changesSequence;workbenchSession.page.taskListWidth=preferredListWidth;});
+
 
   const blank = (): Criterion => ({id: '', title: '', precondition: '', steps: '', expected: '', scope: 'both', required: true});
   async function load() {
@@ -197,8 +225,8 @@
   </div>
   {#if error}<p role="alert" class="error">{error}</p>{/if}
   {#if message}<p class="message" role="status">{message}</p>{/if}
-  <div class="ledger-layout" class:detail-open={mobileDetail}>
-    <section class="task-list" aria-label="任务列表"><small class="result-count">{filtered.length} 个结果</small>
+  <div class="ledger-layout" class:detail-open={mobileDetail} bind:clientWidth={layoutWidth} style:--task-list-width={`${listWidth}px`}>
+    <section class="task-list" id="task-ledger-list" aria-label="任务列表"><small class="result-count">{filtered.length} 个结果</small>
       <div class="task-rows">
         {#each filtered as task (task.id)}
           <button class="task-row" class:selected={selected?.id === task.id} aria-pressed={selected?.id === task.id} on:click={e => select(task, e.currentTarget)}>
@@ -210,14 +238,19 @@
         {/each}
       </div>
     </section>
+    <TaskListResizeHandle value={listWidth} max={maxListWidth} active={layoutWidth>700} onResize={value=>preferredListWidth=value}/>
     <aside class="task-detail" aria-label="任务详情" tabindex="-1">
       {#if selected && run}
         <button class="back quiet" on:click={back}>← 返回任务列表</button>
-        <TaskRunDetail task={selected} bind:runId bind:this={detail} onEditTask={() => editTask(selected)} onVerify={startVerification} onOpenChat={openChat}/>
+        <TaskRunDetail task={selected} bind:runId bind:this={detail} onEditTask={() => editTask(selected)} onVerify={startVerification} onOpenChat={openChat} {changes} {changesLoading} {changesOpen} onOpenChanges={openChanges}/>
       {:else}<div class="empty">选择任务查看执行记录</div>{/if}
     </aside>
   </div>
 </section>
+
+<AppSidePanel open={changesOpen&&!!run} title="代码变更" description={selected?.title??'所选执行的代码变更'} closeLabel="关闭代码变更" returnFocus={changesTrigger} onClose={()=>changesOpen=false}>
+  {#if run&&changes}<TaskRunChanges {run} {changes} {commits} loading={changesLoading} error={changesError}/>{/if}
+</AppSidePanel>
 
 <Dialog.Modal title={taskDraft ? '修改任务信息' : '新建任务'} class="ledger-dialog" bind:this={taskDialog} onCancel={e => { if (busy) e.preventDefault(); }}>
   <form on:submit|preventDefault={saveTask}><fieldset class="form-controls" disabled={busy}>

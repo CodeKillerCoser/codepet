@@ -55,7 +55,8 @@ mockIPC(async(command,args:any)=>{
  if(command==='codex_workbench_request')return args.request.op==='projects'?{projects:[],warnings:[]}:[];
  if(command!=='task_ledger_request')throw Error(`Unexpected ${command}`);
  if(args.request.op==='list')return structuredClone(tasks);
- if(args.request.op==='commit-files')return currentRun(base).agentWorkspace.relatedCommits.map(commit=>({commit,files:[{path:'committed-change.ts',changeType:'modified',staged:false,originalPath:null}],error:null}));
+ if(args.request.op==='openChat'){(window as any).__openedTaskChat=args.request.conversationId;return null;}
+ if(args.request.op==='commit-files')return (tasks.find(t=>t.id===args.request.taskId)?.runs.find(r=>r.id===args.request.runId)??currentRun(base)).agentWorkspace.relatedCommits.map(commit=>({commit,files:[{path:'committed-change.ts',changeType:'modified',staged:false,originalPath:null}],error:null}));
  if(args.request.op==='setup')return {...setupState};
  if(['update-task-run','edit-task','save-instructions'].includes(args.request.op)&&(window as any).__holdTaskSave)return new Promise((_,reject)=>{(window as any).__rejectTaskSave=()=>reject(Error('模拟保存失败'));});
  if(args.request.op==='save-instructions'){

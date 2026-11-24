@@ -15,6 +15,7 @@ const errors = [];
 try {
   const page = await browser.newPage({viewport: {width: 1280, height: 920}});
   page.on('pageerror', e => errors.push(e.message));
+  const closeChanges=async()=>{await page.getByRole('button',{name:'关闭代码变更',exact:true}).click();await page.locator('.app-side-panel').waitFor({state:'detached'});};
   const route = scenario => `http://127.0.0.1:1438/frontend/qa/task-ledger.html${scenario ? `?scenario=${scenario}` : ''}`;
   await page.goto(route()); await page.locator('.task-row').waitFor();
   for (const name of ['目标与方案', '工作区', '验收清单', '活动时间线']) {
@@ -32,9 +33,9 @@ try {
   await page.keyboard.press('End');
   assert.equal(await page.locator('.run-card').last().getAttribute('aria-selected'), 'true');
   await page.getByRole('button', {name: '查看变更', exact: true}).click();
-  assert.ok(await page.locator('.changed-file').count() > 0);
-  if(await page.locator('.commit-changes').count())await page.getByText('committed-change.ts',{exact:true}).first().waitFor();
-  await page.getByRole('button', {name: '查看变更', exact: true}).click();
+  assert.ok(await page.locator('.change-file').count() > 0);
+  if(await page.locator('.commit-changes').count()){await page.locator('.commit-changes>summary').first().click();await page.getByText('committed-change.ts',{exact:true}).first().waitFor();}
+  await closeChanges();
 
   for (const mode of ['light', 'dark']) {
     await page.evaluate(mode => window.__setTaskTheme(mode), mode);
@@ -129,7 +130,7 @@ try {
         assert.equal(title.title, title.text, 'Full title is retained');
       }
       await page.locator('.task-row').first().click();
-      const detail = page.locator('.task-detail');
+      const detail = page.locator('.task-run-scroll');
       const assertFits = async () => {
         const bounds = await detail.evaluate(e => ({client:e.clientWidth,scroll:e.scrollWidth,bar:getComputedStyle(e).scrollbarWidth,webkit:getComputedStyle(e,'::-webkit-scrollbar').display}));
         assert.ok(bounds.scroll <= bounds.client + 1, `${engine}/${mode}/${width} detail overflow: ${JSON.stringify(bounds)}`);
@@ -139,11 +140,11 @@ try {
       await assertFits();
       await page.getByRole('button', {name: '查看变更', exact: true}).click();
       await assertFits();
-      await page.getByRole('button', {name: '查看变更', exact: true}).click();
+      await closeChanges();
       if (width === 1280) {
         await detail.evaluate(e => {e.scrollTop = 0;}); await detail.focus();
         await page.keyboard.press('PageDown');
-        await page.waitForFunction(() => document.querySelector('.task-detail').scrollTop > 0);
+        await page.waitForFunction(() => document.querySelector('.task-run-scroll').scrollTop > 0);
       }
       await page.screenshot({path:resolve(output, `compact-${mode}-${width}.png`),fullPage:true});
     }
@@ -180,7 +181,11 @@ try {
     await app.screenshot({path: resolve(output, `app-shell-${mode}-1143.png`)});
     await app.setViewportSize({width: 1143, height: 520});
     const top = (await app.locator('.content-navigation').boundingBox()).y;
-    assert.ok(await app.locator('.content').evaluate(e => { e.scrollTop = e.scrollHeight; return e.scrollTop; }) > 0);
+    await app.locator('.task-row').first().click();
+    const infoTop=(await app.locator('.task-info').boundingBox()).y;
+    assert.ok(await app.locator('.task-run-scroll').evaluate(e => { e.scrollTop = e.scrollHeight; return e.scrollTop; }) > 0,'Execution body scrolls in short windows');
+    assert.equal((await app.locator('.task-info').boundingBox()).y,infoTop);
+    assert.equal(await app.locator('.content').evaluate(e=>e.scrollTop),0);
     assert.equal((await app.locator('.content-navigation').boundingBox()).y, top);
     await app.setViewportSize({width: 1143, height: 949});
   }
@@ -209,9 +214,11 @@ try {
   for (const empty of [false,true]) {
     await page.goto(route('owned-files'+(empty?'&emptyFiles=1':'')));await page.locator('.task-row').waitFor();
     await page.getByRole('button',{name:'查看变更',exact:true}).click();
-    await page.getByText(empty?'本次执行没有代码变更':'frontend/feature.svelte',{exact:true}).waitFor();
-    await page.getByText('当前没有未提交文件',{exact:true}).waitFor();
+    if(empty)await page.getByText('本次执行没有代码变更',{exact:true}).waitFor();
+    else await page.locator('.change-file[title="frontend/feature.svelte"]').waitFor();
+    await page.locator('.commit-changes>summary').first().click();
     await page.getByText('committed-change.ts',{exact:true}).waitFor();
+    await closeChanges();
   }
   console.log(`Task UI passed (${engine}): run cards, four groups, per-item results, prompt editing/reset/conflict, focus, themes, responsive layout and fixed navigation.`);
 } finally { await browser.close(); await server.close(); }

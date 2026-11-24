@@ -1,6 +1,7 @@
 /* Task surfaces share the main window theme and the app-level modal host. */
 .task-ledger {
   width: 100%;
+  height:100%;min-height:0;display:flex;flex-direction:column;
   min-width: 0;
   color: var(--wb-text);
   font: 13px/1.6 var(--font-family-ui);
@@ -52,7 +53,7 @@
   overflow: hidden;
 }
 .task-ledger .text-toggle { font-size: 10px; min-height: 24px; padding: 2px 0; }
-.task-ledger .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.task-ledger .toolbar { flex:none; display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .task-ledger .filters {
   flex: 0 1 544px;
   min-width: 0;
@@ -92,13 +93,14 @@
 .task-ledger summary::-webkit-details-marker { display: none; }
 .task-ledger .ledger-layout {
   display: grid;
-  grid-template-columns: minmax(230px, .8fr) minmax(0, 1.4fr);
-  min-height: 440px;
+  grid-template-columns: minmax(0,var(--task-list-width,280px)) 8px minmax(0,1fr);
+  grid-template-rows:minmax(0,1fr);
+  flex:1;min-height:0;
   border-top: 1px solid var(--wb-border);
 }
-.task-ledger .task-list { min-width: 0; border-right: 1px solid var(--wb-border); padding-right: 10px; }
+.task-ledger .task-list { min-width:0;min-height:0;display:flex;flex-direction:column;padding-right:8px;overflow:hidden; }
 .task-ledger .result-count { display: block; padding: 10px 10px 7px; }
-.task-ledger .task-rows { max-height: calc(100dvh - 240px); overflow: auto; }
+.task-ledger .task-rows { flex:1;min-height:0;overflow-y:auto;overflow-x:hidden; }
 .task-ledger .task-row {
   display: flex;
   flex-direction: column;
@@ -131,9 +133,7 @@
 .task-ledger .task-detail {
   min-width: 0;
   padding: 16px 0 12px 24px;
-  max-height: calc(100dvh - 190px);
-  overflow-x: hidden;
-  overflow-y: auto;
+  min-height:0;overflow:hidden;
   scrollbar-width: none;
   scrollbar-gutter: auto;
 }
@@ -175,10 +175,11 @@
   .task-ledger .toolbar-actions { margin-left: auto; }
 }
 @container (max-width: 700px) {
-  .task-ledger .ledger-layout { grid-template-columns: minmax(0, 1fr); min-height: 360px; }
+  .task-ledger .ledger-layout { grid-template-columns:minmax(0,1fr);min-height:0; }
+  .task-ledger .task-list-resizer {display:none;}
   .task-ledger .task-list { border: 0; padding: 0; }
   .task-ledger .task-rows { max-height: none; }
-  .task-ledger .task-detail { display: none; max-height: none; padding: 14px 0; }
+  .task-ledger .task-detail { display:none;padding:14px 0 0; }
   .task-ledger .ledger-layout.detail-open .task-detail { display: block; }
   .task-ledger .ledger-layout.detail-open .task-list { display: none; }
   .task-ledger .back { display: block; padding-left: 0; margin-bottom: 10px; }
