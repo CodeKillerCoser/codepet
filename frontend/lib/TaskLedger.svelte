@@ -22,6 +22,12 @@
   const preferences=workbenchSession.page.taskLedger;
   let tasks:Task[]=[],query=preferences.query,project=preferences.project,status=preferences.status,selectedId='',runId='';
   let view=preferences.view,sort=preferences.sort;
+  let availableWidth=0;
+  $: boardFits=availableWidth>=960;
+  $: if(availableWidth>0&&boardFits!==preferences.boardFits){
+    preferences.boardFits=boardFits;
+    view=boardFits?'board':'table';
+  }
   let collection:TaskCollection,lastTaskId='';
   let runPanelOpen=false, panelView:'run'|'changes'='run', runTrigger:HTMLElement|undefined;
   let runContent:TaskRunContent;
@@ -203,7 +209,7 @@
   {@render checklistEditor()}
 {/snippet}
 
-<section class="task-ledger" aria-label="任务与验收">
+<section class="task-ledger" aria-label="任务与验收" bind:clientWidth={availableWidth}>
   <div class="toolbar" class:task-toolbar={!!selected}>
     {#if selected}
       <button class="quiet collection-back" disabled={busy} on:click={back} aria-label="返回任务列表"><ArrowLeft size={16}/>全部任务</button>
@@ -211,7 +217,7 @@
     {:else}
       <div class="collection-heading"><h3>全部任务</h3><span>{filtered.length}</span></div>
       <div class="view-switch" role="group" aria-label="任务视图">
-        <button class:active={view==='board'} aria-pressed={view==='board'} on:click={()=>view='board'}><Columns3 size={15}/>看板</button>
+        <button class:active={view==='board'} aria-pressed={view==='board'} disabled={!boardFits} title={boardFits?'看板':'内容区宽度不足，已自动使用表格'} on:click={()=>view='board'}><Columns3 size={15}/>看板</button>
         <button class:active={view==='table'} aria-pressed={view==='table'} on:click={()=>view='table'}><Table2 size={15}/>表格</button>
       </div>
       <div class="filters" role="search" aria-label="筛选任务">

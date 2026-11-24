@@ -26,7 +26,7 @@ export function createWorkbenchSession(api = workbenchRequest) {
   let initialization: Promise<void> | undefined;
   let saveQueue = Promise.resolve();
   let sequence = 0;
-  const page = { taskListWidth:280, taskListCollapsed:false, taskLedger:{view:'board' as 'board'|'table',sort:'updated_desc' as 'updated_desc'|'updated_asc'|'title',query:'',project:'',status:'all'}, query: '', filterProjects: [] as string[], related: false, period: 'all', date: '', status: 'all' };
+  const page = { taskListWidth:280, taskListCollapsed:false, taskLedger:{view:'board' as 'board'|'table',boardFits:undefined as boolean|undefined,sort:'updated_desc' as 'updated_desc'|'updated_asc'|'title',query:'',project:'',status:'all'}, query: '', filterProjects: [] as string[], related: false, period: 'all', date: '', status: 'all' };
 
   function persist() {
     const projectIds = [...get(state).draft];

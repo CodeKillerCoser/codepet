@@ -21,6 +21,20 @@ try{
  await goto('dense',false);
  assert.equal(await page.locator('.board-task').count(),8,'A card is a Task, never an individual TaskRun');
  assert.deepEqual(await page.locator('.column-count').allTextContents(),['2','2','2','2'],'Grouping uses the current run only');
+ const assertSingleRow=async()=>{
+  const tops=await page.locator('.board-column').evaluateAll(es=>es.map(e=>e.getBoundingClientRect().top));
+  assert.equal(tops.length,4);assert.ok(tops.every(top=>Math.abs(top-tops[0])<1),'All four states stay on one row');
+ };
+ await assertSingleRow();
+ // The available content width matters, including shell navigation/panel changes.
+ await page.locator('.task-ledger').evaluate(e=>e.style.width='959px');
+ await page.getByRole('table').waitFor();assert.ok(await page.getByRole('button',{name:'看板',exact:true}).isDisabled());
+ await page.getByLabel('搜索任务',{exact:true}).fill('菜单');
+ await page.locator('.task-ledger').evaluate(e=>e.style.width='960px');
+ await page.locator('.task-board').waitFor();await assertSingleRow();
+ assert.equal(await page.getByLabel('搜索任务',{exact:true}).inputValue(),'菜单','Auto switching preserves filters');
+ await page.getByLabel('搜索任务',{exact:true}).fill('');
+ await page.locator('.task-ledger').evaluate(e=>e.style.removeProperty('width'));
  await page.getByRole('button',{name:'表格',exact:true}).click();await page.getByRole('table').waitFor();
  assert.equal(await page.locator('.task-table tbody tr').count(),8);
  assert.equal(await page.locator('.task-table tbody tr').first().locator('.runs-column').innerText(),'2');
@@ -35,8 +49,13 @@ try{
   await page.evaluate(mode=>window.__setTaskTheme(mode),mode);
   for(const width of [1440,1280,820,390]){
    await page.setViewportSize({width,height:860});
-   for(const name of ['看板','表格']){
+   const fits=await page.locator('.task-ledger').evaluate(e=>e.clientWidth>=960);
+   await page.waitForFunction(disabled=>[...document.querySelectorAll('.view-switch button')].find(e=>e.textContent.trim()==='看板')?.disabled===disabled,!fits);
+   if(!fits)await page.locator('.task-table').waitFor();
+   assert.equal(await page.getByRole('button',{name:'看板',exact:true}).isDisabled(),!fits);
+   for(const name of fits?['看板','表格']:['表格']){
     await page.getByRole('button',{name,exact:true}).click();
+    if(name==='看板')await assertSingleRow();
     assert.equal(await page.locator('.task-row').count(),8);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Neither view overflows the main page');
     assert.ok(await page.locator('.task-collection').evaluate(e=>e.scrollWidth<=e.clientWidth+1));
@@ -45,6 +64,8 @@ try{
   }
  }
  await page.setViewportSize({width:1440,height:920});
+ await page.locator('.task-board').waitFor();
+ await page.getByRole('button',{name:'表格',exact:true}).click();
  await page.locator('.table-task').first().focus();await page.keyboard.press('Enter');await page.locator('.task-heading h3').waitFor();
  await page.getByRole('button',{name:'返回任务列表',exact:true}).click();assert.ok(await page.locator('.table-task').first().evaluate(e=>e===document.activeElement),'Returning focuses the correct task in the same view');
  await goto('design');

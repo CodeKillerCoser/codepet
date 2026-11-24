@@ -49,6 +49,12 @@ try{
  }
  const app=await browser.newPage({viewport:{width:1440,height:760}});app.on('pageerror',e=>errors.push(e.message));
  await app.goto(`http://127.0.0.1:${port}/frontend/qa/main-window.html?taskOverflow=1`);await app.getByRole('tab',{name:'任务与验收',exact:true}).click();await app.locator('.task-row').nth(5).waitFor();
+ await app.setViewportSize({width:1180,height:760});await app.locator('.task-table').waitFor();
+ await app.getByRole('button',{name:'收起导航栏',exact:true}).click();await app.locator('.task-board').waitFor();
+ const columnTops=await app.locator('.board-column').evaluateAll(es=>es.map(e=>e.getBoundingClientRect().top));
+ assert.equal(columnTops.length,4);assert.ok(columnTops.every(top=>Math.abs(top-columnTops[0])<1));
+ await app.getByRole('button',{name:'展开导航栏',exact:true}).click();await app.locator('.task-table').waitFor();
+ await app.setViewportSize({width:1440,height:760});await app.locator('.task-board').waitFor();
  await app.locator('.task-row').first().click();await app.locator('.run-card').first().click();await app.locator('.task-run-panel').waitFor();
  const infoTop=(await app.locator('.task-info').boundingBox()).y,navTop=(await app.locator('.content-navigation').boundingBox()).y;
  await app.locator('.panel-body').evaluate(e=>e.scrollTop=e.scrollHeight);assert.equal((await app.locator('.task-info').boundingBox()).y,infoTop);assert.equal((await app.locator('.content-navigation').boundingBox()).y,navTop);assert.equal(await app.locator('.content').evaluate(e=>e.scrollTop),0);
