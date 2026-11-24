@@ -1,14 +1,16 @@
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
 import { createServer } from 'vite';
 
-const output = resolve('artifacts/codex-workbench-qa');
+const engine = process.env.CODEPET_QA_ENGINE ?? 'chromium';
+assert.ok(['chromium', 'webkit'].includes(engine));
+const output = resolve('artifacts/codex-workbench-qa', engine === 'webkit' ? 'webkit' : '.');
 await mkdir(output, { recursive: true });
 const server = await createServer({ server: { host: '127.0.0.1', port: 1437, strictPort: true } });
 await server.listen();
-const browser = await chromium.launch({ headless: true });
+const browser = await ({ chromium, webkit })[engine].launch({ headless: true });
 try {
   const page = await browser.newPage({ viewport: { width: 1200, height: 955 }, timezoneId: 'Asia/Shanghai' });
   const errors = [];
@@ -18,12 +20,34 @@ try {
     if (await page.locator('.more-filters').getAttribute('open') === null) await more().click();
     await page.getByRole('button', { name: '重置筛选', exact: true }).click();
   }
-  const closeDetail = () => page.getByRole('button', { name: '关闭工作树详情', exact: true }).click();
+  const settle = () => page.evaluate(async () => { await Promise.all(document.getAnimations().filter(a => a.effect?.getComputedTiming().endTime !== Infinity).map(a => a.finished.catch(() => {}))); });
+  const closeDetail = async () => { await page.getByRole('button', { name: '关闭工作树详情', exact: true }).click(); await settle(); };
   const noOverflow = () => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
   const surface = selector => page.locator(selector).evaluate(element => {
     const style = getComputedStyle(element);
     return { background: style.backgroundColor, border: style.borderTopColor, radius: style.borderTopLeftRadius };
   });
+  async function previewIsTopWindow() {
+    const facts = await page.locator('.workbench-preview').evaluate(preview => {
+      const rect = preview.getBoundingClientRect(), panel = document.querySelector('.app-side-panel');
+      return { hit: preview.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)),
+        focused: preview.contains(document.activeElement),
+        portalled: preview.parentElement.classList.contains('app-window-host'),
+        aboveDrawer: panel?.getAttribute('data-mode') !== 'drawer' || Number(getComputedStyle(preview).zIndex) > Number(getComputedStyle(panel).zIndex) };
+    });
+    assert.deepEqual(facts, { hit: true, focused: true, portalled: true, aboveDrawer: true }, 'The foreground preview receives clicks and focus above its drawer');
+  }
+  const startMotion = () => page.evaluate(() => {
+    window.__panelFrames = []; window.__trackPanel = true;
+    function record() {
+      const panel = document.querySelector('.app-side-panel'), content = document.querySelector('.content-pane');
+      if (panel) window.__panelFrames.push({ x: panel.getBoundingClientRect().x, contentWidth: content?.getBoundingClientRect().width });
+      if (window.__trackPanel) requestAnimationFrame(record);
+    }
+    requestAnimationFrame(record);
+  });
+  const finishMotion = () => page.evaluate(() => { window.__trackPanel = false; return window.__panelFrames; });
+  function moved(frames, field, minimum) { return Math.max(...frames.map(f => f[field])) - Math.min(...frames.map(f => f[field])) > minimum; }
   async function sharedContentSurface() {
     const canvas = await surface('.content-pane');
     assert.equal((await surface('.workbench')).background, canvas.background, 'Workbench uses the same canvas as other App pages');
@@ -38,7 +62,7 @@ try {
   assert.equal(await page.locator('.worktree-row').count(), 0);
   assert.equal(await page.locator('.detail').count(), 0, 'No permanent or automatic details pane');
   assert.equal(await page.getByText('检查范围', { exact: true }).count(), 0);
-  await page.screenshot({ path: resolve(output, 'initial-light.png'), fullPage: true });
+  await settle(); await page.screenshot({ path: resolve(output, 'initial-light.png'), fullPage: true });
   await more().click();
   await page.getByRole('button', { name: '数据来源', exact: true }).click();
   await page.getByText('/fixture/.codex', { exact: true }).waitFor();
@@ -80,23 +104,25 @@ try {
   assert.equal(await page.locator('.worktree-row').count(), 0);
   await reset();
   const mainRow = page.locator('.row-select').filter({ hasText: 'codex/history-workbench' });
-  await mainRow.click();
+  await mainRow.click(); await settle();
   await page.locator('.app-side-panel').waitFor();
+  await settle();
   assert.ok(await page.locator('.panel-header h3').evaluate(element => element === document.activeElement));
   const drawerBox = await page.locator('.app-side-panel').boundingBox();
   assert.ok(Math.abs(drawerBox.x + drawerBox.width - 1200) < 2, 'Framework column anchors to the window edge');
   assert.equal(await page.locator('.app-side-panel').getAttribute('data-mode'), 'column');
   assert.equal(await page.locator('.workbench .app-side-panel').count(), 0, 'Panel is outside the feature page');
   const retryRow = page.locator('.row-select').filter({ hasText: 'codex/provider-retry' });
-  await retryRow.click();
+  await retryRow.click(); await settle();
   assert.equal(await page.locator('.app-side-panel').count(), 1, 'Selecting another row replaces the framework content');
   assert.equal(await page.locator('.panel-header h3').innerText(), 'codex/provider-retry');
   await page.getByLabel('搜索工作树与对话').focus();
   assert.ok(await page.getByLabel('搜索工作树与对话').evaluate(element => element === document.activeElement), 'Desktop third column does not trap focus');
-  await mainRow.click();
+  await mainRow.click(); await settle();
   await page.getByRole('button', { name: '预览 src/history.ts', exact: true }).click();
   await page.getByRole('button', { name: '暂存区', exact: true }).click();
   await page.locator('.cm-mergeView').waitFor();
+  await previewIsTopWindow();
   assert.ok((await page.locator('.cm-mergeView').innerText()).includes('index'));
   await page.waitForTimeout(180);
   assert.ok(!(await page.locator('.cm-mergeView').innerText()).includes('workspace'));
@@ -114,7 +140,7 @@ try {
     assert.equal(await page.locator('.workbench-preview').evaluate(element => getComputedStyle(element).colorScheme), mode);
     assert.equal(await editor.evaluate(element => element === document.querySelector('.cm-editor')), true);
     assert.equal(await page.locator('.cm-editor').first().evaluate(element => getComputedStyle(element).color), await page.locator('.workbench').evaluate(element => getComputedStyle(element).color));
-    await page.screenshot({ path: resolve(output, `preview-${mode}.png`) });
+    await settle(); await page.screenshot({ path: resolve(output, `preview-${mode}.png`) });
     if (mode === 'dark') assert.notEqual(await page.locator('.workbench').evaluate(element => getComputedStyle(element).backgroundColor), lightBg);
   }
   await page.setViewportSize({ width: 390, height: 955 });
@@ -123,6 +149,8 @@ try {
   await page.locator('.app-side-panel[data-mode="drawer"]').waitFor();
   await page.getByRole('button', { name: '预览 src/history.ts', exact: true }).click();
   await page.locator('.cm-mergeView').waitFor();
+  await previewIsTopWindow();
+  await settle(); await page.screenshot({ path: resolve(output, 'preview-390.png') });
   await page.keyboard.press('Escape');
   await page.locator('.workbench-preview').waitFor({ state: 'hidden' });
   assert.ok(await page.locator('.app-side-panel[data-mode="drawer"]').isVisible(), 'Nested preview closes before the framework drawer');
@@ -141,20 +169,20 @@ try {
   assert.ok(await mainRow.evaluate(element => element === document.activeElement));
   for (const mode of ['light', 'dark']) {
     await page.evaluate(mode => window.__setWorkbenchTheme(mode), mode);
-    await page.screenshot({ path: resolve(output, `theme-${mode}.png`), fullPage: true });
-    await mainRow.click();
-    await page.screenshot({ path: resolve(output, `theme-${mode}-detail.png`) });
+    await settle(); await page.screenshot({ path: resolve(output, `theme-${mode}.png`), fullPage: true });
+    await mainRow.click(); await settle();
+    await settle(); await page.screenshot({ path: resolve(output, `theme-${mode}-detail.png`) });
     await page.setViewportSize({ width: 390, height: 955 });
     await page.locator('.app-side-panel[data-mode="drawer"]').waitFor();
     assert.ok(await page.locator('.detail').isVisible());
     assert.ok(await page.locator('.panel-header h3').evaluate(element => element === document.activeElement));
     await page.keyboard.press('Tab');
     assert.ok(await page.locator('.app-side-panel').evaluate(element => element.contains(document.activeElement)), 'Focus stays inside the drawer');
-    await page.screenshot({ path: resolve(output, `theme-${mode}-390-detail.png`), fullPage: true });
+    await settle(); await page.screenshot({ path: resolve(output, `theme-${mode}-390-detail.png`), fullPage: true });
     await page.keyboard.press('Escape');
     await page.locator('.app-side-panel').waitFor({ state: 'hidden' });
     assert.ok(await mainRow.evaluate(element => element === document.activeElement));
-    await page.screenshot({ path: resolve(output, `theme-${mode}-390.png`), fullPage: true });
+    await settle(); await page.screenshot({ path: resolve(output, `theme-${mode}-390.png`), fullPage: true });
     assert.ok(await noOverflow());
     await page.setViewportSize({ width: 1200, height: 955 });
   }
@@ -171,7 +199,7 @@ try {
   await reset();
   for (const width of [1440, 801, 780, 460, 390]) {
     await page.setViewportSize({ width, height: 955 });
-    await page.screenshot({ path: resolve(output, `width-${width}.png`), fullPage: true });
+    await settle(); await page.screenshot({ path: resolve(output, `width-${width}.png`), fullPage: true });
     assert.ok(await noOverflow(), `No overflow at ${width}`);
     await page.getByLabel('搜索工作树与对话').focus();
     assert.ok(await page.getByLabel('搜索工作树与对话').evaluate(element => element === document.activeElement));
@@ -194,7 +222,7 @@ try {
   await page.getByLabel('提交状态', { exact: true }).selectOption('pushed');
   const scanTime = await page.locator('.scan-status').innerText();
   const callsBeforeReturn = await page.evaluate(() => window.__workbenchCalls.length);
-  await mainRow.click();
+  await mainRow.click(); await settle();
   await remountWorkbench();
   assert.equal(await page.locator('.worktree-row').count(), 1);
   assert.equal(await page.getByLabel('搜索工作树与对话').inputValue(), 'history-workbench');
@@ -204,7 +232,7 @@ try {
   assert.equal(await page.locator('.overview button').nth(2).locator('strong').innerText(), '0', 'Rechecked facts survive remount');
   assert.equal(await page.locator('.app-side-panel').count(), 0, 'Only transient details are cleared');
   assert.equal(await page.evaluate(() => window.__workbenchCalls.length), callsBeforeReturn, 'Returning performs no catalog load or scan');
-  await mainRow.click();
+  await mainRow.click(); await settle();
   assert.equal(await page.getByRole('button', { name: '预览 src/history.ts', exact: true }).count(), 0, 'Rechecked changes remain cleared');
   await closeDetail();
   await reset();
@@ -216,37 +244,70 @@ try {
   assert.equal((await page.evaluate(() => window.__workbenchCalls)).filter(request => request.op === 'scan').length, 2);
   assert.equal((await page.evaluate(() => window.__workbenchCalls)).filter(request => request.op === 'cancel').length, 0);
   await remountWorkbench();
-  await mainRow.click();
+  await mainRow.click(); await settle();
   await page.getByRole('button', { name: '预览 src/history.ts', exact: true }).click();
   await page.locator('.cm-mergeView').waitFor();
   await page.keyboard.press('Escape');
   await closeDetail();
+  await startMotion();
+  await mainRow.click(); await settle();
+  assert.ok(moved(await finishMotion(), 'x', 100), 'The narrow drawer slides in from the edge');
+  await startMotion();
+  await closeDetail();
+  assert.ok(moved(await finishMotion(), 'x', 100), 'The narrow drawer slides out before unmounting');
+  await mainRow.click(); await settle();
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.activeElement?.classList.contains('row-select'));
+  await page.keyboard.press('Enter'); await settle();
+  assert.equal(await page.locator('.app-side-panel').count(), 1, 'A drawer can reopen during its exit animation');
+  await closeDetail();
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await mainRow.click();
+  assert.equal(await page.locator('.app-side-panel').evaluate(e => getComputedStyle(e).animationName), 'none');
+  await closeDetail();
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.goto('http://127.0.0.1:1437/frontend/qa/main-window.html');
   await page.getByRole('button', { name: '确认', exact: true }).click();
   await page.locator('.worktree-row').waitFor();
   await sharedContentSurface();
-  await page.screenshot({ path: resolve(output, 'app-shell.png') });
+  await settle(); await page.screenshot({ path: resolve(output, 'app-shell.png') });
   assert.ok(await page.locator('.content').evaluate(element => element.clientHeight > 400));
-  await page.locator('.row-select').click();
+  await startMotion();
+  await page.locator('.row-select').click(); await settle();
+  const openingFrames = await finishMotion();
+  assert.ok(moved(openingFrames, 'contentWidth', 100), 'The main content gives way gradually as the third column expands');
+  assert.ok(moved(openingFrames, 'x', 2), 'The column slides into view');
+  const titleBox = await page.locator('.panel-header h3').boundingBox(), closeBox = await page.getByRole('button', { name: '关闭工作树详情', exact: true }).boundingBox();
+  assert.ok(titleBox.x < closeBox.x, 'Consumer title sits left of the close button');
+  const cardBox = await page.locator('.panel-body').boundingBox(), headerBox = await page.locator('.panel-header').boundingBox();
+  assert.ok(cardBox.y >= headerBox.y + headerBox.height, 'The rounded body card is separate from the title area');
   const shellDrawer = await page.locator('.app-side-panel').boundingBox();
   assert.ok(Math.abs(shellDrawer.x + shellDrawer.width - 1192) < 2, 'App framework column aligns with the shell inset');
   const hostParentIsShell = await page.locator('.app-side-panel').evaluate(element => element.parentElement.classList.contains('app-shell'));
   assert.ok(hostParentIsShell, 'Third column is a direct App framework child');
   const columnSurface = await sharedContentSurface();
-  assert.deepEqual(await surface('.app-side-panel'), columnSurface, 'Third column and main content share background, border and radius');
-  await page.screenshot({ path: resolve(output, 'app-shell-third-column.png') });
+  assert.deepEqual(await surface('.app-side-panel .panel-body'), columnSurface, 'Third column and main content share background, border and radius');
+  await settle(); await page.screenshot({ path: resolve(output, 'app-shell-third-column.png') });
   await page.getByRole('button', { name: '收起导航栏', exact: true }).click();
   await page.waitForTimeout(240);
   assert.ok((await page.locator('.content-pane').boundingBox()).width > 750, 'The third column coexists with collapsed navigation');
   await page.getByRole('button', { name: '展开导航栏', exact: true }).click();
   await page.waitForTimeout(240);
   const contentBeforeClose = await page.locator('.content-pane').boundingBox();
+  await startMotion();
   await closeDetail();
+  assert.ok(moved(await finishMotion(), 'contentWidth', 100), 'Closing the column releases its width gradually');
+  await settle();
   const contentAfterClose = await page.locator('.content-pane').boundingBox();
   assert.ok(contentAfterClose.width > contentBeforeClose.width + 350, 'Closing releases the framework column width');
-  await page.locator('.row-select').click();
+  await page.locator('.row-select').click(); await settle();
+  await page.getByRole('button', { name: '关闭工作树详情', exact: true }).click();
+  await page.evaluate(() => document.querySelector('.row-select').click());
+  await settle();
+  assert.equal(await page.locator('.app-side-panel').count(), 1, 'Reopening a closing column leaves one usable panel');
   await page.getByRole('button', { name: '设置', exact: true }).click();
+  await settle();
   assert.equal(await page.locator('.app-side-panel').count(), 0, 'Route navigation clears the global panel');
   assert.deepEqual(await surface('.content-pane'), columnSurface, 'Workbench and settings keep the same App canvas');
   assert.ok(!(await page.locator('.app-shell').getAttribute('class')).includes('has-side-panel-column'));
@@ -263,17 +324,17 @@ try {
   await page.waitForFunction(() => getComputedStyle(document.querySelector('.workbench')).colorScheme === 'light');
   await page.emulateMedia({ colorScheme: 'dark' });
   await page.waitForFunction(() => getComputedStyle(document.querySelector('.workbench')).colorScheme === 'dark');
-  await page.screenshot({ path: resolve(output, 'app-shell-system-dark.png') });
+  await settle(); await page.screenshot({ path: resolve(output, 'app-shell-system-dark.png') });
   await page.getByRole('button', { name: '确认', exact: true }).click();
-  await page.locator('.row-select').click();
+  await page.locator('.row-select').click(); await settle();
   const darkSurface = await sharedContentSurface();
-  assert.deepEqual(await surface('.app-side-panel'), darkSurface, 'Dark third column matches the dark main content surface');
-  await page.screenshot({ path: resolve(output, 'app-shell-third-column-dark.png') });
+  assert.deepEqual(await surface('.app-side-panel .panel-body'), darkSurface, 'Dark third column matches the dark main content surface');
+  await settle(); await page.screenshot({ path: resolve(output, 'app-shell-third-column-dark.png') });
   await closeDetail();
   await page.emulateMedia({ colorScheme: 'light' });
   await page.waitForFunction(() => getComputedStyle(document.querySelector('.workbench')).colorScheme === 'light');
   assert.deepEqual(errors, []);
-  console.log('Workbench UI passed: compact layout, source explanations, filtering/recheck, nested preview races/focus, archive/search/pagination, App framework column/ownership/navigation, drawer dismissal/focus, responsive and system themes.');
+  console.log(`Workbench UI passed (${engine}): global modal hit-testing/layers/focus, separate title and body card, column/drawer entry/exit/reopening, reduced motion, scan persistence, responsive layout and themes.`);
 } finally {
   await browser.close();
   await server.close();

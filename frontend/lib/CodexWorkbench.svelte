@@ -17,8 +17,8 @@
   let { query, filterProjects, related, period, date, status } = retained;
   let selectedId = '', archived = false;
   let progress = { checked: 0, total: 0, phase: 'history' }, rechecking = new Set<string>(), actionMessage = '', actionError = '';
-  let warningDialog: HTMLDialogElement, previewOpen = false, previewElement: HTMLDivElement, previewChange: Change | null = null, previewRow: Worktree | null = null, version = 'workspace', previewError = '', previewLoading = false, previewSequence = 0;
-  let sourceInfo: SourceInfo | undefined, sourceDialog: HTMLDialogElement;
+  let warningDialog: Dialog.ModalHandle, previewOpen = false, previewElement: HTMLDivElement, previewChange: Change | null = null, previewRow: Worktree | null = null, version = 'workspace', previewError = '', previewLoading = false, previewSequence = 0;
+  let sourceInfo: SourceInfo | undefined, sourceDialog: Dialog.ModalHandle;
   let detailOpen = false, moreOpen = false, selectedButton: HTMLButtonElement | undefined;
   let chatQuery = '', chatLimit = 30;
   let alive = true;
@@ -42,7 +42,7 @@
     void tick().then(() => projectInput?.focus({ preventScroll: true }));
   }
   function toggleProject(id: string) { updateProjectSelection(draft.includes(id) ? draft.filter(p => p !== id) : [...draft, id]); }
-  function retainProjectSearchFocus(event: PointerEvent) {
+  function retainPopupFocus(event: PointerEvent) {
     // macOS WebKit moves focus to the ancestor section before a button's click.
     // Keep this popup mounted until selection, including touch/pen activation.
     if (event.button === 0) event.preventDefault();
@@ -90,9 +90,9 @@
         {#if pickerOpen}
           <div class="project-options" role="group" aria-label="项目选项">
             {#each projects.filter(p => !draft.includes(p.id) && p.name.toLowerCase().includes(projectSearch.toLowerCase())) as p}
-              <button on:pointerdown={retainProjectSearchFocus} on:click={() => toggleProject(p.id)}>{p.name}<small>{p.roots.join(' · ')}</small></button>
+              <button on:pointerdown={retainPopupFocus} on:click={() => toggleProject(p.id)}>{p.name}<small>{p.roots.join(' · ')}</small></button>
             {:else}<p>没有其他匹配项目</p>{/each}
-            {#if draft.length}<button on:pointerdown={retainProjectSearchFocus} on:click={() => updateProjectSelection([])}>清空选择</button>{/if}
+            {#if draft.length}<button on:pointerdown={retainPopupFocus} on:click={() => updateProjectSelection([])}>清空选择</button>{/if}
           </div>
         {/if}
       </div>
@@ -117,7 +117,7 @@
           {#if period === 'date'}<input type="date" aria-label="起始日期" bind:value={date}/>{/if}
           <select aria-label="提交状态" bind:value={status}><option value="all">全部状态</option><option value="dirty">未提交</option><option value="unpushed">未推送</option><option value="pushed">无待推送提交</option><option value="clean">干净 · 无上游</option><option value="error">读取失败</option></select>
           <details class="more-filters" bind:open={moreOpen}
-            on:focusout={(event) => {if (!event.currentTarget.contains(event.relatedTarget as Node)) moreOpen = false;}}><summary aria-label="更多筛选与说明" title="更多筛选与说明" class:active={related}><SlidersHorizontal size={16}/></summary><div>
+            on:focusout={(event) => {if (!event.currentTarget.contains(event.relatedTarget as Node)) moreOpen = false;}}><summary aria-label="更多筛选与说明" title="更多筛选与说明" class:active={related}><SlidersHorizontal size={16}/></summary><div role="group" aria-label="更多筛选选项" on:pointerdown={retainPopupFocus}>
             <label class="check"><input type="checkbox" bind:checked={related}/>仅有关联对话</label>
             <button on:click={() => {reset(); moreOpen = false;}}>重置筛选</button>
             <button on:click={() => {moreOpen = false; sourceDialog.showModal();}}>数据来源</button>
@@ -161,14 +161,14 @@
         {#if actionError}<p class="error" role="alert">{actionError}</p>{/if}
       </aside>
 </AppSidePanel>
-<dialog bind:this={sourceDialog} class="wb-dialog source-dialog"><header><h3>数据来源与检查范围</h3><button aria-label="关闭数据来源" on:click={() => sourceDialog.close()}>×</button></header>
+<Dialog.Modal title="数据来源与检查范围" bind:this={sourceDialog} class="wb-dialog source-dialog"><header><h3>数据来源与检查范围</h3><button aria-label="关闭数据来源" on:click={() => sourceDialog.close()}>×</button></header>
   <dl><dt>项目</dt><dd>读取 Codex 保存的项目与根目录。{sourceInfo?.projectCatalog === 'globalState' ? '当前使用本地工作目录列表作为后备来源。' : '优先使用 Codex 项目数据库。'}</dd>
   <dt>工作树与 Git 状态</dt><dd>从所选项目执行本地 Git 只读检查。未提交是文件条目数；未推送是相对本地上游引用的提交数，不执行 fetch。单棵重检只更新 Git 状态；新增工作树或对话需要重新扫描。</dd>
   <dt>关联对话</dt><dd>读取 Codex 的标题索引、会话数据库和后备会话头。按工作目录或其 Git 顶层关联；数量不是任务数或完成度。活动时间取关联主对话的最新更新时间，包含归档。</dd>
   <dt>本次数据目录</dt><dd>{#if sourceInfo}<span>Codex</span><code>{sourceInfo.codexHome}</code>{:else}读取项目后显示实际来源目录。{/if}</dd></dl>
   <p>Git 改动由同一工作树的对话共享，不自动归属到某条对话。本页不调用模型提取任务。</p>
-</dialog>
-<dialog bind:this={warningDialog} class="wb-dialog"><header><h3>读取失败详情</h3><button on:click={() => warningDialog.close()} aria-label="关闭读取失败详情">×</button></header>{#each warnings as warning}<p class="warning-text">{warning}</p>{/each}</dialog>
+</Dialog.Modal>
+<Dialog.Modal title="读取失败详情" bind:this={warningDialog} class="wb-dialog"><header><h3>读取失败详情</h3><button on:click={() => warningDialog.close()} aria-label="关闭读取失败详情">×</button></header>{#each warnings as warning}<p class="warning-text">{warning}</p>{/each}</Dialog.Modal>
 <Dialog.Root bind:open={previewOpen} onOpenChange={(open) => {if (!open) closePreview();}}>
   <Dialog.Content class="workbench-preview" showCloseButton={false}>
     <Dialog.Description class="sr-only">文件改动的只读对比，可切换工作区与暂存区。</Dialog.Description>
@@ -308,17 +308,16 @@
   .load-chats { width: 100%; font-size: 12px; min-height: 34px; margin-top: 10px; background: var(--wb-control); }
   .empty { text-align: center; padding: 40px 16px; color: var(--wb-muted); font-size: 12px; }
   .action-status { font-size: 12px; color: var(--wb-muted); margin: 12px 0 0; }
-  .wb-dialog { font: 13px/1.6 var(--font-family-ui); color: var(--wb-text); background: var(--wb-panel); border: 1px solid var(--wb-border); border-radius: 10px; max-width: min(90vw,700px); max-height: 85vh; padding: 20px; color-scheme: inherit; }
-  .wb-dialog::backdrop { background: var(--wb-scrim); backdrop-filter: blur(3px); }
-  .wb-dialog header, .preview-body header { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 14px; }
-  .wb-dialog h3, .preview-body :global(h3) { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
-  .wb-dialog header button, .preview-body header button { min-width: 30px; min-height: 30px; }
+  :global(.wb-dialog) { font: 13px/1.6 var(--font-family-ui); color: var(--wb-text); background: var(--wb-panel); border: 1px solid var(--wb-border); border-radius: 10px; width: min(90vw,700px); max-width: calc(100vw - 24px); max-height: 85vh; padding: 20px; color-scheme: inherit; }
+  :global(.wb-dialog) header, .preview-body header { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 14px; }
+  :global(.wb-dialog) h3, .preview-body :global(h3) { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+  :global(.wb-dialog) header button, .preview-body header button { min-width: 30px; min-height: 30px; }
   .warning-text { font-size: 12px; overflow-wrap: anywhere; border-bottom: 1px solid var(--wb-border); padding-bottom: 8px; }
-  .source-dialog dl { margin: 0; }
-  .source-dialog dt { font-size: 13px; font-weight: 600; margin-top: 14px; }
-  .source-dialog dd { margin: 5px 0 0; font-size: 12px; color: var(--wb-muted); }
-  .source-dialog code { display: block; font-size: 11px; overflow-wrap: anywhere; margin: 4px 0 10px; color: var(--wb-text); }
-  .source-dialog>p { font-size: 12px; color: var(--wb-muted); border-top: 1px solid var(--wb-border); padding-top: 12px; }
+  :global(.source-dialog) dl { margin: 0; }
+  :global(.source-dialog) dt { font-size: 13px; font-weight: 600; margin-top: 14px; }
+  :global(.source-dialog) dd { margin: 5px 0 0; font-size: 12px; color: var(--wb-muted); }
+  :global(.source-dialog) code { display: block; font-size: 11px; overflow-wrap: anywhere; margin: 4px 0 10px; color: var(--wb-text); }
+  :global(.source-dialog)>p { font-size: 12px; color: var(--wb-muted); border-top: 1px solid var(--wb-border); padding-top: 12px; }
   :global(.workbench-preview) { width: min(1300px,94vw); max-width: 94vw; border: 1px solid var(--wb-border); border-radius: 10px; background: var(--wb-panel); color: var(--wb-text); font: 13px/1.6 var(--font-family-ui); color-scheme: inherit; }
   .preview-body { padding: 20px; min-width: 0; }
   .versions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 15px 0; font-size: 12px; }

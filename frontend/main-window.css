@@ -4,7 +4,7 @@
 /* Shared shell: product content retains its own DOM, controls and ordering. */
 .main-theme { --app-content-inset: 24px; }
 .main-theme.app-shell {
-  grid-template-columns: 192px minmax(0, 1fr);
+  grid-template-columns: 192px minmax(0, 1fr) 0px;
   grid-template-rows: 40px minmax(0, 1fr);
   gap: 0;
   padding: 0 8px 8px 0;
@@ -97,7 +97,7 @@
 .main-theme .tabs button.active { background: var(--color-main-selected); color: var(--color-main-selected-text); }
 .main-theme .tabs button:hover { transform: none; background: var(--color-main-hover); }
 .main-theme .tabs button.active:hover { background: var(--color-main-selected); }
-.main-theme.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); padding-left: 8px; }
+.main-theme.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr) 0px; padding-left: 8px; }
 .main-theme.sidebar-collapsed .sidebar { visibility: hidden; padding: 0; overflow: hidden; opacity: 0; transform: translateX(-12px); transition-delay: 0s, 0s, 0s, 220ms; }
 @media (prefers-reduced-motion: reduce) {
   .main-theme.app-shell, .main-theme .sidebar, .main-theme.sidebar-collapsed .sidebar, .main-theme .window-toolbar.macos { transition: none; }
@@ -196,7 +196,7 @@
 }
 @media (max-width: 600px) {
   .main-theme.app-shell { grid-template-columns: 132px minmax(0, 1fr); }
-  .main-theme.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
+  .main-theme.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr) 0px; }
   .main-theme .sidebar { padding: 0 8px; }
   .main-theme .brand { padding-left: 4px; }
   .main-theme { --app-content-inset: 12px; }
@@ -314,3 +314,8 @@
 /* Framework side panel: pages supply content; the shell owns the third column. */
 .main-theme.app-shell.has-side-panel-column { grid-template-columns: 192px minmax(0,1fr) 400px; }
 .main-theme.app-shell.sidebar-collapsed.has-side-panel-column { grid-template-columns: 0 minmax(0,1fr) 400px; }
+@media (max-width: 1179px) {
+  /* Switching to a drawer must release the old column immediately on resize. */
+  .main-theme.app-shell.has-side-panel-column { grid-template-columns: 192px minmax(0,1fr) 0px; }
+  .main-theme.app-shell.sidebar-collapsed.has-side-panel-column { grid-template-columns: 0 minmax(0,1fr) 0px; }
+}

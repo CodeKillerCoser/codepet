@@ -24,6 +24,8 @@ if(new URLSearchParams(location.search).get('scenario')==='dense') {
 mockIPC(async(command,args:any)=>{
   if(command!=='task_ledger_request')throw new Error(`Unexpected ${command}`);
   if(args.request.op==='list')return structuredClone(tasks);
+  if(args.request.op==='setup')return {config:'[mcp_servers.codepet]\ncommand = \"fixture\"',instructions:'在方案与验收节点登记任务。'};
+  if(args.request.op==='save'&&(window as any).__holdTaskSave)return new Promise((_,reject)=>{(window as any).__rejectTaskSave=()=>reject(new Error('模拟保存失败：验证忙碌时不能关闭窗口'));});
   throw new Error('Layout QA does not simulate business writes');
 });
 const target=document.getElementById('app')!;

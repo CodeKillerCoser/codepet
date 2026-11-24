@@ -8,9 +8,13 @@ import Portal from "./dialog-portal.svelte";
 import Title from "./dialog-title.svelte";
 import Trigger from "./dialog-trigger.svelte";
 import Root from "./dialog.svelte";
+import Modal from "./dialog-modal.svelte";
+
+export interface ModalHandle { showModal(): void; close(): void; isOpen(): boolean }
 
 export {
 	Root,
+	Modal,
 	Title,
 	Portal,
 	Footer,

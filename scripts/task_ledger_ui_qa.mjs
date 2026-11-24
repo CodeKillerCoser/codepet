@@ -32,7 +32,27 @@ try{
       if(width<=600){assert.ok(await page.locator('.task-list').isHidden());await page.getByRole('button',{name:'← 返回任务列表',exact:true}).click();assert.ok(await page.locator('.task-row').evaluate(e=>e===document.activeElement));}
     }
   }
-  await page.setViewportSize({width:1280,height:920});await page.getByLabel('搜索任务',{exact:true}).fill('升级 1.3.0');assert.equal(await page.locator('.task-row').count(),1);await page.getByLabel('搜索任务',{exact:true}).fill('不存在的任务');await page.getByText('没有符合条件的任务',{exact:true}).waitFor();
+  await page.setViewportSize({width:1280,height:920});
+  for(const [label,title] of [['记录人工验收','记录人工验收'],['结束任务','结束任务'],['接入 Codex','连接 Codex 任务登记']]){
+    const trigger=page.getByRole('button',{name:label,exact:true});await trigger.click();
+    const modal=page.getByRole('dialog',{name:title,exact:true});await modal.waitFor();
+    await page.waitForFunction(()=>document.querySelector('[role="dialog"]')?.contains(document.activeElement));
+    assert.ok(await modal.evaluate(e=>e.parentElement.classList.contains('app-window-host')&&e.contains(document.activeElement)),'Task modals use the global host and focus scope');
+    await page.keyboard.press('Escape');await modal.waitFor({state:'detached'});
+    assert.ok(await trigger.evaluate(e=>e===document.activeElement));
+  }
+  await page.evaluate(()=>{window.__holdTaskSave=true;});
+  await page.getByRole('button',{name:'编辑与记录进展',exact:true}).click();
+  await page.getByRole('button',{name:'保存任务',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('.form-controls')?.disabled);
+  await page.keyboard.press('Escape');
+  assert.ok(await page.getByRole('dialog').isVisible(),'A pending save keeps the modal open on Escape');
+  assert.ok(await page.getByRole('button',{name:'关闭任务编辑',exact:true}).isDisabled());
+  await page.evaluate(()=>window.__rejectTaskSave());
+  await page.waitForFunction(()=>!document.querySelector('.form-controls')?.disabled);
+  await page.getByRole('button',{name:'关闭任务编辑',exact:true}).click();
+  await page.getByRole('dialog').waitFor({state:'detached'});
+  await page.getByLabel('搜索任务',{exact:true}).fill('升级 1.3.0');assert.equal(await page.locator('.task-row').count(),1);await page.getByLabel('搜索任务',{exact:true}).fill('不存在的任务');await page.getByText('没有符合条件的任务',{exact:true}).waitFor();
   await page.goto('http://127.0.0.1:1438/frontend/qa/task-ledger.html?scenario=dense');await page.locator('.task-row').nth(7).waitFor();
   assert.ok((await page.locator('.task-row').first().boundingBox()).height<=100);assert.equal(await page.locator('.criterion').count(),3);assert.equal(await page.locator('.criterion[open]').count(),1);
   assert.equal(await page.locator('.criterion').nth(1).getAttribute('open'),'','Failed acceptance items are expanded first');
@@ -46,5 +66,5 @@ try{
     for(const badge of badges){const values=[luminance(badge.bg),luminance(badge.color)].sort((a,b)=>b-a);assert.ok((values[0]+.05)/(values[1]+.05)>=4.5,`${mode} ${badge.status} text contrast`);assert.ok(badge.width<100,'Status color stays within a small badge');}
     await page.screenshot({path:resolve(output,`${mode}-1280-dense.png`),fullPage:true});
   }
-  assert.deepEqual(errors,[]);console.log('Task layout passed: native snapshot, light/dark themes, 1280/820/600/390 widths, modal focus, mobile return focus, recurrence search and empty state.');
+  assert.deepEqual(errors,[]);console.log('Task layout passed: native snapshot replay, four global modals, busy Escape guard, return focus, light/dark themes, 1280/820/600/390 widths, mobile focus, recurrence search and empty state.');
 }finally{await browser.close();await server.close();}

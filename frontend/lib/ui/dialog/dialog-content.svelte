@@ -7,11 +7,14 @@
 	import DialogPortal from "./dialog-portal.svelte";
 	import type { Snippet } from "svelte";
 	import type { ComponentProps } from "svelte";
+	import { getContext, onMount } from "svelte";
+	import type { Readable } from "svelte/store";
+	import { windowHost, windowLayerKey, windowTriggerKey } from "./windowStack";
 
 	let {
 		ref = $bindable(null),
 		class: className,
-		portalProps = { disabled: true },
+		portalProps = {},
 		children,
 		showCloseButton = true,
 		overlayClass,
@@ -22,10 +25,17 @@
 		showCloseButton?: boolean;
 		overlayClass?: string;
 	} = $props();
+	const layer = getContext<Readable<number>>(windowLayerKey);
+	const trigger = getContext<Readable<HTMLElement | undefined>>(windowTriggerKey);
+	let anchor: HTMLSpanElement;
+	let host = $state<HTMLElement>();
+	onMount(() => { host = windowHost(anchor); });
 </script>
 
-<DialogPortal {...portalProps}>
-	<DialogOverlay class={overlayClass} />
+<span hidden bind:this={anchor}></span>
+{#if host}
+<DialogPortal to={host} {...portalProps}>
+	<DialogOverlay class={overlayClass} style={`z-index: ${$layer}`} />
 	<DialogPrimitive.Content
 		bind:ref
 		data-slot="dialog-content"
@@ -34,6 +44,14 @@
 			className
 		)}
 		{...restProps}
+		style={[restProps.style, `z-index: ${$layer + 1}`].filter(Boolean).join('; ')}
+		onCloseAutoFocus={(event) => {
+			restProps.onCloseAutoFocus?.(event);
+			if (!event.defaultPrevented && $trigger?.isConnected) {
+				event.preventDefault();
+				$trigger.focus({ preventScroll: true });
+			}
+		}}
 	>
 		{@render children?.()}
 		{#if showCloseButton}
@@ -48,3 +66,4 @@
 		{/if}
 	</DialogPrimitive.Content>
 </DialogPortal>
+{/if}

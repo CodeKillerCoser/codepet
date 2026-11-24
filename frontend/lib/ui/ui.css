@@ -11,6 +11,7 @@
   --color-ring: var(--color-focus-ring);
 }
 
+.app-window-host { display: contents; }
 .cn-dialog-overlay {
   position: fixed;
   inset: 0;
@@ -29,8 +30,14 @@
   overflow-y: auto;
   outline: none;
 }
-.cn-dialog-content[data-state="closed"],
-.cn-dialog-overlay[data-state="closed"] { display: none; }
+.cn-dialog-content[data-state="closed"]:not(.app-side-panel) { display: none; }
+.cn-dialog-overlay[data-state="open"] { animation: app-window-scrim-enter 160ms ease both; }
+.cn-dialog-overlay[data-state="closed"] { animation: app-window-scrim-exit 220ms ease both; pointer-events: none; }
+@keyframes app-window-scrim-enter { from { opacity: 0; } to { opacity: 1; } }
+@keyframes app-window-scrim-exit { from { opacity: 1; } to { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .cn-dialog-overlay[data-state] { animation: none; }
+}
 .cn-dialog-overlay.history-overlay { background: var(--color-history-scrim); backdrop-filter: none; }
 
 /* Match the switches already drawn by main-window.css. */
