@@ -24,7 +24,7 @@ def main() -> None:
     subprocess.run([
         environment.get("CARGO", "cargo"), "test", "--manifest-path", str(repository / "crates/Cargo.toml"),
         "-p", "codepet-provider-codex", "--test", "provider_vertical",
-        "provider_binary_public_mux_smoke", "--", "--exact",
+        "transport_control::provider_binary_public_mux_smoke", "--", "--exact",
     ], cwd=repository, env=environment, check=True)
     print("Codex Provider mux stdio black-box smoke passed")
 

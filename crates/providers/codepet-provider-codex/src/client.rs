@@ -1,29 +1,29 @@
 use super::protocol::{
-    permission_from_sandbox, thread_list_params, thread_start_params, turn_start_params,
-    turn_steer_params, output_content_id, reasoning_summary_content_id, text_content_id,
+    output_content_id, permission_from_sandbox, reasoning_summary_content_id, text_content_id,
+    thread_list_params, thread_start_params, turn_start_params, turn_steer_params,
     CodexAppServerError, CodexApprovalKind, CodexApprovalRequest, CodexContentKind,
     CodexConversationSnapshot, CodexIncoming, CodexModel, CodexModelListResponse,
     CodexNotification, CodexPermissionLevel, CodexProject, CodexProjectCreateRequest,
     CodexProjectPage, CodexProjectUpdateRequest, CodexThreadListRequest, CodexThreadPage,
-    CodexThreadStartRequest, CodexTurn, CodexTurnPage, CodexTurnStatus,
-    CodexTurnItemsView, CodexTurnStartRequest, CodexTurnSteerRequest, CommandApprovalParams, FileApprovalParams,
-    InitializeResponse, JsonRpcId, ProjectListResponse, ProjectResponse,
-    ThreadConfiguredResponse, ThreadListResponse,
-    ThreadReadResponse, ThreadTurnsListResponse, TurnResponse, TurnSteerResponse,
+    CodexThreadStartRequest, CodexTurn, CodexTurnItemsView, CodexTurnPage, CodexTurnStartRequest,
+    CodexTurnStatus, CodexTurnSteerRequest, CommandApprovalParams, FileApprovalParams,
+    InitializeResponse, JsonRpcId, ProjectListResponse, ProjectResponse, ThreadConfiguredResponse,
+    ThreadListResponse, ThreadReadResponse, ThreadTurnsListResponse, TurnResponse,
+    TurnSteerResponse,
 };
 use codepet_provider_sdk::ApprovalDecision;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
-mod title;
-mod projects;
 mod compatible;
+mod projects;
+mod title;
+use codepet_provider_sdk::process::Child;
+use codepet_provider_sdk::process::Command;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{self, ChildStdin, ChildStdout, Stdio};
-use codepet_provider_sdk::process::Child;
-use codepet_provider_sdk::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Condvar, Mutex};
@@ -158,7 +158,10 @@ pub(crate) enum CodexRequestOutcome<T> {
 }
 
 impl<T> CodexRequestOutcome<T> {
-    fn and_then<U>(self, operation: impl FnOnce(T) -> CodexRequestOutcome<U>) -> CodexRequestOutcome<U> {
+    fn and_then<U>(
+        self,
+        operation: impl FnOnce(T) -> CodexRequestOutcome<U>,
+    ) -> CodexRequestOutcome<U> {
         match self {
             Self::Success(value) => operation(value),
             Self::NotSent(error) => CodexRequestOutcome::NotSent(error),
@@ -178,9 +181,16 @@ impl<T> CodexRequestOutcome<T> {
 }
 
 impl SessionInner {
-    fn reject_message(&self, request_id: Option<JsonRpcId>, method: Option<String>, error: CodexAppServerError) {
+    fn reject_message(
+        &self,
+        request_id: Option<JsonRpcId>,
+        method: Option<String>,
+        error: CodexAppServerError,
+    ) {
         eprintln!("Codex App Server rejected message id={request_id:?} method={method:?}: {error}");
-        let Some(id) = request_id else { return; };
+        let Some(id) = request_id else {
+            return;
+        };
         if method.is_some() {
             // Server request ids are independent of our pending client request ids.
             if let Err(reply_error) = self.write(json!({
@@ -189,7 +199,9 @@ impl SessionInner {
                 eprintln!("Codex App Server could not reject server request: {reply_error}");
             }
         } else if let Ok(mut pending) = self.pending.lock() {
-            if let Some(sender) = pending.remove(&id) { let _ = sender.send(Err(error)); }
+            if let Some(sender) = pending.remove(&id) {
+                let _ = sender.send(Err(error));
+            }
         }
     }
 
@@ -231,13 +243,17 @@ impl SessionInner {
         let termination = self
             .control
             .lock()
-            .map_err(|_| CodexAppServerError::Protocol("process control lock is poisoned".to_string()))
+            .map_err(|_| {
+                CodexAppServerError::Protocol("process control lock is poisoned".to_string())
+            })
             .and_then(|mut control| match control.as_mut() {
                 Some(control) => control.shutdown(),
                 None => Ok(()),
             });
         if let Err(termination_error) = termination {
-            eprintln!("Codex App Server termination after terminal fault failed: {termination_error}");
+            eprintln!(
+                "Codex App Server termination after terminal fault failed: {termination_error}"
+            );
         }
     }
 
@@ -246,9 +262,7 @@ impl SessionInner {
             .writer
             .lock()
             .map_err(|_| CodexAppServerError::Protocol("writer lock is poisoned".to_string()))?;
-        let writer = writer
-            .as_mut()
-            .ok_or(CodexAppServerError::Shutdown)?;
+        let writer = writer.as_mut().ok_or(CodexAppServerError::Shutdown)?;
         writer.write_message(&message)
     }
 
@@ -318,7 +332,6 @@ impl SessionInner {
             }
         }
     }
-
 }
 
 impl Drop for SessionInner {
@@ -348,7 +361,8 @@ impl CodexAppServerSession {
     ) -> Result<Self, CodexAppServerError> {
         let mut command = codex_app_server_command(executable, args);
         if let Some(directory) = data_directory {
-            std::fs::create_dir_all(directory).map_err(|error| CodexAppServerError::Spawn(error.to_string()))?;
+            std::fs::create_dir_all(directory)
+                .map_err(|error| CodexAppServerError::Spawn(error.to_string()))?;
             command.env("CODEX_HOME", directory);
         }
         let mut child = command
@@ -433,8 +447,14 @@ impl CodexAppServerSession {
                     }
                     break;
                 }
-                Err(CodexAppServerError::RejectedMessage { request_id, method, error }) => {
-                    let Some(inner) = weak_inner.upgrade() else { break; };
+                Err(CodexAppServerError::RejectedMessage {
+                    request_id,
+                    method,
+                    error,
+                }) => {
+                    let Some(inner) = weak_inner.upgrade() else {
+                        break;
+                    };
                     inner.reject_message(request_id, method, *error);
                     continue;
                 }
@@ -452,8 +472,13 @@ impl CodexAppServerSession {
             let Some(inner) = weak_inner.upgrade() else {
                 break;
             };
-            let request_id = message.get("id").cloned().and_then(|id| serde_json::from_value(id).ok());
-            let method = message.get("method").map(|method| method.as_str().unwrap_or("").to_owned());
+            let request_id = message
+                .get("id")
+                .cloned()
+                .and_then(|id| serde_json::from_value(id).ok());
+            let method = message
+                .get("method")
+                .map(|method| method.as_str().unwrap_or("").to_owned());
             if let Err(error) = handle_message(&inner, message) {
                 inner.reject_message(request_id, method, error);
             }
@@ -536,11 +561,19 @@ impl CodexAppServerSession {
 
     /// Test the native loaded namespace independently of directory listing.
     #[cfg(test)]
-    pub fn thread_loaded_list(&self, cursor: Option<String>, limit: u32) -> Result<(Vec<String>, Option<String>), CodexAppServerError> {
+    pub fn thread_loaded_list(
+        &self,
+        cursor: Option<String>,
+        limit: u32,
+    ) -> Result<(Vec<String>, Option<String>), CodexAppServerError> {
         #[derive(serde::Deserialize)]
         #[serde(rename_all = "camelCase")]
-        struct Page { data: Vec<String>, next_cursor: Option<String> }
-        let page: Page = self.request("thread/loaded/list", json!({"cursor":cursor,"limit":limit}))?;
+        struct Page {
+            data: Vec<String>,
+            next_cursor: Option<String>,
+        }
+        let page: Page =
+            self.request("thread/loaded/list", json!({"cursor":cursor,"limit":limit}))?;
         Ok((page.data, page.next_cursor))
     }
 
@@ -682,33 +715,32 @@ impl CodexAppServerSession {
             REQUEST_TIMEOUT,
             send_request,
         )
-        .and_then(|response| match serde_json::from_value::<ThreadConfiguredResponse>(response) {
-            Ok(response) => CodexRequestOutcome::Success(response),
-            Err(error) => CodexRequestOutcome::SentOutcomeUnknown(
-                CodexAppServerError::Protocol(format!(
-                    "invalid thread/resume response: {error}"
-                )),
-            ),
-        })
+        .and_then(
+            |response| match serde_json::from_value::<ThreadConfiguredResponse>(response) {
+                Ok(response) => CodexRequestOutcome::Success(response),
+                Err(error) => {
+                    CodexRequestOutcome::SentOutcomeUnknown(CodexAppServerError::Protocol(format!(
+                        "invalid thread/resume response: {error}"
+                    )))
+                }
+            },
+        )
         .and_then(|response| {
             let snapshot = snapshot_from_configured_response(response);
             if snapshot.thread.id != thread_id {
-                return CodexRequestOutcome::SentOutcomeUnknown(
-                    CodexAppServerError::Protocol(format!(
+                return CodexRequestOutcome::SentOutcomeUnknown(CodexAppServerError::Protocol(
+                    format!(
                         "thread/resume returned thread {} for requested thread {thread_id}",
                         snapshot.thread.id
-                    )),
-                );
+                    ),
+                ));
             }
             self.inner.record_configuration(&snapshot);
             CodexRequestOutcome::Success(snapshot)
         })
     }
 
-    pub(crate) fn ensure_thread_loaded_outcome(
-        &self,
-        thread_id: &str,
-    ) -> CodexRequestOutcome<u64> {
+    pub(crate) fn ensure_thread_loaded_outcome(&self, thread_id: &str) -> CodexRequestOutcome<u64> {
         self.ensure_thread_loaded_outcome_with_sender(thread_id, |message| {
             self.inner.write_request(message)
         })
@@ -733,18 +765,12 @@ impl CodexAppServerSession {
                     return CodexRequestOutcome::Success(evidence)
                 }
                 Some(ThreadLoadState::Resuming) => {
-                    loaded_threads = match self
-                        .inner
-                        .loaded_threads_changed
-                        .wait(loaded_threads)
-                    {
+                    loaded_threads = match self.inner.loaded_threads_changed.wait(loaded_threads) {
                         Ok(loaded_threads) => loaded_threads,
                         Err(_) => {
-                            return CodexRequestOutcome::NotSent(
-                                CodexAppServerError::Protocol(
-                                    "loaded thread state lock is poisoned".to_string(),
-                                ),
-                            )
+                            return CodexRequestOutcome::NotSent(CodexAppServerError::Protocol(
+                                "loaded thread state lock is poisoned".to_string(),
+                            ))
                         }
                     };
                     drop(loaded_threads);
@@ -759,11 +785,9 @@ impl CodexAppServerSession {
         let mut loaded_threads = match self.inner.loaded_threads.lock() {
             Ok(loaded_threads) => loaded_threads,
             Err(_) => {
-                return CodexRequestOutcome::SentOutcomeUnknown(
-                    CodexAppServerError::Protocol(
-                        "loaded thread state lock is poisoned".to_string(),
-                    ),
-                )
+                return CodexRequestOutcome::SentOutcomeUnknown(CodexAppServerError::Protocol(
+                    "loaded thread state lock is poisoned".to_string(),
+                ))
             }
         };
         let settled = match result {
@@ -771,10 +795,7 @@ impl CodexAppServerSession {
                 let evidence = match loaded_threads.get(thread_id).copied() {
                     Some(ThreadLoadState::Loaded(evidence)) => evidence,
                     _ => {
-                        let evidence = self
-                            .inner
-                            .next_load_evidence
-                            .fetch_add(1, Ordering::SeqCst);
+                        let evidence = self.inner.next_load_evidence.fetch_add(1, Ordering::SeqCst);
                         loaded_threads
                             .insert(thread_id.to_string(), ThreadLoadState::Loaded(evidence));
                         evidence
@@ -818,9 +839,7 @@ impl CodexAppServerSession {
         &self,
         request: CodexThreadStartRequest,
     ) -> CodexRequestOutcome<CodexConversationSnapshot> {
-        self.thread_start_outcome_with_sender(request, |message| {
-            self.inner.write_request(message)
-        })
+        self.thread_start_outcome_with_sender(request, |message| self.inner.write_request(message))
     }
 
     pub(crate) fn thread_start_outcome_with_sender(
@@ -834,20 +853,22 @@ impl CodexAppServerSession {
             REQUEST_TIMEOUT,
             send_request,
         )
-        .and_then(|response| match serde_json::from_value::<ThreadConfiguredResponse>(response) {
-            Ok(response) => CodexRequestOutcome::Success(response),
-            Err(error) => CodexRequestOutcome::SentOutcomeUnknown(
-                CodexAppServerError::Protocol(format!(
-                    "invalid thread/start response: {error}"
-                )),
-            ),
+        .and_then(
+            |response| match serde_json::from_value::<ThreadConfiguredResponse>(response) {
+                Ok(response) => CodexRequestOutcome::Success(response),
+                Err(error) => {
+                    CodexRequestOutcome::SentOutcomeUnknown(CodexAppServerError::Protocol(format!(
+                        "invalid thread/start response: {error}"
+                    )))
+                }
+            },
+        )
+        .and_then(|response: ThreadConfiguredResponse| {
+            let snapshot = snapshot_from_configured_response(response);
+            self.inner.record_configuration(&snapshot);
+            self.inner.mark_thread_loaded(&snapshot.thread.id);
+            CodexRequestOutcome::Success(snapshot)
         })
-            .and_then(|response: ThreadConfiguredResponse| {
-                let snapshot = snapshot_from_configured_response(response);
-                self.inner.record_configuration(&snapshot);
-                self.inner.mark_thread_loaded(&snapshot.thread.id);
-                CodexRequestOutcome::Success(snapshot)
-            })
     }
 
     #[cfg(test)]
@@ -902,7 +923,8 @@ impl CodexAppServerSession {
         thread_id: &str,
         turn_id: &str,
     ) -> Result<CodexTurn, CodexAppServerError> {
-        self.turn_interrupt_outcome(thread_id, turn_id).into_result()
+        self.turn_interrupt_outcome(thread_id, turn_id)
+            .into_result()
     }
 
     pub(crate) fn turn_interrupt_outcome(
@@ -915,10 +937,12 @@ impl CodexAppServerSession {
                 "turn/interrupt",
                 json!({ "threadId": thread_id, "turnId": turn_id }),
             )
-            .and_then(|_: Value| match self.authoritative_turn(thread_id, turn_id) {
-                Ok(turn) => CodexRequestOutcome::Success(turn),
-                Err(error) => CodexRequestOutcome::SentOutcomeUnknown(error),
-            })
+            .and_then(
+                |_: Value| match self.authoritative_turn(thread_id, turn_id) {
+                    Ok(turn) => CodexRequestOutcome::Success(turn),
+                    Err(error) => CodexRequestOutcome::SentOutcomeUnknown(error),
+                },
+            )
         })
     }
 
@@ -953,14 +977,11 @@ impl CodexAppServerSession {
                         .iter()
                         .any(|available| available == native_decision)
                 {
-                    return CodexRequestOutcome::NotSent(CodexAppServerError::Protocol(
-                        format!("Codex approval does not offer decision {native_decision}"),
-                    ));
+                    return CodexRequestOutcome::NotSent(CodexAppServerError::Protocol(format!(
+                        "Codex approval does not offer decision {native_decision}"
+                    )));
                 }
-                self.respond_outcome(
-                    &approval.request_id,
-                    json!({ "decision": native_decision }),
-                )
+                self.respond_outcome(&approval.request_id, json!({ "decision": native_decision }))
             })
     }
 
@@ -1038,18 +1059,12 @@ impl CodexAppServerSession {
             .and_then(|result| match serde_json::from_value(result) {
                 Ok(result) => CodexRequestOutcome::Success(result),
                 Err(error) => CodexRequestOutcome::SentOutcomeUnknown(
-                    CodexAppServerError::Protocol(format!(
-                        "invalid {method} response: {error}"
-                    )),
+                    CodexAppServerError::Protocol(format!("invalid {method} response: {error}")),
                 ),
             })
     }
 
-    fn request_value_outcome(
-        &self,
-        method: &str,
-        params: Value,
-    ) -> CodexRequestOutcome<Value> {
+    fn request_value_outcome(&self, method: &str, params: Value) -> CodexRequestOutcome<Value> {
         self.request_value_with_timeout_outcome(method, params, REQUEST_TIMEOUT)
     }
 
@@ -1069,12 +1084,9 @@ impl CodexAppServerSession {
         params: Value,
         timeout: Duration,
     ) -> CodexRequestOutcome<Value> {
-        self.request_value_with_timeout_outcome_with_sender(
-            method,
-            params,
-            timeout,
-            |message| self.inner.write_request(message),
-        )
+        self.request_value_with_timeout_outcome_with_sender(method, params, timeout, |message| {
+            self.inner.write_request(message)
+        })
     }
 
     fn request_value_with_timeout_outcome_with_sender(
@@ -1141,9 +1153,9 @@ impl CodexAppServerSession {
                 ));
                 CodexRequestOutcome::SentOutcomeUnknown(error)
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => CodexRequestOutcome::SentOutcomeUnknown(
-                CodexAppServerError::ProcessExited,
-            ),
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                CodexRequestOutcome::SentOutcomeUnknown(CodexAppServerError::ProcessExited)
+            }
         }
     }
 
@@ -1172,7 +1184,10 @@ impl CodexAppServerSession {
 
 fn codex_app_server_command(binary: &Path, args: &[String]) -> Command {
     let mut command = codepet_provider_sdk::local_runtime::command(binary);
-    command.env(crate::desktop_takeover::HARNESS_MARKER, std::process::id().to_string());
+    command.env(
+        crate::desktop_takeover::HARNESS_MARKER,
+        std::process::id().to_string(),
+    );
     command.args(args);
     command
 }
@@ -1210,7 +1225,8 @@ fn harness_version_from_user_agent(user_agent: &str) -> Option<String> {
             // Without an originator override, Codex uses initialize.clientInfo.name
             // as the product name, followed by the native Harness version.
             if (name.eq_ignore_ascii_case(APP_SERVER_CLIENT_NAME)
-                || name.to_ascii_lowercase().contains("codex") || previous_was_codex)
+                || name.to_ascii_lowercase().contains("codex")
+                || previous_was_codex)
                 && !version.trim().is_empty()
             {
                 return Some(version.trim().to_string());
@@ -1221,1936 +1237,8 @@ fn harness_version_from_user_agent(user_agent: &str) -> Option<String> {
     None
 }
 
-fn handle_message(inner: &SessionInner, message: Value) -> Result<(), CodexAppServerError> {
-    let object = message.as_object().ok_or_else(|| {
-        CodexAppServerError::Protocol("App Server message must be an object".to_string())
-    })?;
-    if object
-        .get("jsonrpc")
-        .is_some_and(|version| version.as_str() != Some("2.0"))
-    {
-        return Err(CodexAppServerError::Protocol(
-            "App Server jsonrpc metadata must be exactly 2.0 when present".to_string(),
-        ));
-    }
-    if let Some(trace) = object.get("trace") {
-        if !trace.is_null() {
-            let trace = trace.as_object().ok_or_else(|| {
-                CodexAppServerError::Protocol(
-                    "App Server trace metadata must be an object or null".to_string(),
-                )
-            })?;
-            for field in ["traceparent", "tracestate"] {
-                if trace
-                    .get(field)
-                    .is_some_and(|value| !value.is_null() && !value.is_string())
-                {
-                    return Err(CodexAppServerError::Protocol(format!(
-                        "App Server trace {field} must be a string or null"
-                    )));
-                }
-            }
-        }
-    }
-    if object
-        .get("emittedAtMs")
-        .is_some_and(|emitted_at| emitted_at.as_i64().is_none())
-    {
-        return Err(CodexAppServerError::Protocol(
-            "App Server emittedAtMs metadata must be an integer".to_string(),
-        ));
-    }
-    if object.contains_key("method") {
-        let incoming = parse_incoming(message, &inner.generation)?;
-        if let CodexIncoming::UnsupportedServerRequest {
-            request_id,
-            method,
-        } = &incoming
-        {
-            let response = json!({
-                "id": request_id,
-                "error": {
-                    "code": -32601,
-                    "message": format!(
-                        "Code Pet does not support Codex server request {method}"
-                    ),
-                    "data": {
-                        "method": method,
-                        "reason": "unsupported_client_capability"
-                    }
-                }
-            });
-            inner.write(response)?;
-        }
-        if let CodexIncoming::Notification(CodexNotification::ThreadStarted { snapshot }) = &incoming {
-            if snapshot.thread.ephemeral {
-                inner.ephemeral_threads.lock().unwrap_or_else(|e| e.into_inner()).insert(snapshot.thread.id.clone());
-            }
-        }
-        if let Some(thread_id) = incoming_thread_id(&incoming) {
-            inner.mark_thread_loaded(thread_id);
-        }
-        inner.broadcast(Ok(incoming));
-        return Ok(());
-    }
-    let has_result = object.contains_key("result");
-    let has_error = object.contains_key("error");
-    if has_result == has_error {
-        return Err(CodexAppServerError::Protocol(
-            "App Server response must contain exactly one of result or error".to_string(),
-        ));
-    }
-    let id: JsonRpcId = serde_json::from_value(
-        object
-            .get("id")
-            .cloned()
-            .ok_or_else(|| CodexAppServerError::Protocol("response is missing id".to_string()))?,
-    )
-    .map_err(|error| CodexAppServerError::Protocol(format!("invalid response id: {error}")))?;
-    let response = if let Some(error) = object.get("error") {
-        let error = error.as_object().ok_or_else(|| {
-            CodexAppServerError::Protocol("App Server error must be an object".to_string())
-        })?;
-        let code = error.get("code").and_then(Value::as_i64).ok_or_else(|| {
-            CodexAppServerError::Protocol("App Server error is missing integer code".to_string())
-        })?;
-        let message = error
-            .get("message")
-            .and_then(Value::as_str)
-            .filter(|message| !message.is_empty())
-            .ok_or_else(|| {
-                CodexAppServerError::Protocol(
-                    "App Server error is missing non-empty message".to_string(),
-                )
-            })?;
-        Err(CodexAppServerError::Rpc {
-            code,
-            message: message.to_string(),
-            data: error
-                .get("data")
-                .filter(|data| !data.is_null())
-                .cloned(),
-        })
-    } else {
-        Ok(object["result"].clone())
-    };
-    let sender = inner
-        .pending
-        .lock()
-        .map_err(|_| CodexAppServerError::Protocol("pending map lock is poisoned".to_string()))?
-        .remove(&id)
-        .ok_or_else(|| {
-            CodexAppServerError::Protocol(format!("response has no matching request id {id}"))
-        })?;
-    let _ = sender.send(response);
-    Ok(())
-}
-
-fn incoming_thread_id(incoming: &CodexIncoming) -> Option<&str> {
-    match incoming {
-        CodexIncoming::Notification(CodexNotification::ThreadStarted { snapshot }) => {
-            Some(&snapshot.thread.id)
-        }
-        CodexIncoming::Notification(
-            CodexNotification::ThreadNameUpdated { thread_id, .. }
-            | CodexNotification::ThreadStatusChanged { thread_id, .. }
-            | CodexNotification::TurnStarted { thread_id, .. }
-            | CodexNotification::TurnError { thread_id, .. }
-            | CodexNotification::TurnCompleted { thread_id, .. }
-            | CodexNotification::ItemUpserted { thread_id, .. }
-            | CodexNotification::OutputDelta { thread_id, .. }
-            | CodexNotification::ServerRequestResolved { thread_id, .. },
-        ) => Some(thread_id),
-        CodexIncoming::ApprovalRequested(approval) => Some(&approval.thread_id),
-        CodexIncoming::Notification(
-            CodexNotification::ProjectChanged { .. } | CodexNotification::Unknown { .. },
-        )
-        | CodexIncoming::UnsupportedServerRequest { .. } => None,
-    }
-}
-
-fn parse_incoming(
-    message: Value,
-    session_generation: &str,
-) -> Result<CodexIncoming, CodexAppServerError> {
-    let method = required_string(&message, "method")?;
-    let params = message
-        .get("params")
-        .cloned()
-        .unwrap_or(Value::Null);
-    if let Some(id_value) = message.get("id") {
-        let request_id: JsonRpcId = serde_json::from_value(id_value.clone()).map_err(|error| {
-            CodexAppServerError::Protocol(format!("invalid server request id: {error}"))
-        })?;
-        return parse_server_request(request_id, &method, &params, session_generation);
-    }
-    parse_notification(&method, params, session_generation).map(CodexIncoming::Notification)
-}
-
-fn parse_server_request(
-    request_id: JsonRpcId,
-    method: &str,
-    params: &Value,
-    session_generation: &str,
-) -> Result<CodexIncoming, CodexAppServerError> {
-    let unsupported = || CodexIncoming::UnsupportedServerRequest {
-        request_id: request_id.clone(),
-        method: method.to_string(),
-    };
-    let (kind, thread_id, turn_id, item_id, requested_at_ms, available_decisions, title, description) =
-        match method {
-            "item/commandExecution/requestApproval" => {
-                if has_any_key(
-                    params,
-                    &[
-                        "additionalPermissions",
-                        "networkApprovalContext",
-                        "proposedExecpolicyAmendment",
-                        "proposedNetworkPolicyAmendments",
-                    ],
-                ) || params
-                    .as_object()
-                    .is_some_and(|object| object.get("kind").is_some_and(Value::is_null))
-                {
-                    return Ok(unsupported());
-                }
-                let Ok(params) = serde_json::from_value::<CommandApprovalParams>(params.clone()) else {
-                    return Ok(unsupported());
-                };
-                if params.has_unsupported_semantics()
-                    || params.thread_id.is_empty()
-                    || params.turn_id.is_empty()
-                    || params.item_id.is_empty()
-                {
-                    return Ok(unsupported());
-                }
-                let Ok(requested_at_ms) = u64::try_from(params.started_at_ms) else {
-                    return Ok(unsupported());
-                };
-                let available_decisions = params.binary_decisions();
-                let description = params.command.clone().or(params.reason.clone());
-                (
-                    CodexApprovalKind::CommandExecution,
-                    params.thread_id,
-                    params.turn_id,
-                    params.item_id,
-                    requested_at_ms,
-                    available_decisions,
-                    "Run command".to_string(),
-                    description,
-                )
-            }
-            "item/fileChange/requestApproval" => {
-                if has_any_key(params, &["grantRoot"]) {
-                    return Ok(unsupported());
-                }
-                let Ok(params) = serde_json::from_value::<FileApprovalParams>(params.clone()) else {
-                    return Ok(unsupported());
-                };
-                if params.grant_root.is_some()
-                    || params.thread_id.is_empty()
-                    || params.turn_id.is_empty()
-                    || params.item_id.is_empty()
-                {
-                    return Ok(unsupported());
-                }
-                let Ok(requested_at_ms) = u64::try_from(params.started_at_ms) else {
-                    return Ok(unsupported());
-                };
-                (
-                    CodexApprovalKind::FileChange,
-                    params.thread_id,
-                    params.turn_id,
-                    params.item_id,
-                    requested_at_ms,
-                    vec!["accept".to_string(), "decline".to_string()],
-                    "Apply file changes".to_string(),
-                    params.reason,
-                )
-            }
-            _ => return Ok(unsupported()),
-        };
-    Ok(CodexIncoming::ApprovalRequested(CodexApprovalRequest {
-        request_id,
-        session_generation: session_generation.to_string(),
-        kind,
-        thread_id,
-        turn_id,
-        item_id,
-        title,
-        description,
-        requested_at_ms,
-        available_decisions,
-    }))
-}
-
-fn has_any_key(value: &Value, keys: &[&str]) -> bool {
-    value
-        .as_object()
-        .is_some_and(|object| keys.iter().any(|key| object.contains_key(*key)))
-}
-
-fn parse_notification(
-    method: &str,
-    params: Value,
-    session_generation: &str,
-) -> Result<CodexNotification, CodexAppServerError> {
-    match method {
-        "project/changed" => {
-            let change_type = match required_string(&params, "changeType")?.as_str() {
-                "created" => super::protocol::CodexProjectChangeType::Created,
-                "updated" => super::protocol::CodexProjectChangeType::Updated,
-                "deleted" => super::protocol::CodexProjectChangeType::Deleted,
-                value => {
-                    return Err(CodexAppServerError::Protocol(format!(
-                        "unknown project change type: {value}"
-                    )))
-                }
-            };
-            Ok(CodexNotification::ProjectChanged {
-                project_id: required_string(&params, "projectId")?,
-                change_type,
-            })
-        }
-        "thread/started" => {
-            let thread = deserialize_field(&params, "thread")?;
-            Ok(CodexNotification::ThreadStarted {
-                snapshot: CodexConversationSnapshot::from_thread(thread),
-            })
-        }
-        "thread/name/updated" => Ok(CodexNotification::ThreadNameUpdated {
-            thread_id: required_string(&params, "threadId")?,
-            thread_name: params
-                .get("threadName")
-                .map(|value| serde_json::from_value(value.clone()))
-                .transpose()
-                .map_err(|error| {
-                    CodexAppServerError::Protocol(format!(
-                        "invalid notification field threadName: {error}"
-                    ))
-                })?
-                .flatten(),
-        }),
-        "thread/status/changed" => Ok(CodexNotification::ThreadStatusChanged {
-            thread_id: required_string(&params, "threadId")?,
-            status: deserialize_field(&params, "status")?,
-        }),
-        "turn/started" => Ok(CodexNotification::TurnStarted {
-            thread_id: required_string(&params, "threadId")?,
-            turn: deserialize_field(&params, "turn")?,
-        }),
-        "error" => Ok(CodexNotification::TurnError {
-            thread_id: required_string(&params, "threadId")?,
-            turn_id: required_string(&params, "turnId")?,
-            error: deserialize_field(&params, "error")?,
-        }),
-        "turn/completed" => Ok(CodexNotification::TurnCompleted {
-            thread_id: required_string(&params, "threadId")?,
-            turn: deserialize_field(&params, "turn")?,
-        }),
-        "item/started" | "item/completed" => {
-            let item = deserialize_field(&params, "item")?;
-            Ok(CodexNotification::ItemUpserted {
-                thread_id: required_string(&params, "threadId")?,
-                turn_id: required_string(&params, "turnId")?,
-                turn_status: if method == "item/started" {
-                    CodexTurnStatus::InProgress
-                } else {
-                    CodexTurnStatus::Completed
-                },
-                item,
-            })
-        }
-        "item/agentMessage/delta"
-        | "item/plan/delta"
-        | "item/commandExecution/outputDelta"
-        | "item/fileChange/outputDelta"
-        | "item/reasoning/summaryTextDelta" => {
-            let item_id = required_string(&params, "itemId")?;
-            let (content_id, kind) = match method {
-                "item/agentMessage/delta" | "item/plan/delta" => {
-                    (text_content_id(&item_id), CodexContentKind::Text)
-                }
-                "item/reasoning/summaryTextDelta" => {
-                    let summary_index = required_usize(&params, "summaryIndex")?;
-                    (
-                        reasoning_summary_content_id(&item_id, summary_index),
-                        CodexContentKind::ReasoningSummary,
-                    )
-                }
-                _ => (output_content_id(&item_id), CodexContentKind::Output),
-            };
-            Ok(CodexNotification::OutputDelta {
-                native_method: method.to_string(),
-                thread_id: required_string(&params, "threadId")?,
-                turn_id: required_string(&params, "turnId")?,
-                item_id,
-                content_id,
-                kind,
-                delta: required_string(&params, "delta")?,
-            })
-        }
-        "serverRequest/resolved" => Ok(CodexNotification::ServerRequestResolved {
-            request_id: deserialize_field(&params, "requestId")?,
-            thread_id: required_string(&params, "threadId")?,
-            session_generation: session_generation.to_string(),
-        }),
-        _ => Ok(CodexNotification::Unknown {
-            method: method.to_string(),
-        }),
-    }
-}
-
-fn required_string(value: &Value, key: &str) -> Result<String, CodexAppServerError> {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty())
-        .map(str::to_string)
-        .ok_or_else(|| CodexAppServerError::Protocol(format!("message is missing {key}")))
-}
-
-fn required_usize(value: &Value, key: &str) -> Result<usize, CodexAppServerError> {
-    value
-        .get(key)
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-        .ok_or_else(|| CodexAppServerError::Protocol(format!("message is missing {key}")))
-}
-
-fn deserialize_field<T: DeserializeOwned>(
-    value: &Value,
-    key: &str,
-) -> Result<T, CodexAppServerError> {
-    serde_json::from_value(
-        value
-            .get(key)
-            .cloned()
-            .ok_or_else(|| CodexAppServerError::Protocol(format!("message is missing {key}")))?,
-    )
-    .map_err(|error| CodexAppServerError::Protocol(format!("invalid {key}: {error}")))
-}
+mod incoming;
+use incoming::*;
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::protocol::{
-        CodexPermissionLevel, CodexThreadActiveFlag, CodexThreadItem, CodexThreadStatus,
-        CodexTurnStatus,
-    };
-    use std::sync::mpsc::{Receiver, Sender};
-    use std::sync::Barrier;
-    use std::time::Duration;
-
-    #[test]
-    fn extracts_cli_and_desktop_harness_versions_without_using_shell_product_versions() {
-        assert_eq!(
-            harness_version_from_user_agent(
-                "code-pet/0.153.1 (Mac OS 26.3.2; arm64) iTerm.app/3.6.9 (code-pet; 0.1.0)"
-            ),
-            Some("0.153.1".to_string())
-        );
-        assert_eq!(harness_version_from_user_agent("iTerm.app/3.6.9 (code-pet; 0.1.0)"), None);
-        assert_eq!(
-            harness_version_from_user_agent("codex-cli/0.151.0"),
-            Some("0.151.0".to_string())
-        );
-        assert_eq!(
-            harness_version_from_user_agent(
-                "Codex Desktop/0.152.1 (Mac OS 26.3.2; arm64) iTerm.app/3.6.9"
-            ),
-            Some("0.152.1".to_string())
-        );
-    }
-
-    struct MockReader {
-        receiver: Receiver<Value>,
-    }
-
-    impl JsonRpcReader for MockReader {
-        fn read_message(&mut self) -> Result<Option<Value>, CodexAppServerError> {
-            match self.receiver.recv() {
-                Ok(value) => Ok(Some(value)),
-                Err(_) => Ok(None),
-            }
-        }
-    }
-
-    struct MockWriter {
-        sender: Sender<Value>,
-    }
-
-    struct MockByteReader {
-        receiver: Receiver<Vec<u8>>,
-        current: std::io::Cursor<Vec<u8>>,
-    }
-
-    impl Read for MockByteReader {
-        fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
-            if output.is_empty() { return Ok(0); }
-            loop {
-                let count = self.current.read(output)?;
-                if count > 0 { return Ok(count); }
-                match self.receiver.recv() {
-                    Ok(bytes) => self.current = std::io::Cursor::new(bytes),
-                    Err(_) => return Ok(0),
-                }
-            }
-        }
-    }
-
-    impl JsonRpcWriter for MockWriter {
-        fn write_message(&mut self, message: &Value) -> Result<(), CodexAppServerError> {
-            self.sender
-                .send(message.clone())
-                .map_err(|error| CodexAppServerError::Io(error.to_string()))
-        }
-    }
-
-    struct RecordingControl {
-        terminated: Arc<AtomicBool>,
-    }
-
-    impl SessionControl for RecordingControl {
-        fn shutdown(&mut self) -> Result<(), CodexAppServerError> {
-            self.terminated.store(true, Ordering::SeqCst);
-            Ok(())
-        }
-    }
-
-    #[test]
-    fn release_shutdown_failure_is_not_reported_as_success_on_retry() {
-        struct FailOnce(Arc<std::sync::atomic::AtomicUsize>);
-        impl SessionControl for FailOnce {
-            fn shutdown(&mut self) -> Result<(), CodexAppServerError> {
-                if self.0.fetch_add(1, Ordering::SeqCst) == 0 { Err(CodexAppServerError::Io("mock kill denied".into())) } else { Ok(()) }
-            }
-        }
-        let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let (outgoing, _receiver) = mpsc::channel(); let (_sender, incoming) = mpsc::channel();
-        let session = CodexAppServerSession::from_parts(Box::new(MockReader { receiver:incoming }),
-            Box::new(MockWriter { sender:outgoing }), Some(Box::new(FailOnce(count.clone()))));
-        assert!(session.shutdown().is_err());
-        assert!(!session.is_running());
-        assert!(session.shutdown().is_ok());
-        assert_eq!(count.load(Ordering::SeqCst), 2, "retry must invoke process control even though RPC admission is closed");
-    }
-
-    fn mock_session() -> (CodexAppServerSession, Receiver<Value>, Sender<Value>) {
-        let (to_peer_sender, peer_receiver) = mpsc::channel::<Value>();
-        let (peer_sender, client_receiver) = mpsc::channel::<Value>();
-        let peer = thread::spawn(move || {
-            let initialize = peer_receiver.recv().unwrap();
-            assert_eq!(initialize["method"], "initialize");
-            assert!(initialize.get("jsonrpc").is_none());
-            peer_sender
-                .send(json!({
-                    "id": initialize["id"],
-                    "result": {
-                        "codexHome": "/tmp/codex-home",
-                        "platformFamily": "unix",
-                        "platformOs": "macos",
-                        "userAgent": "codex-cli/fixture"
-                    }
-                }))
-                .unwrap();
-            let initialized = peer_receiver.recv().unwrap();
-            assert_eq!(initialized["method"], "initialized");
-            assert!(initialized.get("jsonrpc").is_none());
-            (peer_receiver, peer_sender)
-        });
-        let session = CodexAppServerSession::connect(
-            Box::new(MockReader {
-                receiver: client_receiver,
-            }),
-            Box::new(MockWriter {
-                sender: to_peer_sender,
-            }),
-        )
-        .unwrap();
-        let (peer_receiver, client_sender) = peer.join().unwrap();
-        (session, peer_receiver, client_sender)
-    }
-
-    #[test]
-    fn app_server_command_uses_the_resolved_executable_path() {
-        let executable = Path::new("/resolved/runtime/codex");
-        let args = vec![
-            "app-server".to_string(),
-            "--listen".to_string(),
-            "stdio://".to_string(),
-        ];
-        let command = codex_app_server_command(executable, &args);
-
-        assert_eq!(command.get_program(), executable.as_os_str());
-        let marker = command.get_envs().find(|(key, _)| *key == crate::desktop_takeover::HARNESS_MARKER)
-            .and_then(|(_, value)| value).unwrap();
-        assert_eq!(marker.to_str(), Some(std::process::id().to_string().as_str()));
-        assert_eq!(
-            command.get_args().collect::<Vec<_>>(),
-            ["app-server", "--listen", "stdio://"]
-                .iter()
-                .map(std::ffi::OsStr::new)
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn initialize_timeout_fails_closed_instead_of_blocking_forever() {
-        let (outgoing_sender, _outgoing_receiver) = mpsc::channel::<Value>();
-        let (incoming_sender, incoming_receiver) = mpsc::channel::<Value>();
-
-        let error = CodexAppServerSession::connect_with_initialize_timeout(
-            Box::new(MockReader {
-                receiver: incoming_receiver,
-            }),
-            Box::new(MockWriter {
-                sender: outgoing_sender,
-            }),
-            Duration::from_millis(20),
-        )
-        .err()
-        .expect("a silent App Server must time out");
-        drop(incoming_sender);
-
-        assert!(matches!(error, CodexAppServerError::Timeout(_)));
-    }
-
-    #[test]
-    fn empty_initialize_result_is_rejected() {
-        let (outgoing_sender, outgoing_receiver) = mpsc::channel::<Value>();
-        let (incoming_sender, incoming_receiver) = mpsc::channel::<Value>();
-        let peer = thread::spawn(move || {
-            let initialize = outgoing_receiver.recv().unwrap();
-            incoming_sender
-                .send(json!({
-                    "id": initialize["id"],
-                    "result": {}
-                }))
-                .unwrap();
-        });
-
-        let error = CodexAppServerSession::connect(
-            Box::new(MockReader {
-                receiver: incoming_receiver,
-            }),
-            Box::new(MockWriter {
-                sender: outgoing_sender,
-            }),
-        )
-        .err()
-        .expect("an empty initialize result must fail closed");
-        peer.join().unwrap();
-
-        assert!(matches!(error, CodexAppServerError::Protocol(_)));
-    }
-
-    #[test]
-    fn oversized_stderr_keeps_session_and_pending_requests_alive() {
-        let (outgoing_sender, _outgoing_receiver) = mpsc::channel::<Value>();
-        let (incoming_sender, incoming_receiver) = mpsc::channel::<Value>();
-        let terminated = Arc::new(AtomicBool::new(false));
-        let session = CodexAppServerSession::from_parts(
-            Box::new(MockReader { receiver: incoming_receiver }),
-            Box::new(MockWriter { sender: outgoing_sender }),
-            Some(Box::new(RecordingControl { terminated: terminated.clone() })),
-        );
-        let (pending_sender, pending_receiver) = mpsc::channel();
-        session.inner.pending.lock().unwrap().insert(JsonRpcId::Number(41), pending_sender);
-        let mut stderr = vec![b'x'; MAX_APP_SERVER_STDERR_LINE_BYTES + 1];
-        stderr.extend_from_slice(b"\nnext line\n");
-        session.start_stderr_monitor(std::io::Cursor::new(stderr)).join().unwrap();
-        assert!(session.is_running());
-        assert!(!terminated.load(Ordering::SeqCst));
-        assert!(matches!(pending_receiver.try_recv(), Err(mpsc::TryRecvError::Empty)));
-        drop(incoming_sender);
-    }
-
-    #[test]
-    fn rejected_frames_preserve_concurrent_requests_events_and_server_request_id_namespace() {
-        let (outgoing_sender, outgoing_receiver) = mpsc::channel();
-        let (incoming_sender, incoming_receiver) = mpsc::channel();
-        let terminated = Arc::new(AtomicBool::new(false));
-        let session = CodexAppServerSession::from_parts(
-            Box::new(JsonLineReader::new(MockByteReader {
-                receiver: incoming_receiver, current: std::io::Cursor::new(Vec::new()),
-            })),
-            Box::new(MockWriter { sender: outgoing_sender }),
-            Some(Box::new(RecordingControl { terminated: terminated.clone() })),
-        );
-        let notifications = session.subscribe().unwrap();
-        let session_a = session.clone();
-        let request_a = thread::spawn(move || session_a.request_value_with_timeout(
-            "thread/read", json!({ "threadId": "thread-a" }), Duration::from_secs(2)));
-        let id_a = outgoing_receiver.recv_timeout(Duration::from_secs(1)).unwrap()["id"].clone();
-        let session_b = session.clone();
-        let request_b = thread::spawn(move || session_b.request_value_with_timeout(
-            "thread/read", json!({ "threadId": "thread-b" }), Duration::from_secs(2)));
-        let id_b = outgoing_receiver.recv_timeout(Duration::from_secs(1)).unwrap()["id"].clone();
-
-        // An incoming server request may legitimately reuse a pending client id.
-        let server_request = format!("{{\"id\":{id_b},\"method\":\"approval\",\"params\":!}}\n");
-        let invalid = format!("{{\"id\":{id_a},\"result\":!}}\n");
-        let healthy = json!({ "id": id_b, "result": { "ok": true } });
-        let event = json!({ "method": "thread/name/updated", "params": {
-            "threadId": "thread-b", "threadName": "Still receiving",
-        } });
-        incoming_sender.send(format!("{server_request}{invalid}{healthy}\n{event}\n").into_bytes()).unwrap();
-
-        let rejected = outgoing_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(rejected["id"], id_b);
-        assert_eq!(rejected["error"]["code"], -32600);
-        assert!(matches!(request_a.join().unwrap().unwrap_err(), CodexAppServerError::Protocol(_)));
-        assert_eq!(request_b.join().unwrap().unwrap(), json!({ "ok": true }));
-        assert!(matches!(notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap(),
-            CodexIncoming::Notification(CodexNotification::ThreadNameUpdated { thread_id, .. }) if thread_id == "thread-b"));
-        assert!(session.is_running());
-        assert!(!terminated.load(Ordering::SeqCst));
-        session.shutdown().unwrap();
-        drop(incoming_sender);
-    }
-
-    #[test]
-    fn persistent_session_initializes_once_and_matches_out_of_order_responses() {
-        let (session, peer_receiver, peer_sender) = mock_session();
-        let first_session = session.clone();
-        let first = thread::spawn(move || {
-            first_session.thread_read("thread-one").unwrap().thread.id
-        });
-        let second_session = session.clone();
-        let second = thread::spawn(move || {
-            second_session.thread_read("thread-two").unwrap().thread.id
-        });
-        let request_a = peer_receiver.recv().unwrap();
-        let request_b = peer_receiver.recv().unwrap();
-        assert_eq!(request_a["method"], "thread/read");
-        assert_eq!(request_b["method"], "thread/read");
-        for request in [&request_b, &request_a] {
-            let thread_id = request["params"]["threadId"].as_str().unwrap();
-            peer_sender
-                .send(json!({
-                    "jsonrpc": "2.0",
-                    "id": request["id"],
-                    "result": {
-                        "thread": thread_fixture(thread_id, "/tmp/project", "idle", vec![])
-                    }
-                }))
-                .unwrap();
-        }
-        let mut ids = vec![first.join().unwrap(), second.join().unwrap()];
-        ids.sort();
-        assert_eq!(ids, vec!["thread-one", "thread-two"]);
-        assert!(session.is_running());
-        session.shutdown().unwrap();
-        assert!(!session.is_running());
-    }
-
-    #[test]
-    fn repeated_thread_reads_do_not_load_or_configure_the_thread() {
-        let (session, peer_receiver, peer_sender) = mock_session();
-        let operation_session = session.clone();
-        let operation = thread::spawn(move || {
-            (0..2)
-                .map(|_| operation_session.thread_read("thread-writer-held").unwrap())
-                .collect::<Vec<_>>()
-        });
-
-        for _ in 0..2 {
-            let read = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-            assert_eq!(read["method"], "thread/read");
-            assert_eq!(read["params"]["threadId"], "thread-writer-held");
-            assert_eq!(read["params"]["includeTurns"], true);
-            peer_sender
-                .send(json!({
-                    "id": read["id"],
-                    "result": {
-                        "thread": thread_fixture(
-                            "thread-writer-held",
-                            "/tmp/project",
-                            "idle",
-                            vec![]
-                        )
-                    }
-                }))
-                .unwrap();
-        }
-
-        let snapshots = operation.join().unwrap();
-        assert_eq!(snapshots.len(), 2);
-        assert!(snapshots
-            .iter()
-            .all(|snapshot| snapshot.thread.id == "thread-writer-held"));
-        assert!(session.inner.loaded_threads.lock().unwrap().is_empty());
-        assert!(session
-            .inner
-            .thread_configurations
-            .lock()
-            .unwrap()
-            .is_empty());
-        assert!(peer_receiver.try_recv().is_err());
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn loaded_list_preserves_native_pagination_and_reads_metadata_without_turns() {
-        let (session, peer_receiver, peer_sender) = mock_session();
-        let source = session.clone();
-        let operation = thread::spawn(move || {
-            let page = source.thread_loaded_list(Some("previous-id".into()), 100).unwrap();
-            assert_eq!(page, (vec!["loaded-id".into()], Some("loaded-id".into())));
-            source.thread_read_metadata("loaded-id").unwrap()
-        });
-        let list = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(list["method"], "thread/loaded/list");
-        assert_eq!(list["params"], json!({"cursor":"previous-id","limit":100}));
-        peer_sender.send(json!({"id":list["id"],"result":{"data":["loaded-id"],"nextCursor":"loaded-id"}})).unwrap();
-        let read = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(read["method"], "thread/read");
-        assert_eq!(read["params"]["includeTurns"], false);
-        peer_sender.send(json!({"id":read["id"],"result":{"thread":thread_fixture("loaded-id","/tmp/project","idle",vec![])}})).unwrap();
-        assert_eq!(operation.join().unwrap().thread.id, "loaded-id");
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn thread_list_preserves_native_cwds_from_the_wire() {
-        let worktree = "/fixture/.codex/worktrees/linked/project";
-        let deleted = "/fixture/.codex/worktrees/deleted/project";
-        let (session, peer_receiver, peer_sender) = mock_session();
-        let list_session = session.clone();
-        let listed = thread::spawn(move || {
-            list_session
-                .thread_list(CodexThreadListRequest::default())
-                .unwrap()
-        });
-        let request = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(request["method"], "thread/list");
-        peer_sender
-            .send(json!({
-                "id": request["id"],
-                "result": {
-                    "data": [
-                        thread_fixture(
-                            "thread-worktree",
-                            worktree,
-                            "idle",
-                            vec![]
-                        ),
-                        thread_fixture(
-                            "thread-deleted-worktree",
-                            deleted,
-                            "idle",
-                            vec![]
-                        )
-                    ],
-                    "nextCursor": null
-                }
-            }))
-            .unwrap();
-
-        let snapshots = listed.join().unwrap().data;
-
-        assert_eq!(snapshots[0].thread.cwd, worktree);
-        assert_eq!(snapshots[1].thread.cwd, deleted);
-        assert_eq!(snapshots[0].workspace_root.as_deref(), Some(worktree));
-        assert_eq!(snapshots[1].workspace_root.as_deref(), Some(deleted));
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn session_keeps_reading_notifications_between_requests() {
-        let (session, _, peer_sender) = mock_session();
-        let notifications = session.subscribe().unwrap();
-            peer_sender
-                .send(json!({
-                    "method": "turn/started",
-                    "params": {
-                    "threadId": "thread-one",
-                    "turn": turn_fixture("turn-one", "inProgress")
-                }
-            }))
-            .unwrap();
-        let incoming = notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
-        assert!(matches!(
-            incoming,
-            CodexIncoming::Notification(CodexNotification::TurnStarted { thread_id, .. })
-                if thread_id == "thread-one"
-        ));
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn session_parses_thread_name_updated_notifications() {
-        let (session, _, peer_sender) = mock_session();
-        let notifications = session.subscribe().unwrap();
-        peer_sender
-            .send(json!({
-                "method": "thread/name/updated",
-                "params": {
-                    "threadId": "thread-one",
-                    "threadName": "A useful title"
-                }
-            }))
-            .unwrap();
-
-        let incoming = notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
-        assert!(matches!(
-            incoming,
-            CodexIncoming::Notification(CodexNotification::ThreadNameUpdated {
-                thread_id,
-                thread_name: Some(thread_name),
-            }) if thread_id == "thread-one" && thread_name == "A useful title"
-        ));
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn session_parses_thread_status_changed_notifications() {
-        let (session, _, peer_sender) = mock_session();
-        let notifications = session.subscribe().unwrap();
-        peer_sender
-            .send(json!({
-                "method": "thread/status/changed",
-                "params": {
-                    "threadId": "thread-one",
-                    "status": {
-                        "type": "active",
-                        "activeFlags": ["waitingOnApproval"]
-                    }
-                }
-            }))
-            .unwrap();
-
-        let incoming = notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
-        assert!(matches!(
-            incoming,
-            CodexIncoming::Notification(CodexNotification::ThreadStatusChanged {
-                thread_id,
-                status: CodexThreadStatus::Active { active_flags },
-            }) if thread_id == "thread-one"
-                && active_flags == vec![CodexThreadActiveFlag::WaitingOnApproval]
-        ));
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn peer_exit_is_reported_to_subscribers_and_stops_the_session() {
-        let (session, _, peer_sender) = mock_session();
-        let notifications = session.subscribe().unwrap();
-        drop(peer_sender);
-        let error = notifications
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap()
-            .unwrap_err();
-        assert_eq!(error, CodexAppServerError::ProcessExited);
-        assert!(!session.is_running());
-    }
-
-    #[test]
-    fn terminal_fault_is_replayed_to_late_subscriber() {
-        let (session, _, peer_sender) = mock_session();
-        drop(peer_sender);
-        for _ in 0..100 {
-            if !session.is_running() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(1));
-        }
-        assert!(!session.is_running());
-
-        let error = match session.subscribe() {
-            Err(error) => error,
-            Ok(_) => panic!("late subscriber did not receive the terminal fault"),
-        };
-        assert_eq!(error, CodexAppServerError::ProcessExited);
-    }
-
-    #[test]
-    fn subscribe_racing_terminal_fault_always_observes_the_fault() {
-        let (session, _peer_receiver, peer_sender) = mock_session();
-        let subscriber_count = 32;
-        let barrier = Arc::new(Barrier::new(subscriber_count + 1));
-        let expected = CodexAppServerError::Protocol("forced concurrent fault".to_string());
-        let subscribers = (0..subscriber_count)
-            .map(|_| {
-                let session = session.clone();
-                let barrier = barrier.clone();
-                thread::spawn(move || {
-                    barrier.wait();
-                    match session.subscribe() {
-                        Ok(receiver) => receiver
-                            .recv_timeout(Duration::from_secs(1))
-                            .unwrap()
-                            .unwrap_err(),
-                        Err(error) => error,
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
-
-        barrier.wait();
-        session.inner.fail(expected.clone());
-
-        for subscriber in subscribers {
-            assert_eq!(subscriber.join().unwrap(), expected);
-        }
-        let late_error = match session.subscribe() {
-            Err(error) => error,
-            Ok(_) => panic!("terminal fault was not retained after the race"),
-        };
-        assert_eq!(late_error, expected);
-        drop(peer_sender);
-    }
-
-    #[test]
-    fn official_notification_metadata_and_missing_params_are_accepted() {
-        let (session, peer_receiver, peer_sender) = mock_session();
-        let notifications = session.subscribe().unwrap();
-        peer_sender
-            .send(json!({
-                "method": "remoteControl/status/changed",
-                "emittedAtMs": 1234
-            }))
-            .unwrap();
-        let incoming = notifications
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap()
-            .unwrap();
-        assert!(matches!(
-            incoming,
-            CodexIncoming::Notification(CodexNotification::Unknown { method })
-                if method == "remoteControl/status/changed"
-        ));
-
-        peer_sender
-            .send(json!({
-                "id": "future-request",
-                "method": "future/request",
-                "trace": { "traceparent": null, "tracestate": null }
-            }))
-            .unwrap();
-        let incoming = notifications
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap()
-            .unwrap();
-        assert!(matches!(
-            incoming,
-            CodexIncoming::UnsupportedServerRequest { request_id, method }
-                if request_id == JsonRpcId::String("future-request".to_string())
-                    && method == "future/request"
-        ));
-        let response = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(response["id"], "future-request");
-        assert_eq!(response["error"]["code"], -32601);
-        assert!(response.get("jsonrpc").is_none());
-        assert!(session.is_running());
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn empty_streaming_agent_message_text_does_not_fault_the_reader() {
-        let (session, _, peer_sender) = mock_session();
-        let notifications = session.subscribe().unwrap();
-        peer_sender
-            .send(json!({
-                "method": "item/started",
-                "params": {
-                    "threadId": "thread-one",
-                    "turnId": "turn-one",
-                    "item": {
-                        "type": "agentMessage",
-                        "id": "agent-one",
-                        "text": ""
-                    }
-                }
-            }))
-            .unwrap();
-
-        let incoming = notifications
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap()
-            .unwrap();
-        assert!(matches!(
-            incoming,
-            CodexIncoming::Notification(CodexNotification::ItemUpserted {
-                item: CodexThreadItem::AgentMessage { id, text },
-                ..
-            }) if id == "agent-one" && text.is_empty()
-        ));
-        assert!(session.is_running());
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn output_delta_uses_channel_specific_content_ids_and_ignores_raw_reasoning() {
-        let summary = parse_notification(
-            "item/reasoning/summaryTextDelta",
-            json!({
-                "threadId": "thread-one",
-                "turnId": "turn-one",
-                "itemId": "reasoning-one",
-                "summaryIndex": 2,
-                "delta": "summary"
-            }),
-            "generation-one",
-        )
-        .unwrap();
-        assert!(matches!(
-            summary,
-            CodexNotification::OutputDelta {
-                item_id,
-                content_id,
-                kind: CodexContentKind::ReasoningSummary,
-                ..
-            } if item_id == "reasoning-one" && content_id == "reasoning-one:summary:2"
-        ));
-
-        let raw = parse_notification(
-            "item/reasoning/textDelta",
-            json!({
-                "threadId": "thread-one",
-                "turnId": "turn-one",
-                "itemId": "reasoning-one",
-                "contentIndex": 0,
-                "delta": "private raw reasoning"
-            }),
-            "generation-one",
-        )
-        .unwrap();
-        assert!(matches!(
-            raw,
-            CodexNotification::Unknown { method }
-                if method == "item/reasoning/textDelta"
-        ));
-    }
-
-    #[test]
-    fn thread_read_rejects_non_full_turn_items() {
-        let (session, peer_receiver, peer_sender) = mock_session();
-        let request_session = session.clone();
-        let request = thread::spawn(move || request_session.thread_read("thread-one"));
-        let read = peer_receiver.recv().unwrap();
-        let mut turn = turn_fixture("turn-one", "completed");
-        turn["itemsView"] = json!("summary");
-        peer_sender
-            .send(json!({
-                "id": read["id"],
-                "result": {
-                    "thread": thread_fixture(
-                        "thread-one",
-                        "/tmp/project",
-                        "idle",
-                        vec![turn]
-                    )
-                }
-            }))
-            .unwrap();
-
-        let error = request.join().unwrap().unwrap_err();
-        assert!(matches!(
-            error,
-            CodexAppServerError::Protocol(message)
-                if message.contains("non-full items for turn turn-one")
-        ));
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn invalid_notification_metadata_does_not_stop_other_notifications() {
-        let (session, _peer_receiver, peer_sender) = mock_session();
-        let notifications = session.subscribe().unwrap();
-        peer_sender.send(json!({ "jsonrpc": "1.0", "method": "remoteControl/status/changed" })).unwrap();
-        peer_sender.send(json!({ "method": "thread/name/updated", "params": {
-            "threadId": "thread-other", "threadName": "Still receiving",
-        } })).unwrap();
-        assert!(matches!(notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap(),
-            CodexIncoming::Notification(CodexNotification::ThreadNameUpdated { thread_id, .. }) if thread_id == "thread-other"));
-        assert!(session.is_running());
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn command_approval_kind_null_is_unsupported_but_missing_kind_defaults_to_command() {
-        let (session, peer_receiver, peer_sender) = mock_session();
-        let notifications = session.subscribe().unwrap();
-        peer_sender
-            .send(json!({
-                "id": "kind-null",
-                "method": "item/commandExecution/requestApproval",
-                "params": {
-                    "threadId": "thread-one",
-                    "turnId": "turn-one",
-                    "itemId": "item-null",
-                    "startedAtMs": 123,
-                    "kind": null
-                }
-            }))
-            .unwrap();
-        assert!(matches!(
-            notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap(),
-            CodexIncoming::UnsupportedServerRequest {
-                request_id: JsonRpcId::String(request_id),
-                method
-            } if request_id == "kind-null"
-                && method == "item/commandExecution/requestApproval"
-        ));
-        let rejected = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(rejected["id"], "kind-null");
-        assert_eq!(rejected["error"]["code"], -32601);
-
-        peer_sender
-            .send(json!({
-                "id": "kind-missing",
-                "method": "item/commandExecution/requestApproval",
-                "params": {
-                    "threadId": "thread-one",
-                    "turnId": "turn-one",
-                    "itemId": "item-command",
-                    "startedAtMs": 124
-                }
-            }))
-            .unwrap();
-        let accepted = notifications
-            .recv_timeout(Duration::from_secs(1))
-            .unwrap()
-            .unwrap();
-        assert!(matches!(
-            accepted,
-            CodexIncoming::ApprovalRequested(CodexApprovalRequest {
-                kind: CodexApprovalKind::CommandExecution,
-                ..
-            })
-        ));
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn stopped_session_reports_not_sent_without_allocating_or_writing() {
-        let (session, peer_receiver, peer_sender) = mock_session();
-        session.shutdown().unwrap();
-        let next_id = session.inner.next_id.load(Ordering::SeqCst);
-
-        let outcome = session.ensure_thread_loaded_outcome("thread-stopped");
-
-        assert_eq!(
-            outcome,
-            CodexRequestOutcome::NotSent(CodexAppServerError::Shutdown)
-        );
-        assert_eq!(session.inner.next_id.load(Ordering::SeqCst), next_id);
-        assert!(session.inner.pending.lock().unwrap().is_empty());
-        assert!(peer_receiver.try_recv().is_err());
-        drop(peer_sender);
-    }
-
-    #[test]
-    fn unmatched_and_late_responses_do_not_stop_the_session() {
-        let (session, peer_receiver, peer_sender) = mock_session();
-        let timed = session.request_value_with_timeout("project/read", json!({}), Duration::from_millis(20));
-        assert!(matches!(timed, Err(CodexAppServerError::Timeout(_))));
-        assert!(session.is_running());
-        let old = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        peer_sender.send(json!({ "id": old["id"], "result": {} })).unwrap();
-        peer_sender.send(json!({ "id": 999, "result": {} })).unwrap();
-        let operation_session = session.clone();
-        let operation = thread::spawn(move || operation_session.request_value_with_timeout(
-            "project/read", json!({}), Duration::from_secs(1)));
-        let current = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        peer_sender.send(json!({ "id": current["id"], "result": { "ok": true } })).unwrap();
-        assert_eq!(operation.join().unwrap().unwrap(), json!({ "ok": true }));
-        assert!(session.is_running());
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn typed_operations_preserve_normal_and_project_thread_start_parameters() {
-        let (session, peer_receiver, peer_sender) = mock_session();
-        let operation_session = session.clone();
-        let operations = thread::spawn(move || {
-            let page = operation_session
-                .thread_list(CodexThreadListRequest {
-                    cursor: Some("cursor-one".to_string()),
-                    limit: Some(20),
-                    project_id: None,
-                    workspace_root: Some("/work/project".to_string()),
-                    search_term: None,
-                })
-                .unwrap();
-            assert_eq!(page.data.len(), 1);
-            let read = operation_session.thread_read("thread-read").unwrap();
-            assert_eq!(read.thread.id, "thread-read");
-            let normal = operation_session
-                .thread_start(CodexThreadStartRequest {
-                    workspace_root: None,
-                    project_id: None,
-                    permission_level: CodexPermissionLevel::ReadOnly,
-                    model: None,
-                    reasoning_effort: None,
-                })
-                .unwrap();
-            assert_eq!(normal.workspace_root.as_deref(), Some("/tmp"));
-            assert_eq!(
-                normal.permission_level,
-                Some(CodexPermissionLevel::ReadOnly)
-            );
-            let project = operation_session
-                .thread_start(CodexThreadStartRequest {
-                    workspace_root: Some("/work/project".to_string()),
-                    project_id: Some("project-fixture".to_string()),
-                    permission_level: CodexPermissionLevel::FullAccess,
-                    model: Some("gpt-fixture".to_string()),
-                    reasoning_effort: Some("high".to_string()),
-                })
-                .unwrap();
-            assert_eq!(project.workspace_root.as_deref(), Some("/work/project"));
-            assert_eq!(
-                project.permission_level,
-                Some(CodexPermissionLevel::FullAccess)
-            );
-            assert_eq!(project.model.as_deref(), Some("gpt-fixture"));
-            assert_eq!(project.reasoning_effort.as_deref(), Some("high"));
-            let turn = operation_session
-                .turn_start(CodexTurnStartRequest {
-                    thread_id: "thread-project".to_string(),
-                    message: "hello".to_string(),
-                    client_message_id: Some("message-one".to_string()),
-                    permission_level: Some(CodexPermissionLevel::FullAccess),
-                    model: Some("gpt-fixture".to_string()),
-                    reasoning_effort: Some("high".to_string()),
-                })
-                .unwrap();
-            assert_eq!(turn.id, "turn-started");
-            let steered = operation_session
-                .turn_steer(CodexTurnSteerRequest {
-                    thread_id: "thread-project".to_string(),
-                    expected_turn_id: "turn-started".to_string(),
-                    message: "steer".to_string(),
-                    client_message_id: Some("message-two".to_string()),
-                })
-                .unwrap();
-            assert_eq!(steered.id, "turn-started");
-            let interrupted = operation_session
-                .turn_interrupt("thread-project", "turn-started")
-                .unwrap();
-            assert_eq!(interrupted.status, CodexTurnStatus::Interrupted);
-        });
-
-        let list = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(list["method"], "thread/list");
-        assert_eq!(list["params"]["cwd"], "/work/project");
-        assert_eq!(list["params"]["sortKey"], "updated_at");
-        assert_eq!(list["params"]["sortDirection"], "desc");
-        assert_eq!(list["params"]["useStateDbOnly"], true);
-        assert!(list["params"].get("searchTerm").is_none());
-        peer_sender
-            .send(json!({
-                "id": list["id"],
-                "result": {
-                    "data": [thread_fixture("thread-listed", "/work/project", "idle", vec![])],
-                    "nextCursor": null
-                }
-            }))
-            .unwrap();
-
-        let read = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(read["method"], "thread/read");
-        assert_eq!(read["params"]["includeTurns"], true);
-        peer_sender
-            .send(json!({
-                "id": read["id"],
-                "result": {
-                    "thread": thread_fixture("thread-read", "/tmp", "idle", vec![])
-                }
-            }))
-            .unwrap();
-
-        let normal = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(normal["method"], "thread/start");
-        assert!(normal["params"].get("cwd").is_none());
-        assert!(normal["params"].get("projectId").is_none());
-        assert_eq!(normal["params"]["sandbox"], "read-only");
-        assert_eq!(normal["params"]["approvalPolicy"], "on-request");
-        peer_sender
-            .send(json!({
-                "id": normal["id"],
-                "result": {
-                    "thread": thread_fixture("thread-normal", "/tmp", "idle", vec![]),
-                    "model": "default",
-                    "modelProvider": "openai",
-                    "cwd": "/tmp",
-                    "approvalPolicy": "on-request",
-                    "approvalsReviewer": "user",
-                    "reasoningEffort": "medium",
-                    "sandbox": {
-                        "type": "readOnly",
-                        "networkAccess": false
-                    }
-                }
-            }))
-            .unwrap();
-
-        let project = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(project["method"], "thread/start");
-        assert_eq!(project["params"]["cwd"], "/work/project");
-        assert_eq!(project["params"]["projectId"], "project-fixture");
-        assert_eq!(project["params"]["sandbox"], "danger-full-access");
-        assert_eq!(project["params"]["approvalPolicy"], "never");
-        assert_eq!(
-            project["params"]["config"]["model_reasoning_effort"],
-            "high"
-        );
-        peer_sender
-            .send(json!({
-                "id": project["id"],
-                "result": {
-                    "thread": thread_fixture("thread-project", "/work/project", "idle", vec![]),
-                    "model": "gpt-fixture",
-                    "modelProvider": "openai",
-                    "cwd": "/work/project",
-                    "approvalPolicy": "never",
-                    "approvalsReviewer": "user",
-                    "reasoningEffort": "high",
-                    "sandbox": {
-                        "type": "dangerFullAccess"
-                    }
-                }
-            }))
-            .unwrap();
-
-        let start = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(start["method"], "turn/start");
-        assert_eq!(start["params"]["input"][0]["text"], "hello");
-        assert_eq!(start["params"]["clientUserMessageId"], "message-one");
-        assert_eq!(start["params"]["sandboxPolicy"]["type"], "dangerFullAccess");
-        assert_eq!(start["params"]["approvalPolicy"], "never");
-        assert_eq!(start["params"]["model"], "gpt-fixture");
-        assert_eq!(start["params"]["effort"], "high");
-        peer_sender
-            .send(json!({
-                "id": start["id"],
-                "result": { "turn": turn_fixture("turn-started", "inProgress") }
-            }))
-            .unwrap();
-
-        let steer = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(steer["method"], "turn/steer");
-        assert_eq!(steer["params"]["expectedTurnId"], "turn-started");
-        peer_sender
-            .send(json!({
-                "id": steer["id"],
-                "result": { "turnId": "turn-started" }
-            }))
-            .unwrap();
-
-        let steer_read = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(steer_read["method"], "thread/read");
-        peer_sender
-            .send(json!({
-                "id": steer_read["id"],
-                "result": {
-                    "thread": thread_fixture(
-                        "thread-project",
-                        "/work/project",
-                        "active",
-                        vec![turn_fixture("turn-started", "inProgress")]
-                    )
-                }
-            }))
-            .unwrap();
-
-        let interrupt = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(interrupt["method"], "turn/interrupt");
-        assert_eq!(interrupt["params"]["turnId"], "turn-started");
-        peer_sender
-            .send(json!({
-                "id": interrupt["id"],
-                "result": {}
-            }))
-            .unwrap();
-
-        let interrupt_read = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(interrupt_read["method"], "thread/read");
-        peer_sender
-            .send(json!({
-                "id": interrupt_read["id"],
-                "result": {
-                    "thread": thread_fixture(
-                        "thread-project",
-                        "/work/project",
-                        "idle",
-                        vec![turn_fixture("turn-started", "interrupted")]
-                    )
-                }
-            }))
-            .unwrap();
-
-        operations.join().unwrap();
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn project_operations_use_the_experimental_app_server_contract() {
-        let (session, peer_receiver, peer_sender) = mock_session();
-        *session.inner.harness_version.lock().unwrap() = Some("0.166.0-alpha.5.1".into());
-        let operation_session = session.clone();
-        let operations = thread::spawn(move || {
-            let listed = operation_session
-                .project_list(Some("cursor-one".to_string()), Some(5))
-                .unwrap();
-            assert_eq!(listed.next_cursor.as_deref(), Some("cursor-two"));
-            assert_eq!(listed.data[0].id, "project-one");
-            assert_eq!(operation_session.project_read("project-one").unwrap().position, 3);
-            operation_session
-                .project_create(CodexProjectCreateRequest {
-                    idempotency_key: "create-one".to_string(),
-                    name: "Project One".to_string(),
-                    roots: vec![super::super::protocol::CodexProjectRoot {
-                        path: "/fixture/project".to_string(),
-                    }],
-                    metadata: std::collections::BTreeMap::from([(
-                        "team".to_string(),
-                        "gateway".to_string(),
-                    )]),
-                })
-                .unwrap();
-            operation_session
-                .project_update(CodexProjectUpdateRequest {
-                    project_id: "project-one".to_string(),
-                    name: Some("Project Renamed".to_string()),
-                    roots: None,
-                    metadata: None,
-                })
-                .unwrap();
-            operation_session.project_delete("project-one").unwrap();
-        });
-
-        let project_json = || {
-            json!({
-                "id": "project-one",
-                "name": "Project One",
-                "roots": [{ "path": "/fixture/project" }],
-                "metadata": { "team": "gateway" },
-                "position": 3,
-                "createdAt": 11,
-                "updatedAt": 12
-            })
-        };
-
-        let list = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(list["method"], "project/list");
-        assert_eq!(list["params"], json!({ "cursor": "cursor-one", "limit": 5 }));
-        peer_sender
-            .send(json!({
-                "id": list["id"],
-                "result": { "data": [project_json()], "nextCursor": "cursor-two" }
-            }))
-            .unwrap();
-
-        let read = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(read["method"], "project/read");
-        assert_eq!(read["params"], json!({ "projectId": "project-one" }));
-        peer_sender
-            .send(json!({ "id": read["id"], "result": { "project": project_json() } }))
-            .unwrap();
-
-        let create = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(create["method"], "project/create");
-        assert_eq!(create["params"]["idempotencyKey"], "create-one");
-        assert_eq!(create["params"]["roots"][0]["path"], "/fixture/project");
-        assert_eq!(create["params"]["metadata"]["team"], "gateway");
-        peer_sender
-            .send(json!({ "id": create["id"], "result": { "project": project_json() } }))
-            .unwrap();
-
-        let update = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(update["method"], "project/update");
-        assert_eq!(
-            update["params"],
-            json!({ "projectId": "project-one", "name": "Project Renamed" })
-        );
-        peer_sender
-            .send(json!({ "id": update["id"], "result": { "project": project_json() } }))
-            .unwrap();
-
-        let delete = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(delete["method"], "project/delete");
-        assert_eq!(delete["params"], json!({ "projectId": "project-one" }));
-        peer_sender
-            .send(json!({ "id": delete["id"], "result": {} }))
-            .unwrap();
-
-        operations.join().unwrap();
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn historical_threads_resume_once_per_app_server_session() {
-        for session_number in 1..=2 {
-            let (session, peer_receiver, peer_sender) = mock_session();
-            let operation_session = session.clone();
-            let operation = thread::spawn(move || {
-                for message_number in 1..=2 {
-                    operation_session
-                        .turn_start(CodexTurnStartRequest {
-                            thread_id: "thread-historical".to_string(),
-                            message: format!("message {message_number}"),
-                            client_message_id: Some(format!(
-                                "session-{session_number}-message-{message_number}"
-                            )),
-                            permission_level: None,
-                            model: None,
-                            reasoning_effort: None,
-                        })
-                        .unwrap();
-                }
-            });
-
-            let resume = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-            assert_eq!(resume["method"], "thread/resume");
-            assert_eq!(resume["params"]["threadId"], "thread-historical");
-            assert_eq!(resume["params"]["excludeTurns"], true);
-            peer_sender
-                .send(json!({
-                    "id": resume["id"],
-                    "result": {
-                        "thread": thread_fixture(
-                            "thread-historical",
-                            "/tmp/project",
-                            "idle",
-                            vec![]
-                        ),
-                        "model": "default",
-                        "modelProvider": "openai",
-                        "cwd": "/tmp/project",
-                        "approvalPolicy": "on-request",
-                        "approvalsReviewer": "user",
-                        "reasoningEffort": null,
-                        "sandbox": {
-                            "type": "workspaceWrite",
-                            "writableRoots": [],
-                            "networkAccess": false,
-                            "excludeTmpdirEnvVar": false,
-                            "excludeSlashTmp": false
-                        }
-                    },
-                    "emittedAtMs": 1234
-                }))
-                .unwrap();
-
-            for message_number in 1..=2 {
-                let start = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-                assert_eq!(start["method"], "turn/start");
-                assert_eq!(
-                    start["params"]["clientUserMessageId"],
-                    format!("session-{session_number}-message-{message_number}")
-                );
-                peer_sender
-                    .send(json!({
-                        "id": start["id"],
-                        "result": {
-                            "turn": turn_fixture(
-                                &format!("turn-{session_number}-{message_number}"),
-                                "inProgress"
-                            )
-                        }
-                    }))
-                    .unwrap();
-            }
-
-            operation.join().unwrap();
-            assert!(peer_receiver.try_recv().is_err());
-            session.shutdown().unwrap();
-        }
-    }
-
-    #[test]
-    fn failed_resume_wakes_waiter_to_retry_without_caching_failure() {
-        let (session, peer_receiver, peer_sender) = mock_session();
-        let first_session = session.clone();
-        let first = thread::spawn(move || {
-            first_session.ensure_thread_loaded_outcome("thread-missing")
-        });
-        let first_resume = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(first_resume["method"], "thread/resume");
-
-        let second_session = session.clone();
-        let second = thread::spawn(move || {
-            second_session.ensure_thread_loaded_outcome("thread-missing")
-        });
-        assert!(peer_receiver
-            .recv_timeout(Duration::from_millis(20))
-            .is_err());
-        peer_sender
-            .send(json!({
-                "id": first_resume["id"],
-                "error": {
-                    "code": -32600,
-                    "message": "no rollout found for thread id thread-missing"
-                }
-            }))
-            .unwrap();
-
-        let second_resume = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(second_resume["method"], "thread/resume");
-        assert_eq!(second_resume["params"]["threadId"], "thread-missing");
-        peer_sender
-            .send(json!({
-                "id": second_resume["id"],
-                "error": {
-                    "code": -32600,
-                    "message": "no rollout found for thread id thread-missing"
-                }
-            }))
-            .unwrap();
-
-        for outcome in [first.join().unwrap(), second.join().unwrap()] {
-            assert!(matches!(
-                outcome,
-                CodexRequestOutcome::ExplicitRpcReject(CodexAppServerError::Rpc {
-                    code: -32600,
-                    message,
-                    data: None
-                }) if message == "no rollout found for thread id thread-missing"
-            ));
-        }
-        assert!(peer_receiver.try_recv().is_err());
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn approval_and_unsupported_server_requests_receive_terminal_responses() {
-        let (session, peer_receiver, peer_sender) = mock_session();
-        let notifications = session.subscribe().unwrap();
-        peer_sender
-            .send(json!({
-                "id": "approval-one",
-                "method": "item/commandExecution/requestApproval",
-                "params": {
-                    "threadId": "thread-one",
-                    "turnId": "turn-one",
-                    "itemId": "item-one",
-                    "startedAtMs": 123,
-                    "command": "cargo test",
-                    "availableDecisions": ["accept", "acceptForSession", "decline", "cancel"],
-                    "futureField": { "mustNotLeak": true }
-                }
-            }))
-            .unwrap();
-        let incoming = notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
-        assert!(matches!(
-            incoming,
-            CodexIncoming::UnsupportedServerRequest {
-                request_id: JsonRpcId::String(request_id),
-                method
-            } if request_id == "approval-one"
-                && method == "item/commandExecution/requestApproval"
-        ));
-        let response = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(response["id"], "approval-one");
-        assert_eq!(response["error"]["code"], -32601);
-
-        peer_sender
-            .send(json!({
-                "id": "approval-safe",
-                "method": "item/commandExecution/requestApproval",
-                "params": {
-                    "threadId": "thread-one",
-                    "turnId": "turn-one",
-                    "itemId": "item-one",
-                    "startedAtMs": 123,
-                    "command": "cargo test",
-                    "availableDecisions": ["accept", "decline"]
-                }
-            }))
-            .unwrap();
-        let incoming = notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
-        let CodexIncoming::ApprovalRequested(approval) = incoming else {
-            panic!("expected safe binary approval request");
-        };
-        assert_eq!(approval.kind, CodexApprovalKind::CommandExecution);
-        assert_eq!(approval.description.as_deref(), Some("cargo test"));
-        assert_eq!(approval.session_generation, session.generation());
-        session
-            .respond_to_approval(&approval, ApprovalDecision::Approve)
-            .unwrap();
-        let response = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(response["id"], "approval-safe");
-        assert_eq!(response["result"]["decision"], "accept");
-        assert!(response.get("method").is_none());
-
-        peer_sender
-            .send(json!({
-                "id": 2,
-                "method": "item/permissions/requestApproval",
-                "params": {
-                    "threadId": "thread-one",
-                    "turnId": "turn-one",
-                    "itemId": "item-two",
-                    "environmentId": null,
-                    "startedAtMs": 124,
-                    "cwd": "/tmp/project",
-                    "reason": "Allow network access",
-                    "permissions": {
-                        "network": { "enabled": true },
-                        "fileSystem": null
-                    }
-                }
-            }))
-            .unwrap();
-        let incoming = notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
-        assert!(matches!(
-            incoming,
-            CodexIncoming::UnsupportedServerRequest { request_id: JsonRpcId::Number(2), method }
-                if method == "item/permissions/requestApproval"
-        ));
-        let response = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(response["id"], 2);
-        assert_eq!(response["error"]["code"], -32601);
-        assert_eq!(
-            response["error"]["data"]["reason"],
-            "unsupported_client_capability"
-        );
-        assert!(response.get("result").is_none());
-
-        peer_sender
-            .send(json!({
-                "id": "unknown-one",
-                "method": "item/future/request",
-                "params": {}
-            }))
-            .unwrap();
-        let incoming = notifications.recv_timeout(Duration::from_secs(1)).unwrap().unwrap();
-        assert!(matches!(
-            incoming,
-            CodexIncoming::UnsupportedServerRequest {
-                request_id: JsonRpcId::String(request_id),
-                method
-            } if request_id == "unknown-one" && method == "item/future/request"
-        ));
-        let response = peer_receiver.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(response["id"], "unknown-one");
-        assert_eq!(response["error"]["code"], -32601);
-        assert!(session.is_running());
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn title_generation_skips_existing_names() {
-        let (session, requests, replies) = mock_session();
-        let worker = session.clone();
-        let task = thread::spawn(move || worker.generate_thread_title("target", "hello", None));
-        let read = requests.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(read["method"], "thread/read");
-        assert_eq!(read["params"]["includeTurns"], false);
-        let mut target = thread_fixture("target", "/tmp", "idle", vec![]);
-        target["name"] = json!("User title");
-        replies.send(json!({"id": read["id"], "result": {"thread": target}})).unwrap();
-        assert!(!task.join().unwrap().unwrap());
-        assert!(requests.try_recv().is_err());
-        session.shutdown().unwrap();
-    }
-
-    #[test]
-    fn title_generation_is_ephemeral_bounded_and_preserves_concurrent_names() {
-        for scenario in ["success", "renamed", "invalid", "timeout"] {
-            let (session, requests, replies) = mock_session();
-            let worker = session.clone();
-            let task = thread::spawn(move || worker.generate_thread_title_with_timeout(
-                "target", "fallback", Some("selected-model"), Duration::from_millis(100)));
-            let read = requests.recv_timeout(Duration::from_secs(1)).unwrap();
-            let mut target = thread_fixture("target", "/tmp", "idle", vec![]);
-            target["preview"] = json!("首条用户问题".repeat(2000));
-            replies.send(json!({"id": read["id"], "result": {"thread": target}})).unwrap();
-            let start = requests.recv_timeout(Duration::from_secs(1)).unwrap();
-            assert_eq!(start["method"], "thread/start");
-            assert_eq!(start["params"]["ephemeral"], true);
-            assert_eq!(start["params"]["model"], "selected-model");
-            assert_eq!(start["params"]["sandbox"], "read-only");
-            assert_eq!(start["params"]["approvalPolicy"], "never");
-            assert_eq!(start["params"]["config"]["features.hooks"], false);
-            let mut temporary = thread_fixture("title-job", "/tmp", "idle", vec![]);
-            temporary["ephemeral"] = json!(true);
-            // Native notifications may precede their RPC response.
-            replies.send(json!({"method": "thread/started", "params": {"thread": temporary}})).unwrap();
-            replies.send(json!({"id": start["id"], "result": {"thread": temporary,
-                "model": "selected-model", "modelProvider": "openai", "cwd": "/tmp",
-                "approvalPolicy": "never", "approvalsReviewer": "user", "sandbox": {"type": "readOnly"}}})).unwrap();
-            let turn = requests.recv_timeout(Duration::from_secs(1)).unwrap();
-            assert_eq!(turn["method"], "turn/start");
-            assert_eq!(turn["params"]["input"][0]["text"].as_str().unwrap().chars().count(), 6000);
-            assert!(turn["params"]["outputSchema"].is_object());
-            assert!(session.is_ephemeral_thread("title-job"));
-            if scenario != "timeout" {
-                replies.send(json!({"method": "item/completed", "params": {
-                    "threadId": "title-job", "turnId": "title-turn", "item": {
-                        "id": "title-output", "type": "agentMessage",
-                        "text": if scenario == "invalid" {"not JSON"} else {"{\"title\":\"生成的简短标题\"}"}
-                    }
-                }})).unwrap();
-                replies.send(json!({"method": "turn/completed", "params": {
-                    "threadId": "title-job", "turn": turn_fixture("title-turn", "completed")
-                }})).unwrap();
-            }
-            replies.send(json!({"id": turn["id"], "result": {"turn": turn_fixture("title-turn", "inProgress")}})).unwrap();
-            if scenario == "timeout" || scenario == "invalid" {
-                let cancel = requests.recv_timeout(Duration::from_secs(1)).unwrap();
-                assert_eq!(cancel["method"], "turn/interrupt");
-                replies.send(json!({"id": cancel["id"], "result": {}})).unwrap();
-            }
-            let cleanup = requests.recv_timeout(Duration::from_secs(1)).unwrap();
-            assert_eq!(cleanup["method"], "thread/unsubscribe");
-            replies.send(json!({"id": cleanup["id"], "result": {}})).unwrap();
-            if scenario == "success" || scenario == "renamed" {
-                let read = requests.recv_timeout(Duration::from_secs(1)).unwrap();
-                assert_eq!(read["method"], "thread/read");
-                if scenario == "renamed" { target["name"] = json!("User renamed meanwhile"); }
-                replies.send(json!({"id": read["id"], "result": {"thread": target}})).unwrap();
-                if scenario == "success" {
-                    let save = requests.recv_timeout(Duration::from_secs(1)).unwrap();
-                    assert_eq!(save["method"], "thread/name/set");
-                    assert_eq!(save["params"], json!({"threadId": "target", "name": "生成的简短标题"}));
-                    replies.send(json!({"id": save["id"], "result": {}})).unwrap();
-                }
-                assert_eq!(task.join().unwrap().unwrap(), scenario == "success");
-            } else {
-                assert!(task.join().unwrap().is_err());
-            }
-            assert!(requests.try_recv().is_err());
-            session.shutdown().unwrap();
-        }
-    }
-
-    fn thread_fixture(id: &str, cwd: &str, status: &str, turns: Vec<Value>) -> Value {
-        let status = if status == "active" {
-            json!({ "type": status, "activeFlags": [] })
-        } else {
-            json!({ "type": status })
-        };
-        json!({
-            "id": id,
-            "name": null,
-            "preview": "fixture",
-            "cwd": cwd,
-            "cliVersion": "0.151.0",
-            "createdAt": 100,
-            "ephemeral": false,
-            "modelProvider": "openai",
-            "projectId": null,
-            "sessionId": format!("session-{id}"),
-            "source": "appServer",
-            "updatedAt": 101,
-            "status": status,
-            "turns": turns,
-            "ignoredFutureField": { "mustNotLeak": true }
-        })
-    }
-
-    fn turn_fixture(id: &str, status: &str) -> Value {
-        json!({
-            "id": id,
-            "status": status,
-            "startedAt": 100,
-            "completedAt": null,
-            "items": []
-        })
-    }
-}
+mod tests;

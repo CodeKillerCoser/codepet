@@ -83,7 +83,7 @@
 | `f4fdf5f8`（2026-09-04） | 补齐 Provider 会话列表的项目归属，原生 projectId 缺失时曾按 cwd/project roots 推断 |
 | `be531f60`（2026-09-04） | 用 Desktop 旧关联与 legacy→native ID 映射替代上述路径推断，补齐 Provider 读取及筛选，覆盖 worktree |
 
-三项提交均为当前 HEAD 的祖先。旧关联兼容仍由 `provider/directory_list.rs` 与 `provider/ordered_ids.rs` 调用，未被本次项目响应适配删除。复跑 `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --lib project_assignment_compat_tests --quiet`（2 项）及 vertical 的 `project_owned_conversation_uses_native_project_id_without_inferring_cwd -- --exact`（1 项），均通过。这些提交和测试验证读取补齐、筛选与 native ID 传递，不验证 Remote 新建后原生 App 自动采用旧侧栏关联。
+三项提交均为当前 HEAD 的祖先。旧关联兼容仍由 `provider/directory_list.rs` 与 `provider/ordered_ids.rs` 调用，未被本次项目响应适配删除。复跑 `cargo test --manifest-path crates/Cargo.toml -p codepet-provider-codex --lib project_assignment_compat_tests --quiet`（2 项）及 vertical 的 `projects::project_owned_conversation_uses_native_project_id_without_inferring_cwd -- --exact`（1 项），均通过。这些提交和测试验证读取补齐、筛选与 native ID 传递，不验证 Remote 新建后原生 App 自动采用旧侧栏关联。
 
 11 月 8 日已有排查也记录了“native project_id 正确、旧 assignment 缺失”的相同数据状态，早于这次 0.171 适配。不能把用户记得的修复概括为从未存在；同样不能在没有旧版完整跨端通过证据时，断言现在是旧修复回归或已经确定官方开关是根因。
 
@@ -93,3 +93,19 @@
 用户确认“Code Pet 新建 → 原生 App 自动归组”为既有问题，本次先不处理，不作为此次兼容修复提交的阻塞项。历史验收失败证据保留，不将其改记为通过；原生项目 ID、显式归属参数及现有旧关联读取兼容继续保留。
 
 本次提交包含项目接口逐版本兼容、项目探测失败保留模型/发送能力、新旧契约与分页回归、schema 差异开发工具，以及将导出的 Provider SDK README 改为 SKILL.md 并写入逐接口兼容最佳实践。截图、完整 schema 导出和 SDK ZIP 为本机验收产物，不纳入源码提交。与本次无关的工作区修改保留。
+
+
+## 主干长度门禁与职责拆分（2026-11-25）
+
+提交前同步主干后，新增长度门禁要求本次触及的手写源码不超过 2000 行。用户明确授权先拆分再推送；没有放宽门禁或删除测试。
+
+- Client 保留进程/RPC 会话，来消息解码移至 `client/incoming.rs`；32 个原有 Client 测试按 session、operations、incoming、titles 分组，共用 mock/fixture 保留在测试模块入口。
+- Provider 保留配置、实例注册和公共类型，运行时会话/执行槽移至 runtime，Provider trait 方法移至 dispatch，工作区准备、账号用量与旧项目归属各自收拢。跨子模块可见性仅放到 Provider 父模块，lib.rs 的公共 re-export 不变。
+- 77 个纵向测试按项目、生命周期/审批、历史、交互释放、共享执行、传输控制、原生/标题、目录元数据分组，共用进程与 wire helper 保留在原测试入口。自动对照测试名称清单，未增加、删除或忽略任何测试；精确测试调用的脚本同步使用新模块路径。
+
+`dispatch.rs` 约 1514 行，属于 1500–2000 的审查区间：仅承载同一个 Provider trait 实现，原生协议编解码仍在 Client，后续增长应提取业务 helper，不压缩排版或按编号分片。相关验证包括长度门禁、完整 Codex 测试、stdio 脚本、Host 内置 Provider 集成和真实只读项目探针。
+
+
+拆分后 Client/Provider/纵向测试入口分别为 1244、1413、1026 行；长度检查为 0 violations、1 个已审查项。自动对照 402 个函数的签名、属性和函数体，在归一化 rustfmt 的尾逗号/闭包块格式及等价 crate 路径后保持一致。最终 88 单元 + 76 纵向、stdio 黑盒 1 项、Host 集成 63 项、真实 Codex 非空项目探针 1 项、协议检查 41 项与导出/staging 7 项均通过。4 项外部环境测试默认忽略，真实探针另行显式运行。
+
+提交前一次 4-worker 复跑中，既有 mux 背压用例出现 command receiver closed；该用例独跑通过，最新主干及拆分后的完整串行回归均通过。没有为本次提交放宽断言、调整超时或跳过该测试。
