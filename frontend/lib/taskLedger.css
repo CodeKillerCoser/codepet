@@ -1,10 +1,11 @@
 /* Task surfaces share the main window theme and the app-level modal host. */
 .task-ledger {
+  --task-secondary: color-mix(in srgb, var(--wb-text) 76%, var(--wb-panel));
   width: 100%;
   height:100%;min-height:0;display:flex;flex-direction:column;
   min-width: 0;
   color: var(--wb-text);
-  font: 13px/1.6 var(--font-family-ui);
+  font: 14px/1.65 var(--font-family-ui);
 }
 .task-ledger *, .ledger-dialog * { box-sizing: border-box; }
 .task-ledger :is(button, input, select, textarea), .ledger-dialog :is(button, input, select, textarea) {
@@ -31,11 +32,11 @@
   color: var(--wb-on-primary);
   font-weight: 500;
 }
-.task-ledger .quiet, .ledger-dialog .quiet { background: transparent; border-color: transparent; color: var(--wb-muted); }
+.task-ledger .quiet, .ledger-dialog .quiet { background: transparent; border-color: transparent; color: var(--task-secondary, var(--wb-muted)); }
 .task-ledger .quiet:hover, .ledger-dialog .quiet:hover { background: var(--wb-control); border-color: transparent; color: var(--wb-text); }
 .task-ledger .text-link { color: var(--app-accent); }
 .task-ledger .conversation-link { color: var(--wb-info-text); }
-.task-ledger .muted, .task-ledger small, .ledger-dialog .muted, .ledger-dialog small { font-size: 11px; color: var(--wb-muted); }
+.task-ledger .muted, .task-ledger small, .ledger-dialog .muted, .ledger-dialog small { font-size: 12px; color: var(--task-secondary, var(--wb-muted)); }
 .task-ledger .preserve, .ledger-dialog .preserve { white-space: pre-wrap; overflow-wrap: anywhere; }
 .task-ledger .error, .ledger-dialog .error {
   padding: 8px 10px;
@@ -44,7 +45,7 @@
   border-radius: 5px;
   overflow-wrap: anywhere;
 }
-.task-ledger .message, .ledger-dialog .message { font-size: 11px; color: var(--wb-muted); }
+.task-ledger .message, .ledger-dialog .message { font-size: 12px; color: var(--task-secondary, var(--wb-muted)); }
 .task-ledger .clamped {
   display: -webkit-box;
   -webkit-line-clamp: 3;
@@ -52,7 +53,7 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
-.task-ledger .text-toggle { font-size: 10px; min-height: 24px; padding: 2px 0; }
+.task-ledger .text-toggle { font-size: 12px; min-height: 24px; padding: 2px 0; }
 .task-ledger .toolbar { flex:none; display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
 .task-ledger .filters {
   flex: 0 1 544px;
@@ -61,7 +62,7 @@
   grid-template-columns: minmax(150px, 280px) minmax(104px, 132px) minmax(96px, 116px);
   gap: 8px;
 }
-.task-ledger .filters :is(input, select) { width: 100%; height: 32px; font-size: 12px; background: transparent; }
+.task-ledger .filters :is(input, select) { width: 100%; height: 34px; font-size: 12px; background: transparent; }
 .task-ledger .toolbar-actions { display: flex; align-items: center; gap: 5px; flex: none; margin-left: auto; }
 .task-ledger .toolbar button { font-size: 12px; white-space: nowrap; }
 .task-ledger .ledger-more { position: relative; }
@@ -74,7 +75,7 @@
   list-style: none;
   border-radius: 5px;
   cursor: pointer;
-  color: var(--wb-muted);
+  color: var(--task-secondary, var(--wb-muted));
 }
 .task-ledger .ledger-more > summary:hover { background: var(--wb-control); }
 .task-ledger .more-menu {
@@ -118,7 +119,7 @@
 .task-ledger .task-row.selected { box-shadow: inset 2px 0 var(--wb-border-strong); }
 .task-ledger .row-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .task-ledger .row-top strong {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
   line-height: 1.55;
   flex: 1;
@@ -128,8 +129,8 @@
   text-overflow: ellipsis;
   overflow: hidden;
 }
-.task-ledger .row-context { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; flex-wrap: wrap; font-size: 10px; color: var(--wb-muted); }
-.task-ledger .row-context small { font-size: 10px; }
+.task-ledger .row-context { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; flex-wrap: wrap; font-size: 12px; color: var(--task-secondary, var(--wb-muted)); }
+.task-ledger .row-context small { font-size: 12px; }
 .task-ledger .task-detail {
   min-width: 0;
   padding: 16px 0 12px 24px;
@@ -138,17 +139,18 @@
   scrollbar-gutter: auto;
 }
 .task-ledger .task-detail::-webkit-scrollbar { display: none; width: 0; height: 0; }
-.task-ledger .status-badge { display: inline-flex; align-items: center; justify-content: center; flex: none; white-space: nowrap; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 500; line-height: 1.5; }
+.task-ledger .status-badge { display: inline-flex; align-items: center; justify-content: center; flex: none; white-space: nowrap; padding: 2px 7px; border-radius: 4px; font-size: 12px; font-weight: 500; line-height: 1.5; }
 .task-ledger .status-badge[data-status="in_progress"] { background: var(--wb-info-bg); color: var(--wb-info-strong-text); }
 .task-ledger .status-badge[data-status="ready_for_delivery"] { background: var(--wb-warning-bg); color: var(--wb-warning-strong-text); }
 .task-ledger .status-badge[data-status="published"] { background: var(--wb-success-bg); color: var(--wb-success-text); }
 .task-ledger .status-badge[data-status="closed"] { background: var(--wb-neutral-bg); color: var(--wb-neutral-text); }
 .task-ledger .back { display: none; }
-.task-ledger .empty { padding: 36px 16px; text-align: center; font-size: 12px; color: var(--wb-muted); }
+.task-ledger .empty { padding: 36px 16px; text-align: center; font-size: 12px; color: var(--task-secondary, var(--wb-muted)); }
 .ledger-dialog {
+  --task-secondary: color-mix(in srgb, var(--wb-text) 76%, var(--wb-panel));
   background: var(--wb-panel);
   color: var(--wb-text);
-  font: 13px/1.6 var(--font-family-ui);
+  font: 14px/1.65 var(--font-family-ui);
   border: 1px solid var(--wb-border);
   border-radius: 10px;
   width: min(650px, 92vw);
@@ -183,7 +185,7 @@
   .task-ledger .ledger-layout.detail-open .task-detail { display: block; }
   .task-ledger .ledger-layout.detail-open .task-list { display: none; }
   .task-ledger .back { display: block; padding-left: 0; margin-bottom: 10px; }
-  .task-ledger .toolbar button { font-size: 11px; }
+  .task-ledger .toolbar button { font-size: 12px; }
 }
 @container (max-width: 440px) {
   .task-ledger .filters { grid-template-columns: 1fr 1fr; }

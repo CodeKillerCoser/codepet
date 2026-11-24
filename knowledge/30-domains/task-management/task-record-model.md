@@ -71,3 +71,11 @@ TaskRunDetail 固定任务标题/背景/基本信息区，编辑入口为带可�
 受影响模块：TaskLedger/TaskRunDetail 负责固定头部和动作布局；TaskListResizeHandle 与当前会话记录负责尺寸；taskChanges/TaskChangeCounts 负责真实分类与未知状态；TaskRunChanges 经全局 host 展示。验证覆盖明暗、390/600/820/1280/1440、短窗口、分栏取消/复位、深链动作、图标编辑、模态叠放及关闭焦点、无横向溢出。没有新增后端接口或提高 API 30。
 
 本机交付复核发现一个补充场景：已保存的 commitChanges 有 11 个文件，侧栏提交明细可见，但摘要仍显示未确认。原因是 Svelte legacy reactive 先计算 changes，再通过函数间接同步赋值 commits；异步补查会触发下一轮刷新，掩盖了已缓存快照的问题。改为显式响应式初始化 commits，再计算投影；cached-files 用例覆盖同一已保存快照的主区数量、A/M/D 和全局侧栏一致性，保留原异步补查场景。
+
+## 可读性、验收结构与差异证据（2026-11-25）
+
+Task 状态枚举不变，当前页面将 in_progress 显示为“开发中”、ready_for_delivery 显示为“待确认”。任务正文改为 14px，元信息保留层级；次要文字使用正文与面板混合的较深颜色，明暗主题对比度检查至少 4.5:1，不提高大面积装饰的视觉重量。
+
+验收点仍由 title 表达，展开仅显示验收方式、预期结果、验收结果。既有 precondition 合并显示在方式内，steps 为实际操作；新清单编辑不再单独要求前提字段。结果内并列状态和非空结论，不再把 evidence 拆成“说明”，移除“验收记录”折叠块；后台 records/revisions 原样保留，人工权限及阶段/目标/环境隔离不变。记录结果的动作仍按单项追加，并同时提交状态和结论。原清单不得为本轮反馈改写，新要求追加新项。
+
+变更侧栏新增逐文件 Git 统一 diff 和本地留存，提交元数据补查改走项目 Git common directory，并可回退已保存清单，避免绑定已清理的 worktree 路径。涉及 tasks/diffs（归档）、mod/store（同事务与回填）、task_ledger IPC（按需读取）、TaskRunChanges/TaskFileDiff（文件与行号）、taskDiffs（解析）。API 升为 31，需要原生更新，具体来源、保留范围、容量与验证见 [任务执行的文件差异留存](run-change-evidence.md)。

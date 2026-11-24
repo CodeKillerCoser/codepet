@@ -61,6 +61,13 @@ mockIPC(async(command,args:any)=>{
  if(args.request.op==='list')return structuredClone(tasks);
  if(args.request.op==='openChat'){(window as any).__openedTaskChat=args.request.conversationId;return null;}
  if(args.request.op==='commit-files')return (tasks.find(t=>t.id===args.request.taskId)?.runs.find(r=>r.id===args.request.runId)??currentRun(base)).agentWorkspace.relatedCommits.map(commit=>({commit,files:[{path:'committed-change.ts',changeType:'modified',staged:false,originalPath:null}],error:null}));
+ if(args.request.op==='change-diffs'){
+  const run=tasks.find(t=>t.id===args.request.taskId)?.runs.find(r=>r.id===args.request.runId)??currentRun(base);
+  const snapshot=(scenario==='cached-files'?run.agentWorkspace.commitChanges?.flatMap(c=>c.files):undefined)??[{path:'committed-change.ts',changeType:'modified',staged:false,originalPath:null}];
+  const fileList=scenario==='owned-files'?(run.agentWorkspace.runFiles??[]).map(path=>({path,changeType:'modified',staged:false,originalPath:null})):[...new Map(snapshot.map(f=>[f.path,f])).values()];
+  return [{id:'commit-sample',commit:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',capturedAt:run.updatedAt,observedAt:run.updatedAt,error:null,files:fileList.map(f=>({...f,added:2,deleted:1,error:null}))}];
+ }
+ if(args.request.op==='file-diff')return {path:args.request.path,originalPath:null,changeType:'modified',added:2,deleted:1,error:null,patch:'diff --git a/sample.ts b/sample.ts\n--- a/sample.ts\n+++ b/sample.ts\n@@ -1,2 +1,3 @@\n-const old = true;\n+const current = true;\n+const retained = true;\n unchanged\n'};
  if(args.request.op==='setup')return {...setupState};
  if(['update-task-run','edit-task','save-instructions'].includes(args.request.op)&&(window as any).__holdTaskSave)return new Promise((_,reject)=>{(window as any).__rejectTaskSave=()=>reject(Error('模拟保存失败'));});
  if(args.request.op==='save-instructions'){

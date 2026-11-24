@@ -56,7 +56,7 @@ try {
       await dialog.waitFor();
       assert.equal(await dialog.evaluate(e => getComputedStyle(e).colorScheme), mode);
       assert.ok(await dialog.evaluate(e => e.parentElement.classList.contains('app-window-host')));
-      await page.getByLabel('证据或说明', {exact: true}).focus();
+      await page.getByLabel('验收结论', {exact: true}).focus();
       await page.screenshot({path: resolve(output, `${mode}-${width}-result-editor.png`)});
       await page.keyboard.press('Escape'); await dialog.waitFor({state: 'detached'});
       assert.ok(await criterion.locator(':scope>summary').evaluate(e => e === document.activeElement));
@@ -78,15 +78,15 @@ try {
   await page.evaluate(() => { window.__holdTaskSave = true; });
   await criterion.getByRole('button', {name: '记录结果', exact: true}).click();
   await page.getByLabel('实际验收版本').fill('1.3.0'); await page.getByLabel('验收环境').fill('macOS');
-  await page.getByLabel('证据或说明').fill('待保存证据');
+  await page.getByLabel('验收结论').fill('待保存证据');
   await page.getByLabel('验收状态', {exact:true}).selectOption('passed');
   await page.getByRole('button', {name: '保存此项结果', exact: true}).click();
   await page.waitForFunction(() => document.querySelector('.form-controls')?.disabled);
   await page.keyboard.press('Escape'); assert.ok(await page.getByRole('dialog').isVisible());
-  assert.ok(await page.getByRole('button', {name: '关闭验收记录'}).isDisabled());
+  assert.ok(await page.getByRole('button', {name: '关闭验收结果'}).isDisabled());
   await page.evaluate(() => { window.__holdTaskSave = false; window.__rejectTaskSave(); });
   await page.waitForFunction(() => !document.querySelector('.form-controls')?.disabled);
-  assert.equal(await page.getByLabel('证据或说明').inputValue(), '待保存证据');
+  assert.equal(await page.getByLabel('验收结论').inputValue(), '待保存证据');
   await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({state: 'detached'});
 
   await page.getByLabel('更多任务操作').click();
@@ -216,8 +216,7 @@ try {
     await page.getByRole('button',{name:'查看变更',exact:true}).click();
     if(empty)await page.getByText('本次执行没有代码变更',{exact:true}).waitFor();
     else await page.locator('.change-file[title="frontend/feature.svelte"]').waitFor();
-    await page.locator('.commit-changes>summary').first().click();
-    await page.getByText('committed-change.ts',{exact:true}).waitFor();
+    assert.ok(await page.locator('.commit-reference').count()>0,'Associated commits remain available separately from declared files');
     await closeChanges();
   }
   console.log(`Task UI passed (${engine}): run cards, four groups, per-item results, prompt editing/reset/conflict, focus, themes, responsive layout and fixed navigation.`);

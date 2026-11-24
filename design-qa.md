@@ -300,3 +300,12 @@ final result: passed
 实机复查发现准备阶段 `visibility:hidden` 会丢失焦点并意外收起；改用保留焦点的透明过渡，并新增键盘焦点断言后，顶部 UI QA 与原生逐帧再次通过。312 张最终截图另以橘猫像素位置检查位移，逐帧坐标/像素结论一致。
 
 交付：最终完整版本 `0.3.10-beta+topedge.20261110.5` 已干净替换 `/Applications/Code Pet.app` 并启动，签名完整性校验通过。CUA 验证实际展开稳定保持、收起正常；真实任务截图为 `artifacts/top-edge-release/native-morph-v5-{expanded,collapsed}.png`。旧 `.4` 只保留仓库 ZIP 备份。
+
+## 2026-11-25 任务可读性、结构化验收与留存 diff
+
+- 状态显示开发中/待确认；任务正文 14px，次要文字明暗对比度 >=4.5:1。
+- 验收点标题加方式/预期/结果，状态与结论同块；移除验收记录折叠 UI，持久化历史不删除。
+- 全局侧栏支持文件类型、行数、提交/工作区版本与逐文件统一 diff，行号及增删背景，长代码换行。
+- Chromium/WebKit 的完整任务与 refinement QA 通过，覆盖 390/600/820/1280/1440、短窗口、固定任务头、键盘与分栏、焦点/模态层级；新增 diff 展开、行号、四项结构、对比度与无横向溢出检查。
+- 截图：`artifacts/task-ledger-qa/refinement/{chromium,webkit}/diff-{light,dark}.png`。
+- Rust 真实 Git 测试覆盖提交后清理、删除仓库仍可读已留存差异、删除 linked worktree 后历史回填、路径边界和明确的二进制/容量错误。

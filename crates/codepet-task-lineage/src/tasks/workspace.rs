@@ -143,7 +143,7 @@ pub(super) fn inspect(input: &WorkspaceInput) -> Result<Context> {
     })
 }
 
-fn commit_changes(path: &Path, commit: &str) -> CommitChange {
+pub(super) fn commit_changes(path: &Path, commit: &str) -> CommitChange {
     let result = workbench::git(
         path,
         &[

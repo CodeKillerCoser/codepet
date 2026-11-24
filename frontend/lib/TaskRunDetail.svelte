@@ -5,7 +5,7 @@
   import {projectRunChanges,workspaceCommitState,type RunChanges} from './taskChanges';
   import {
     currentRun, statuses, actorLabel, results, scopes,
-    criterionCheck, criterionRecords, formatTaskTime as fmt,
+    criterionCheck, formatTaskTime as fmt,
     type Task, type Criterion
   } from './taskLedger';
 
@@ -133,23 +133,16 @@
                 <span class="check-mark" class:passed={check.passed} class:failed={check.result === 'failed'} aria-label={check.passed ? '通过' : check.result === 'failed' ? '失败' : '未验收'}>
                   {#if check.passed}<Check size={15} strokeWidth={2}/>{:else}<Circle size={13} strokeWidth={1.5}/>{/if}
                 </span>
-                <span class="criterion-title">{criterion.title}</span>
+                <span class="criterion-title" title="验收点">{criterion.title}</span>
               </summary>
               <dl class="info-grid criterion-body">
-                {#if criterion.precondition}<div><dt>前提</dt><dd>{criterion.precondition}</dd></div>{/if}
-                <div><dt>操作</dt><dd>{criterion.steps}</dd></div>
-                <div><dt>预期</dt><dd>{criterion.expected}</dd></div>
-                <div><dt>验收结果</dt><dd class="criterion-result"><span class:failed={check.result === 'failed'}>{check.result === 'passed' ? `${scopes[check.stage]}${check.actor === 'agent' ? '自测' : '验收'}通过` : check.result === 'not_tested' ? '未验收' : results[check.result]}</span>{#if writable}<button class="quiet text-link record-result" on:click={event => record(criterion, event.currentTarget)}>记录结果</button>{/if}</dd></div>
-                {#if check.evidence}<div><dt>说明</dt><dd>{check.evidence}</dd></div>{/if}
+                <div><dt>验收方式</dt><dd>{#if criterion.precondition}<p class="method-context">{criterion.precondition}</p>{/if}{criterion.steps}</dd></div>
+                <div><dt>预期结果</dt><dd>{criterion.expected}</dd></div>
+                <div><dt>验收结果</dt><dd>
+                  <div class="criterion-result"><span class:failed={check.result === 'failed'}>{check.result === 'passed' ? `${scopes[check.stage]}${check.actor === 'agent' ? '自测' : '验收'}通过` : check.result === 'not_tested' ? '未验收' : results[check.result]}</span>{#if writable}<button class="quiet text-link record-result" on:click={event => record(criterion, event.currentTarget)}>记录结果</button>{/if}</div>
+                  {#if check.evidence}<p class="result-conclusion">{check.evidence}</p>{/if}
+                </dd></div>
               </dl>
-              {#if criterionRecords(run, criterion.id).length}
-                <details class="criterion-history"><summary>验收记录</summary>
-                  {#each criterionRecords(run, criterion.id) as record}
-                    {@const result = record.results.find(r => r.criterionId === criterion.id)!}
-                    <div class="verification-record"><small>{actorLabel(record.agent)}{record.actor === 'agent' ? ' 自测' : ''} · {scopes[record.stage]} · {fmt(record.createdAt)} · 清单第 {record.planRevision} 版</small><p>{record.target} · {record.environment} · {results[result.result]}</p><p class="preserve">{result.evidence}</p></div>
-                  {/each}
-                </details>
-              {/if}
             </details>
           {:else}<p class="muted">尚未登记验收清单</p>{/each}
         </div>
@@ -179,8 +172,8 @@
   h3 { min-width: 0; flex: 1; margin: 0; font-size: 20px; line-height: 1.45; font-weight: 600; overflow-wrap: anywhere; }
   h3:focus { outline: none; }
   .task-record .metadata-edit { flex:none;display:grid;place-items:center;width:28px;height:28px;min-height:28px;padding:0;border:0;border-radius:5px; }
-  .task-background { font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 6px; }
-  .task-context { display: flex; gap: 4px 8px; flex-wrap: wrap; color: var(--wb-muted); font-size: 10px; }
+  .task-background { font-size: 14px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 6px; }
+  .task-context { display: flex; gap: 4px 8px; flex-wrap: wrap; color: var(--task-secondary); font-size: 12px; }
   .task-context > :not(:last-child)::after { content: ' ·'; margin-left: 8px; }
   .task-divider { border: 0; border-top: 1px solid var(--wb-border); margin: 12px 0 16px; }
   .run-navigation { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
@@ -188,56 +181,55 @@
   .task-record .run-card {width:100%;min-width:0;display:flex;flex-direction:column;gap:2px;padding:0;text-align:left;border:0;border-radius:3px;background:transparent;min-height:0;}
   .run-card:focus-visible { outline-offset: -2px; }
   .run-card-shell.selected { background: var(--wb-control); border-color: color-mix(in srgb, var(--wb-border) 65%, var(--wb-border-strong)); }
-  .run-title { min-width: 0; width: 100%; display: flex; gap: 8px; font-size: 12px; line-height: 1.5; color: var(--wb-muted); }
+  .run-title { min-width: 0; width: 100%; display: flex; gap: 8px; font-size: 14px; line-height: 1.5; color: var(--task-secondary); }
   .run-title > span:last-child { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .selected .run-title { color: var(--wb-text); font-weight: 500; }
   .run-number { flex: none; font-variant-numeric: tabular-nums; }
-  .run-facts { display: flex; align-items: center; gap: 8px; color: var(--wb-muted); font-size: 10px; }
-  .run-card .status-badge { padding: 0 4px; font-size: 10px; }
-  .run-card small { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 10px; white-space: nowrap; }
-  .run-card-shell:not(.selected) .status-badge { background: transparent; color: var(--wb-muted); font-weight: 400; padding: 0; }
+  .run-facts { display: flex; align-items: center; gap: 8px; color: var(--task-secondary); font-size: 12px; }
+  .run-card .status-badge { padding: 0 4px; font-size: 12px; }
+  .run-card small { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 12px; white-space: nowrap; }
+  .run-card-shell:not(.selected) .status-badge { background: transparent; color: var(--task-secondary); font-weight: 400; padding: 0; }
   .run-section { margin-top: 20px; min-width: 0; }
-  h4 { color: var(--wb-muted); font-size: 13px; font-weight: 500; margin: 0 0 8px; }
-  .info-grid { margin: 0; font-size: 12px; }
-  .info-grid > div { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 12px; margin: 6px 0; align-items: baseline; }
-  dt { color: var(--wb-muted); font-size: 11px; white-space: nowrap; }
+  h4 { color: var(--wb-text); font-size: 15px; font-weight: 500; margin: 0 0 8px; }
+  .info-grid { margin: 0; font-size: 14px; }
+  .info-grid > div { display: grid; grid-template-columns: 60px minmax(0, 1fr); gap: 12px; margin: 6px 0; align-items: baseline; }
+  dt { color: var(--task-secondary); font-size: 13px; white-space: nowrap; }
   dd { margin: 0; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
   dd p { margin: 0; }
   .goal { font-weight: 500; }
-  code, .path { font-family: var(--font-family-code); font-size: 11px; overflow-wrap: anywhere; }
+  code, .path { font-family: var(--font-family-code); font-size: 13px; overflow-wrap: anywhere; }
   .code-summary {display:flex;gap:12px;align-items:baseline;flex-wrap:wrap;}
-  .code-state {font-size:10px;white-space:nowrap;color:var(--wb-muted);}
+  .code-state {font-size:12px;white-space:nowrap;color:var(--task-secondary);}
   .code-state[data-state="dirty"] {color:var(--wb-warning-strong-text);}
   .code-state[data-state="unpushed"] {color:var(--wb-info-text);}
   .code-state[data-state="synced"] {color:var(--color-success);}
-  .task-record .changes-toggle {padding:0;font-size:11px;min-height:22px;}
+  .task-record .changes-toggle {padding:0;font-size:13px;min-height:22px;}
   .card-conversations {min-width:0;margin-top:4px;display:flex;flex-direction:column;align-items:flex-start;}
-  .card-conversations small {font-size:10px;}
-  .task-record .conversation-link {display:flex;align-items:center;gap:4px;max-width:100%;min-height:20px;padding:0;font-size:10px;border:0;color:var(--wb-info-text);}
+  .card-conversations small {font-size:12px;}
+  .task-record .conversation-link {display:flex;align-items:center;gap:4px;max-width:100%;min-height:20px;padding:0;font-size:12px;border:0;color:var(--wb-info-text);}
   .conversation-link span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .historical-description { margin-top: 10px; font-size: 11px; color: var(--wb-muted); }
+  .historical-description { margin-top: 10px; font-size: 13px; color: var(--task-secondary); }
   .section-heading { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
   .section-heading h4 { margin-bottom: 8px; }
   .criterion > summary { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 10px; align-items: baseline; padding: 5px 0; cursor: pointer; list-style: none; }
   .criterion > summary::-webkit-details-marker { display: none; }
-  .check-mark { align-self: center; display: flex; align-items: center; color: var(--wb-muted); }
+  .check-mark { align-self: center; display: flex; align-items: center; color: var(--task-secondary); }
   .check-mark.passed { color: var(--color-success); }
   .failed { color: var(--wb-danger-text); }
-  .criterion-title { font-size: 12px; font-weight: 400; overflow-wrap: anywhere; }
+  .criterion-title { font-size: 14px; font-weight: 400; overflow-wrap: anywhere; }
   .criterion[open] .criterion-title { font-weight: 500; }
   .criterion-body { margin: 4px 0 10px 26px; }
   .criterion-result { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }
-  .record-result { font-size: 11px; padding: 0; min-height: 24px; }
-  .criterion-history { margin: 0 0 12px 26px; font-size: 11px; color: var(--wb-muted); }
-  .verification-record { margin-top: 10px; }
-  .verification-record p { margin: 4px 0; }
+  .record-result { font-size: 13px; padding: 0; min-height: 24px; }
+  .method-context {margin-bottom:4px;color:var(--task-secondary);}
+  .result-conclusion {margin-top:4px;}
   .activity-timeline { list-style: none; padding: 0; margin: 0 0 0 5px; }
-  .activity-timeline li { display: grid; grid-template-columns: 43px minmax(0, 1fr); gap: 12px; position: relative; border-left: 1px solid var(--wb-border); padding: 0 0 8px 16px; font-size: 11px; }
+  .activity-timeline li { display: grid; grid-template-columns: 43px minmax(0, 1fr); gap: 12px; position: relative; border-left: 1px solid var(--wb-border); padding: 0 0 8px 16px; font-size: 13px; }
   .activity-timeline li:last-child { padding-bottom: 0; }
-  .activity-timeline :global(.timeline-dot) { position: absolute; left: -3.5px; top: 6px; color: var(--wb-muted); }
-  .activity-timeline time { color: var(--wb-muted); font-variant-numeric: tabular-nums; }
+  .activity-timeline :global(.timeline-dot) { position: absolute; left: -3.5px; top: 6px; color: var(--task-secondary); }
+  .activity-timeline time { color: var(--task-secondary); font-variant-numeric: tabular-nums; }
   .activity-timeline p { margin: 0 0 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
-  .timeline-author { color: var(--wb-muted); }
+  .timeline-author { color: var(--task-secondary); }
   .history-note { margin-bottom: -10px; }
   @container (max-width: 700px) {
     .run-card-shell { flex-basis: 155px; }

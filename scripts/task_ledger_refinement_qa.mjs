@@ -55,6 +55,25 @@ try{
  const panel=page.locator('.app-side-panel');await panel.waitFor();await page.waitForFunction(()=>!document.getAnimations().some(a=>a.playState==='running'));assert.equal(await panel.getAttribute('data-mode'),'column');
  assert.ok(await panel.evaluate(e=>!e.closest('.task-ledger')),'Panel is hosted by the app framework');
  await page.locator('.change-file[title="committed-change.ts"]').waitFor();assert.ok(await panel.getByLabel('修改 1 个文件',{exact:true}).count());
+ const file=page.locator('.change-file').first();await file.locator('summary').click();
+ await page.getByRole('textbox',{name:'只读代码差异',exact:true}).waitFor();
+ assert.ok(await page.locator('.diff-line.added').count()>0);assert.ok(await page.locator('.diff-line.deleted').count()>0);
+ assert.equal(await page.locator('.diff-line.added .line-number').last().innerText(),'2');
+ for(const mode of ['light','dark']){
+  await page.evaluate(mode=>window.__setTaskTheme(mode),mode);
+  const readability=await page.locator('.info-grid').first().evaluate(e=>{
+   const color=css=>{const c=document.createElement('canvas');c.width=c.height=1;const x=c.getContext('2d');x.fillStyle=css;x.fillRect(0,0,1,1);return [...x.getImageData(0,0,1,1).data].slice(0,3);};
+   const luminance=rgb=>rgb.map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((a,v,i)=>a+v*[.2126,.7152,.0722][i],0);
+   const probe=document.createElement('span');probe.style.color='var(--wb-panel)';e.append(probe);const bg=luminance(color(getComputedStyle(probe).color));probe.remove();const label=e.querySelector('dt'),text=luminance(color(getComputedStyle(label).color));
+   return {size:parseFloat(getComputedStyle(e).fontSize),contrast:(Math.max(bg,text)+.05)/(Math.min(bg,text)+.05)};
+  });
+  assert.ok(readability.size>=14,'Task body is at least 14px');assert.ok(readability.contrast>=4.5,`Secondary text contrast ${mode}: ${readability.contrast}`);
+  assert.equal(await panel.locator('.diff-lines').evaluate(e=>e.scrollWidth<=e.clientWidth),true,'Code wraps inside panel');
+  await page.screenshot({path:resolve(output,`diff-${mode}.png`)});
+ }
+ const criterion=page.locator('.criterion').first();if(await criterion.getAttribute('open')===null)await criterion.locator(':scope>summary').click();
+ assert.deepEqual(await criterion.locator('.criterion-body>div>dt').allTextContents(),['验收方式','预期结果','验收结果']);
+ assert.equal(await page.locator('.criterion-history').count(),0,'No separate acceptance history block');
  await page.screenshot({path:resolve(output,'global-column.png')});
  await edit.click();await page.getByRole('dialog',{name:'修改任务信息',exact:true}).waitFor();await page.keyboard.press('Escape');assert.equal(await panel.count(),1);await close();
  assert.ok(await page.getByRole('button',{name:'查看变更',exact:true}).evaluate(e=>e===document.activeElement));

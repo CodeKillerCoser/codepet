@@ -1,6 +1,7 @@
 //! Canonical task/run ledger shared by the App and MCP. Legacy v3/v2 are read only for migration.
 #[allow(dead_code)]
 mod delivery;
+mod diffs;
 mod legacy;
 mod legacy_model;
 mod migration;
@@ -142,20 +143,38 @@ impl Ledger {
             .iter()
             .find(|r| r.id == run_id)
             .ok_or("执行不存在")?;
-        let input = WorkspaceInput {
-            path: run.agent_workspace.path.clone(),
-            related_commits: run.agent_workspace.related_commits.clone(),
-        };
-        let context = workspace::inspect(&input)?;
         let project = Self::projects(&self.store()?)?
             .into_iter()
             .find(|p| p.id == task.project_id)
             .ok_or("项目不存在")?;
-        if context.repository != project.path {
-            return Err("工作区不属于任务项目".into());
-        }
-        Ok(context.observation.commit_changes)
+        Ok(run
+            .agent_workspace
+            .related_commits
+            .iter()
+            .map(|sha| {
+                if !(7..=64).contains(&sha.len()) || !sha.bytes().all(|c| c.is_ascii_hexdigit()) {
+                    return CommitChange {
+                        commit: sha.clone(),
+                        files: vec![],
+                        error: Some("提交引用不是有效 SHA".into()),
+                    };
+                }
+                let read = workspace::commit_changes(Path::new(&project.path), sha);
+                if read.error.is_some() {
+                    if let Some(saved) = run
+                        .agent_workspace
+                        .commit_changes
+                        .iter()
+                        .find(|c| c.commit == *sha && c.error.is_none())
+                    {
+                        return saved.clone();
+                    }
+                }
+                read
+            })
+            .collect())
     }
+
     pub fn find(&self, input: FindTasksInput) -> Result<Value> {
         let scope = input
             .workspace
@@ -336,7 +355,14 @@ impl Ledger {
             status: run.status.clone(),
             created_by: run.created_by.clone(),
         };
-        store.commit(vec![
+        let repository = projects
+            .iter()
+            .find(|p| p.id == task.project_id)
+            .ok_or("项目不存在")?
+            .path
+            .clone();
+        let mut writes = diffs::prepare(&store, &task, &repository, true)?;
+        writes.extend(vec![
             ("projects.json".into(), json!(projects)),
             (Self::key(&task.project_id, &task.id), json!(task)),
             (
@@ -346,7 +372,8 @@ impl Ledger {
                     receipt: receipt.clone()
                 }),
             ),
-        ])?;
+        ]);
+        store.commit(writes)?;
         Ok(receipt)
     }
 }

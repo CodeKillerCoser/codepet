@@ -36,6 +36,14 @@ pub(crate) async fn task_ledger_request(
             "commit-files" => serde_json::to_value(ledger.commit_changes(
                 id()?, request["runId"].as_str().ok_or("缺少执行 ID")?
             )?).map_err(|e| e.to_string()),
+            "change-diffs" => ledger.change_diffs(
+                id()?, request["runId"].as_str().ok_or("缺少执行 ID")?
+            ),
+            "file-diff" => ledger.file_diff(
+                id()?, request["runId"].as_str().ok_or("缺少执行 ID")?,
+                request["version"].as_str().ok_or("缺少差异版本")?,
+                request["path"].as_str().ok_or("缺少文件路径")?
+            ),
             "create-task" => {
                 let input: CreateTaskInput =
                     serde_json::from_value(request["input"].clone()).map_err(|e| e.to_string())?;

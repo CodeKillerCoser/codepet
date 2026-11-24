@@ -43,6 +43,16 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(![...document.querySelectorAll('button')].some(b => ['更新执行', '结束执行'].includes(b.textContent?.trim() ?? '')), 'Removed run actions');
   check(!acceptanceReady(currentRun(task)), 'Agent self-test is not human acceptance');
 
+  const versions=await taskRequest<{id:string;files:{path:string}[]}[]>('change-diffs',{taskId:task.id,runId:currentRun(task).id});
+  check(versions.length>0&&versions[0].files.length>0,'Real commit diff archive is exposed by production IPC');
+  const nativeDiff=await taskRequest<{patch:string;error:string|null}>('file-diff',{taskId:task.id,runId:currentRun(task).id,version:versions[0].id,path:versions[0].files[0].path});
+  check(!nativeDiff.error&&nativeDiff.patch.includes('@@'),'Actual archived Git diff through production IPC');
+  await button('查看变更');await until(()=>document.querySelector('.change-file'));
+  document.querySelector<HTMLElement>('.change-file>summary')!.click();await until(()=>document.querySelector('.diff-line'));
+  check(document.querySelectorAll('.diff-line.added,.diff-line.deleted').length>0,'Native UI renders Git diff lines');
+  await button('关闭代码变更');await until(()=>!document.querySelector('.app-side-panel'));
+  check(!document.querySelector('.criterion-history'),'No acceptance history block');
+
   const recordItem = async (index: number) => {
     const item = document.querySelectorAll<HTMLDetailsElement>('.criterion')[index];
     item.open = true;
@@ -51,7 +61,7 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
     input('实际验收版本', '1.2.0 已安装包', dialog);
     input('验收环境', 'macOS', dialog);
     input('验收状态', 'passed', dialog);
-    input('证据或说明', `实际检查第 ${index + 1} 项，符合预期`, dialog);
+    input('验收结论', `实际检查第 ${index + 1} 项，符合预期`, dialog);
     submit(dialog); await until(() => !dialog.isConnected);
     check(document.activeElement === item.querySelector('summary'), 'Result dialog returns to visible row');
   };
@@ -86,7 +96,7 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   const pending = document.querySelector<HTMLDetailsElement>('.criterion')!;
   pending.open = true; await button('记录结果', pending); dialog = await modal();
   input('实际验收版本', '1.3.0', dialog); input('验收环境', 'macOS', dialog);
-  input('证据或说明', '过期草稿必须保留', dialog); input('验收状态', 'passed', dialog);
+  input('验收结论', '过期草稿必须保留', dialog); input('验收状态', 'passed', dialog);
   await taskRequest('update-task-run', {input: {agentConversation: [], taskId: task.id, runId: currentRun(task).id, expectedRevision: task.revision, note: '并发写入'}});
   submit(dialog); await until(() => dialog.querySelector('[role="alert"]')?.textContent?.includes('revision='));
   check(dialog.isConnected && dialog.querySelector('textarea')?.value === '过期草稿必须保留', 'Conflict retains result draft');

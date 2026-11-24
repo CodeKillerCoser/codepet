@@ -97,7 +97,7 @@
     const current = currentRun(runTask);
     runTitle = ''; runGoal = current.goal; runSolution = ''; runKind = 'bugfix';
     workspace = current.agentWorkspace.path;
-    criteria = structuredClone(current.validationPlan.items).map(c => ({...c, id: ''}));
+    criteria = structuredClone(current.validationPlan.items).map(c => ({...c, id: '', steps: [c.precondition,c.steps].filter(Boolean).join('\n'),precondition:''}));
     if (!criteria.length) criteria = [blank()];
     includePlan = current.validationPlan.items.length > 0;
     error = ''; runDialog.showModal();
@@ -184,9 +184,8 @@
   {#if includePlan}
     {#each criteria as criterion, i}
       <fieldset class="check-editor"><legend>验收项 {i + 1}</legend>
-        <label>验证什么<input required bind:value={criterion.title}/></label>
-        <label>前置条件（可选）<input bind:value={criterion.precondition}/></label>
-        <label>操作步骤<textarea required rows="2" bind:value={criterion.steps}></textarea></label>
+        <label>验收点<input required bind:value={criterion.title}/></label>
+        <label>验收方式<textarea required rows="2" bind:value={criterion.steps}></textarea></label>
         <label>预期结果<textarea required rows="2" bind:value={criterion.expected}></textarea></label>
         <div class="form-row"><label>适用阶段<select bind:value={criterion.scope}>{#each Object.entries(scopes) as [value, label]}<option {value}>{label}</option>{/each}</select></label>
           <label class="checkbox"><input type="checkbox" bind:checked={criterion.required}/>必验</label>
@@ -249,7 +248,7 @@
 </section>
 
 <AppSidePanel open={changesOpen&&!!run} title="代码变更" description={selected?.title??'所选执行的代码变更'} closeLabel="关闭代码变更" returnFocus={changesTrigger} onClose={()=>changesOpen=false}>
-  {#if run&&changes}<TaskRunChanges {run} {changes} {commits} loading={changesLoading} error={changesError}/>{/if}
+  {#if run&&changes}<TaskRunChanges taskId={selected!.id} {run} {changes} {commits} loading={changesLoading} error={changesError}/>{/if}
 </AppSidePanel>
 
 <Dialog.Modal title={taskDraft ? '修改任务信息' : '新建任务'} class="ledger-dialog" bind:this={taskDialog} onCancel={e => { if (busy) e.preventDefault(); }}>
@@ -278,7 +277,7 @@
 
 <Dialog.Modal title="记录验收结果" class="ledger-dialog" returnFocus={verifyReturnFocus} bind:this={verifyDialog} onCancel={e => { if (busy) e.preventDefault(); }}>
   <form on:submit|preventDefault={saveVerification}><fieldset class="form-controls" disabled={busy}>
-    <header><h3>记录验收结果</h3><button type="button" aria-label="关闭验收记录" on:click={() => verifyDialog.close()}>×</button></header>
+    <header><h3>记录验收结果</h3><button type="button" aria-label="关闭验收结果" on:click={() => verifyDialog.close()}>×</button></header>
     <p>{verifyItem?.title}</p>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <label>验收阶段<select bind:value={stage} on:change={setVerificationContext}>
@@ -288,7 +287,7 @@
     <label>实际验收版本<input required bind:value={target}/></label>
     <label>验收环境<input required bind:value={environment}/></label>
     <label>验收状态<select aria-label="验收状态" required bind:value={checkResult}><option value="" disabled>选择验收状态</option>{#each Object.entries(results) as [value, label]}<option {value}>{label}</option>{/each}</select></label>
-    <label>证据或说明<textarea required rows="3" maxlength="3000" bind:value={evidence}></textarea></label>
+    <label>验收结论<textarea required rows="3" maxlength="3000" bind:value={evidence}></textarea></label>
     <footer><button class="primary">{busy ? '保存中…' : '保存此项结果'}</button></footer>
   </fieldset></form>
 </Dialog.Modal>
