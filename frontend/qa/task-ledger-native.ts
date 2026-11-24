@@ -50,7 +50,7 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
     const dialog = await modal();
     input('实际验收版本', '1.2.0 已安装包', dialog);
     input('验收环境', 'macOS', dialog);
-    input('结果', 'passed', dialog);
+    input('验收状态', 'passed', dialog);
     input('证据或说明', `实际检查第 ${index + 1} 项，符合预期`, dialog);
     submit(dialog); await until(() => !dialog.isConnected);
     check(document.activeElement === item.querySelector('summary'), 'Result dialog returns to visible row');
@@ -77,7 +77,7 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   document.querySelectorAll<HTMLButtonElement>('.run-card')[0].click(); await tick();
   check(!document.querySelector('.record-result'), 'History read only');
   document.querySelectorAll<HTMLButtonElement>('.run-card')[1].click(); await tick();
-  await taskRequest('update-task-run', {input: {taskId: task.id, runId: currentRun(task).id, expectedRevision: task.revision, title: '复发问题已修复', goal: '窗口切换后点击稳定响应', solution: '补齐新版事件注册', kind: 'feature', status: 'ready_for_delivery'}});
+  await taskRequest('update-task-run', {input: {agentConversation: [], taskId: task.id, runId: currentRun(task).id, expectedRevision: task.revision, title: '复发问题已修复', goal: '窗口切换后点击稳定响应', solution: '补齐新版事件注册', kind: 'feature', status: 'ready_for_delivery'}});
   await button('刷新任务'); await pause();
   task = await taskRequest<Task>('get', {taskId: task.id});
   check(task.description === background && currentRun(task).kind === 'feature', 'Run fields independent of Task');
@@ -86,8 +86,8 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   const pending = document.querySelector<HTMLDetailsElement>('.criterion')!;
   pending.open = true; await button('记录结果', pending); dialog = await modal();
   input('实际验收版本', '1.3.0', dialog); input('验收环境', 'macOS', dialog);
-  input('证据或说明', '过期草稿必须保留', dialog);
-  await taskRequest('update-task-run', {input: {taskId: task.id, runId: currentRun(task).id, expectedRevision: task.revision, note: '并发写入'}});
+  input('证据或说明', '过期草稿必须保留', dialog); input('验收状态', 'passed', dialog);
+  await taskRequest('update-task-run', {input: {agentConversation: [], taskId: task.id, runId: currentRun(task).id, expectedRevision: task.revision, note: '并发写入'}});
   submit(dialog); await until(() => dialog.querySelector('[role="alert"]')?.textContent?.includes('revision='));
   check(dialog.isConnected && dialog.querySelector('textarea')?.value === '过期草稿必须保留', 'Conflict retains result draft');
   await dismiss(dialog); await button('刷新任务'); await pause();

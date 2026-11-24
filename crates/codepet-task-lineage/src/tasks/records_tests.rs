@@ -1,7 +1,7 @@
 use super::*;
 use serde_json::json;
 fn create(root: &Path) -> CreateTaskInput {
-    serde_json::from_value(json!({"title":"任务目标","description":"任务背景","agentWorkspace":{"path":root},"initialRun":{"kind":"bugfix","title":"首次定位","goal":"检查菜单","solution":"排查事件","description":"本次排查","validationPlan":{"items":[{"title":"检查菜单","steps":"点击","expected":"打开"}]}}})).unwrap()
+    serde_json::from_value(json!({"title":"任务目标","description":"任务背景","agentWorkspace":{"path":root},"initialRun":{"agentConversation":["00000000-0000-4000-8000-000000000001"],"kind":"bugfix","title":"首次定位","goal":"检查菜单","solution":"排查事件","description":"本次排查","validationPlan":{"items":[{"title":"检查菜单","steps":"点击","expected":"打开"}]}}})).unwrap()
 }
 #[test]
 fn task_and_run_are_independent_and_retries_are_atomic() {
@@ -18,6 +18,7 @@ fn task_and_run_are_independent_and_retries_are_atomic() {
         description: Some("确认原因并修复".into()),
         status: Some(RunStatus::Published),
         delivery: Some("1.0".into()),
+        agent_conversation: vec!["00000000-0000-4000-8000-000000000001".into()],
         ..Default::default()
     };
     let r = l.update_task_run(u, a).unwrap();
@@ -27,7 +28,7 @@ fn task_and_run_are_independent_and_retries_are_atomic() {
     assert_eq!(task.created_by, "codex");
     assert!(serde_json::to_value(task).unwrap().get("rounds").is_none());
     let input: CreateTaskRunInput = serde_json::from_value(
-        json!({"taskId":r.task_id,"expectedRevision":r.revision,"title":"发布后复发","kind":"bugfix"}),
+        json!({"taskId":r.task_id,"expectedRevision":r.revision,"title":"发布后复发","kind":"bugfix","agentConversation":["00000000-0000-4000-8000-000000000001"]}),
     )
     .unwrap();
     let next = l
@@ -56,6 +57,7 @@ fn task_and_run_are_independent_and_retries_are_atomic() {
                 task_id: task.id,
                 run_id: r.run_id,
                 expected_revision: next.revision,
+                agent_conversation: vec!["00000000-0000-4000-8000-000000000001".into()],
                 ..Default::default()
             },
             Actor::agent("codex").unwrap()
@@ -137,6 +139,7 @@ fn permissions_versions_and_human_acceptance_survive_the_new_shape() {
         run_id: r.run_id.clone(),
         expected_revision: rev,
         verification: Some(record),
+        agent_conversation: vec!["00000000-0000-4000-8000-000000000001".into()],
         ..Default::default()
     };
     let r2 = l
@@ -155,6 +158,7 @@ fn permissions_versions_and_human_acceptance_survive_the_new_shape() {
                 run_id: r.run_id.clone(),
                 expected_revision: r2.revision,
                 status: Some(RunStatus::Closed),
+                agent_conversation: vec!["00000000-0000-4000-8000-000000000001".into()],
                 ..Default::default()
             },
             Actor::agent("codex").unwrap()
@@ -189,6 +193,7 @@ fn conflicting_writers_and_retries_do_not_duplicate_milestones() {
                         run_id: r.run_id,
                         expected_revision: r.revision,
                         note: Some(format!("writer {i}")),
+                        agent_conversation: vec!["00000000-0000-4000-8000-000000000001".into()],
                         ..Default::default()
                     },
                     Actor::agent("codex").unwrap(),
@@ -380,6 +385,7 @@ fn run_fields_and_single_item_verification_are_independent() {
         kind: Some(TaskKind::Feature),
         goal: Some("独立目标".into()),
         solution: Some("独立方案".into()),
+        agent_conversation: vec!["00000000-0000-4000-8000-000000000001".into()],
         ..Default::default()
     };
     let updated = ledger
@@ -413,6 +419,7 @@ fn run_fields_and_single_item_verification_are_independent() {
                     run_id: run.id.clone(),
                     expected_revision: revision,
                     verification: Some(verification),
+                    agent_conversation: vec!["00000000-0000-4000-8000-000000000001".into()],
                     ..Default::default()
                 },
                 Actor::human(),
@@ -454,6 +461,7 @@ fn v3_migration_preserves_unstructured_text_evidence_and_original_bytes() {
                         evidence: "迁移前的验证证据".into(),
                     }],
                 }),
+                agent_conversation: vec!["00000000-0000-4000-8000-000000000001".into()],
                 ..Default::default()
             },
             Actor::agent("codex").unwrap(),

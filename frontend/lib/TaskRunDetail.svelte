@@ -2,9 +2,9 @@
   import {tick} from 'svelte';
   import {Check, Circle, ExternalLink, Link as LinkIcon} from '@lucide/svelte';
   import {
-    currentRun, statuses, actorLabel, results, scopes, fileLabels,
+    taskRequest, currentRun, statuses, actorLabel, results, scopes, fileLabels,
     criterionCheck, criterionRecords, formatTaskTime as fmt,
-    type Task, type TaskRun, type Criterion
+    type Task, type TaskRun, type Criterion, type AgentWorkspace
   } from './taskLedger';
 
   export let task: Task;
@@ -14,15 +14,28 @@
   export let onOpenChat: (conversationId: string) => void;
   let heading: HTMLHeadingElement, navigation: HTMLElement;
   let expandedBackground = false, expandedGoal = false, expandedSolution = false;
-  let shownTask = '', shownRun = '', showFiles = false;
+  let shownTask = '', shownRun = '', showFiles = false, loadingFiles = false, fileError = '';
+  let commitChanges: NonNullable<AgentWorkspace['commitChanges']> = [];
   $: run = task.runs.find(r => r.id === runId) ?? currentRun(task);
   $: if (shownTask !== task.id) { shownTask = task.id; expandedBackground = false; }
-  $: if (shownRun !== run.id) { shownRun = run.id; expandedGoal = expandedSolution = false; showFiles = false; }
+  $: if (shownRun !== run.id) { shownRun = run.id; expandedGoal = expandedSolution = false; showFiles = false; commitChanges = run.agentWorkspace.commitChanges ?? []; fileError = ''; loadingFiles = false; }
+  $: if (run.agentWorkspace.commitChanges?.length) commitChanges = run.agentWorkspace.commitChanges;
   $: writable = run.id === currentRun(task).id && run.status !== 'closed';
   $: items = run.validationPlan.items;
   $: passed = items.filter(c => criterionCheck(run, c).passed).length;
   $: firstPending = items.findIndex(c => !criterionCheck(run, c).passed);
 
+  async function toggleFiles() {
+    showFiles = !showFiles;
+    if (!showFiles || loadingFiles || run.agentWorkspace.relatedCommits.every(sha => commitChanges.some(c => c.commit === sha && !c.error))) return;
+    const selectedRun = run.id;
+    loadingFiles = true; fileError = '';
+    try {
+      const files = await taskRequest<NonNullable<AgentWorkspace['commitChanges']>>('commit-files', {taskId: task.id, runId: selectedRun});
+      if (run.id === selectedRun) commitChanges = files;
+    } catch (e) { if (run.id === selectedRun) fileError = String(e); }
+    finally { if (run.id === selectedRun) loadingFiles = false; }
+  }
   export function focusHeading() { heading?.focus({preventScroll: true}); }
   async function choose(id: string) {
     runId = id;
@@ -87,9 +100,9 @@
           {#if conversation.agent === 'codex' && conversation.verified}
             <button class="quiet text-link conversation-link" on:click={() => onOpenChat(conversation.conversationId)}><LinkIcon size={13}/>{actorLabel(conversation.agent)} · {conversation.conversationId.slice(0, 8)}<ExternalLink size={11}/></button>
           {:else}<small>{actorLabel(conversation.agent)} · {conversation.conversationId}（待核实）</small>{/if}
-        {:else}<small>尚未关联 Agent 对话</small>{/each}
+        {:else}<small>历史记录未关联对话</small>{/each}
       </div>
-      {#if run.description}<details class="historical-description"><summary>补充说明</summary><p class="preserve">{run.description}</p></details>{/if}
+      {#if run.description.trim() && ![run.goal.trim(), run.solution.trim()].includes(run.description.trim())}<details class="historical-description"><summary>处理说明</summary><p class="preserve">{run.description}</p></details>{/if}
       {#if run.closure}<p class="muted">{run.closure.accepted ? '人工验收通过' : '执行已结束'} · {run.closure.reason}</p>{/if}
     </section>
 
@@ -98,13 +111,27 @@
       <dl class="info-grid">
         <div><dt>分支</dt><dd><code>{run.agentWorkspace.branch ?? '分支未知'}</code><small class="workspace-state">{run.agentWorkspace.changeStatus.hasUncommittedChanges === null ? '改动状态未知' : run.agentWorkspace.changeStatus.hasUncommittedChanges ? `${run.agentWorkspace.changedFiles.length} 个文件未提交` : '工作区干净'}</small></dd></div>
         <div><dt>路径</dt><dd class="path">{run.agentWorkspace.path}</dd></div>
-        <div><dt>提交</dt><dd><span>{run.agentWorkspace.relatedCommits.length} 个关联提交</span><button class="quiet text-link changes-toggle" aria-expanded={showFiles} aria-controls={`run-files-${run.id}`} on:click={() => showFiles = !showFiles}>查看变更</button></dd></div>
+        <div><dt>提交</dt><dd><span>{run.agentWorkspace.relatedCommits.length} 个关联提交</span><button class="quiet text-link changes-toggle" aria-expanded={showFiles} aria-controls={`run-files-${run.id}`} on:click={toggleFiles}>查看变更</button></dd></div>
       </dl>
       <div class="workspace-changes" id={`run-files-${run.id}`} hidden={!showFiles}>
         <small>观测于 {fmt(run.agentWorkspace.observedAt)}；{run.agentWorkspace.changeStatus.hasUnpushedCommits === null ? '推送状态未知' : run.agentWorkspace.changeStatus.hasUnpushedCommits ? '有待推送提交' : '无待推送提交'}。文件由同目录任务共享，推送状态基于本地上游引用。</small>
         {#if run.agentWorkspace.error}<p class="muted">{run.agentWorkspace.error}</p>{/if}
-        <div class="changed-files">{#each run.agentWorkspace.changedFiles as file}<div class="changed-file"><small>{fileLabels[file.changeType] ?? file.changeType}{file.staged ? ' · 已暂存' : ''}</small><code>{file.originalPath ? `${file.originalPath} → ` : ''}{file.path}</code></div>{:else}<p class="muted">没有记录到变更文件</p>{/each}</div>
-        {#each run.agentWorkspace.relatedCommits as sha}<code class="commit">{sha}</code>{/each}
+        {#if run.agentWorkspace.runFiles != null}
+          <p class="muted">本次执行变更文件 · {run.agentWorkspace.runFiles.length}</p>
+          <div class="run-files">{#each run.agentWorkspace.runFiles as path}<div class="changed-file"><code>{path}</code></div>{:else}<p class="muted">本次执行没有代码变更</p>{/each}</div>
+        {/if}
+        <p class="muted">当前未提交文件</p>
+        <div class="changed-files">{#each run.agentWorkspace.changedFiles as file}<div class="changed-file"><small>{fileLabels[file.changeType] ?? file.changeType}{file.staged ? ' · 已暂存' : ''}</small><code>{file.originalPath ? `${file.originalPath} → ` : ''}{file.path}</code></div>{:else}<p class="muted">{run.agentWorkspace.error ? '当前文件状态不可用' : '当前没有未提交文件'}</p>{/each}</div>
+        {#if loadingFiles}<p class="muted" role="status">正在读取关联提交文件…</p>{/if}
+        {#if fileError}<p class="muted" role="status">关联提交文件读取失败：{fileError}</p>{/if}
+        {#each run.agentWorkspace.relatedCommits as sha}
+          {@const change = commitChanges.find(c => c.commit === sha)}
+          <div class="commit-changes"><code class="commit">{sha}</code>
+            {#if change?.error}<p class="muted">提交文件读取失败：{change.error}</p>
+            {:else if change}<div class="changed-files">{#each change.files as file}<div class="changed-file"><small>{fileLabels[file.changeType] ?? file.changeType}</small><code>{file.originalPath ? `${file.originalPath} → ` : ''}{file.path}</code></div>{:else}<p class="muted">此提交没有文件变更</p>{/each}</div>
+            {:else}<p class="muted">历史记录未保存此提交的文件；下次更新执行时读取</p>{/if}
+          </div>
+        {/each}
       </div>
     </section>
 
@@ -125,7 +152,7 @@
                 {#if criterion.precondition}<div><dt>前提</dt><dd>{criterion.precondition}</dd></div>{/if}
                 <div><dt>操作</dt><dd>{criterion.steps}</dd></div>
                 <div><dt>预期</dt><dd>{criterion.expected}</dd></div>
-                <div><dt>验收结果</dt><dd class="criterion-result"><span class:failed={check.result === 'failed'}>{check.passed ? '通过' : check.result === 'passed' ? '自测通过，待人工验收' : check.result === 'not_tested' ? '未验收' : results[check.result]}</span>{#if writable}<button class="quiet text-link record-result" on:click={event => record(criterion, event.currentTarget)}>记录结果</button>{/if}</dd></div>
+                <div><dt>验收结果</dt><dd class="criterion-result"><span class:failed={check.result === 'failed'}>{check.result === 'passed' ? `${scopes[check.stage]}${check.actor === 'agent' ? '自测' : '验收'}通过` : check.result === 'not_tested' ? '未验收' : results[check.result]}</span>{#if writable}<button class="quiet text-link record-result" on:click={event => record(criterion, event.currentTarget)}>记录结果</button>{/if}</dd></div>
                 {#if check.evidence}<div><dt>说明</dt><dd>{check.evidence}</dd></div>{/if}
               </dl>
               {#if criterionRecords(run, criterion.id).length}

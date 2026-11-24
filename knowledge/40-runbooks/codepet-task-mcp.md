@@ -2,7 +2,7 @@
 
 ## 入口与升级
 
-2026-11-24 当前实现要求 backend API 29。仅更新前端不能获得新模型与工具，需安装新版 App。Codex工作台 → 任务与验收 → 更多 → 接入 Agent，从已就绪服务复制完整配置，替换 config.toml 的 codepet_tasks 条目，然后在新对话使用。
+2026-11-25 当前实现要求 backend API 30。仅更新前端不能获得新模型与工具，需安装新版 App。Codex工作台 → 任务与验收 → 更多 → 接入 Agent，从已就绪服务复制完整配置，替换 config.toml 的 codepet_tasks 条目，然后在新对话使用。
 
 ```toml
 [mcp_servers.codepet_tasks]
@@ -14,16 +14,17 @@ http_headers = { Authorization = "Bearer <从 App 复制>", "X-CodePet-Agent" = 
 
 服务由 App Rust 后台托管，固定回环端口；关闭窗口而 App 仍运行时保持，退出时取消并释放。端口占用会报告失败，不跳到其他端口，也不生成假配置。Bearer 凭据位于当前 data/tasks/mcp-http.token，Unix 权限 0600，重启稳定、不写日志。数据目录切换在重启后统一应用。前端不代理 MCP。
 
-## 四个工具
+## 五个工具
 
 | 工具 | 输入与职责 |
 | --- | --- |
-| create-task | title、description、agentWorkspace.path，及可选 initialRun；一个事务同时创建任务与首次执行 |
+| create-task | title、description、agentWorkspace.path，及必填 initialRun（含非空 agentConversation）；一个事务同时创建任务与首次执行 |
 | create-task-run | taskId、expectedRevision、title、kind、goal、solution，按需携带补充说明/工作区/清单/对话；只为已发布或已结束目标开启新处理 |
 | update-task-run | taskId、runId、expectedRevision，以及变化的摘要、status、validationPlan、verification、明确关联提交或 delivery |
+| finish-task-run | taskId、runId、expectedRevision、conclusion、非空 agentConversation、changedFiles（无变更显式 []）、verification；原子结束开发并按必验本地结果进入待验收或保持进行中，不确认人工通过、不关闭 |
 | find-tasks | 按项目/关键词搜索简短列表；taskId 读当前执行，runId 选择历史，history 显式获取历史摘要 |
 
-没有 update-task MCP 工具；任务基本信息可在 App 单独修改。kind 在 TaskRun 上，只有 bugfix/feature。状态为 in_progress、ready_for_delivery、published、closed，Agent 不能关闭或记录人工验收。首次 published 要同时提供实际 delivery；提交不证明发布。
+所有 MCP 写入都必须携带非空 agentConversation，对话 ID 或 codex://threads/<id> 均可；人工入口可空。每项验收必须同时提供 result 与非空 evidence，缺任一项整次不落库。没有 update-task MCP 工具；任务基本信息可在 App 单独修改。kind 在 TaskRun 上，只有 bugfix/feature。状态为 in_progress、ready_for_delivery、published、closed，Agent 不能关闭或记录人工验收。首次 published 要同时提供实际 delivery；提交不证明发布。
 
 最小创建示例（工具参数，不含创建来源和时间）：
 
@@ -33,6 +34,7 @@ http_headers = { Authorization = "Bearer <从 App 复制>", "X-CodePet-Agent" = 
   "description": "切换窗口后首次点击偶发无响应",
   "agentWorkspace": { "path": "/absolute/project/worktree" },
   "initialRun": {
+    "agentConversation": ["<实际 Codex 对话 ID 或 codex://threads/<id>>"],
     "title": "修复首次点击",
     "kind": "bugfix",
     "goal": "切换窗口后点击稳定响应",
@@ -46,9 +48,9 @@ http_headers = { Authorization = "Bearer <从 App 复制>", "X-CodePet-Agent" = 
 
 保留回执 taskId/runId/revision/planRevision/criterionIds。更新省略不变字段，agentWorkspace 只允许提交路径和 relatedCommits，Git 状态与文件由 Rust 观测，不能从参数伪造。新执行省略计划时复用旧清单，但生成新检查项 ID 并清空结果；不要把恢复同次处理当作新执行。
 
-通常开始实施一次 create-task，实现告一段落一次 update-task-run；发布和复发再按事实补记。初始化 instructions 自动携带这套规则。接入面板可编辑 Agent 使用提示词，保存后重新连接 MCP 或开新对话使用；恢复默认可撤销覆盖。自定义内容保存在 Rust 配置，不依赖前端页面存活，不修改全局 Codex 配置。纯咨询不登记，不轮询，不逐文件维护。普通回执约 225 字节、四工具定义约 9 KB，实际数值见黑盒报告；不把这些字节数当作模型 token 计费或自动登记可靠性保证。
+通常开始实施一次 create-task，关键进展合并一次 update-task-run，开发完成一次 finish-task-run；发布和复发再按事实补记。初始化 instructions 自动携带这套规则。接入面板可编辑 Agent 使用提示词，保存后重新连接 MCP 或开新对话使用；恢复默认可撤销覆盖。自定义内容保存在 Rust 配置，不依赖前端页面存活，不修改全局 Codex 配置。纯咨询不登记，不轮询，不逐文件维护。普通回执保持紧凑，五工具定义受 24 KB 上限测试约束，实际数值见黑盒报告；不把这些字节数当作模型 token 计费或自动登记可靠性保证。
 
-agentConversation 输入是实际对话 ID 的数组，来源从请求上下文取得。ID 不确定可省略；只有来源 codex 的引用尝试只读查询本地 state_5.sqlite 并核对仓库，缺失保持待核实，已知跨项目引用拒绝。不读取其他 Agent 的历史。Header 不等于对话 ID。
+agentConversation 输入是实际对话 ID 的数组，来源从请求上下文取得。ID 不确定时不要猜造，先确认实际来源，新的 MCP 写入不允许省略；只有来源 codex 的引用尝试只读查询本地 state_5.sqlite 并核对仓库，缺失保持待核实，已知跨项目引用拒绝。不读取其他 Agent 的历史。Header 不等于对话 ID。
 
 ## 数据、迁移与并发
 
@@ -91,7 +93,7 @@ npm run build
 TMPDIR=/private/tmp npm run test:webcontent
 ```
 
-真实 HTTP/stdio 黑盒隔离 HOME/CODEX_HOME 与应用数据，验证四工具、创建来源、工作区文件、重启幂等、冲突和权限。官方 SDK 及原始 HTTP 验证每请求来源、Host/Origin、缺失来源和端口故障。原生测试用临时账本，HTTP 在 Rust 发出，GUI 通过生产 IPC 读取同一 revision，逐项走人工验收、后台关闭、新执行、历史只读与冲突草稿，并核对编辑后的提示词真正进入 HTTP initialize。样例不代表真实业务问题已发布。
+真实 HTTP/stdio 黑盒隔离 HOME/CODEX_HOME 与应用数据，验证五工具、创建来源、工作区文件、重启幂等、冲突和权限。官方 SDK 及原始 HTTP 验证每请求来源、Host/Origin、缺失来源和端口故障。原生测试用临时账本，HTTP 在 Rust 发出，GUI 通过生产 IPC 读取同一 revision，逐项走人工验收、后台关闭、新执行、历史只读与冲突草稿，并核对编辑后的提示词真正进入 HTTP initialize。样例不代表真实业务问题已发布。
 
 浏览器复用原生快照，测试明暗、1280/820/600/390、完整 App 1143 视口与短窗口真实滚动。验证任务编辑与执行字段隔离、运行卡片键盘切换、四区布局、逐项验收与独立保存；同时验证提示词保存/重开/恢复/冲突、文件内容、明暗窄屏、菜单与弹窗焦点及忙碌取消拦截。WebKit 的 display-p3 颜色先转换到 sRGB 再计算。证据位于忽略目录 artifacts/task-ledger-qa/（mcp/http/embedded 报告、native/report.json、native-window.png、layout/）。
 
@@ -101,4 +103,23 @@ TMPDIR=/private/tmp npm run test:webcontent
 
 本次真实开发任务“调整任务执行详情并支持编辑 Agent 接入提示词”的初始回执在 artifacts/task-ledger-qa/run-detail-implementation.json；通过已有 MCP 登记，完成后使用新工具与 Header 更新同一任务。它与隔离的验收样本分开记录，Agent 不记录 human 通过或自动结束。
 
-提示词保存限制：非空、最多 16000 字且不超过 64 KiB；保存只作用于当前数据目录。多窗口 revision 冲突时重新打开面板后合并，不自动覆盖。初始化配置损坏返回错误，不悄悄丢掉自定义内容。四个工具名和 X-CodePet-Agent Header 保持不变，新参数要求 MCP 0.3 与原生 API 29。
+提示词保存限制：非空、最多 16000 字且不超过 64 KiB；保存只作用于当前数据目录。多窗口 revision 冲突时重新打开面板后合并，不自动覆盖。初始化配置损坏返回错误，不悄悄丢掉自定义内容。既有四工具名保留，新增 finish-task-run； X-CodePet-Agent Header 保持不变，新参数要求 MCP 0.4 与原生 API 30。
+
+完成调用示例（使用实际回执，不复制占位 ID）：
+
+```json
+{
+  "taskId": "<taskId>", "runId": "<runId>", "expectedRevision": 2,
+  "agentConversation": ["<实际对话 ID>"],
+  "conclusion": "已定位并修复事件注册遗漏，本地验证通过，等待安装包验收。",
+  "changedFiles": ["src/menu.rs", "src/menu.test.rs"],
+  "verification": {
+    "planRevision": 1, "stage": "local", "target": "<实际工作区/commit>", "environment": "macOS",
+    "results": [{"criterionId": "<检查项 ID>", "result": "passed", "evidence": "切换窗口后连续点击 10 次，每次均打开菜单。"}]
+  }
+}
+```
+
+待验收使用原 ready_for_delivery 值；有必验本地项未测/失败/受阻时仍进行中。表单必须主动选状态并填结论，不能只写一段“验收通过”的进度摘要。新工具不会录入 human 结果。历史关联提交文件可在展开时通过 commit-files IPC 读取；文件不在时报告读取失败。API 30 必须更新原生 App，单换前端不能获得第五个工具。
+
+finish-task-run 的 changedFiles 必须显式传入；省略拒绝，空数组表示本次无代码修改。路径是仓库相对路径，拒绝空白、绝对路径、父级跳转、仓库元数据路径和重复项。持久化到 agentWorkspace.runFiles，和当前共享未提交文件、明确关联提交文件分开，后续工作区清洁或其他更新不会清空它。

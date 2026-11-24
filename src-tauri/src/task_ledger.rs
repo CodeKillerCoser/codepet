@@ -33,6 +33,9 @@ pub(crate) async fn task_ledger_request(
                     .collect::<Result<Vec<_>, _>>()?,
             )),
             "get" => ledger.view(&ledger.get(id()?)?),
+            "commit-files" => serde_json::to_value(ledger.commit_changes(
+                id()?, request["runId"].as_str().ok_or("缺少执行 ID")?
+            )?).map_err(|e| e.to_string()),
             "create-task" => {
                 let input: CreateTaskInput =
                     serde_json::from_value(request["input"].clone()).map_err(|e| e.to_string())?;

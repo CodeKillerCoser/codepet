@@ -43,10 +43,16 @@ fn new_run(description: String, workspace: AgentWorkspace, actor: &Actor) -> Tas
     }
 }
 fn link(run: &mut TaskRun, ids: &[String], actor: &Actor, repository: &str) -> Result<()> {
+    if !actor.is_human() && ids.is_empty() {
+        return Err(
+            "agentConversation 必填且不能为空；提交实际对话 ID 或 codex://threads/<id> 链接".into(),
+        );
+    }
     if ids.len() > 20 {
         return Err("一次最多关联 20 条对话".into());
     }
-    for conversation_id in ids {
+    for raw in ids {
+        let conversation_id = raw.strip_prefix("codex://threads/").unwrap_or(raw);
         text(conversation_id, "对话 ID", 160)?;
         let agent = if actor.is_human() {
             "codex"
@@ -54,7 +60,9 @@ fn link(run: &mut TaskRun, ids: &[String], actor: &Actor, repository: &str) -> R
             actor.source()
         };
         let verified = if agent == "codex" {
-            super::valid_id(conversation_id)?;
+            super::valid_id(conversation_id).map_err(|_| {
+                "Codex 对话必须是有效 UUID 或 codex://threads/<UUID> 链接".to_owned()
+            })?;
             crate::sources::local::directory(crate::sources::local::CODEX_ID)
                 .ok()
                 .map(|home| source::verify(&home, conversation_id, repository))
@@ -66,13 +74,13 @@ fn link(run: &mut TaskRun, ids: &[String], actor: &Actor, repository: &str) -> R
         if let Some(existing) = run
             .agent_conversation
             .iter_mut()
-            .find(|c| c.agent == agent && c.conversation_id == *conversation_id)
+            .find(|c| c.agent == agent && c.conversation_id == conversation_id)
         {
             existing.verified |= verified;
         } else {
             run.agent_conversation.push(AgentConversation {
                 agent: agent.into(),
-                conversation_id: conversation_id.clone(),
+                conversation_id: conversation_id.into(),
                 verified,
             });
         }
@@ -267,12 +275,46 @@ impl Ledger {
         })
     }
     pub fn update_task_run(&self, input: UpdateTaskRunInput, actor: Actor) -> Result<Receipt> {
-        let (key, fingerprint, cached) = self.request_key(
-            "update-task-run",
-            &input,
-            input.operation_id.as_deref(),
-            &actor,
-        )?;
+        self.update_run(input, actor, "update-task-run", None)
+    }
+    pub fn finish_task_run(&self, input: FinishTaskRunInput, actor: Actor) -> Result<Receipt> {
+        text(&input.conclusion, "完成结论", 2000)?;
+        workspace::validate_run_files(&input.changed_files)?;
+        self.update_run(
+            UpdateTaskRunInput {
+                task_id: input.task_id,
+                run_id: input.run_id,
+                expected_revision: input.expected_revision,
+                status: Some(RunStatus::ReadyForDelivery),
+                note: Some(input.conclusion),
+                agent_conversation: input.agent_conversation,
+                verification: Some(input.verification),
+                agent_workspace: input.agent_workspace,
+                operation_id: input.operation_id,
+                ..Default::default()
+            },
+            actor,
+            "finish-task-run",
+            Some(input.changed_files),
+        )
+    }
+    fn update_run(
+        &self,
+        input: UpdateTaskRunInput,
+        actor: Actor,
+        operation: &str,
+        finished_files: Option<Vec<String>>,
+    ) -> Result<Receipt> {
+        let (key, fingerprint, cached) = if let Some(files) = &finished_files {
+            self.request_key(
+                operation,
+                &(&input, files),
+                input.operation_id.as_deref(),
+                &actor,
+            )?
+        } else {
+            self.request_key(operation, &input, input.operation_id.as_deref(), &actor)?
+        };
         if let Some(r) = cached {
             return Ok(r);
         }
@@ -339,10 +381,15 @@ impl Ledger {
         }
         let previous = self.get(&input.task_id)?;
         let last = previous.runs.last().unwrap();
-        let workspace = input.agent_workspace.clone().unwrap_or(WorkspaceInput {
+        let mut workspace = input.agent_workspace.clone().unwrap_or(WorkspaceInput {
             path: last.agent_workspace.path.clone(),
             related_commits: vec![],
         });
+        for sha in &last.agent_workspace.related_commits {
+            if !workspace.related_commits.contains(sha) {
+                workspace.related_commits.push(sha.clone());
+            }
+        }
         // Milestone writes still work if a previously recorded worktree was removed.
         let ctx = match workspace::inspect(&workspace) {
             Ok(c) => Some(c),
@@ -363,6 +410,11 @@ impl Ledger {
             if run.status == RunStatus::Closed {
                 return Err("执行已结束，请创建新的执行".into());
             }
+            if operation == "finish-task-run" && run.status == RunStatus::Published {
+                return Err(
+                    "执行已发布；补记发布验证请使用 update-task-run，重新开发请新建执行".into(),
+                );
+            }
             if let Some(value) = input.title {
                 run.title = value;
             }
@@ -380,7 +432,9 @@ impl Ledger {
             }
             if let Some(ctx) = ctx {
                 let retained = run.agent_workspace.related_commits.clone();
+                let run_files = run.agent_workspace.run_files.clone();
                 run.agent_workspace = ctx.observation;
+                run.agent_workspace.run_files = run_files;
                 for sha in retained {
                     if !run.agent_workspace.related_commits.contains(&sha) {
                         run.agent_workspace.related_commits.push(sha);
@@ -395,20 +449,28 @@ impl Ledger {
                 run.agent_workspace.observed_at = now();
                 run.agent_workspace.error = Some("已记录工作区不可用；代码状态未知".into());
             }
+            if let Some(files) = finished_files {
+                run.agent_workspace.run_files = Some(files);
+            }
             if input.status == Some(RunStatus::Published)
                 && run.status != RunStatus::Published
                 && input.delivery.is_none()
             {
                 return Err("标为已发布时需要实际发布版本或记录".into());
             }
-            if let Some(status) = input.status {
-                run.status = status;
+            if let Some(status) = &input.status {
+                run.status = status.clone();
             }
             if let Some(plan) = input.validation_plan {
                 validation::set_plan(run, plan)?;
             }
             if let Some(verification) = input.verification {
                 validation::verify(run, verification, &actor)?;
+            }
+            if input.status == Some(RunStatus::ReadyForDelivery)
+                && !validation::development_ready(run)
+            {
+                run.status = RunStatus::InProgress;
             }
             link(run, &input.agent_conversation, &actor, &repository)?;
             let summary = input.note.unwrap_or_else(|| {

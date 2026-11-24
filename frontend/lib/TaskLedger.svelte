@@ -22,7 +22,7 @@
   let runTask: Task | null = null, runTitle = '', runKind: TaskKind = 'feature', runGoal = '', runSolution = '', workspace = '';
   let criteria: Criterion[] = [], includePlan = false;
   let verifyTask: Task | null = null, verifyRun: TaskRun | null = null, verifyItem: Criterion | null = null;
-  let stage: Scope = 'release', target = '', environment = '', checkResult: TestResult = 'not_tested', evidence = '';
+  let stage: Scope = 'release', target = '', environment = '', checkResult: TestResult | '' = '', evidence = '';
   let verifyReturnFocus: HTMLElement;
   let moreOpen = false, moreTrigger: HTMLElement;
   let pending: {fingerprint: string; operationId: string} | null = null;
@@ -90,7 +90,7 @@
       } else {
         await write('create-task', {
           title: taskTitle, description: taskDescription, agentWorkspace: {path: workspace},
-          initialRun: {title: runTitle || taskTitle, kind: runKind, goal: runGoal || taskTitle, solution: runSolution,
+          initialRun: {agentConversation: [], title: runTitle || taskTitle, kind: runKind, goal: runGoal || taskTitle, solution: runSolution,
             ...(includePlan ? {validationPlan: {items: criteria}} : {})}
         });
         status = 'all'; runId = '';
@@ -104,7 +104,7 @@
     busy = true; error = '';
     try {
       const receipt = await write('create-task-run', {
-        taskId: runTask.id, expectedRevision: runTask.revision,
+        agentConversation: [], taskId: runTask.id, expectedRevision: runTask.revision,
         title: runTitle, kind: runKind, goal: runGoal, solution: runSolution,
         agentWorkspace: {path: workspace}, ...(includePlan ? {validationPlan: {items: criteria}} : {})
       });
@@ -119,16 +119,17 @@
     if (!selected || !run) return;
     verifyTask = structuredClone(selected); verifyRun = structuredClone(run); verifyItem = structuredClone(item);
     stage = item.scope === 'local' ? 'local' : 'release';
-    setVerificationContext(); checkResult = 'not_tested'; evidence = ''; error = '';
+    setVerificationContext(); checkResult = ''; evidence = ''; error = '';
     verifyReturnFocus = returnFocus;
     verifyDialog.showModal();
   }
   async function saveVerification() {
     if (!verifyTask || !verifyRun || !verifyItem) return;
+    if (!checkResult || !evidence.trim()) { error = '请选择验收状态并填写结论'; return; }
     busy = true; error = '';
     try {
       await write('update-task-run', {
-        taskId: verifyTask.id, runId: verifyRun.id, expectedRevision: verifyTask.revision,
+        agentConversation: [], taskId: verifyTask.id, runId: verifyRun.id, expectedRevision: verifyTask.revision,
         verification: {planRevision: verifyRun.validationPlan.revision, stage, target, environment,
           results: [{criterionId: verifyItem.id, result: checkResult, evidence}]},
         note: `${scopes[stage]}验收「${verifyItem.title}」：${results[checkResult]} · ${target}`
@@ -253,7 +254,7 @@
     </select></label>
     <label>实际验收版本<input required bind:value={target}/></label>
     <label>验收环境<input required bind:value={environment}/></label>
-    <label>结果<select bind:value={checkResult}>{#each Object.entries(results) as [value, label]}<option {value}>{label}</option>{/each}</select></label>
+    <label>验收状态<select aria-label="验收状态" required bind:value={checkResult}><option value="" disabled>选择验收状态</option>{#each Object.entries(results) as [value, label]}<option {value}>{label}</option>{/each}</select></label>
     <label>证据或说明<textarea required rows="3" maxlength="3000" bind:value={evidence}></textarea></label>
     <footer><button class="primary">{busy ? '保存中…' : '保存此项结果'}</button></footer>
   </fieldset></form>

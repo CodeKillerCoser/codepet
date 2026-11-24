@@ -113,9 +113,9 @@ async fn http_writes_share_the_app_ledger_and_survive_restart_without_sessions()
     let initialized = endpoint.rpc("initialize", init()).await;
     assert_eq!(initialized["serverInfo"]["name"], "codepet-tasks");
     let tools = endpoint.rpc("tools/list", json!({})).await;
-    assert_eq!(tools["tools"].as_array().unwrap().len(), 4);
+    assert_eq!(tools["tools"].as_array().unwrap().len(), 5);
     assert!(serde_json::to_vec(&tools).unwrap().len() < 24000);
-    let input = json!({"agentWorkspace":{"path":workspace},"title":"HTTP 任务","description":"通过本机 HTTP 登记目标"});
+    let input = json!({"agentWorkspace":{"path":workspace},"title":"HTTP 任务","description":"通过本机 HTTP 登记目标","initialRun":{"agentConversation":["00000000-0000-4000-8000-000000000003"]}});
     let (first, retry) = tokio::join!(
         endpoint.call("create-task", input.clone()),
         endpoint.call("create-task", input)
@@ -261,7 +261,7 @@ async fn official_sdk_client_negotiates_and_calls_the_http_tools() {
             .auth_header(endpoint.authorization.trim_start_matches("Bearer ")),
     );
     let client = ClientConfig::default().serve(transport).await.unwrap();
-    assert_eq!(client.list_all_tools().await.unwrap().len(), 4);
+    assert_eq!(client.list_all_tools().await.unwrap().len(), 5);
     let result = client
         .call_tool(
             CallToolRequestParams::new("find-tasks")
@@ -291,7 +291,7 @@ async fn request_header_is_required_and_each_writer_has_its_own_identity() {
         }
         request.json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":input}}))
     };
-    let input = json!({"title":"来源测试","description":"任务背景","initialRun":{"kind":"bugfix","title":"首次实现","goal":"目标","solution":"方案"},"agentWorkspace":{"path":workspace}});
+    let input = json!({"title":"来源测试","description":"任务背景","initialRun":{"agentConversation":["conversation-test"],"kind":"bugfix","title":"首次实现","goal":"目标","solution":"方案"},"agentWorkspace":{"path":workspace}});
     for agent in [None, Some("human"), Some(""), Some("bad source")] {
         assert_eq!(
             rpc(agent, "create-task", input.clone())
@@ -311,7 +311,7 @@ async fn request_header_is_required_and_each_writer_has_its_own_identity() {
         .unwrap();
     let receipt: Value =
         serde_json::from_str(task_a["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
-    let update = json!({"taskId":receipt["taskId"],"runId":receipt["runId"],"expectedRevision":1,"description":"第二个 Agent 确认方案","status":"published","delivery":"Release 1.0"});
+    let update = json!({"taskId":receipt["taskId"],"runId":receipt["runId"],"expectedRevision":1,"agentConversation":["conversation-test"],"description":"第二个 Agent 确认方案","status":"published","delivery":"Release 1.0"});
     let result = rpc(Some("codex-b"), "update-task-run", update)
         .send()
         .await
@@ -329,7 +329,7 @@ async fn request_header_is_required_and_each_writer_has_its_own_identity() {
     assert_eq!(task.description, "任务背景");
     assert_eq!(task.runs[0].created_by, "codex-a");
     assert_eq!(task.runs[0].timeline.last().unwrap().actor, "codex-b");
-    let next = json!({"taskId":task.id,"expectedRevision":task.revision,"title":"发布后复发","kind":"bugfix"});
+    let next = json!({"taskId":task.id,"expectedRevision":task.revision,"title":"发布后复发","kind":"bugfix","agentConversation":["conversation-test"]});
     let result = rpc(Some("codex-c"), "create-task-run", next)
         .send()
         .await
@@ -393,4 +393,87 @@ async fn edited_instructions_reach_new_initializations_and_survive_restart() {
         original["instructions"]
     );
     restarted.runtime.shutdown_once().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn required_links_atomic_verification_and_finish_are_enforced_over_http() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = repository(root.path());
+    let endpoint = Endpoint::start(&root.path().join("data"), 0).await;
+    endpoint.rpc("initialize", init()).await;
+    let chat = "00000000-0000-4000-8000-000000000004";
+    let input = json!({"title":"完成协议","agentWorkspace":{"path":workspace},"initialRun":{"agentConversation":[format!("codex://threads/{chat}")],"validationPlan":{"items":[{"title":"读写","steps":"写入后读取","expected":"一致","scope":"local"}]}}});
+    for ids in [Value::Null, json!([]), json!([""]), json!([" "])] {
+        let mut bad = input.clone();
+        if ids.is_null() {
+            bad["initialRun"]
+                .as_object_mut()
+                .unwrap()
+                .remove("agentConversation");
+        } else {
+            bad["initialRun"]["agentConversation"] = ids;
+        }
+        let response: Value = endpoint
+            .post("tools/call", json!({"name":"create-task","arguments":bad}))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            response.get("error").is_some() || response["result"]["isError"] == true,
+            "{response}"
+        );
+    }
+    assert!(endpoint.runtime.ledger().list().unwrap().is_empty());
+    let receipt = endpoint.call("create-task", input).await;
+    let finish = json!({"taskId":receipt["taskId"],"runId":receipt["runId"],"expectedRevision":1,"conclusion":"开发完成，实际验证通过","changedFiles":[],"agentConversation":[chat],"verification":{"planRevision":1,"stage":"local","target":"HTTP current worktree","environment":"macOS","results":[{"criterionId":receipt["criterionIds"][0],"result":"passed","evidence":"HTTP 实际读写一致"}]}});
+    for field in ["result", "evidence"] {
+        let mut bad = finish.clone();
+        bad["verification"]["results"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove(field);
+        let response: Value = endpoint
+            .post(
+                "tools/call",
+                json!({"name":"finish-task-run","arguments":bad}),
+            )
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert!(
+            response.get("error").is_some() || response["result"]["isError"] == true,
+            "{response}"
+        );
+        assert_eq!(
+            endpoint
+                .runtime
+                .ledger()
+                .get(receipt["taskId"].as_str().unwrap())
+                .unwrap()
+                .revision,
+            1
+        );
+    }
+    let done = endpoint.call("finish-task-run", finish.clone()).await;
+    assert_eq!(done["status"], "ready_for_delivery");
+    assert_eq!(
+        endpoint.call("finish-task-run", finish).await["revision"],
+        2
+    );
+    let task = endpoint
+        .runtime
+        .ledger()
+        .get(receipt["taskId"].as_str().unwrap())
+        .unwrap();
+    assert!(task.runs[0].closure.is_none());
+    assert_eq!(task.runs[0].validation_plan.records.len(), 1);
+    assert_eq!(task.runs[0].validation_plan.records[0].actor, "agent");
+    assert_eq!(task.runs[0].agent_conversation[0].conversation_id, chat);
+    endpoint.runtime.shutdown_once().await;
 }

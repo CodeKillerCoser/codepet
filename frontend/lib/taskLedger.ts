@@ -3,13 +3,13 @@ export type RunStatus='in_progress'|'ready_for_delivery'|'published'|'closed';
 export type Scope='local'|'release'|'both';
 export type TestResult='passed'|'failed'|'not_tested'|'blocked';
 export type TaskKind='bugfix'|'feature';
-export const statuses:Record<RunStatus,string>={in_progress:'进行中',ready_for_delivery:'待交付',published:'已发布',closed:'已结束'};
-export const phases={in_progress:'进行中',ready_for_delivery:'待交付',published:'已发布'};
+export const statuses:Record<RunStatus,string>={in_progress:'进行中',ready_for_delivery:'待验收',published:'已发布',closed:'已结束'};
+export const phases={in_progress:'进行中',ready_for_delivery:'待验收',published:'已发布'};
 export const kinds:Record<TaskKind,string>={bugfix:'修复',feature:'功能'};
 export const results:Record<TestResult,string>={passed:'通过',failed:'失败',not_tested:'未测',blocked:'受阻'};
 export const scopes:Record<Scope,string>={local:'本地',release:'发布后',both:'本地与发布后'};
 export interface Criterion{id:string;title:string;precondition:string;steps:string;expected:string;scope:Scope;required:boolean}
-export interface AgentWorkspace{path:string;branch:string|null;head:string|null;upstream:string|null;changeStatus:{hasUncommittedChanges:boolean|null;hasUnpushedCommits:boolean|null};changedFiles:{path:string;changeType:string;staged:boolean;originalPath:string|null}[];relatedCommits:string[];observedAt:number;error:string|null}
+export interface AgentWorkspace{path:string;branch:string|null;head:string|null;upstream:string|null;changeStatus:{hasUncommittedChanges:boolean|null;hasUnpushedCommits:boolean|null};changedFiles:{path:string;changeType:string;staged:boolean;originalPath:string|null}[];relatedCommits:string[];runFiles?:string[]|null;commitChanges?:{commit:string;files:AgentWorkspace['changedFiles'];error:string|null}[];observedAt:number;error:string|null}
 export interface VerificationInput{planRevision:number;stage:Scope;target:string;environment:string;results:{criterionId:string;result:TestResult;evidence:string}[]}
 export interface Verification extends VerificationInput{id:string;actor:string;agent:string;createdAt:number;agentWorkspace:AgentWorkspace|null}
 export interface PlanRevision{revision:number;createdAt:number;summary:string;affectedAreas:string[];criteria:Criterion[]}
@@ -31,9 +31,10 @@ export const actorLabel=(source:string)=>source==='human'?'人工':source==='cod
 export const fileLabels:Record<string,string>={added:'新增',modified:'修改',deleted:'删除',renamed:'重命名',conflicted:'冲突',untracked:'未跟踪'};
 
 export function criterionCheck(run:TaskRun,criterion:Criterion){
-  const stage=criterion.scope==='local'?'local':'release';
+  const hasRelease=run.validationPlan.records.some(v=>v.planRevision===run.validationPlan.revision&&v.stage==='release');
+  const stage=criterion.scope==='both'?(hasRelease?'release':'local'):criterion.scope;
   const check=latestResult(run,criterion,stage);
-  return {...check,stage,passed:check.actor==='human'&&check.result==='passed'};
+  return {...check,stage,passed:check.result==='passed'};
 }
 export function criterionRecords(run:TaskRun,criterionId:string){
   return run.validationPlan.records.filter(v=>v.results.some(r=>r.criterionId===criterionId)).reverse();

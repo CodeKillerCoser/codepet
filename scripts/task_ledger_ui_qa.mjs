@@ -33,6 +33,7 @@ try {
   assert.equal(await page.locator('.run-card').last().getAttribute('aria-selected'), 'true');
   await page.getByRole('button', {name: '查看变更', exact: true}).click();
   assert.ok(await page.locator('.changed-file').count() > 0);
+  if(await page.locator('.commit-changes').count())await page.getByText('committed-change.ts',{exact:true}).first().waitFor();
   await page.getByRole('button', {name: '查看变更', exact: true}).click();
 
   for (const mode of ['light', 'dark']) {
@@ -77,6 +78,7 @@ try {
   await criterion.getByRole('button', {name: '记录结果', exact: true}).click();
   await page.getByLabel('实际验收版本').fill('1.3.0'); await page.getByLabel('验收环境').fill('macOS');
   await page.getByLabel('证据或说明').fill('待保存证据');
+  await page.getByLabel('验收状态', {exact:true}).selectOption('passed');
   await page.getByRole('button', {name: '保存此项结果', exact: true}).click();
   await page.waitForFunction(() => document.querySelector('.form-controls')?.disabled);
   await page.keyboard.press('Escape'); assert.ok(await page.getByRole('dialog').isVisible());
@@ -195,5 +197,21 @@ try {
   await visual.screenshot({path: resolve(output, 'approved-detail-visual.png'), fullPage: true});
   await writeFile(resolve(output, 'report.json'), JSON.stringify({success: true, engine, pageErrors: errors, singleItemResult: true, editablePrompt: true, promptConflicts: true, runCardNavigation: true, themes: ['light', 'dark'], widths: [1280, 820, 600, 390]}, null, 2));
   assert.deepEqual(errors, []);
+  await page.goto(route('local-verification')); await page.locator('.task-row').waitFor();
+  const checks = page.locator('.criterion');
+  assert.equal(await page.locator('.check-mark.passed').count(), await checks.count(), 'Local self-tests have visible status before release');
+  await checks.first().locator(':scope>summary').click();
+  await checks.first().getByRole('button',{name:'记录结果',exact:true}).click();
+  const resultDialog=page.getByRole('dialog',{name:'记录验收结果',exact:true});
+  assert.equal(await page.getByLabel('验收状态',{exact:true}).inputValue(),'');
+  assert.ok(!(await resultDialog.locator('form').evaluate(form=>form.checkValidity())), 'Status must be explicitly selected with a conclusion');
+  await page.keyboard.press('Escape');
+  for (const empty of [false,true]) {
+    await page.goto(route('owned-files'+(empty?'&emptyFiles=1':'')));await page.locator('.task-row').waitFor();
+    await page.getByRole('button',{name:'查看变更',exact:true}).click();
+    await page.getByText(empty?'本次执行没有代码变更':'frontend/feature.svelte',{exact:true}).waitFor();
+    await page.getByText('当前没有未提交文件',{exact:true}).waitFor();
+    await page.getByText('committed-change.ts',{exact:true}).waitFor();
+  }
   console.log(`Task UI passed (${engine}): run cards, four groups, per-item results, prompt editing/reset/conflict, focus, themes, responsive layout and fixed navigation.`);
 } finally { await browser.close(); await server.close(); }

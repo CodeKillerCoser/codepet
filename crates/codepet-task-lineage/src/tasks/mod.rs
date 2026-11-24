@@ -134,6 +134,28 @@ impl Ledger {
         view["projectName"] = json!(project.name);
         Ok(view)
     }
+    /// Read immutable, explicitly linked commit files on demand, including old snapshots.
+    pub fn commit_changes(&self, task_id: &str, run_id: &str) -> Result<Vec<CommitChange>> {
+        let task = self.get(task_id)?;
+        let run = task
+            .runs
+            .iter()
+            .find(|r| r.id == run_id)
+            .ok_or("执行不存在")?;
+        let input = WorkspaceInput {
+            path: run.agent_workspace.path.clone(),
+            related_commits: run.agent_workspace.related_commits.clone(),
+        };
+        let context = workspace::inspect(&input)?;
+        let project = Self::projects(&self.store()?)?
+            .into_iter()
+            .find(|p| p.id == task.project_id)
+            .ok_or("项目不存在")?;
+        if context.repository != project.path {
+            return Err("工作区不属于任务项目".into());
+        }
+        Ok(context.observation.commit_changes)
+    }
     pub fn find(&self, input: FindTasksInput) -> Result<Value> {
         let scope = input
             .workspace
@@ -171,6 +193,30 @@ impl Ledger {
             if run.agent_workspace.changed_files.len() > 20 {
                 observed["changedFiles"] = json!(&run.agent_workspace.changed_files[..20]);
                 observed["filesTruncated"] = json!(true);
+            }
+            if let Some(files) = &run.agent_workspace.run_files {
+                observed["runFileCount"] = json!(files.len());
+                if files.len() > 20 {
+                    observed["runFiles"] = json!(&files[..20]);
+                    observed["runFilesTruncated"] = json!(true);
+                }
+            }
+            observed["commitChangeCount"] = json!(run.agent_workspace.commit_changes.len());
+            if let Some(changes) = observed["commitChanges"].as_array_mut() {
+                if changes.len() > 5 {
+                    changes.truncate(5);
+                }
+                for change in changes {
+                    let files = change["files"].as_array().cloned().unwrap_or_default();
+                    change["fileCount"] = json!(files.len());
+                    if files.len() > 10 {
+                        change["files"] = json!(&files[..10]);
+                        change["filesTruncated"] = json!(true);
+                    }
+                }
+            }
+            if run.agent_workspace.commit_changes.len() > 5 {
+                observed["commitsTruncated"] = json!(true);
             }
             // Saved evidence retains complete snapshots. Normal MCP reads expose
             // the latest facts once, rather than repeating file lists in events/tests.
@@ -306,3 +352,6 @@ impl Ledger {
 }
 #[cfg(test)]
 mod records_tests;
+
+#[cfg(test)]
+mod contract_tests;

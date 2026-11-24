@@ -42,6 +42,11 @@ if(scenario==='design'){
   return run;
  });
 }
+if(scenario==='owned-files'){const run=currentRun(base);run.agentWorkspace.runFiles=new URLSearchParams(location.search).has('emptyFiles')?[]:['frontend/feature.svelte'];run.agentWorkspace.changedFiles=[];run.agentWorkspace.relatedCommits=['1234567890abcdef'.repeat(4)];}
+if(scenario==='local-verification'){
+ const run=currentRun(base);run.validationPlan.items=run.validationPlan.items.map(c=>({...c,scope:'both'}));
+ run.validationPlan.records=[{id:'local-only',actor:'agent',agent:'codex',createdAt:base.updatedAt,agentWorkspace:null,planRevision:run.validationPlan.revision,stage:'local',target:'local-commit',environment:'macOS',results:run.validationPlan.items.map(c=>({criterionId:c.id,result:'passed',evidence:'本地检查结论已明确记录'}))}];
+}
 const defaults='在方案确定后登记任务，实现告一段落时合并更新。保留 taskId/runId/revision，不逐消息或逐文件维护。';
 let setupState={config:'[mcp_servers.codepet_tasks]\nurl = "http://127.0.0.1:47623/mcp"\nhttp_headers = { "X-CodePet-Agent" = "codex" }',instructions:defaults,defaultInstructions:defaults,instructionsRevision:0,instructionsCustomized:false};
 (window as any).__promptConflict=()=>{setupState.instructionsRevision++;};
@@ -50,6 +55,7 @@ mockIPC(async(command,args:any)=>{
  if(command==='codex_workbench_request')return args.request.op==='projects'?{projects:[],warnings:[]}:[];
  if(command!=='task_ledger_request')throw Error(`Unexpected ${command}`);
  if(args.request.op==='list')return structuredClone(tasks);
+ if(args.request.op==='commit-files')return currentRun(base).agentWorkspace.relatedCommits.map(commit=>({commit,files:[{path:'committed-change.ts',changeType:'modified',staged:false,originalPath:null}],error:null}));
  if(args.request.op==='setup')return {...setupState};
  if(['update-task-run','edit-task','save-instructions'].includes(args.request.op)&&(window as any).__holdTaskSave)return new Promise((_,reject)=>{(window as any).__rejectTaskSave=()=>reject(Error('模拟保存失败'));});
  if(args.request.op==='save-instructions'){

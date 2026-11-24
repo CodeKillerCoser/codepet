@@ -60,6 +60,9 @@ pub(super) fn set_plan(run: &mut TaskRun, input: ChecklistInput) -> Result<()> {
     Ok(())
 }
 pub(super) fn verify(run: &mut TaskRun, input: VerificationInput, actor: &Actor) -> Result<()> {
+    if input.plan_revision != run.validation_plan.revision {
+        return Err("只能为当前验收清单提交结果；请读取最新 planRevision".into());
+    }
     legacy::validate_verification(&legacy_round(run), &input)?;
     if input.results.iter().any(|r| r.result == TestResult::Failed) {
         run.status = RunStatus::InProgress;
@@ -76,4 +79,39 @@ pub(super) fn verify(run: &mut TaskRun, input: VerificationInput, actor: &Actor)
 }
 pub fn human_acceptance_ready(run: &TaskRun) -> bool {
     legacy::human_acceptance_ready(&legacy_round(run))
+}
+
+/// Development may finish after required local checks; release-only checks wait for deployment.
+pub(super) fn development_ready(run: &TaskRun) -> bool {
+    let items: Vec<_> = run
+        .validation_plan
+        .items
+        .iter()
+        .filter(|c| c.required && c.scope != Scope::Release)
+        .collect();
+    if items.is_empty() {
+        return true;
+    }
+    let records: Vec<_> = run
+        .validation_plan
+        .records
+        .iter()
+        .rev()
+        .filter(|v| {
+            v.input.plan_revision == run.validation_plan.revision && v.input.stage == Scope::Local
+        })
+        .collect();
+    let Some(latest) = records.first() else {
+        return false;
+    };
+    items.iter().all(|c| {
+        records
+            .iter()
+            .filter(|v| {
+                v.input.target == latest.input.target
+                    && v.input.environment == latest.input.environment
+            })
+            .find_map(|v| v.input.results.iter().find(|r| r.criterion_id == c.id))
+            .is_some_and(|r| r.result == TestResult::Passed)
+    })
 }

@@ -83,7 +83,8 @@ pub struct PlanInput {
 pub struct CheckResult {
     pub criterion_id: String,
     pub result: TestResult,
-    #[serde(default)]
+    /// Nonempty conclusion/evidence must accompany each explicit result status.
+    #[schemars(length(min = 1, max = 3000))]
     pub evidence: String,
 }
 

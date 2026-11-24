@@ -1,8 +1,9 @@
-//! Four milestone tools; Rust owns the ledger and request-scoped Agent identity.
+//! Five milestone tools; Rust owns the ledger and request-scoped Agent identity.
 pub mod http;
 pub mod instructions;
 use codepet_task_lineage::tasks::{
-    Actor, CreateTaskInput, CreateTaskRunInput, FindTasksInput, Ledger, UpdateTaskRunInput,
+    Actor, CreateTaskInput, CreateTaskRunInput, FindTasksInput, FinishTaskRunInput, Ledger,
+    UpdateTaskRunInput,
 };
 use rmcp::{
     handler::server::wrapper::Parameters,
@@ -48,7 +49,7 @@ fn response(result: Result<serde_json::Value, String>) -> CallToolResult {
 impl TaskServer {
     #[tool(
         name = "create-task",
-        description = "Register one independently verifiable goal with its first run. Combine task context, initial run description and checklist in one call. Author comes from the connection, not arguments. Keep returned taskId/runId/revision. Do not call per message or file."
+        description = "Register one independently verifiable goal with its first run. Combine task context, initial run and checklist in one call. initialRun.agentConversation must contain the actual current conversation ID/link. Author comes from the connection, not arguments. Keep returned taskId/runId/revision. Do not call per message or file."
     )]
     async fn create_task(
         &self,
@@ -72,7 +73,7 @@ impl TaskServer {
     }
     #[tool(
         name = "create-task-run",
-        description = "Start another handling attempt for a published or closed task, with its reason. Continuing the same attempt uses update-task-run. An omitted checklist reuses prior items with new IDs and no results. Keep the returned runId and task revision."
+        description = "Start another handling attempt for a published or closed task, with its reason. Continuing the same attempt uses update-task-run. An omitted checklist reuses prior items with new IDs and no results. agentConversation must contain the actual current conversation ID/link. Keep the returned runId and task revision."
     )]
     async fn create_task_run(
         &self,
@@ -96,7 +97,7 @@ impl TaskServer {
     }
     #[tool(
         name = "update-task-run",
-        description = "Save one current-run milestone: findings/solution, checklist, tests, explicit commits or release reference. Omit unchanged fields. expectedRevision is the task revision. Only the user accepts or closes. Git is observed by Rust; never supply invented state or file lists. No polling."
+        description = "Save one current-run milestone: findings/solution, checklist, tests, explicit commits or release reference. Omit unchanged fields. expectedRevision is the task revision. agentConversation is required and nonempty on every write. Each verification item requires result and nonempty evidence together. Use finish-task-run when development is done. Only the user accepts or closes. Git is observed by Rust; never supply invented state or file lists. No polling."
     )]
     async fn update_task_run(
         &self,
@@ -112,6 +113,30 @@ impl TaskServer {
             tokio::task::spawn_blocking(move || {
                 ledger
                     .update_task_run(input, actor)
+                    .and_then(|r| serde_json::to_value(r).map_err(|e| e.to_string()))
+            })
+            .await
+            .unwrap_or_else(|e| Err(e.to_string())),
+        )
+    }
+    #[tool(
+        name = "finish-task-run",
+        description = "Finish development with required changedFiles (repository-relative file paths; [] for no code changes), nonempty conclusion, actual conversation link and item verification results (status plus evidence). Required local checks must pass for ready_for_delivery; failed/incomplete checks keep in_progress. This never accepts or closes for the user. Atomically saves tests, Git snapshot and conclusion. Retain the receipt; no polling."
+    )]
+    async fn finish_task_run(
+        &self,
+        Parameters(input): Parameters<FinishTaskRunInput>,
+        context: RequestContext<RoleServer>,
+    ) -> CallToolResult {
+        let actor = match self.actor(&context) {
+            Ok(a) => a,
+            Err(e) => return response(Err(e)),
+        };
+        let ledger = self.ledger.clone();
+        response(
+            tokio::task::spawn_blocking(move || {
+                ledger
+                    .finish_task_run(input, actor)
                     .and_then(|r| serde_json::to_value(r).map_err(|e| e.to_string()))
             })
             .await
@@ -177,7 +202,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
 mod tests {
     use super::*;
     #[test]
-    fn four_tools_and_bounded_instructions() {
+    fn five_tools_and_bounded_instructions() {
         let tools = TaskServer::tool_router().list_all();
         let mut names = tools.iter().map(|t| t.name.as_ref()).collect::<Vec<_>>();
         names.sort();
@@ -187,11 +212,12 @@ mod tests {
                 "create-task",
                 "create-task-run",
                 "find-tasks",
+                "finish-task-run",
                 "update-task-run"
             ]
         );
         let bytes = serde_json::to_vec(&tools).unwrap().len();
         assert!(bytes < 24000, "definitions: {bytes}");
-        assert!(INSTRUCTIONS.len() < 1400);
+        assert!(INSTRUCTIONS.len() < 2000);
     }
 }

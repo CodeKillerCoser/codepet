@@ -80,6 +80,13 @@ pub struct ChangedFile {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CommitChange {
+    pub commit: String,
+    pub files: Vec<ChangedFile>,
+    pub error: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AgentWorkspace {
     pub path: String,
     pub branch: Option<String>,
@@ -88,6 +95,11 @@ pub struct AgentWorkspace {
     pub change_status: ChangeStatus,
     pub changed_files: Vec<ChangedFile>,
     pub related_commits: Vec<String>,
+    #[serde(default)]
+    pub commit_changes: Vec<CommitChange>,
+    /// Explicit files owned by this run; None means an older record, Some([]) means no code changes.
+    #[serde(default)]
+    pub run_files: Option<Vec<String>>,
     pub observed_at: i64,
     pub error: Option<String>,
 }
@@ -199,8 +211,8 @@ pub struct InitialRunInput {
     #[serde(default)]
     pub description: String,
     pub validation_plan: Option<ChecklistInput>,
-    /// Actual current conversation IDs if available; omit rather than guessing.
-    #[serde(default)]
+    /// Required actual conversation IDs or codex://threads/<id> links. Never invent an ID.
+    #[schemars(length(min = 1, max = 20), inner(length(min = 1, max = 220)))]
     pub agent_conversation: Vec<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -210,7 +222,6 @@ pub struct CreateTaskInput {
     #[serde(default)]
     pub description: String,
     pub agent_workspace: WorkspaceInput,
-    #[serde(default)]
     pub initial_run: InitialRunInput,
     pub operation_id: Option<String>,
 }
@@ -230,7 +241,7 @@ pub struct CreateTaskRunInput {
     pub description: String,
     pub agent_workspace: Option<WorkspaceInput>,
     pub validation_plan: Option<ChecklistInput>,
-    #[serde(default)]
+    #[schemars(length(min = 1, max = 20), inner(length(min = 1, max = 220)))]
     pub agent_conversation: Vec<String>,
     pub operation_id: Option<String>,
 }
@@ -250,11 +261,29 @@ pub struct UpdateTaskRunInput {
     pub agent_workspace: Option<WorkspaceInput>,
     pub validation_plan: Option<ChecklistInput>,
     pub verification: Option<VerificationInput>,
-    #[serde(default)]
+    #[schemars(length(min = 1, max = 20), inner(length(min = 1, max = 220)))]
     pub agent_conversation: Vec<String>,
     /// Actual build/release reference. Required when first marking published.
     pub delivery: Option<String>,
     pub note: Option<String>,
+    pub operation_id: Option<String>,
+}
+/// Complete development in one atomic write; never records human acceptance.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FinishTaskRunInput {
+    pub task_id: String,
+    pub run_id: String,
+    pub expected_revision: u64,
+    #[schemars(length(min = 1, max = 2000))]
+    pub conclusion: String,
+    /// Files changed by this run, relative to the repository. Required, including [] for no code changes.
+    #[schemars(length(max = 300), inner(length(min = 1, max = 1024)))]
+    pub changed_files: Vec<String>,
+    #[schemars(length(min = 1, max = 20), inner(length(min = 1, max = 220)))]
+    pub agent_conversation: Vec<String>,
+    pub verification: VerificationInput,
+    pub agent_workspace: Option<WorkspaceInput>,
     pub operation_id: Option<String>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

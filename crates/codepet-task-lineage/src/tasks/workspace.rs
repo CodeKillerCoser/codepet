@@ -43,6 +43,8 @@ pub(super) fn inspect(input: &WorkspaceInput) -> Result<Context> {
             has_uncommitted_changes: None,
             has_unpushed_commits: None,
         },
+        commit_changes: vec![],
+        run_files: None,
         changed_files: vec![],
         related_commits: vec![],
         observed_at: now(),
@@ -123,6 +125,9 @@ pub(super) fn inspect(input: &WorkspaceInput) -> Result<Context> {
         )
         .map_err(|_| format!("提交 {sha} 在当前仓库中不存在"))?;
         if !observation.related_commits.contains(&full) {
+            observation
+                .commit_changes
+                .push(commit_changes(&path, &full));
             observation.related_commits.push(full);
         }
     }
@@ -136,4 +141,94 @@ pub(super) fn inspect(input: &WorkspaceInput) -> Result<Context> {
         repository: repository.display().to_string(),
         observation,
     })
+}
+
+fn commit_changes(path: &Path, commit: &str) -> CommitChange {
+    let result = workbench::git(
+        path,
+        &[
+            "diff-tree",
+            "--root",
+            "--no-commit-id",
+            "--name-status",
+            "-r",
+            "--first-parent",
+            "-m",
+            "-z",
+            "-M",
+            commit,
+            "--",
+        ],
+    )
+    .and_then(|bytes| parse_commit_files(&bytes));
+    match result {
+        Ok(files) => CommitChange {
+            commit: commit.into(),
+            files,
+            error: None,
+        },
+        Err(error) => CommitChange {
+            commit: commit.into(),
+            files: vec![],
+            error: Some(error),
+        },
+    }
+}
+fn parse_commit_files(bytes: &[u8]) -> Result<Vec<ChangedFile>> {
+    let mut parts = bytes.split(|b| *b == 0).filter(|b| !b.is_empty());
+    let mut files = vec![];
+    while let Some(status) = parts.next() {
+        let first = parts.next().ok_or("提交文件列表不完整")?;
+        let rename = matches!(status.first(), Some(b'R' | b'C'));
+        let (name, original) = if rename {
+            (
+                parts.next().ok_or("提交重命名列表不完整")?,
+                Some(String::from_utf8_lossy(first).into_owned()),
+            )
+        } else {
+            (first, None)
+        };
+        let kind = match status.first() {
+            Some(b'A') => "added",
+            Some(b'D') => "deleted",
+            Some(b'R') => "renamed",
+            Some(b'C') => "added",
+            _ => "modified",
+        };
+        files.push(ChangedFile {
+            path: String::from_utf8_lossy(name).into_owned(),
+            change_type: kind.into(),
+            staged: false,
+            original_path: original,
+        });
+    }
+    Ok(files)
+}
+
+/// Agent-owned run scope is distinct from observed status and explicit commit facts.
+pub(super) fn validate_run_files(files: &[String]) -> Result<()> {
+    use std::{collections::HashSet, path::Component};
+    if files.len() > 300 {
+        return Err("本次变更列表最多 300 个文件".into());
+    }
+    let mut used = HashSet::new();
+    for file in files {
+        super::text(file, "变更文件路径", 1024)?;
+        if file.contains('\\')
+            || file.contains(':')
+            || file.contains('\0')
+            || file
+                .split('/')
+                .any(|p| p.is_empty() || p == "." || p == ".." || p == ".git")
+            || Path::new(file)
+                .components()
+                .any(|c| !matches!(c, Component::Normal(_)))
+        {
+            return Err("变更文件必须是仓库内的相对文件路径".into());
+        }
+        if !used.insert(file) {
+            return Err("变更文件列表有重复路径".into());
+        }
+    }
+    Ok(())
 }
