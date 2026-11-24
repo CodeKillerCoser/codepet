@@ -1,5 +1,6 @@
 <script lang="ts">
-  import {ChevronRight, Pencil, CheckCheck, ChevronDown, ChevronUp} from '@lucide/svelte';
+  import {ChevronRight, Pencil, CheckCheck} from '@lucide/svelte';
+  import ExpandableText from './ExpandableText.svelte';
   import TaskStatus from './TaskStatus.svelte';
   import {currentRun,kinds,actorLabel,criterionCheck,formatTaskTime as fmt,type Task} from './taskLedger';
 
@@ -10,8 +11,6 @@
   export let onEditTask:()=>void;
   export let onOpenRun:(id:string,button:HTMLButtonElement)=>void=()=>{};
   let heading:HTMLHeadingElement;
-  let expandedBackground=false,shownTask='';
-  $: if(shownTask!==task.id){shownTask=task.id;expandedBackground=false;}
   $: executions=task.runs.map((run,index)=>({run,index})).reverse();
   export function focusHeading(){heading?.focus({preventScroll:true});}
   function navigate(event:KeyboardEvent){
@@ -35,8 +34,7 @@
       <button class="quiet metadata-edit" disabled={busy} aria-label="修改任务信息" title="修改任务信息" on:click={onEditTask}><Pencil size={17}/></button>
     </header>
     {#if task.description}
-      <p class="task-background" class:clamped={!expandedBackground}>{task.description}</p>
-      {#if task.description.length>220}<button class="quiet text-toggle" aria-label={expandedBackground?'收起任务背景':'展开任务背景'} title={expandedBackground?'收起':'展开'} aria-expanded={expandedBackground} on:click={()=>expandedBackground=!expandedBackground}>{#if expandedBackground}<ChevronUp size={16}/>{:else}<ChevronDown size={16}/>{/if}</button>{/if}
+      {#key task.id}<div class="task-background"><ExpandableText text={task.description} label="任务背景"/></div>{/key}
     {/if}
     <div class="task-context"><span>{task.projectName}</span><span>{actorLabel(task.createdBy)} 创建</span><time datetime={new Date(task.createdAt).toISOString()}>{fmt(task.createdAt)}</time></div>
     <hr class="task-divider"/>
@@ -73,7 +71,7 @@
   h3{flex:1;min-width:0;margin:0;font:var(--font-title);letter-spacing:var(--letter-spacing-title);overflow-wrap:anywhere;}
   h3:focus{outline:none;}
   .task-record .metadata-edit{display:grid;place-items:center;flex:none;min-height:32px;width:32px;padding:0;}
-  .task-background{font:var(--font-body);margin:var(--space-related) 0;color:var(--task-secondary);white-space:pre-wrap;overflow-wrap:anywhere;}
+  .task-background{font:var(--font-body);margin:var(--space-related) 0;color:var(--task-secondary);overflow-wrap:anywhere;}
   .task-context{display:flex;gap:var(--space-inline) var(--space-block);flex-wrap:wrap;font:var(--font-caption);color:var(--task-secondary);margin-top:var(--space-related);}
   .task-context > :not(:last-child)::after{content:'·';margin-left:16px;color:var(--wb-border-strong);}
   .task-divider{border:0;border-top:1px solid var(--wb-border);margin:var(--space-page) 0 0;}

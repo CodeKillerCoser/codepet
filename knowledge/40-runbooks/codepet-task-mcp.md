@@ -147,3 +147,6 @@ finish-task-run 的 changedFiles 必须显式传入；省略拒绝，空数组�
 调整全局字体、字重或间距后，不能只检查 token 字符串和横向溢出。先运行原生隔离验收生成 report.json，再运行 `node scripts/task_ledger_refinement_qa.mjs` 及其 `CODEPET_QA_ENGINE=webkit` 版本；reading 场景覆盖长验收标题、换行操作、长结论、长活动及证据路径。检查实际计算的标题/正文大小与400/500/600字重、第一行图标对齐、字段双列和极窄屏纵排、活动展开完整性及组间/组内间距。截图位于 refinement/<engine>/acceptance-reading-<width>.png 与 timeline-reading-<width>.png。
 
 全局样式可能覆盖组件 CSS，且 root 定义的复合 font 会提前解析字体族，因此应核对真实 .main-theme 和全局侧栏里的计算样式。原生构建会写入 QA HTML 产物，先完成原生构建再启动 Vite 浏览器回归，避免开发服务器因产物变化刷新正在验收的页面。最后在本机安装版只读复核，不把布局样例或 Agent 自测写成生产任务人工验收。
+
+
+原生只读复查还需打开真实的短方案与活动：字符数未到阈值，400px侧栏也可能已经超过三行。ExpandableText 统一按 scrollHeight/实际行高和引用宽度计算入口，ResizeObserver 随尺寸变化重测；wrapped 样例使用少于180字的多行内容覆盖目标、方案、背景及活动。验收折叠行使用4px上下间距，字段仍为两列。新增组件后检查字段实际间距，避免外层 white-space:pre-wrap 将组件模板换行渲染成空白行。实际安装版截图与复查报告位于忽略目录 artifacts/task-ledger-qa/actual-audit/。

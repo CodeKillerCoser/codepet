@@ -1,5 +1,6 @@
 <script lang="ts">
-  import {ExternalLink, Link as LinkIcon, ChevronDown, ChevronUp} from '@lucide/svelte';
+  import {ExternalLink, Link as LinkIcon} from '@lucide/svelte';
+  import ExpandableText from './ExpandableText.svelte';
   import TaskRunStatus from './TaskRunStatus.svelte';
   import TaskRunAcceptance from './TaskRunAcceptance.svelte';
   import TaskRunTimeline from './TaskRunTimeline.svelte';
@@ -16,7 +17,6 @@
   export let onOpenChanges:(button:HTMLButtonElement)=>void;
   export let changes:RunChanges|undefined=undefined;
   export let changesLoading=false;
-  let expandedGoal=false,expandedSolution=false;
   let changesTrigger:HTMLButtonElement;
   export function focusChanges(){changesTrigger?.focus({preventScroll:true});}
   $: changeSummary=changes??projectRunChanges(run.agentWorkspace,run.agentWorkspace.commitChanges??[]);
@@ -28,8 +28,8 @@
     <section aria-label="目标与方案" class="run-section">
       <h4>目标与方案</h4>
       <dl class="info-grid">
-        <div><dt>目标</dt><dd><p class="goal" class:clamped={!expandedGoal}>{run.goal || '尚未记录本次目标'}</p>{#if run.goal.length > 220}<button class="quiet text-toggle" aria-label={expandedGoal?'收起目标':'展开目标'} aria-expanded={expandedGoal} on:click={() => expandedGoal = !expandedGoal}>{#if expandedGoal}<ChevronUp size={16}/>{:else}<ChevronDown size={16}/>{/if}</button>{/if}</dd></div>
-        <div><dt>方案</dt><dd><p class:clamped={!expandedSolution}>{run.solution || '尚未记录方案'}</p>{#if run.solution.length > 220}<button class="quiet text-toggle" aria-label={expandedSolution?'收起方案':'展开方案'} aria-expanded={expandedSolution} on:click={() => expandedSolution = !expandedSolution}>{#if expandedSolution}<ChevronUp size={16}/>{:else}<ChevronDown size={16}/>{/if}</button>{/if}</dd></div>
+        <div><dt>目标</dt><dd><ExpandableText text={run.goal || '尚未记录本次目标'} label="目标" textClass="goal"/></dd></div>
+        <div><dt>方案</dt><dd><ExpandableText text={run.solution || '尚未记录方案'} label="方案"/></dd></div>
       </dl>
 
       <div class="panel-conversations" aria-label="执行关联对话">
@@ -71,8 +71,7 @@
   .info-grid{margin:0;font-size:var(--font-size-body);}
   .info-grid>div{display:grid;grid-template-columns:2.8em minmax(0,1fr);gap:var(--space-related);align-items:baseline;margin:var(--space-related) 0;}
   dt{font-size:var(--font-size-caption);color:var(--task-secondary);margin-bottom:0;}
-  dd{margin:0;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;}
-  dd p{margin:0;}
+  dd{margin:0;min-width:0;overflow-wrap:anywhere;}
   code,.path{font:var(--font-size-caption)/var(--line-height-reading) var(--font-family-code);overflow-wrap:anywhere;}
   .workspace-section .info-grid>div{grid-template-columns:2.8em minmax(0,1fr);}
   .code-summary{display:flex;gap:8px 12px;align-items:baseline;flex-wrap:wrap;}

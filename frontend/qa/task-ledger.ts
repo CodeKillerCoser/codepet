@@ -16,6 +16,14 @@ if(scenario==='overflow'&&new URLSearchParams(location.search).has('manyRuns')){
 }
 if(scenario==='single')base.runs=[currentRun(base)];
 if(scenario==='long'){base.description='布局样例：任务背景需要保留，但默认只展示摘要。'.repeat(60);currentRun(base).goal='布局样例：这次处理的目标按需展开。'.repeat(60);currentRun(base).solution='布局样例：定位结论与实施方案按需展开。'.repeat(60);}
+// Short text may still occupy many lines in a narrow native sidebar.
+if(scenario==='wrapped'){
+ base.description='任务背景需要完整阅读。\n第二行保留问题来源。\n第三行说明复发条件。\n第四行包含背景末尾证据。';
+ const run=currentRun(base);
+ run.goal='检查真实侧栏内的阅读体验，确保较短的中文目标也能在空间不足时展开。'.repeat(3)+'目标末尾证据。';
+ run.solution='方案第一行。\n方案第二行。\n方案第三行。\n方案末尾证据。';
+ run.timeline=[{id:'wrapped-event',at:run.updatedAt,actor:'codex',kind:'milestone',summary:'活动第一行。\n活动第二行。\n活动第三行。\n活动末尾证据。'}];
+}
 if(scenario==='dense'){
   const titles=['修复桌宠菜单点击失效','Agent 任务登记与验收清单','历史对话与项目关联','优化工作树差异预览','修复主窗口焦点恢复','完善更新资源包校验','验证新版本安装流程','工作树状态刷新'];
   tasks.splice(0,1,...titles.map((title,i)=>{const task=structuredClone(base);task.id=`layout-${i}`;task.title=title;task.updatedAt-=i*3600000;const run=currentRun(task);run.kind=i%2?'feature':'bugfix';run.status=(['published','in_progress','ready_for_delivery','closed'] as const)[i%4];run.closure=run.status==='closed'?{accepted:false,reason:'布局样例',closedAt:task.updatedAt}:null;return task;}));

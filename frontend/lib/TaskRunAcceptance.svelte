@@ -35,7 +35,7 @@
  h4{font:var(--font-subheading);margin:0;}
  .acceptance-count{font:var(--font-caption);color:var(--task-secondary);white-space:nowrap;}
  .criterion{min-width:0;}
- summary{display:grid;grid-template-columns:16px minmax(0,1fr);gap:var(--space-related);align-items:start;padding:var(--space-related) 0;list-style:none;cursor:pointer;}
+ summary{display:grid;grid-template-columns:16px minmax(0,1fr);gap:var(--space-related);align-items:start;padding:var(--space-inline) 0;list-style:none;cursor:pointer;}
  summary::-webkit-details-marker{display:none;}
  .check-mark{display:flex;align-items:center;height:calc(var(--font-size-body)*var(--line-height-body));color:var(--task-secondary);}
  .check-mark.passed{color:var(--color-success);}.check-mark.failed{color:var(--wb-danger-text);}

@@ -68,6 +68,7 @@ try{
   assert.deepEqual(hierarchy.map(value=>value.weight),[600,600,500,400,400]);
   const spacing=await panel.evaluate(e=>({group:parseFloat(getComputedStyle(e.querySelector('.acceptance-section')).marginTop),related:parseFloat(getComputedStyle(e.querySelector('.criterion-body')).rowGap)}));
   assert.ok(spacing.group>spacing.related*2,'Related fields stay closer than separate content groups');
+  assert.ok(await panel.locator('.reading-prefix').first().evaluate(e=>parseFloat(getComputedStyle(e).marginRight)>=4),'Actor and event text have explicit inline spacing');
   const paragraph=panel.locator('.timeline-content>p').first(),expand=panel.getByRole('button',{name:'展开活动',exact:true}).first();
   const compact=(await paragraph.boundingBox()).height;await expand.click();assert.ok((await paragraph.boundingBox()).height>compact*2);
   assert.ok((await paragraph.textContent()).includes('末尾证据仍可读取'));await panel.getByRole('button',{name:'收起活动',exact:true}).first().click();
@@ -77,6 +78,30 @@ try{
   await paragraph.scrollIntoViewIfNeeded();await page.screenshot({path:resolve(output,`timeline-reading-${width}.png`)});
   await close();
  }
+ // Actual wrapping, rather than character count, determines whether content can expand.
+ await page.setViewportSize({width:1440,height:900});await goto('wrapped');
+ for(const [label,tail] of [['任务背景','背景末尾证据']]){
+  const paragraph=page.locator('.task-background>p'),compact=(await paragraph.boundingBox()).height;
+  await page.getByRole('button',{name:`展开${label}`,exact:true}).click();
+  assert.ok((await paragraph.boundingBox()).height>compact);assert.ok((await paragraph.innerText()).includes(tail));
+  await page.getByRole('button',{name:`收起${label}`,exact:true}).click();
+ }
+ await open();
+ for(const [label,selector,tail] of [['目标','.goal','目标末尾证据'],['方案','.info-grid>div:nth-child(2) dd>p','方案末尾证据'],['活动','.timeline-content>p','活动末尾证据']]){
+  const paragraph=panel.locator(selector).first(),compact=(await paragraph.boundingBox()).height;
+  assert.ok((await paragraph.innerText()).length<180,'Regression text stays below the old character threshold');
+  await panel.getByRole('button',{name:`展开${label}`,exact:true}).click();
+  assert.ok((await paragraph.boundingBox()).height>compact);assert.ok((await paragraph.innerText()).includes(tail));
+  await panel.getByRole('button',{name:`收起${label}`,exact:true}).click();
+  assert.ok(Math.abs((await paragraph.boundingBox()).height-compact)<1);
+ }
+ const fieldGap=await panel.locator('.info-grid').first().evaluate(e=>{
+  const rows=e.querySelectorAll(':scope>div');return rows[1].getBoundingClientRect().top-rows[0].querySelector('dd').getBoundingClientRect().bottom;
+ });
+ assert.ok(fieldGap<=12,'Component formatting whitespace must not add blank lines between related fields');
+ await page.setViewportSize({width:390,height:900});
+ await panel.getByRole('button',{name:'展开目标',exact:true}).click();
+ await page.screenshot({path:resolve(output,'short-text-actual-wrapping.png')});await close();
  const app=await browser.newPage({viewport:{width:1440,height:760}});app.on('pageerror',e=>errors.push(e.message));
  await app.goto(`http://127.0.0.1:${port}/frontend/qa/main-window.html?taskOverflow=1`);await app.getByRole('tab',{name:'任务与验收',exact:true}).click();await app.locator('.task-row').nth(5).waitFor();
  await app.setViewportSize({width:1180,height:760});await app.locator('.task-table').waitFor();
