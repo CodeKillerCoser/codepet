@@ -42,6 +42,10 @@ if(scenario==='design'){
   return run;
  });
 }
+if(scenario==='cached-files'){
+ const run=currentRun(base);run.agentWorkspace.runFiles=null;run.agentWorkspace.relatedCommits=['cached-a','cached-b'];
+ run.agentWorkspace.commitChanges=[{commit:'cached-a',error:null,files:[{path:'cached-added.ts',changeType:'added',staged:false,originalPath:null},{path:'cached-modified.ts',changeType:'modified',staged:false,originalPath:null}]},{commit:'cached-b',error:null,files:[{path:'cached-modified.ts',changeType:'modified',staged:false,originalPath:null},{path:'cached-deleted.ts',changeType:'deleted',staged:false,originalPath:null}]}];
+}
 if(scenario==='owned-files'){const run=currentRun(base);run.agentWorkspace.runFiles=new URLSearchParams(location.search).has('emptyFiles')?[]:['frontend/feature.svelte'];run.agentWorkspace.changedFiles=[];run.agentWorkspace.relatedCommits=['1234567890abcdef'.repeat(4)];}
 if(scenario==='local-verification'){
  const run=currentRun(base);run.validationPlan.items=run.validationPlan.items.map(c=>({...c,scope:'both'}));

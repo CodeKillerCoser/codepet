@@ -40,18 +40,18 @@
   $: selected = filtered.find(t => t.id === selectedId) ?? filtered[0];
   $: run = selected?.runs.find(r => r.id === runId) ?? (selected && currentRun(selected));
   $: projects = [...new Map(tasks.map(t => [t.projectId, t.projectName])).entries()];
+  $: nextChangesKey=selected&&run?[selected.id,run.id,run.agentWorkspace.observedAt,...run.agentWorkspace.relatedCommits].join('|'):'';
+  $: if(nextChangesKey!==changesKey){
+    if(!changesKey.startsWith(`${selected?.id}|${run?.id}|`))changesOpen=false;
+    changesKey=nextChangesKey;const sequence=++changesSequence;
+    commits=run?.agentWorkspace.commitChanges??[];changesError='';changesLoading=false;
+    if(run&&selected&&!run.agentWorkspace.relatedCommits.every(sha=>commits.some(c=>c.commit===sha&&!c.error))){
+      changesLoading=true;void loadCommitFiles(selected.id,run.id,sequence);
+    }
+  }
   $: changes=run?projectRunChanges(run.agentWorkspace,commits):undefined;
-  $: if(selected&&run)void prepareChanges(selected,run);
-  else {changesOpen=false;changesKey='';++changesSequence;}
-  async function prepareChanges(task:Task,record:TaskRun){
-    const key=[task.id,record.id,record.agentWorkspace.observedAt,...record.agentWorkspace.relatedCommits].join('|');
-    if(key===changesKey)return;
-    if(!changesKey.startsWith(`${task.id}|${record.id}|`))changesOpen=false;
-    changesKey=key;const sequence=++changesSequence;
-    commits=record.agentWorkspace.commitChanges??[];changesError='';changesLoading=false;
-    if(record.agentWorkspace.relatedCommits.every(sha=>commits.some(c=>c.commit===sha&&!c.error)))return;
-    changesLoading=true;
-    try {const result=await api<CommitChange[]>('commit-files',{taskId:task.id,runId:record.id});if(sequence===changesSequence)commits=result;}
+  async function loadCommitFiles(taskId:string,runId:string,sequence:number){
+    try {const result=await api<CommitChange[]>('commit-files',{taskId,runId});if(sequence===changesSequence)commits=result;}
     catch(e){if(sequence===changesSequence)changesError=String(e);}
     finally{if(sequence===changesSequence)changesLoading=false;}
   }

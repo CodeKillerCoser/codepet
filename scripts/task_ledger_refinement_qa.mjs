@@ -40,6 +40,10 @@ try{
   const green=await page.locator('.check-mark.passed').first().evaluate(e=>{const expected=document.createElement('span');expected.style.color='var(--color-success)';e.append(expected);const same=getComputedStyle(e).color===getComputedStyle(expected).color;expected.remove();return same;});assert.ok(green,'Check uses semantic green in each theme');
   await page.screenshot({path:resolve(output,`fixed-header-${mode}.png`)});
  }
+ await goto('cached-files');
+ await page.locator('.code-summary').getByText('3 个文件',{exact:true}).waitFor();
+ for(const label of ['新增 1 个文件','修改 1 个文件','删除 1 个文件'])assert.equal(await page.locator('.code-summary').getByLabel(label,{exact:true}).count(),1,'Cached snapshots project synchronously');
+ await page.getByRole('button',{name:'查看变更',exact:true}).click();await page.locator('.change-file[title="cached-added.ts"]').waitFor();await close();
  await goto('design');await page.locator('.run-card').last().click();
  const lastId=await page.locator('.run-card').last().getAttribute('id');
  await page.locator('.run-card-shell').first().getByRole('button',{name:/打开 Codex 对话/}).click();
