@@ -7,17 +7,46 @@ import assert from 'node:assert/strict';
 const engine=process.env.CODEPET_QA_ENGINE??'chromium';
 assert.ok(['chromium','webkit'].includes(engine));
 const output=resolve('artifacts/task-ledger-qa/layout',engine);await mkdir(output,{recursive:true});
-const server=await createServer({server:{host:'127.0.0.1',port:0}});await server.listen();
+const server=await createServer({cacheDir:resolve(`node_modules/.vite-task-ui-${engine}`),server:{host:'127.0.0.1',port:0}});await server.listen();
 const port=server.httpServer.address().port;
 const browser=await({chromium,webkit})[engine].launch({headless:true});
 const errors=[];
 try{
  const page=await browser.newPage({viewport:{width:1440,height:920}});page.on('pageerror',e=>errors.push(e.message));
  const route=scenario=>`http://127.0.0.1:${port}/frontend/qa/task-ledger.html${scenario?`?scenario=${scenario}`:''}`;
- const goto=async scenario=>{await page.goto(route(scenario));await page.locator('.task-row').first().waitFor();};
+ const goto=async(scenario,open=true)=>{await page.goto(route(scenario));await page.locator('.task-row').first().waitFor();if(open){const id=await page.evaluate(()=>window.__taskCompletionState()[0].id);await page.locator(`[data-task-id="${id}"]`).click();await page.locator('.task-heading h3').waitFor();}};
  const panel=page.locator('.app-side-panel');
  const openRun=async(index=0)=>{await page.locator('.run-card').nth(index).click();await page.getByLabel('任务执行详情',{exact:true}).waitFor();};
  const close=async()=>{await page.getByRole('button',{name:'关闭执行详情',exact:true}).click();await panel.waitFor({state:'detached'});};
+ await goto('dense',false);
+ assert.equal(await page.locator('.board-task').count(),8,'A card is a Task, never an individual TaskRun');
+ assert.deepEqual(await page.locator('.column-count').allTextContents(),['2','2','2','2'],'Grouping uses the current run only');
+ await page.getByRole('button',{name:'表格',exact:true}).click();await page.getByRole('table').waitFor();
+ assert.equal(await page.locator('.task-table tbody tr').count(),8);
+ assert.equal(await page.locator('.task-table tbody tr').first().locator('.runs-column').innerText(),'2');
+ await page.getByRole('button',{name:'任务',exact:true}).click();
+ const sortedTitles=await page.locator('.table-task').allTextContents();assert.deepEqual(sortedTitles,[...sortedTitles].sort((a,b)=>a.localeCompare(b,'zh-CN')));
+ await page.getByLabel('任务状态',{exact:true}).selectOption('closed');assert.equal(await page.locator('.table-task').count(),2);
+ await page.getByRole('button',{name:'看板',exact:true}).click();assert.equal(await page.locator('.board-column').count(),1);assert.equal(await page.locator('.board-task').count(),2);
+ await page.getByRole('tab',{name:'代码状态',exact:true}).click();await page.getByRole('tab',{name:'任务与验收',exact:true}).click();await page.locator('.board-task').first().waitFor();assert.equal(await page.getByLabel('任务状态',{exact:true}).inputValue(),'closed','Filters and view survive page switches');
+ await page.getByLabel('任务状态',{exact:true}).selectOption('all');
+ await page.getByLabel('搜索任务',{exact:true}).fill('不存在的任务');await page.getByRole('heading',{name:'没有符合条件的任务',exact:true}).waitFor();await page.getByLabel('搜索任务',{exact:true}).fill('');
+ for(const mode of ['light','dark']){
+  await page.evaluate(mode=>window.__setTaskTheme(mode),mode);
+  for(const width of [1440,1280,820,390]){
+   await page.setViewportSize({width,height:860});
+   for(const name of ['看板','表格']){
+    await page.getByRole('button',{name,exact:true}).click();
+    assert.equal(await page.locator('.task-row').count(),8);
+    assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'Neither view overflows the main page');
+    assert.ok(await page.locator('.task-collection').evaluate(e=>e.scrollWidth<=e.clientWidth+1));
+    await page.screenshot({path:resolve(output,`collection-${mode}-${width}-${name==='看板'?'board':'table'}.png`)});
+   }
+  }
+ }
+ await page.setViewportSize({width:1440,height:920});
+ await page.locator('.table-task').first().focus();await page.keyboard.press('Enter');await page.locator('.task-heading h3').waitFor();
+ await page.getByRole('button',{name:'返回任务列表',exact:true}).click();assert.ok(await page.locator('.table-task').first().evaluate(e=>e===document.activeElement),'Returning focuses the correct task in the same view');
  await goto('design');
  assert.equal(await page.locator('.run-card').count(),3);
  assert.equal(await page.locator('.run-content').count(),0,'Run details load only on explicit selection');
@@ -25,11 +54,6 @@ try{
  assert.equal(await page.locator('.run-title strong').first().innerText(),'修复重启丢失','Latest execution first');
  const positions=await page.locator('.task-heading,.task-background,.task-context,.task-divider,.run-navigation').evaluateAll(es=>es.map(e=>e.getBoundingClientRect().top));
  assert.ok(positions.every((y,i)=>!i||y>positions[i-1]),'Task title, description, metadata and execution list keep hierarchy');
- await page.getByRole('button',{name:'收起任务列表',exact:true}).click();
- assert.equal(await page.getByRole('region',{name:'任务列表',exact:true}).count(),0,'Collapsed navigation is not accessible');
- assert.ok(await page.locator('.task-detail').isVisible());
- await page.getByRole('button',{name:'展开任务列表',exact:true}).click();
- assert.ok(await page.locator('.task-row').isVisible());
  await openRun();
  for(const name of ['目标与方案','工作区','验收清单','活动时间线'])assert.equal(await panel.getByRole('region',{name,exact:true}).count(),1);
  assert.ok(await panel.evaluate(e=>!e.closest('.task-ledger')),'Uses the framework panel');
@@ -51,9 +75,8 @@ try{
   await page.evaluate(mode=>window.__setTaskTheme(mode),mode);
   for(const width of [1440,1280,820,600,390]){
    await page.setViewportSize({width,height:820});await page.waitForTimeout(250);
-   if(await page.getByRole('button',{name:'← 返回任务列表',exact:true}).isVisible())await page.getByRole('button',{name:'← 返回任务列表',exact:true}).click();
-   if(await page.getByRole('button',{name:'展开任务列表',exact:true}).count())await page.getByRole('button',{name:'展开任务列表',exact:true}).click();
-   await page.locator('.task-row').click();
+   await page.getByRole('button',{name:'返回任务列表',exact:true}).click();
+   await page.locator('.task-row').first().click();
    assert.ok(await page.locator('.task-heading h3').evaluate(e=>e===document.activeElement));
    await page.screenshot({path:resolve(output,`${mode}-${width}-overview.png`)});
    await openRun();
@@ -102,9 +125,9 @@ try{
  assert.ok(await page.getByRole('button',{name:'保存中…',exact:true}).isDisabled());await page.evaluate(()=>{window.__holdTaskClose=false;window.__rejectTaskClose();});await complete.waitFor();
  assert.equal(await page.evaluate(()=>window.__taskCompletionState()[0].runs.at(-1).status),'ready_for_delivery');
  await page.evaluate(()=>window.__conflictTaskCompletion());await complete.click();await page.getByRole('alert').filter({hasText:'revision='}).waitFor();
- await close();await page.getByRole('button',{name:'刷新任务',exact:true}).click();await page.getByLabel('任务状态',{exact:true}).selectOption('ready_for_delivery');await openRun();
+ await close();await page.getByRole('button',{name:'刷新任务',exact:true}).click();await page.getByRole('button',{name:'返回任务列表',exact:true}).click();await page.getByLabel('任务状态',{exact:true}).selectOption('ready_for_delivery');await page.locator('.task-row').first().click();await openRun();
  await complete.click();await panel.waitFor({state:'detached'});await page.getByRole('status').filter({hasText:'已标记完成'}).waitFor();
- assert.equal(await page.locator('.task-row.selected .status-badge').innerText(),'已完成');assert.equal(await page.getByLabel('任务状态',{exact:true}).inputValue(),'all');
+ assert.equal(await page.locator('.run-card .status-badge').first().innerText(),'已完成');
  assert.ok(await page.locator('.task-heading h3').evaluate(e=>e===document.activeElement));
  const beforeRestore=await page.evaluate(()=>window.__taskCompletionState()[0].runs);assert.equal(JSON.stringify(beforeRestore.at(-1).validationPlan),oldEvidence);assert.equal(beforeRestore.at(-1).closure.accepted,false);
  await openRun();const restore=page.getByRole('button',{name:'改为开发中',exact:true});await restore.click();const dialog=page.getByRole('dialog',{name:'改为开发中',exact:true});await dialog.waitFor();
@@ -114,5 +137,5 @@ try{
  await dialog.getByRole('button',{name:'新增执行并改为开发中',exact:true}).click();await dialog.waitFor({state:'detached'});await panel.waitFor({state:'detached'});
  const restored=await page.evaluate(()=>window.__taskCompletionState()[0]);assert.deepEqual(restored.runs.slice(0,-1),beforeRestore);assert.equal(restored.runs.at(-1).status,'in_progress');assert.equal(restored.runs.at(-1).validationPlan.records.length,0);
  await openRun(1);assert.equal(await page.getByRole('button',{name:'改为开发中',exact:true}).count(),0,'Closed historical run stays read-only');await close();
- assert.deepEqual(errors,[]);console.log(`Task UI passed (${engine}): collapsible navigation, overview hierarchy, framework run panel/diff return, responsive themes, keyboard focus, completion/history preservation, prompt editing/conflicts.`);
+ assert.deepEqual(errors,[]);console.log(`Task UI passed (${engine}): Task board/table and filtering/sorting, overview hierarchy, framework run panel/diff return, responsive themes, keyboard focus, completion/history preservation, prompt editing/conflicts.`);
 }catch(e){console.error(e);throw e;}finally{await browser.close();await server.close();}

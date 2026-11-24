@@ -37,7 +37,7 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(task.createdBy === 'codex' && currentRun(task).timeline.at(-1)?.actor === 'native-qa', 'Request-scoped source');
   const background = task.description;
   mount(WorkbenchFrameQa, {target});
-  await button('任务与验收'); await until(() => document.querySelector('.run-card'));
+  await button('任务与验收');await until(()=>document.querySelector('.task-row'));document.querySelector<HTMLButtonElement>('.task-row')!.click();await until(()=>document.querySelector('.run-card'));
   check(!document.querySelector('.task-context')?.textContent?.includes('bugfix'), 'Type belongs to run');
   check(document.querySelector('.run-card')?.textContent?.includes('修复'), 'Card contains run type');
   check(![...document.querySelectorAll('button')].some(b => ['更新执行', '结束执行'].includes(b.textContent?.trim() ?? '')), 'Removed run actions');
@@ -135,15 +135,15 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   const pendingReady=await taskRequest<Receipt>('update-task-run',{input:{taskId:pendingReceipt.taskId,runId:pendingReceipt.runId,expectedRevision:pendingReceipt.revision,agentConversation:[],status:'ready_for_delivery'}});
   check(pendingReady.status==='ready_for_delivery','Native completion scenario starts in a valid pending state');
   const pendingTask=await taskRequest<Task>('get',{taskId:pendingReceipt.taskId}),oldPlan=JSON.stringify(currentRun(pendingTask).validationPlan);
-  await button('刷新任务');await until(()=>[...document.querySelectorAll('.task-row')].find(e=>e.textContent?.includes(pendingTask.title)));
+  await button('刷新任务');await button('返回任务列表');await until(()=>[...document.querySelectorAll('.task-row')].find(e=>e.textContent?.includes(pendingTask.title)));
   const pendingRow=[...document.querySelectorAll<HTMLButtonElement>('.task-row')].find(e=>e.textContent?.includes(pendingTask.title))!;pendingRow.click();await tick();document.querySelector<HTMLButtonElement>('.run-card')!.click();
   await until(()=>[...document.querySelectorAll('button')].find(e=>e.textContent?.trim()==='标记完成'));
-  await button('标记完成');await until(()=>document.querySelector('.task-row.selected .status-badge')?.textContent==='已完成');
+  await button('标记完成');await until(()=>document.querySelector('.run-card .status-badge')?.textContent==='已完成');
   const completed=await taskRequest<Task>('get',{taskId:pendingTask.id}),completedRun=currentRun(completed);
   check(completedRun.status==='closed'&&completedRun.closure?.accepted===false,'Manual completion persists without human-acceptance fabrication');
   check(JSON.stringify(completedRun.validationPlan)===oldPlan,'Completing preserves the entire validation plan and records');
   check(completedRun.timeline.at(-1)?.actor==='human'&&completedRun.timeline.at(-1)?.summary==='用户标记完成','Human completion appears in timeline');
-  await button('刷新任务');await pause();check(document.querySelector('.task-row.selected .status-badge')?.textContent==='已完成','Completion survives refresh');
+  await button('刷新任务');await pause();check(document.querySelector('.run-card .status-badge')?.textContent==='已完成','Completion survives refresh');
   check(document.activeElement===document.querySelector('.task-heading h3'),'Completion returns focus to task heading');
   const completedHistory=JSON.stringify(completed.runs[0]);
   document.querySelector<HTMLButtonElement>('.run-card')!.click();await until(()=>document.querySelector('.task-run-panel'));
@@ -154,8 +154,8 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(restored.id===pendingTask.id&&restored.runs.length===2&&currentRun(restored).status==='in_progress','Human state change creates one run in the same task');
   check(JSON.stringify(restored.runs[0])===completedHistory,'Completed execution stays immutable after human restoration');
   check(currentRun(restored).validationPlan.records.length===0&&currentRun(restored).createdBy==='human','New run requires fresh verification and records the human actor');
-  check(document.querySelector('.task-row.selected .status-badge')?.textContent==='开发中','GUI shows development after restoration');
-  [...document.querySelectorAll<HTMLButtonElement>('.task-row')].find(e=>e.textContent?.includes(task.title))!.click();await tick();
+  check(document.querySelector('.run-card .status-badge')?.textContent==='开发中','GUI shows development after restoration');
+  await button('返回任务列表');[...document.querySelectorAll<HTMLButtonElement>('.task-row')].find(e=>e.textContent?.includes(task.title))!.click();await tick();
   await invoke('qa_report', {value: {
     success: true, mode: 'native-task-run-production-ipc', taskId: task.id, workspace: expected.workspace,
     runFields: true, headerSource: true, singleItemAcceptance: true, promptEditing: true,
