@@ -7,6 +7,8 @@ crates/target/
 src-tauri/resources/provider-plugins/*
 !src-tauri/resources/provider-plugins/.gitkeep
 src-tauri/resources/provider-sdk/
+src-tauri/resources/task-mcp/*
+!src-tauri/resources/task-mcp/.gitkeep
 custom-pet-data/
 .local-secrets/
 __pycache__/

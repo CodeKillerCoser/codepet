@@ -12,9 +12,9 @@ Git 工作台回答工作区是否残留改动；任务账本追踪“要解决�
 
 Task 保存目标标题、背景、项目、创建来源/时间和 runs。TaskRun 保存执行标题、bugfix/feature 类型、goal/solution、本次补充说明、四态、验收计划及结果、agentWorkspace、agentConversation 和 timeline。首次创建包含首个执行；更新执行不改变任务背景。旧执行与验收历史保留，新执行清空通过结果。完整字段与边界见 [领域定义](../30-domains/task-management/task-record-model.md)。
 
-MCP 由 App Rust 后台在 127.0.0.1:47623/mcp 提供。四工具为 create-task、create-task-run、update-task-run、find-tasks；HTTP Header X-CodePet-Agent 记录客户端来源。创建者固定，更新者写时间线；权限仍区分 Agent 与人工。初始化和接入面板使用同一份 Rust 提示词配置，默认来源为 instructions.md；用户可编辑保存并恢复默认，安装接入后无需另行复制 AGENTS 约定。
+MCP 默认通过 `~/.codepet/bin/` 中的独立 stdio 程序提供，App 安装资源到不可变版本目录并原子更新当前版本/活动数据目录，移动或重命名 App 不影响配置。五工具为 create-task、create-task-run、update-task-run、finish-task-run、find-tasks；stdio 使用 CODEPET_AGENT，兼容的 App 后台 HTTP 在 127.0.0.1:47623/mcp 使用 X-CodePet-Agent。创建者固定，更新者写时间线；权限仍区分 Agent 与人工。初始化和接入面板使用同一份 Rust 提示词配置，默认来源为 instructions.md；用户可编辑保存并恢复默认，安装接入后无需另行复制 AGENTS 约定。
 
-原子事务、版本冲突和幂等回执沿用现有 Store。活动数据为 tasks/v4，首次优先从 v3、否则从 v2 原子导入且不修改旧文件。历史未记录具体 Agent 时保留 unknown。backend API 29 阻止旧二进制加载新前端接口；需安装新 App，旧 stdio 入口保留但同样改为四工具。
+原子事务、版本冲突和幂等回执沿用现有 Store。活动数据为 tasks/v4，首次优先从 v3、否则从 v2 原子导入且不修改旧文件。历史未记录具体 Agent 时保留 unknown。初版使用 backend API 29，增加 finish-task-run 后为 API 30；旧内嵌 stdio 入口保留兼容，默认配置使用独立稳定入口。
 
 ## 界面
 
@@ -24,7 +24,8 @@ MCP 由 App Rust 后台在 127.0.0.1:47623/mcp 提供。四工具为 create-task
 
 - tasks/：新对象、执行写入、旧数据迁移和验收规则，保证背景与执行独立、历史不丢失。
 - workbench.rs：向同 crate 的任务观测公开已有有界 Git 命令，保持统一平台业务边界。
-- task-mcp/http 与 task_ledger：按请求取得来源，Agent 与人工共享同一活动 Ledger，前端不代理 MCP。
+- task-mcp/managed、http 与 task_ledger：安装稳定独立入口、按传输取得来源，Agent 与人工使用同一活动数据目录，前端不代理 MCP。
+- stage_provider_plugins.mjs、Tauri 资源映射：跨目标编译、打包独立任务程序，不能复制依赖 App 框架的 GUI 主程序充当固定入口。
 - TaskLedger.svelte、taskLedger.ts：任务列表与协调，TaskRunDetail 四区详情，TaskAgentSetup 可编辑接入提示词与独立表单，沿用主题和框架弹窗焦点。
 - webcontent-contract.json：提升原生 API，防止旧 App 误展示新命令。
 

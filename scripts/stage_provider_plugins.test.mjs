@@ -7,11 +7,13 @@ import test from "node:test";
 import {
   PROVIDERS,
   SDK_GENERATOR,
+  TASK_MCP,
   providerCargoBuildArguments,
   resolveBunExecutable,
   sdkGeneratorBuildArguments,
   stageProviderPlugins,
   stageProviderSdkResources,
+  stageTaskMcpResources,
 } from "./stage_provider_plugins.mjs";
 
 test("Provider build profile selects the matching Cargo output profile", () => {
@@ -25,9 +27,25 @@ test("Provider build profile selects the matching Cargo output profile", () => {
   }
   assert.equal(release.includes(SDK_GENERATOR.packageName), false);
   assert.equal(debug.includes(SDK_GENERATOR.packageName), false);
+  assert.equal(release.includes(TASK_MCP.packageName), true);
+  assert.equal(debug.includes(TASK_MCP.packageName), true);
   const bun = sdkGeneratorBuildArguments("/repository", "/output/cp-sdk-gen", "aarch64-apple-darwin");
   assert.deepEqual(bun.slice(0, 2), ["build", path.join("/repository", "tools", "cp-sdk-gen", "cp-sdk-gen.mjs")]);
   assert.equal(bun.includes("bun-darwin-arm64"), true);
+});
+
+test("standalone task MCP is staged for macOS and Windows without becoming a Provider", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codepet-mcp-stage-"));
+  const source = path.join(root, "standalone");
+  await writeFile(source, "standalone task MCP");
+  const binaries = new Map([[TASK_MCP.name, source]]);
+  for (const [target, name] of [["aarch64-apple-darwin", "codepet-task-mcp"], ["x86_64-pc-windows-msvc", "codepet-task-mcp.exe"]]) {
+    const directory = path.join(root, target);
+    await stageTaskMcpResources({repositoryRoot: root, stagingDirectory: directory, target, binaries});
+    assert.equal(await readFile(path.join(directory, name), "utf8"), "standalone task MCP");
+    if (target.includes("darwin")) assert.ok((await stat(path.join(directory, name))).mode & 0o111);
+  }
+  assert.equal(PROVIDERS.some(p => p.name === TASK_MCP.name), false);
 });
 
 test("Windows Bun discovery resolves npm shims to the native executable", async () => {

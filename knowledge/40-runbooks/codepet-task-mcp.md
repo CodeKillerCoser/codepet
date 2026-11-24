@@ -2,17 +2,26 @@
 
 ## 入口与升级
 
-2026-11-25 当前实现要求 backend API 30。仅更新前端不能获得新模型与工具，需安装新版 App。Codex工作台 → 任务与验收 → 更多 → 接入 Agent，从已就绪服务复制完整配置，替换 config.toml 的 codepet_tasks 条目，然后在新对话使用。
+2026-11-25 默认接入改为独立 stdio 程序。当前任务模型要求 backend API 30；默认接入的生成与安装还需包含本次改造的新版 App，仅更新前端不能安装程序。Codex工作台 → 任务与验收 → 更多 → 接入 Agent，复制完整配置，替换 config.toml 的整个 codepet_tasks 条目，然后重连 MCP 或在新对话使用。
 
 ```toml
 [mcp_servers.codepet_tasks]
-url = "http://127.0.0.1:47623/mcp"
-http_headers = { Authorization = "Bearer <从 App 复制>", "X-CodePet-Agent" = "codex" }
+command = "/Users/<实际用户名>/.codepet/bin/codepet-task-mcp"
+args = ["--managed-stdio"]
+env = { CODEPET_AGENT = "codex" }
 ```
 
-不要复制占位凭据，删除旧 command/args。X-CodePet-Agent 由配置自动附到每条 HTTP 请求，使用 1–64 位字母、数字、点、下划线、短横线，服务统一小写；human/user/agent/unknown 是保留值。它标记调用来源，不能取代认证或授予人工权限。缺失、重复或无效来源返回 400；无效凭据 401，错误 Host/Origin 403。
+示例路径不可直接复制，使用 App 生成的绝对路径；Windows 命令带 `.exe`。移除旧 url/http_headers，保留生成的 command/args/env。stdio 的 CODEPET_AGENT 标记来源；1–64 位字母、数字、点、下划线、短横线，统一小写，human/user/agent/unknown 为保留值。来源不能授予人工权限。
 
-服务由 App Rust 后台托管，固定回环端口；关闭窗口而 App 仍运行时保持，退出时取消并释放。端口占用会报告失败，不跳到其他端口，也不生成假配置。Bearer 凭据位于当前 data/tasks/mcp-http.token，Unix 权限 0600，重启稳定、不写日志。数据目录切换在重启后统一应用。前端不代理 MCP。
+稳定入口是用户目录内的独立程序，不是 App 路径或软链接。`scripts/stage_provider_plugins.mjs` 同时构建独立 `codepet-task-mcp` 并打包到 `resources/task-mcp/`；App 启动或打开接入说明时调用 `managed::install`。固定命令位于 `~/.codepet/bin/`，实际版本按 SHA-256 存放在 `~/.codepet/tools/task-mcp/versions/`，`current.json` 原子记录当前版本与 App 正在使用的数据目录。启动器不被后续升级覆盖，避免 Windows 正在执行的文件锁；新连接读取当前版本，旧连接保留原程序与数据目录。移动、重命名甚至移除原 App 不影响已安装入口，升级后启动新版 App 才切换到新程序。
+
+数据目录仍由 App 启动时统一选择，已保存但待重启的数据目录设置不会让新 stdio 连接提前写入另一本账本。App 关闭后可继续登记，提示词与人工 IPC 仍使用同一数据目录。升级后重连已有 Agent；暂不自动清理旧版本，避免删除其他客户端正在运行的文件。固定入口、版本文件或记录损坏会明确报错，不回退到未知 App 或默认空账本。独立 CLI 的 `--install` 可将自身安装到相同入口，使用当前 bootstrap 设置解析的数据目录，供开发验证；不能用它覆盖 App 仍在使用的旧数据目录选择。
+
+## HTTP 兼容入口
+
+HTTP 保留在 `http://127.0.0.1:47623/mcp`，现有客户端仍可使用 App 后台和完整 Authorization、X-CodePet-Agent 配置。它受客户端代理影响，本机地址应绕过代理。HTTP 缺失、重复或无效来源返回 400；无效凭据 401，错误 Host/Origin 403。不要把 http_headers 当成 stdio 的 env。
+
+HTTP 服务由 App Rust 后台托管，固定回环端口；关闭窗口而 App 仍运行时保持，退出时取消并释放。端口占用会报告失败，不跳到其他端口，也不生成假 HTTP 配置；不阻止独立 stdio 接入。Bearer 凭据位于当前 data/tasks/mcp-http.token，Unix 权限 0600，重启稳定、不写日志。前端不代理 MCP。
 
 ## 五个工具
 
@@ -50,7 +59,7 @@ http_headers = { Authorization = "Bearer <从 App 复制>", "X-CodePet-Agent" = 
 
 通常开始实施一次 create-task，关键进展合并一次 update-task-run，开发完成一次 finish-task-run；发布和复发再按事实补记。初始化 instructions 自动携带这套规则。接入面板可编辑 Agent 使用提示词，保存后重新连接 MCP 或开新对话使用；恢复默认可撤销覆盖。自定义内容保存在 Rust 配置，不依赖前端页面存活，不修改全局 Codex 配置。纯咨询不登记，不轮询，不逐文件维护。普通回执保持紧凑，五工具定义受 24 KB 上限测试约束，实际数值见黑盒报告；不把这些字节数当作模型 token 计费或自动登记可靠性保证。
 
-agentConversation 输入是实际对话 ID 的数组，来源从请求上下文取得。ID 不确定时不要猜造，先确认实际来源，新的 MCP 写入不允许省略；只有来源 codex 的引用尝试只读查询本地 state_5.sqlite 并核对仓库，缺失保持待核实，已知跨项目引用拒绝。不读取其他 Agent 的历史。Header 不等于对话 ID。
+agentConversation 输入是实际对话 ID 的数组，来源从传输上下文取得。ID 不确定时不要猜造，先确认实际来源，新的 MCP 写入不允许省略；只有来源 codex 的引用尝试只读查询本地 state_5.sqlite 并核对仓库，缺失保持待核实，已知跨项目引用拒绝。不读取其他 Agent 的历史。来源标记不等于对话 ID。
 
 ## 数据、迁移与并发
 
@@ -64,6 +73,9 @@ Git 状态属于共享工作区，上游只比较本地引用；不 fetch。rela
 
 ## 排查
 
+- stdio 入口不存在：安装完整新版 App 并打开一次；检查用户目录写权限，不改成 App 内二进制的绝对路径。
+- 版本或入口校验失败：保留 current.json 与文件现场，不删除账本、不回退默认目录；重新安装完整资源并排查外部修改。
+- stdio 数据目录不符：重启使用目标目录的 App，再重连 MCP；不要直接编辑 current.json。
 - 400：检查新配置是否含唯一有效 X-CodePet-Agent；不要只保留 Authorization。
 - 401/403：重新复制本机配置，检查凭据、Host/Origin，不关闭鉴权。
 - 端口被占用：停止冲突服务后重启 App；不指向未知服务。
@@ -77,6 +89,7 @@ Git 状态属于共享工作区，上游只比较本地引用；不 fetch。rela
 ```sh
 cargo test --manifest-path crates/Cargo.toml -p codepet-task-lineage -p codepet-task-mcp
 cargo build --manifest-path crates/Cargo.toml -p codepet-task-mcp
+cargo test --manifest-path crates/Cargo.toml -p codepet-task-mcp --test managed_stdio
 node scripts/task_mcp_http_smoke.mjs
 node scripts/task_mcp_smoke.mjs
 TAURI_CONFIG='{"app":{"macOSPrivateApi":false},"bundle":{"resources":[]}}' cargo build --manifest-path src-tauri/Cargo.toml --features custom-protocol --bin code-pet
@@ -98,6 +111,10 @@ TMPDIR=/private/tmp npm run test:webcontent
 浏览器复用原生快照，测试明暗、1280/820/600/390、完整 App 1143 视口与短窗口真实滚动。验证任务编辑与执行字段隔离、运行卡片键盘切换、四区布局、逐项验收与独立保存；同时验证提示词保存/重开/恢复/冲突、文件内容、明暗窄屏、菜单与弹窗焦点及忙碌取消拦截。WebKit 的 display-p3 颜色先转换到 sRGB 再计算。证据位于忽略目录 artifacts/task-ledger-qa/（mcp/http/embedded 报告、native/report.json、native-window.png、layout/）。
 
 ## 边界
+
+稳定 stdio 验证覆盖真实子进程、带空格与中文的目录、原 App 移动并删除、不可用 HTTP 代理、五工具、提示词与同账本多客户端、活跃连接下切换新数据目录、EOF 退出和版本安装失败保护。打包测试检查 macOS/Windows 文件名及独立资源；Windows/macOS 签名发行包的真实升级仍需目标系统验收。接入面板继续做焦点、动作可见性和窄屏验证。开发任务回执位于 `artifacts/task-ledger-qa/stdio-implementation.json`。
+
+本次通过 `cargo test --manifest-path crates/Cargo.toml -p codepet-task-mcp -p codepet-task-lineage`（82 项）、`node --test scripts/stage_provider_plugins.test.mjs`（4 项）、带 `TAURI_CONFIG='{"app":{"macOSPrivateApi":false},"bundle":{"resources":[]}}'` 的 `cargo check --manifest-path src-tauri/Cargo.toml --lib --example workbench_native_qa`、`node scripts/task_ledger_native_qa.mjs` 与 `node scripts/task_ledger_ui_qa.mjs`（Chromium，含 390/600/1280 接入弹窗），以及 `npm run check:frontend`（0 错误，5 项既有警告）、`npm run check:source-size`、`git diff --check`。浏览器测试依赖先生成原生 report.json；缺少该产物时不能直接运行布局回放。原生报告确认生产 IPC 保存的提示词同时进入真实 stdio/HTTP 初始化。本机通过独立程序 `--install` 安装，再备份并切换 Codex 配置；Codex 自身 `mcpServerStatus/list` 在移除 NO_PROXY 的代理环境下发现五工具，证据位于 `artifacts/task-ledger-qa/codex-stdio-load.json`。未安装或发布新的完整 App 包。
 
 安装版退出/重启的人工验收、Windows 本机运行和真实长对话自主登记仍待实际使用。测试直接 cargo 编译的临时 macOSPrivateApi/resource 配置不替代正常发行构建；正式交付走 GitHub Build 的 mac 平台。webcontent 默认 /var 与 /private/var 路径别名会使已有测试字符串断言失败，使用 TMPDIR=/private/tmp 后验证。不会修改用户全局 Codex 配置、替换本机安装版或监控已触发的云端构建。
 

@@ -92,7 +92,17 @@ try {
   await page.getByLabel('更多任务操作').click();
   await page.getByRole('button', {name: '接入 Agent', exact: true}).click();
   const prompt = page.getByRole('textbox', {name: 'Agent 使用提示词', exact: true});
-  await prompt.waitFor(); assert.ok((await page.getByRole('dialog').innerText()).includes('X-CodePet-Agent'));
+  await prompt.waitFor(); assert.ok((await page.getByRole('dialog').innerText()).includes('CODEPET_AGENT'));
+  assert.ok((await page.getByRole('dialog').innerText()).includes('移动或重命名 Code Pet 不影响连接'));
+  assert.ok((await page.getByLabel('MCP 配置').inputValue()).includes('--managed-stdio'));
+  for (const width of [390, 600, 1280]) {
+    await page.setViewportSize({width, height: 920});
+    const modal = page.getByRole('dialog');
+    assert.ok(await modal.evaluate(el => el.getBoundingClientRect().right <= innerWidth));
+    await prompt.focus();
+    assert.ok(await prompt.evaluate(el => el === document.activeElement));
+    assert.ok(await page.getByRole('button', {name: '复制配置', exact: true}).isVisible());
+  }
   const defaultText = await prompt.inputValue();
   await prompt.fill('按当前项目约定在关键节点登记。');
   await page.getByRole('button', {name: '保存提示词', exact: true}).click();

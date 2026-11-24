@@ -1,4 +1,4 @@
-//! Human actions use the same canonical ledger; Agent authority stays in the HTTP adapter.
+//! Human actions use the same canonical ledger; MCP transports retain Agent authority.
 use codepet_task_lineage::tasks::{
     Actor, CreateTaskInput, CreateTaskRunInput, EditTaskInput, UpdateTaskRunInput,
 };
@@ -8,12 +8,17 @@ pub(crate) async fn task_ledger_request(
     window: tauri::WebviewWindow,
     request: Value,
     runtime: tauri::State<'_, codepet_task_mcp::http::HttpRuntime>,
+    app: tauri::AppHandle,
 ) -> Result<Value, String> {
     if window.label() != "main" {
         return Err("任务操作仅允许主窗口调用".into());
     }
     if request["op"].as_str() == Some("setup") {
-        return runtime.configuration().await;
+        let mut config = crate::task_mcp_setup::configuration(
+            &app, runtime.ledger().data_directory().to_owned(),
+        ).await?;
+        config.as_object_mut().unwrap().extend(runtime.instructions().await?.as_object().unwrap().clone());
+        return Ok(config);
     }
     if request["op"].as_str() == Some("save-instructions") {
         let revision = request["expectedRevision"].as_u64().ok_or("缺少提示词修订号")?;

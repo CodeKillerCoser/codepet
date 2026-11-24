@@ -52,7 +52,7 @@ if(scenario==='local-verification'){
  run.validationPlan.records=[{id:'local-only',actor:'agent',agent:'codex',createdAt:base.updatedAt,agentWorkspace:null,planRevision:run.validationPlan.revision,stage:'local',target:'local-commit',environment:'macOS',results:run.validationPlan.items.map(c=>({criterionId:c.id,result:'passed',evidence:'本地检查结论已明确记录'}))}];
 }
 const defaults='在方案确定后登记任务，实现告一段落时合并更新。保留 taskId/runId/revision，不逐消息或逐文件维护。';
-let setupState={config:'[mcp_servers.codepet_tasks]\nurl = "http://127.0.0.1:47623/mcp"\nhttp_headers = { "X-CodePet-Agent" = "codex" }',instructions:defaults,defaultInstructions:defaults,instructionsRevision:0,instructionsCustomized:false};
+let setupState={transport:'stdio',config:'[mcp_servers.codepet_tasks]\ncommand = "/Users/qa/.codepet/bin/codepet-task-mcp"\nargs = ["--managed-stdio"]\nenv = { CODEPET_AGENT = "codex" }',instructions:defaults,defaultInstructions:defaults,instructionsRevision:0,instructionsCustomized:false};
 (window as any).__promptConflict=()=>{setupState.instructionsRevision++;};
 mockIPC(async(command,args:any)=>{
  if(command.startsWith('plugin:event|'))return 1;

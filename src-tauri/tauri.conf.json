@@ -64,7 +64,8 @@
     "resources": {
       "../webcontent/": "webcontent/",
       "resources/provider-plugins/": "provider-plugins/",
-      "resources/provider-sdk/": "provider-sdk/"
+      "resources/provider-sdk/": "provider-sdk/",
+      "resources/task-mcp/": "task-mcp/"
     },
     "icon": [
       "icons/icon.icns",

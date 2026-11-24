@@ -1,6 +1,7 @@
 //! Five milestone tools; Rust owns the ledger and request-scoped Agent identity.
 pub mod http;
 pub mod instructions;
+pub mod managed;
 use codepet_task_lineage::tasks::{
     Actor, CreateTaskInput, CreateTaskRunInput, FindTasksInput, FinishTaskRunInput, Ledger,
     UpdateTaskRunInput,
@@ -185,6 +186,9 @@ impl ServerHandler for TaskServer {
 }
 pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let ledger = Ledger::discover().map_err(std::io::Error::other)?;
+    run_with_ledger(ledger)
+}
+pub fn run_with_ledger(ledger: Ledger) -> Result<(), Box<dyn std::error::Error>> {
     let mut server = TaskServer::new(ledger);
     if let Ok(source) = std::env::var("CODEPET_AGENT") {
         server.stdio_actor = Actor::agent(&source).map_err(std::io::Error::other)?;

@@ -17,6 +17,11 @@ mod paths {
             settings_file: root.join("settings.json"),
         })
     }
+    pub fn for_package(_: &tauri::PackageInfo) -> Result<codepet_paths::PathManager, String> {
+        let mut paths = current()?;
+        paths.resources = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources");
+        Ok(paths)
+    }
 }
 #[path = "../src/platform/workbench_actions.rs"]
 pub mod qa_actions;
@@ -27,6 +32,8 @@ mod platform {
 mod codex_workbench;
 #[path = "../src/task_ledger.rs"]
 mod task_ledger;
+#[path = "../src/task_mcp_setup.rs"]
+mod task_mcp_setup;
 #[tauri::command]
 async fn qa_config() -> Value {
     eprintln!("native QA config requested");
@@ -66,6 +73,34 @@ async fn qa_http_task_write(
     let mut receipt: Value = serde_json::from_str(result["result"]["content"][0]["text"].as_str().ok_or("missing receipt")?).map_err(|e| e.to_string())?;
     receipt["initializeInstructions"] = init["result"]["instructions"].clone();
     Ok(receipt)
+}
+
+#[tauri::command]
+async fn qa_stdio_initialize(app: tauri::AppHandle,
+    runtime: tauri::State<'_, codepet_task_mcp::http::HttpRuntime>,
+) -> Result<Value, String> {
+    let setup = task_mcp_setup::configuration(&app, runtime.ledger().data_directory().to_owned()).await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::io::{BufRead, Write};
+        use std::process::{Command, Stdio};
+        let mut child = Command::new(setup["command"].as_str().ok_or("missing stdio command")?)
+            .arg("--managed-stdio").env("CODEPET_AGENT", "native-qa")
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit())
+            .spawn().map_err(|e| e.to_string())?;
+        let mut input = child.stdin.take().unwrap();
+        let request = json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+            "protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"native-qa","version":"1"}
+        }});
+        writeln!(input, "{request}").map_err(|e| e.to_string())?;
+        let mut line = String::new();
+        std::io::BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).map_err(|e| e.to_string())?;
+        drop(input);
+        let status = child.wait().map_err(|e| e.to_string())?;
+        if !status.success() { return Err(format!("stdio exited: {status}")); }
+        let initialized: Value = serde_json::from_str(&line).map_err(|e| e.to_string())?;
+        if initialized.get("error").is_some() { return Err(initialized.to_string()); }
+        Ok(json!({"initializeInstructions":initialized["result"]["instructions"]}))
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -161,6 +196,7 @@ fn main() {
             task_ledger::task_ledger_request,
             qa_config,
             qa_http_task_write,
+            qa_stdio_initialize,
             qa_trace,
             qa_report
         ])

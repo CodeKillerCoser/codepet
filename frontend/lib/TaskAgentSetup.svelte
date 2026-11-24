@@ -41,10 +41,15 @@
         <h3>连接 Agent 任务登记</h3>
         <button type="button" aria-label="关闭接入说明" on:click={() => dialog.close()}>×</button>
       </header>
-      <p>替换 config.toml 中的 codepet_tasks 条目，在新对话中使用。本机服务随 Code Pet 后台运行。</p>
+      <p>替换 config.toml 中的 codepet_tasks 条目，在新对话或重新连接 MCP 后使用。</p>
+      {#if setup?.transport === 'stdio'}
+        <p class="muted">固定入口位于用户目录，移动或重命名 Code Pet 不影响连接。Agent 会自动启动独立程序，无需保持 App 运行；启动新版 App 后会更新程序和使用的数据目录。</p>
+      {:else}
+        <p class="muted">本机 HTTP 服务随 Code Pet 后台运行。</p>
+      {/if}
       <label>MCP 配置<textarea readonly rows="5" value={setup?.config ?? ''}></textarea></label>
       <button type="button" on:click={copy}>复制配置</button>
-      <p class="muted">X-CodePet-Agent 标记调用来源，默认 codex。</p>
+      <p class="muted">{setup?.transport === 'stdio' ? 'CODEPET_AGENT' : 'X-CodePet-Agent'} 标记调用来源，默认 codex。</p>
       <label>Agent 使用提示词
         <textarea aria-label="Agent 使用提示词" rows="10" maxlength="16000" required bind:value={draft}></textarea>
       </label>

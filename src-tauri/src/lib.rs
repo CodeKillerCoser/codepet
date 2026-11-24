@@ -7,6 +7,7 @@ pub mod runtime_gateway;
 mod task_lineage;
 mod codex_workbench;
 mod task_ledger;
+mod task_mcp_setup;
 
 pub use activity::events;
 pub use activity::title_resolver;
@@ -415,10 +416,12 @@ pub fn run() {
                 codepet_task_mcp::http::DEFAULT_HTTP_PORT,
             );
             let mcp_status = task_mcp.clone();
+            let mcp_app = app.handle().clone();
             app.manage(task_mcp);
             tauri::async_runtime::spawn(async move {
-                match mcp_status.configuration().await {
-                    Ok(config) => app_log::info("task_mcp", config["url"].as_str().unwrap_or("HTTP service ready")),
+                let data = mcp_status.ledger().data_directory().to_owned();
+                match task_mcp_setup::configuration(&mcp_app, data).await {
+                    Ok(config) => app_log::info("task_mcp", config["command"].as_str().unwrap_or("stdio ready")),
                     Err(error) => app_log::error("task_mcp", &error),
                 }
             });

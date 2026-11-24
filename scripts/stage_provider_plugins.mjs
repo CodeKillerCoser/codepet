@@ -32,6 +32,9 @@ export const SDK_GENERATOR = Object.freeze({
   packageName: "cp-sdk-gen",
 });
 
+export const TASK_MCP = Object.freeze({ name: "task-mcp", packageName: "codepet-task-mcp" });
+const BUILD_ARTIFACTS = [...PROVIDERS, TASK_MCP];
+
 const SCRIPT_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_REPOSITORY_ROOT = path.resolve(SCRIPT_DIRECTORY, "..");
 const UNIVERSAL_MACOS_TARGET = "universal-apple-darwin";
@@ -93,7 +96,7 @@ export function providerCargoBuildArguments(repositoryRoot, target, profile = "r
   if (target) {
     args.push("--target", target);
   }
-  for (const provider of PROVIDERS) {
+  for (const provider of BUILD_ARTIFACTS) {
     args.push("--package", provider.packageName, "--bin", provider.packageName);
   }
   return args;
@@ -180,7 +183,7 @@ async function buildProviderBinaries(repositoryRoot, target, profile) {
     );
     await mkdir(universalDirectory, { recursive: true });
     const binaries = new Map();
-    for (const artifact of PROVIDERS) {
+    for (const artifact of BUILD_ARTIFACTS) {
       const inputs = architectureTargets.map((architectureTarget) =>
         builtBinaryPath(repositoryRoot, artifact, architectureTarget, profile),
       );
@@ -196,7 +199,7 @@ async function buildProviderBinaries(repositoryRoot, target, profile) {
 
   cargoBuild(repositoryRoot, target, profile);
   const binaries = new Map(
-    PROVIDERS.map((artifact) => [
+    BUILD_ARTIFACTS.map((artifact) => [
       artifact.name,
       builtBinaryPath(repositoryRoot, artifact, target, profile),
     ]),
@@ -272,6 +275,21 @@ export async function stageProviderSdkResources({
   return exportProviderSdk(directory,path.resolve(repositoryRoot));
 }
 
+export async function stageTaskMcpResources({
+  repositoryRoot = DEFAULT_REPOSITORY_ROOT,
+  stagingDirectory = path.join(repositoryRoot, "src-tauri", "resources", "task-mcp"),
+  target,
+  binaries,
+}) {
+  const source = binaries.get(TASK_MCP.name);
+  await assertFile(source, "Standalone task MCP binary");
+  await mkdir(stagingDirectory, { recursive: true });
+  const destination = path.join(stagingDirectory, binaryFileName(TASK_MCP, target));
+  await copyFile(source, destination);
+  if (!isWindowsTarget(target)) await chmod(destination, (await stat(destination)).mode | 0o111);
+  return stagingDirectory;
+}
+
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   const target =
@@ -295,10 +313,14 @@ async function main() {
     target,
     binaries,
   });
+  const taskMcpDirectory = await stageTaskMcpResources({
+    repositoryRoot: DEFAULT_REPOSITORY_ROOT, target, binaries,
+  });
   process.stdout.write(
     `staged ${PROVIDERS.length} Provider plugins in ${stagingDirectory}\n`
       + `staged Provider JSON Schema and author documentation in ${sdkStagingDirectory}\n`,
   );
+  process.stdout.write(`staged standalone task MCP in ${taskMcpDirectory}\n`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

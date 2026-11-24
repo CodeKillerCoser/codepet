@@ -109,12 +109,14 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(task.description.includes('人工补充背景') && currentRun(task).solution === solution, 'Task edit leaves run solution unchanged');
 
   await more('接入 Agent'); dialog = await modal();
-  check(dialog.querySelector('textarea')?.value.includes('X-CodePet-Agent'), 'Header config shown');
+  check(dialog.querySelector('textarea')?.value.includes('--managed-stdio'), 'Stable stdio config shown');
   const customPrompt = '原生验收：方案确定后登记，完成时合并更新；不要逐消息维护。';
   input('Agent 使用提示词', customPrompt, dialog); await button('保存提示词', dialog);
   await until(() => dialog.querySelector('[role="status"]')?.textContent?.includes('已保存'));
   let initialized = await invoke<{initializeInstructions: string}>('qa_http_task_write');
   check(initialized.initializeInstructions === customPrompt, 'Edited prompt reaches actual HTTP initialize');
+  const stdioInit = await invoke<{initializeInstructions: string}>('qa_stdio_initialize');
+  check(stdioInit.initializeInstructions === customPrompt, 'Edited prompt reaches stable stdio initialize');
   const setup = await taskRequest<AgentSetup>('setup');
   await taskRequest('save-instructions', {expectedRevision: setup.instructionsRevision, text: '其他窗口已保存的新提示词'});
   input('Agent 使用提示词', '提示词草稿必须保留', dialog); await button('保存提示词', dialog);
@@ -130,7 +132,7 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   await invoke('qa_report', {value: {
     success: true, mode: 'native-task-run-production-ipc', taskId: task.id, workspace: expected.workspace,
     runFields: true, headerSource: true, singleItemAcceptance: true, promptEditing: true,
-    promptHttpInitialization: true, promptReset: true, promptConflictPreservesDraft: true,
+    promptHttpInitialization: true, promptStdioInitialization: true, promptReset: true, promptConflictPreservesDraft: true,
     humanAcceptance: true, conflictPreservesDraft: true, changedFiles: true,
     runCount: 2, taskSnapshot: await taskRequest<Task>('get', {taskId: task.id})
   }});
