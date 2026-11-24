@@ -2,6 +2,7 @@
 @import "./lib/ui/ui.css";
 
 /* Shared shell: product content retains its own DOM, controls and ordering. */
+.main-theme { --app-content-inset: 24px; }
 .main-theme.app-shell {
   grid-template-columns: 192px minmax(0, 1fr);
   grid-template-rows: 40px minmax(0, 1fr);
@@ -117,7 +118,7 @@
 }
 .main-theme .topbar {
   min-height: 52px;
-  padding: 12px 24px;
+  padding: 12px var(--app-content-inset);
   align-items: center;
   border-bottom: 1px solid var(--color-main-divider);
   background: var(--app-surface);
@@ -129,7 +130,7 @@
   display: block;
   min-width: 0;
   min-height: 0;
-  padding: 24px;
+  padding: 24px var(--app-content-inset);
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-gutter: stable;
@@ -190,7 +191,7 @@
   .main-theme .personal-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 840px) {
-  .main-theme .content, .main-theme .topbar { padding-left: 20px; padding-right: 20px; }
+  .main-theme { --app-content-inset: 20px; }
   .main-theme .overview-grid, .main-theme .usage-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 600px) {
@@ -198,7 +199,7 @@
   .main-theme.sidebar-collapsed { grid-template-columns: 0 minmax(0, 1fr); }
   .main-theme .sidebar { padding: 0 8px; }
   .main-theme .brand { padding-left: 4px; }
-  .main-theme .content, .main-theme .topbar { padding-left: 12px; padding-right: 12px; }
+  .main-theme { --app-content-inset: 12px; }
   .main-theme .overview-grid, .main-theme .usage-summary-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -306,9 +307,9 @@
 .main-theme .runtime-operation-error { color: var(--app-danger); background: color-mix(in srgb, var(--app-danger) 6%, var(--app-surface)); }
 .main-theme .runtime-operation-notice { color: var(--color-success); background: var(--app-surface-soft); }
 
-/* The history workbench owns its screenshot-aligned header and content spacing. */
-.main-theme .content-pane.history-workbench { grid-template-rows: minmax(0, 1fr); background: var(--app-bg); }
-.main-theme .history-workbench > .content { padding: 0; scrollbar-gutter: auto; overflow-anchor: none; }
+/* Workbench omits the duplicate heading and keeps the shared content surface/inset. */
+.main-theme .content-pane.history-workbench { grid-template-rows: minmax(0, 1fr); }
+.main-theme .history-workbench > .content { scrollbar-gutter: auto; overflow-anchor: none; }
 
 /* Framework side panel: pages supply content; the shell owns the third column. */
 .main-theme.app-shell.has-side-panel-column { grid-template-columns: 192px minmax(0,1fr) 400px; }

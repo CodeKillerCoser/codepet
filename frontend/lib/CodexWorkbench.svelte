@@ -192,14 +192,14 @@
   .wb-tabs {
     display: flex;
     gap: 24px;
-    width: min(1400px,92%);
-    margin: auto;
-    padding-top: 12px;
+    width: 100%;
+    margin: 0;
+    padding-top: 0;
     border-bottom: 1px solid var(--wb-border);
   }
-  .wb-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 10px 0; color: var(--wb-muted); }
+  .wb-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 12px 0 14px; color: var(--wb-muted); }
   .wb-tabs button[aria-pressed="true"] { border-bottom-color: var(--wb-text); color: var(--wb-text); font-weight: 600; }
-  .wb-body { width: min(1400px,92%); margin: auto; padding: 20px 0 28px; }
+  .wb-body { width: 100%; margin: 0; padding: 20px 0 0; }
   .scanbar { display: flex; gap: 8px; align-items: flex-start; }
   .project-picker { position: relative; flex: 1; min-width: 0; }
   .tags { min-height: 36px; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 5px; background: var(--wb-panel); border: 1px solid var(--wb-border); border-radius: 7px; }
@@ -269,7 +269,7 @@
   .badge.green { color: var(--wb-success-text); }
   .badge.danger { color: var(--wb-danger-text); }
   .recheck { position: absolute; top: 50%; right: 10px; transform: translateY(-50%); min-height: 28px; padding: 3px 8px; font-size: 11px; color: var(--wb-muted); background: transparent; }
-  .detail { min-width: 0; padding: 0 20px 20px; }
+  .detail { min-width: 0; }
   .detail-eyebrow { font-size: 12px; color: var(--wb-muted); margin-bottom: 5px; }
   .path { font: 11px/1.6 var(--font-family-code); overflow-wrap: anywhere; color: var(--wb-muted); margin: 0 0 12px; }
   .actions { display: flex; gap: 7px; flex-wrap: wrap; }
@@ -337,7 +337,6 @@
     .recheck { top: auto; bottom: 8px; transform: none; }
   }
   @container(max-width:460px) {
-    .wb-tabs, .wb-body { width: 94%; }
     .wb-body { padding-top: 16px; }
     .confirm { min-width: 60px; padding: 6px 12px; }
     .overview { gap: 2px; }
@@ -349,5 +348,5 @@
     .branch { font-size: 12px; }
     .git-state { flex-direction: column; }
   }
-  @media(max-width:520px) { .detail { padding: 0 20px 20px; } .preview-body { padding: 16px; } }
+  @media(max-width:520px) { .preview-body { padding: 16px; } }
 </style>

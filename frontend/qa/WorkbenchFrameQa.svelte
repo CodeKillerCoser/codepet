@@ -17,7 +17,7 @@
 <style>
   .qa-frame { display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: 0 minmax(0,1fr); height: 100dvh; overflow: hidden; }
   .qa-frame.with-panel { grid-template-columns: minmax(0,1fr) 400px; }
-  .frame-page { grid-column: 1 / -1; grid-row: 2; min-width: 0; min-height: 0; overflow: auto; }
-  .with-panel .frame-page { grid-column: 1; }
+  .frame-page { padding: 24px var(--app-content-inset,24px); box-sizing: border-box; background: var(--app-surface); grid-column: 1 / -1; grid-row: 2; min-width: 0; min-height: 0; overflow: auto; }
+  .with-panel .frame-page { padding: 24px var(--app-content-inset,24px); box-sizing: border-box; background: var(--app-surface); grid-column: 1; }
   .qa-frame :global(aside.app-side-panel) { grid-column: 2; }
 </style>

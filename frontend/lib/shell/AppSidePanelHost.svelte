@@ -98,8 +98,8 @@
     flex-direction: column;
     min-height: 0;
     margin-left: 8px;
-    border: 1px solid var(--app-border);
-    border-radius: 12px;
+    border: 1px solid var(--color-main-outline);
+    border-radius: 16px;
     overflow: hidden;
   }
   :global(.cn-dialog-content.app-side-panel) {
@@ -116,11 +116,11 @@
     border-left: 1px solid var(--app-border);
     box-shadow: -12px 0 40px var(--color-history-drawer-shadow);
   }
-  .panel-header { display: flex; align-items: flex-start; justify-content: space-between; flex: none; gap: 16px; padding: 20px 20px 12px; }
+  .panel-header { display: flex; align-items: flex-start; justify-content: space-between; flex: none; gap: 16px; padding: 24px var(--app-content-inset,24px) 12px; }
   .panel-header :global(h3) { margin: 0; font-size: 15px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
   .panel-header :global(h3:focus) { outline: none; }
   .panel-header button { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--app-muted); cursor: pointer; }
   .panel-header button:hover { background: var(--app-surface-soft); color: var(--app-text); }
   .panel-header button:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
-  .panel-body { min-height: 0; overflow: auto; overscroll-behavior: contain; }
+  .panel-body { padding: 0 var(--app-content-inset,24px) 24px; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 </style>

@@ -20,6 +20,19 @@ try {
   }
   const closeDetail = () => page.getByRole('button', { name: '关闭工作树详情', exact: true }).click();
   const noOverflow = () => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
+  const surface = selector => page.locator(selector).evaluate(element => {
+    const style = getComputedStyle(element);
+    return { background: style.backgroundColor, border: style.borderTopColor, radius: style.borderTopLeftRadius };
+  });
+  async function sharedContentSurface() {
+    const canvas = await surface('.content-pane');
+    assert.equal((await surface('.workbench')).background, canvas.background, 'Workbench uses the same canvas as other App pages');
+    const content = await page.locator('.content').boundingBox();
+    const tabs = await page.locator('.wb-tabs').boundingBox();
+    const inset = await page.locator('.content').evaluate(element => parseFloat(getComputedStyle(element).paddingLeft));
+    assert.ok(Math.abs(tabs.x - content.x - inset) < 1, 'Workbench uses the framework content inset without a second margin');
+    return canvas;
+  }
   await page.goto('http://127.0.0.1:1437/frontend/qa/codex-workbench.html');
   await page.getByRole('button', { name: '确认', exact: true }).waitFor();
   assert.equal(await page.locator('.worktree-row').count(), 0);
@@ -173,6 +186,7 @@ try {
   await page.goto('http://127.0.0.1:1437/frontend/qa/main-window.html');
   await page.getByRole('button', { name: '确认', exact: true }).click();
   await page.locator('.worktree-row').waitFor();
+  await sharedContentSurface();
   await page.screenshot({ path: resolve(output, 'app-shell.png') });
   assert.ok(await page.locator('.content').evaluate(element => element.clientHeight > 400));
   await page.locator('.row-select').click();
@@ -180,6 +194,8 @@ try {
   assert.ok(Math.abs(shellDrawer.x + shellDrawer.width - 1192) < 2, 'App framework column aligns with the shell inset');
   const hostParentIsShell = await page.locator('.app-side-panel').evaluate(element => element.parentElement.classList.contains('app-shell'));
   assert.ok(hostParentIsShell, 'Third column is a direct App framework child');
+  const columnSurface = await sharedContentSurface();
+  assert.deepEqual(await surface('.app-side-panel'), columnSurface, 'Third column and main content share background, border and radius');
   await page.screenshot({ path: resolve(output, 'app-shell-third-column.png') });
   await page.getByRole('button', { name: '收起导航栏', exact: true }).click();
   await page.waitForTimeout(240);
@@ -193,6 +209,7 @@ try {
   await page.locator('.row-select').click();
   await page.getByRole('button', { name: '设置', exact: true }).click();
   assert.equal(await page.locator('.app-side-panel').count(), 0, 'Route navigation clears the global panel');
+  assert.deepEqual(await surface('.content-pane'), columnSurface, 'Workbench and settings keep the same App canvas');
   assert.ok(!(await page.locator('.app-shell').getAttribute('class')).includes('has-side-panel-column'));
   assert.equal(await page.getByRole('button', { name: '任务抽取', exact: true }).count(), 0);
   await page.getByRole('button', { name: '后退', exact: true }).click();
@@ -209,6 +226,8 @@ try {
   await page.screenshot({ path: resolve(output, 'app-shell-system-dark.png') });
   await page.getByRole('button', { name: '确认', exact: true }).click();
   await page.locator('.row-select').click();
+  const darkSurface = await sharedContentSurface();
+  assert.deepEqual(await surface('.app-side-panel'), darkSurface, 'Dark third column matches the dark main content surface');
   await page.screenshot({ path: resolve(output, 'app-shell-third-column-dark.png') });
   await closeDetail();
   await page.emulateMedia({ colorScheme: 'light' });

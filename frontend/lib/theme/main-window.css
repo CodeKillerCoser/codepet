@@ -68,7 +68,7 @@
 
 /* History workbench aliases inherit the app's light/dark/system palette. */
 .main-theme {
-  --wb-bg: var(--app-bg);
+  --wb-bg: var(--app-surface);
   --wb-panel: var(--app-surface);
   --wb-control: var(--app-surface-soft);
   --wb-border: var(--app-border);

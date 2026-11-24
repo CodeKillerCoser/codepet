@@ -198,7 +198,7 @@
 <dialog class="ledger-dialog" bind:this={setupDialog}><header><h3>连接 Codex 任务登记</h3><button aria-label="关闭接入说明" on:click={()=>setupDialog.close()}>×</button></header><p>将配置添加到 Codex 的 config.toml，然后在新对话中使用。MCP 在本机 Rust 进程运行，App 关闭后仍可登记。</p><label>MCP 配置<textarea readonly rows="5" value={setup.config}></textarea></label><button on:click={()=>copy(setup.config,'配置')}>复制配置</button><p>将下面的简短约定加入项目 AGENTS.md，让登记集中在关键节点。</p><label>项目约定<textarea readonly rows="6" value={setup.instructions}></textarea></label><button on:click={()=>copy(setup.instructions,'项目约定')}>复制项目约定</button><p role="status">{copied}</p></dialog>
 
 <style>
-  .task-ledger{width:min(1400px,92%);margin:auto;padding:12px 0 24px;color:var(--wb-text);font:13px/1.6 var(--font-family-ui);min-width:0}
+  .task-ledger{width:100%;margin:0;padding:12px 0 0;color:var(--wb-text);font:13px/1.6 var(--font-family-ui);min-width:0}
   *{box-sizing:border-box}button,input,textarea,select{font:inherit;color:inherit;border:1px solid var(--wb-border);border-radius:5px;background:var(--wb-panel);min-width:0}
   button{cursor:pointer;padding:5px 9px;min-height:30px}button:hover{border-color:var(--wb-border-strong)}button:disabled{opacity:.5;cursor:default}
   :is(button,input,textarea,select,summary):focus-visible{outline:2px solid var(--color-focus-ring);outline-offset:2px}
