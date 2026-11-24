@@ -4,7 +4,7 @@ import '../main-window.css';
 import { themeClassNames } from '../lib/theme/defaults';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { mount } from 'svelte';
-import CodexWorkbench from '../lib/CodexWorkbench.svelte';
+import WorkbenchFrameQa from './WorkbenchFrameQa.svelte';
 import type { Snapshot, Worktree } from '../lib/codexWorkbench';
 const projects = [{id:'codepet',name:'Code Pet',roots:['/fixture/codepet']},{id:'runtime',name:'Agent Runtime',roots:['/fixture/runtime']},{id:'other',name:'Other project',roots:['/fixture/other']}];
 const sourceInfo = {codexHome:'/fixture/.codex',projectCatalog:'database' as const};
@@ -31,4 +31,4 @@ mockIPC(async(command,args:any)=>{
 });
 document.getElementById('app')!.className = `main-theme ${themeClassNames('light')}`;
 (window as any).__setWorkbenchTheme = (mode: 'light' | 'dark') => document.getElementById('app')!.className = `main-theme ${themeClassNames(mode)}`;
-mount(CodexWorkbench,{target:document.getElementById('app')!});
+mount(WorkbenchFrameQa,{target:document.getElementById('app')!});

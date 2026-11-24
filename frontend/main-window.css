@@ -309,3 +309,7 @@
 /* The history workbench owns its screenshot-aligned header and content spacing. */
 .main-theme .content-pane.history-workbench { grid-template-rows: minmax(0, 1fr); background: var(--app-bg); }
 .main-theme .history-workbench > .content { padding: 0; scrollbar-gutter: auto; overflow-anchor: none; }
+
+/* Framework side panel: pages supply content; the shell owns the third column. */
+.main-theme.app-shell.has-side-panel-column { grid-template-columns: 192px minmax(0,1fr) 400px; }
+.main-theme.app-shell.sidebar-collapsed.has-side-panel-column { grid-template-columns: 0 minmax(0,1fr) 400px; }

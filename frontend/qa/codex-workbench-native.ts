@@ -4,7 +4,7 @@ import '../main-window.css';
 import { invoke } from '@tauri-apps/api/core';
 import { mount } from 'svelte';
 import { themeClassNames } from '../lib/theme/defaults';
-import CodexWorkbench from '../lib/CodexWorkbench.svelte';
+import WorkbenchFrameQa from './WorkbenchFrameQa.svelte';
 import type { Snapshot } from '../lib/codexWorkbench';
 window.addEventListener('error',event=>{void invoke('qa_report',{value:{success:false,error:event.message}});});
 window.addEventListener('unhandledrejection',event=>{void invoke('qa_report',{value:{success:false,error:String(event.reason)}});});
@@ -19,7 +19,7 @@ async function run() {
   if(expected.mode==='tasks') { const {runTaskLedgerNativeQa}=await import('./task-ledger-native');await runTaskLedgerNativeQa(expected as {workspace:string;taskId:string});return; }
   const actual=await invoke<Snapshot>('codex_workbench_request',{request:{op:'scan',projectIds:[expected.projectId]}});
   document.getElementById('app')!.className=`main-theme ${themeClassNames('light')}`;
-  mount(CodexWorkbench,{target:document.getElementById('app')!});
+  mount(WorkbenchFrameQa,{target:document.getElementById('app')!});
   const scan=await until(()=>{const e=document.querySelector<HTMLButtonElement>('.confirm');return e&&!e.disabled?e:undefined;});
   scan.click();
   await until(()=>document.querySelector('.worktree-row'));

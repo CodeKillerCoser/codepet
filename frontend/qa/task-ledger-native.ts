@@ -1,7 +1,7 @@
 // Native UI exercises production Rust commands and the production Svelte component, no mocks.
 import { invoke } from '@tauri-apps/api/core';
 import { mount, tick } from 'svelte';
-import CodexWorkbench from '../lib/CodexWorkbench.svelte';
+import WorkbenchFrameQa from './WorkbenchFrameQa.svelte';
 import { themeClassNames } from '../lib/theme/defaults';
 import { taskRequest, currentRound, acceptanceReady, type Task } from '../lib/taskLedger';
 
@@ -14,7 +14,7 @@ function submit(dialog:HTMLDialogElement){dialog.querySelector<HTMLFormElement>(
 
 export async function runTaskLedgerNativeQa(expected:{workspace:string;taskId:string}) {
   document.getElementById('app')!.className=`main-theme ${themeClassNames('light')}`;
-  mount(CodexWorkbench,{target:document.getElementById('app')!});await button('任务与验收');
+  mount(WorkbenchFrameQa,{target:document.getElementById('app')!});await button('任务与验收');
   await until(()=>document.querySelector<HTMLButtonElement>('.task-row'));
   const filter=document.querySelector<HTMLSelectElement>('[aria-label="任务状态"]')!;
   check([...filter.options].map(o=>o.textContent).join(',')==='全部状态,进行中,待交付,已发布,已结束','Only the four main task statuses are exposed');

@@ -6,6 +6,7 @@
   import { EditorView } from '@codemirror/view';
   import { EditorState } from '@codemirror/state';
   import TaskLedger from './TaskLedger.svelte';
+  import AppSidePanel from './shell/AppSidePanel.svelte';
   import * as Dialog from './ui/dialog/index';
   import { workbenchRequest as api, activity, dirty, unpushed, filterRows, statusMatches, branchLabel, changeLabel, gitSummary, type SourceInfo, type Project, type Snapshot, type Worktree, type Change } from './codexWorkbench';
   let projects: Project[] = [], draft: string[] = [], projectSearch = '', pickerOpen = false;
@@ -14,7 +15,7 @@
   let progress = { checked: 0, total: 0, phase: 'history' }, sequence = 0, rechecking = new Set<string>(), actionMessage = '', actionError = '';
   let warningDialog: HTMLDialogElement, previewOpen = false, previewElement: HTMLDivElement, previewChange: Change | null = null, previewRow: Worktree | null = null, version = 'workspace', previewError = '', previewLoading = false, previewSequence = 0;
   let sourceInfo: SourceInfo | undefined, sourceDialog: HTMLDialogElement;
-  let detailOpen = false, moreOpen = false, detailHeading: HTMLElement | null = null, selectedButton: HTMLButtonElement | undefined;
+  let detailOpen = false, moreOpen = false, selectedButton: HTMLButtonElement | undefined;
   let chatQuery = '', chatLimit = 30;
   let alive = true;
   let view: 'code' | 'tasks' = 'code';
@@ -47,9 +48,8 @@
     catch(e) { if(seq === sequence) { error = String(e); snapshot = null; } } finally { if(seq === sequence) loading = false; }
   }
   function reset() { query = ''; filterProjects = []; related = false; period = 'all'; date = ''; status = 'all'; }
-  async function selectRow(row: Worktree, button: HTMLButtonElement) {
+  function selectRow(row: Worktree, button: HTMLButtonElement) {
     selectedId = row.id; selectedButton = button; archived = false; chatQuery = ''; chatLimit = 30; actionMessage = ''; actionError = ''; detailOpen = true;
-    await tick(); detailHeading?.focus({ preventScroll: true });
   }
   function showUnreadable() { related = false; filterProjects = []; query = ''; period = 'all'; status = 'error'; detailOpen = false; }
   async function recheck(row: Worktree) {
@@ -76,15 +76,15 @@
   onDestroy(() => { alive = false; if(loading) void api('cancel').catch(() => {}); ++sequence; ++previewSequence; stop?.(); merge?.destroy(); });
 </script>
 
-<svelte:window on:keydown={(event) => {if (event.key === 'Escape' && moreOpen) {moreOpen = false; document.querySelector<HTMLElement>('.more-filters summary')?.focus();}}}/>
+<svelte:window on:keydown={(event) => {if (event.key === 'Escape' && moreOpen) {event.preventDefault(); moreOpen = false; document.querySelector<HTMLElement>('.more-filters summary')?.focus();}}}/>
 
 <section class="workbench" aria-label="Codex工作台" tabindex="-1">
-  <nav class="wb-tabs" aria-label="工作台视图"><button aria-pressed={view==='code'} on:click={()=>view='code'}>代码状态</button><button aria-pressed={view==='tasks'} on:click={()=>view='tasks'}>任务与验收</button></nav>
+  <nav class="wb-tabs" aria-label="工作台视图"><button aria-pressed={view==='code'} on:click={()=>view='code'}>代码状态</button><button aria-pressed={view==='tasks'} on:click={()=>{detailOpen=false; view='tasks';}}>任务与验收</button></nav>
   {#if view==='tasks'}<TaskLedger workspaceHint={selected?.path??''}/>{:else}
   <div class="wb-body">
     <div class="scanbar">
       <div class="project-picker" on:focusout={(e) => { if (!(e.currentTarget.contains(e.relatedTarget as Node))) pickerOpen = false; }}>
-        <div class="tags">{#each draft as id}<span class="tag">{projects.find(p => p.id === id)?.name}<button aria-label={`移除 ${projects.find(p => p.id === id)?.name}`} on:click={() => toggleProject(id)}><X size={12}/></button></span>{/each}<input aria-label="搜索并选择项目" placeholder={draft.length ? '' : '选择项目，键入搜索…'} bind:value={projectSearch} on:focus={() => pickerOpen = true} on:input={() => pickerOpen = true} on:keydown={(e) => { if(e.key === 'Escape') pickerOpen = false; if(e.key === 'ArrowDown') {e.preventDefault(); pickerOpen = true; tick().then(() => document.querySelector<HTMLButtonElement>('.project-options button')?.focus());} }} /></div>
+        <div class="tags">{#each draft as id}<span class="tag">{projects.find(p => p.id === id)?.name}<button aria-label={`移除 ${projects.find(p => p.id === id)?.name}`} on:click={() => toggleProject(id)}><X size={12}/></button></span>{/each}<input aria-label="搜索并选择项目" placeholder={draft.length ? '' : '选择项目，键入搜索…'} bind:value={projectSearch} on:focus={() => pickerOpen = true} on:input={() => pickerOpen = true} on:keydown={(e) => { if(e.key === 'Escape') {e.preventDefault(); pickerOpen = false;} if(e.key === 'ArrowDown') {e.preventDefault(); pickerOpen = true; tick().then(() => document.querySelector<HTMLButtonElement>('.project-options button')?.focus());} }} /></div>
         {#if pickerOpen}<div class="project-options" role="group" aria-label="项目选项">{#each projects.filter(p => !draft.includes(p.id) && p.name.toLowerCase().includes(projectSearch.toLowerCase())) as p}<button on:click={() => toggleProject(p.id)}>{p.name}<small>{p.roots.join(' · ')}</small></button>{:else}<p>没有其他匹配项目</p>{/each}{#if draft.length}<button on:click={() => { draft = []; void persist(); }}>清空选择</button>{/if}</div>{/if}
       </div>
       <button class="refresh" aria-label="刷新项目列表" disabled={catalogLoading} on:click={() => loadProjects()}><RefreshCw size={18}/></button>
@@ -117,7 +117,7 @@
         <div class="column-head"><span>分支与工作目录</span><span>对话与活动</span><span>Git 状态</span></div>
         <div class="worktree-list">
           {#each rows as row (row.id)}<article class:selected={detailOpen && selected?.id === row.id} class="worktree-row">
-            <button class="row-select" on:click={(event) => selectRow(row,event.currentTarget)} aria-pressed={detailOpen && selected?.id === row.id} aria-haspopup="dialog">
+            <button class="row-select" on:click={(event) => selectRow(row,event.currentTarget)} aria-expanded={detailOpen && selected?.id === row.id}>
               <span class="identity"><b class="branch">{branchLabel(row)}</b><span class="project-name">{row.projectName}{row.main ? ' · 主工作区' : ''}</span><small title={row.path}>{row.path.split(/[\\/]/).slice(-2).join('/')}</small></span>
               <span class="activity"><span>{row.conversations.length ? `${row.conversations.length} 条对话` : '未关联对话'}</span><span class="source-names">{[...new Set(row.conversations.map(c => c.source))].join(' · ')}</span><small>{fmt(activity(row))}</small></span>
               <span class="git-state" title={gitSummary(row)}>{#if row.git.error}<span class="badge danger">读取失败</span>{:else}{#if row.git.changes.some(c => c.conflict)}<span class="badge danger">有冲突</span>{/if}{#if dirty(row)}<span class="badge amber">未提交 {row.git.changes.length}</span>{/if}{#if unpushed(row)}<span class="badge blue">待推送 {row.git.ahead}</span>{/if}{#if !dirty(row) && !unpushed(row)}<span class="badge" class:green={row.git.upstream && !row.git.behind} class:amber={!!row.git.behind}>{row.git.upstream ? (row.git.behind ? '落后上游' : '已同步') : '干净 · 无上游'}</span>{/if}{/if}</span>
@@ -131,13 +131,10 @@
   </div>
   {/if}
 </section>
-<Dialog.Root bind:open={detailOpen}>
-  <Dialog.Content class="worktree-drawer" overlayClass="history-overlay" showCloseButton={false}
-    onOpenAutoFocus={(event) => {event.preventDefault(); detailHeading?.focus({preventScroll:true});}}
-    onCloseAutoFocus={(event) => {event.preventDefault(); selectedButton?.focus({preventScroll:true});}}>
+<AppSidePanel open={detailOpen} title={selected ? branchLabel(selected) : '工作树详情'}
+  description="查看所选工作树的 Git 改动与关联 Codex 对话。" closeLabel="关闭工作树详情"
+  returnFocus={selectedButton} onClose={() => detailOpen = false}>
       <aside class="detail">
-        <header class="drawer-head"><Dialog.Title bind:ref={detailHeading} tabindex={-1}>{selected ? branchLabel(selected) : '工作树详情'}</Dialog.Title><button class="close-detail" aria-label="关闭工作树详情" on:click={() => detailOpen = false}><X size={18}/></button></header>
-        <Dialog.Description class="sr-only">查看所选工作树的 Git 改动与关联 Codex 对话。</Dialog.Description>
         {#if selected}<div class="detail-eyebrow">{selected.projectName} · {selected.main ? '主工作区' : '工作树'}</div><p class="path">{selected.path}</p>
           <div class="actions"><button disabled={loading} on:click={() => action('openDirectory',selected)}><FolderOpen size={12}/>打开目录</button><button disabled={loading} on:click={() => action('openTerminal',selected)}><Terminal size={12}/>打开终端</button></div>
           <p class="git-summary" class:has-error={!!selected.git.error}>{gitSummary(selected)}</p>
@@ -154,8 +151,7 @@
         {#if actionMessage}<p class="action-status" role="status">{actionMessage}</p>{/if}
         {#if actionError}<p class="error" role="alert">{actionError}</p>{/if}
       </aside>
-  </Dialog.Content>
-</Dialog.Root>
+</AppSidePanel>
 <dialog bind:this={sourceDialog} class="wb-dialog source-dialog"><header><h3>数据来源与检查范围</h3><button aria-label="关闭数据来源" on:click={() => sourceDialog.close()}>×</button></header>
   <dl><dt>项目</dt><dd>读取 Codex 保存的项目与根目录。{sourceInfo?.projectCatalog === 'globalState' ? '当前使用本地工作目录列表作为后备来源。' : '优先使用 Codex 项目数据库。'}</dd>
   <dt>工作树与 Git 状态</dt><dd>从所选项目执行本地 Git 只读检查。未提交是文件条目数；未推送是相对本地上游引用的提交数，不执行 fetch。单棵重检只更新 Git 状态；新增工作树或对话需要重新扫描。</dd>
@@ -273,29 +269,7 @@
   .badge.green { color: var(--wb-success-text); }
   .badge.danger { color: var(--wb-danger-text); }
   .recheck { position: absolute; top: 50%; right: 10px; transform: translateY(-50%); min-height: 28px; padding: 3px 8px; font-size: 11px; color: var(--wb-muted); background: transparent; }
-  :global(.cn-dialog-content.worktree-drawer) {
-    inset: 0 0 0 auto;
-    transform: none;
-    margin: 0;
-    width: min(520px,100vw);
-    max-width: 100vw;
-    height: 100dvh;
-    max-height: 100dvh;
-    display: block;
-    box-sizing: border-box;
-    padding: 0;
-    border: 0;
-    border-left: 1px solid var(--wb-border);
-    background: var(--wb-panel);
-    color: var(--wb-text);
-    font: 13px/1.5 var(--font-family-ui);
-    box-shadow: -12px 0 40px var(--color-history-drawer-shadow);
-  }
-  .detail { min-width: 0; padding: 24px; }
-  .drawer-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 10px; }
-  .drawer-head :global(h3) { font-size: 16px; line-height: 1.5; margin: 0; overflow-wrap: anywhere; font-weight: 600; }
-  .drawer-head :global(h3:focus) { outline: none; }
-  .close-detail { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; border-color: transparent; background: transparent; color: var(--wb-muted); }
+  .detail { min-width: 0; padding: 0 20px 20px; }
   .detail-eyebrow { font-size: 12px; color: var(--wb-muted); margin-bottom: 5px; }
   .path { font: 11px/1.6 var(--font-family-code); overflow-wrap: anywhere; color: var(--wb-muted); margin: 0 0 12px; }
   .actions { display: flex; gap: 7px; flex-wrap: wrap; }
@@ -375,5 +349,5 @@
     .branch { font-size: 12px; }
     .git-state { flex-direction: column; }
   }
-  @media(max-width:520px) { .detail { padding: 20px 16px; } .preview-body { padding: 16px; } }
+  @media(max-width:520px) { .detail { padding: 0 20px 20px; } .preview-body { padding: 16px; } }
 </style>

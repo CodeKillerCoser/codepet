@@ -12,6 +12,7 @@ const petAvatarSource = readFileSync(resolve(__dirname, "lib/pet/PetAvatar.svelt
 const pairDeviceDialogSource = readFileSync(resolve(__dirname, "lib/PairDeviceDialog.svelte"), "utf8");
 const remoteDeviceListSource = readFileSync(resolve(__dirname, "lib/RemoteDeviceList.svelte"), "utf8");
 const workbenchSource = readFileSync(resolve(__dirname, "lib/CodexWorkbench.svelte"), "utf8");
+const sidePanelSource = readFileSync(resolve(__dirname, "lib/shell/AppSidePanelHost.svelte"), "utf8");
 const gradientColorSource = readFileSync(resolve(__dirname, "lib/gradientColor.ts"), "utf8");
 
 function blockFor(selector: string) {
@@ -61,7 +62,7 @@ describe("theme tokens", () => {
   });
 
   test("keeps production frontend sources on theme defaults and css tokens", () => {
-    const productionSources = [appSource, petAppSource, petAvatarSource, pairDeviceDialogSource, remoteDeviceListSource, gradientColorSource, workbenchSource];
+    const productionSources = [appSource, petAppSource, petAvatarSource, pairDeviceDialogSource, remoteDeviceListSource, gradientColorSource, workbenchSource, sidePanelSource];
     for (const source of productionSources) {
       expect(source).not.toMatch(/(^|[^{}])#[0-9a-fA-F]{3,8}|rgba?\(/m);
     }

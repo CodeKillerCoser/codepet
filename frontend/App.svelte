@@ -8,6 +8,8 @@
   import PermissionSettings from "./lib/PermissionSettings.svelte";
   import { consumeReloadNotice, webcontentReloading } from "./lib/webcontent";
   import EventJournal from "./lib/EventJournal.svelte";
+  import AppSidePanelHost from "./lib/shell/AppSidePanelHost.svelte";
+  import { provideSidePanel } from "./lib/shell/sidePanel";
   import CodexWorkbench from "./lib/CodexWorkbench.svelte";
   import MainNavigation from "./lib/MainNavigation.svelte";
   import { createNavigation, connectionRoutes, isConnectionRoute, isSettingsRoute, routeTitle, type AppRoute } from "./lib/navigation";
@@ -42,6 +44,9 @@
   import NotificationSettings from "./lib/settings/NotificationSettings.svelte";
   import { normalizeSettings } from "./lib/settings/model";
 
+  const sidePanel = provideSidePanel();
+  const sidePanelCurrent = sidePanel.current;
+  const sidePanelMode = sidePanel.mode;
   const resourceReloaded = consumeReloadNotice();
   const navigation = createNavigation(resourceReloaded ? "about" : "tasks");
   let pendingSettingsSaves = 0;
@@ -52,6 +57,7 @@
   let pageHeading: HTMLHeadingElement;
   let renderedRoute: AppRoute = "tasks";
   $: if (tab !== renderedRoute) {
+    sidePanel.dismiss(false);
     renderedRoute = tab;
     void tick().then(() => {
       contentElement?.scrollTo({ top: 0 });
@@ -1042,7 +1048,7 @@
   $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
 </script>
 
-<main class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed} inert={$webcontentReloading}>
+<main class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed} class:has-side-panel-column={!!$sidePanelCurrent && $sidePanelMode === "column"} inert={$webcontentReloading}>
   <WindowToolbar bind:collapsed={sidebarCollapsed} canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onHome={() => navigation.navigate("tasks")} onBack={navigation.back} onForward={navigation.forward} settingsActive={isSettingsRoute(tab)} onSettings={() => navigation.navigate("settings")} onError={(message) => error = message} />
   <aside id="main-sidebar" class="sidebar" inert={sidebarCollapsed}>
     <MainNavigation current={tab} onNavigate={navigation.navigate} />
@@ -1255,6 +1261,8 @@
     </div>
     </div>
   </section>
+
+  <AppSidePanelHost />
 
   <PairDeviceDialog
     open={pairDeviceDialogOpen}
