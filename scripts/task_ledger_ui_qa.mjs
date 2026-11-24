@@ -220,5 +220,31 @@ try {
     assert.ok(await page.locator('.commit-reference').count()>0,'Associated commits remain available separately from declared files');
     await closeChanges();
   }
+  await page.setViewportSize({width:1280,height:920});await page.goto(route('manual-completion'));await page.locator('.task-row').first().waitFor();
+  const complete=page.getByRole('button',{name:'标记完成',exact:true});
+  assert.equal(await complete.count(),1);assert.equal(await page.locator('button button').count(),0);
+  await page.locator('.run-card').first().click();assert.equal(await complete.count(),0,'Historical pending runs are read only');
+  await page.locator('.run-card').last().click();await page.locator('.task-row').nth(1).click();assert.equal(await complete.count(),0,'Development has no completion action');
+  await page.locator('.task-row').first().click();
+  const oldEvidence=await page.evaluate(()=>JSON.stringify(window.__taskCompletionState()[0].runs.at(-1).validationPlan));
+  await page.evaluate(()=>window.__holdTaskClose=true);await complete.click();
+  await page.getByRole('button',{name:'保存中…',exact:true}).waitFor();
+  assert.ok(await page.getByRole('button',{name:'保存中…',exact:true}).isDisabled());
+  await page.evaluate(()=>{window.__holdTaskClose=false;window.__rejectTaskClose();});
+  await page.getByRole('alert').filter({hasText:'模拟完成保存失败'}).waitFor();assert.equal(await complete.count(),1);
+  await page.evaluate(()=>window.__conflictTaskCompletion());await complete.click();
+  await page.getByRole('alert').filter({hasText:'revision='}).waitFor();
+  assert.equal(await page.evaluate(()=>window.__taskCompletionState()[0].runs.at(-1).status),'ready_for_delivery','Conflict never marks completed');
+  await page.getByRole('button',{name:'刷新任务',exact:true}).click();await complete.waitFor();
+  await page.getByLabel('任务状态',{exact:true}).selectOption('ready_for_delivery');
+  await complete.focus();await page.keyboard.press('Enter');
+  await page.getByRole('status').filter({hasText:'已标记完成'}).waitFor();
+  assert.equal(await page.getByLabel('任务状态',{exact:true}).inputValue(),'all','Completed task stays visible');
+  assert.equal(await page.locator('.task-row.selected .status-badge').innerText(),'已完成');
+  assert.equal(await complete.count(),0);assert.ok(await page.locator('.task-heading h3').evaluate(e=>e===document.activeElement));
+  const closed=await page.evaluate(()=>window.__taskCompletionState()[0].runs.at(-1));
+  assert.equal(closed.closure.accepted,false);assert.equal(closed.timeline.at(-1).actor,'human');assert.equal(JSON.stringify(closed.validationPlan),oldEvidence);
+  await page.getByRole('button',{name:'刷新任务',exact:true}).click();await page.locator('.task-row.selected').getByText('已完成',{exact:true}).waitFor();
+  await page.getByLabel('更多任务操作').click();assert.ok(await page.getByRole('button',{name:'新一次执行',exact:true}).isVisible());
   console.log(`Task UI passed (${engine}): run cards, four groups, conclusion-only results, prompt editing/reset/conflict, focus, themes, responsive layout and fixed navigation.`);
 } finally { await browser.close(); await server.close(); }

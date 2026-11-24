@@ -51,6 +51,14 @@ if(scenario==='local-verification'){
  const run=currentRun(base);run.validationPlan.items=run.validationPlan.items.map(c=>({...c,scope:'both'}));
  run.validationPlan.records=[{id:'local-only',actor:'agent',agent:'codex',createdAt:base.updatedAt,agentWorkspace:null,planRevision:run.validationPlan.revision,stage:'local',target:'local-commit',environment:'macOS',results:run.validationPlan.items.map(c=>({criterionId:c.id,result:'passed',evidence:'本地检查结论已明确记录'}))}];
 }
+if(scenario==='manual-completion'){
+ const run=currentRun(base);run.status='ready_for_delivery';run.closure=null;
+ base.runs[0].status='ready_for_delivery';
+ const developing=structuredClone(base);developing.id='completion-developing';developing.title='开发中的任务';currentRun(developing).id='developing-run';currentRun(developing).status='in_progress';
+ tasks.push(developing);
+}
+(window as any).__taskCompletionState=()=>structuredClone(tasks);
+(window as any).__conflictTaskCompletion=()=>{base.revision++;};
 const defaults='在方案确定后登记任务，实现告一段落时合并更新。保留 taskId/runId/revision，不逐消息或逐文件维护。';
 let setupState={transport:'stdio',config:'[mcp_servers.codepet_tasks]\ncommand = "/Users/qa/.codepet/bin/codepet-task-mcp"\nargs = ["--managed-stdio"]\nenv = { CODEPET_AGENT = "codex" }',instructions:defaults,defaultInstructions:defaults,instructionsRevision:0,instructionsCustomized:false};
 (window as any).__promptConflict=()=>{setupState.instructionsRevision++;};
@@ -59,6 +67,16 @@ mockIPC(async(command,args:any)=>{
  if(command==='codex_workbench_request')return args.request.op==='projects'?{projects:[],warnings:[]}:[];
  if(command!=='task_ledger_request')throw Error(`Unexpected ${command}`);
  if(args.request.op==='list')return structuredClone(tasks);
+ if(args.request.op==='close-run'){
+  if((window as any).__holdTaskClose)return new Promise((_,reject)=>{(window as any).__rejectTaskClose=()=>reject(Error('模拟完成保存失败'));});
+  const task=tasks.find(t=>t.id===args.request.taskId);if(!task)throw Error('任务不存在');
+  if(args.request.expectedRevision!==task.revision)throw Error('任务已更新：revision='+task.revision+'；请刷新后重试');
+  const run=currentRun(task);if(run.id!==args.request.runId||run.status!=='ready_for_delivery')throw Error('只能完成当前待确认执行');
+  if(args.request.accepted!==false)throw Error('完成不能伪造人工验收');
+  run.status='closed';run.closure={accepted:false,reason:args.request.reason,closedAt:Date.now()};task.revision++;
+  run.timeline.push({id:'manual-completion-event',at:Date.now(),actor:'human',kind:'closed',summary:args.request.reason});
+  return {taskId:task.id,runId:run.id,revision:task.revision,planRevision:run.validationPlan.revision,criterionIds:run.validationPlan.items.map(c=>c.id),status:run.status,createdBy:run.createdBy};
+ }
  if(args.request.op==='openChat'){(window as any).__openedTaskChat=args.request.conversationId;return null;}
  if(args.request.op==='commit-files')return (tasks.find(t=>t.id===args.request.taskId)?.runs.find(r=>r.id===args.request.runId)??currentRun(base)).agentWorkspace.relatedCommits.map(commit=>({commit,files:[{path:'committed-change.ts',changeType:'modified',staged:false,originalPath:null}],error:null}));
  if(args.request.op==='change-diffs'){

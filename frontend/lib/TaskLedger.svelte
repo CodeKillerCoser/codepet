@@ -137,6 +137,21 @@
     } catch (e) { error = String(e); }
     finally { busy = false; }
   }
+  async function completeRun() {
+    if (busy || !selected || !run || run.id !== currentRun(selected).id || run.status !== 'ready_for_delivery') return;
+    const taskId=selected.id, completedRunId=run.id, expectedRevision=selected.revision;
+    busy=true;error='';message='';
+    try {
+      await api<Receipt>('close-run',{taskId,runId:completedRunId,expectedRevision,accepted:false,reason:'用户标记完成'});
+      selectedId=taskId;runId=completedRunId;
+      // Keep the completed task visible when the current filter is pending confirmation.
+      if (status==='ready_for_delivery') status='all';
+      await load();
+      message='已标记完成';
+      await tick();detail?.focusHeading();
+    } catch(e) {error=String(e);}
+    finally {busy=false;}
+  }
   async function showSetup() {
     moreOpen = false; moreTrigger?.focus(); error = '';
     try { await setupDialog.show(); } catch (e) { error = String(e); }
@@ -212,7 +227,7 @@
     <aside class="task-detail" aria-label="任务详情" tabindex="-1">
       {#if selected && run}
         <button class="back quiet" on:click={back}>← 返回任务列表</button>
-        <TaskRunDetail task={selected} bind:runId bind:this={detail} onEditTask={() => editTask(selected)} onOpenChat={openChat} {changes} {changesLoading} {changesOpen} onOpenChanges={openChanges}/>
+        <TaskRunDetail task={selected} bind:runId bind:this={detail} onEditTask={() => editTask(selected)} onComplete={completeRun} {busy} onOpenChat={openChat} {changes} {changesLoading} {changesOpen} onOpenChanges={openChanges}/>
       {:else}<div class="empty">选择任务查看执行记录</div>{/if}
     </aside>
   </div>

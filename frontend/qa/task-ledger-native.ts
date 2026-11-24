@@ -3,7 +3,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {mount, tick} from 'svelte';
 import WorkbenchFrameQa from './WorkbenchFrameQa.svelte';
 import {themeClassNames} from '../lib/theme/defaults';
-import {taskRequest, currentRun, acceptanceReady, type Task, type AgentSetup} from '../lib/taskLedger';
+import {taskRequest, currentRun, acceptanceReady, type Task, type Receipt, type AgentSetup} from '../lib/taskLedger';
 
 const pause = () => new Promise(r => setTimeout(r, 40));
 async function until<T>(read: () => T | undefined | false): Promise<T> {
@@ -127,11 +127,27 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   initialized = await invoke<{initializeInstructions: string}>('qa_http_task_write');
   check(initialized.initializeInstructions === (await taskRequest<AgentSetup>('setup')).defaultInstructions, 'Reset reaches actual HTTP initialize');
   await dismiss(dialog); await button('刷新任务'); await pause();
+  // Actual UI completion without fabricating human acceptance or per-item results.
+  const pendingReceipt=await taskRequest<Receipt>('create-task',{input:{title:'待确认手动完成验收样例',agentWorkspace:{path:expected.workspace},initialRun:{agentConversation:[],title:'开发完成等待确认',validationPlan:{items:[{title:'尚未逐项验收',steps:'检查',expected:'保留原状态',scope:'release'}]}}}});
+  const pendingReady=await taskRequest<Receipt>('update-task-run',{input:{taskId:pendingReceipt.taskId,runId:pendingReceipt.runId,expectedRevision:pendingReceipt.revision,agentConversation:[],status:'ready_for_delivery'}});
+  check(pendingReady.status==='ready_for_delivery','Native completion scenario starts in a valid pending state');
+  const pendingTask=await taskRequest<Task>('get',{taskId:pendingReceipt.taskId}),oldPlan=JSON.stringify(currentRun(pendingTask).validationPlan);
+  await button('刷新任务');await until(()=>[...document.querySelectorAll('.task-row')].find(e=>e.textContent?.includes(pendingTask.title)));
+  const pendingRow=[...document.querySelectorAll<HTMLButtonElement>('.task-row')].find(e=>e.textContent?.includes(pendingTask.title))!;pendingRow.click();
+  await until(()=>[...document.querySelectorAll('button')].find(e=>e.textContent?.trim()==='标记完成'));
+  await button('标记完成');await until(()=>document.querySelector('.task-row.selected .status-badge')?.textContent==='已完成');
+  const completed=await taskRequest<Task>('get',{taskId:pendingTask.id}),completedRun=currentRun(completed);
+  check(completedRun.status==='closed'&&completedRun.closure?.accepted===false,'Manual completion persists without human-acceptance fabrication');
+  check(JSON.stringify(completedRun.validationPlan)===oldPlan,'Completing preserves the entire validation plan and records');
+  check(completedRun.timeline.at(-1)?.actor==='human'&&completedRun.timeline.at(-1)?.summary==='用户标记完成','Human completion appears in timeline');
+  await button('刷新任务');await pause();check(document.querySelector('.task-row.selected .status-badge')?.textContent==='已完成','Completion survives refresh');
+  check(document.activeElement===document.querySelector('.task-heading h3'),'Completion returns focus to task heading');
+  [...document.querySelectorAll<HTMLButtonElement>('.task-row')].find(e=>e.textContent?.includes(task.title))!.click();await tick();
   await invoke('qa_report', {value: {
     success: true, mode: 'native-task-run-production-ipc', taskId: task.id, workspace: expected.workspace,
     runFields: true, headerSource: true, singleItemAcceptance: true, promptEditing: true,
     promptHttpInitialization: true, promptStdioInitialization: true, promptReset: true, promptConflictPreservesDraft: true,
-    humanAcceptance: true, conflictPreservesDraft: true, changedFiles: true,
+    manualCompletion:true,humanAcceptance: true, conflictPreservesDraft: true, changedFiles: true,
     runCount: 2, taskSnapshot: await taskRequest<Task>('get', {taskId: task.id})
   }});
 }

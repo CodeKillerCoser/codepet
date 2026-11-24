@@ -12,6 +12,8 @@
   export let task: Task;
   export let runId = '';
   export let onEditTask: () => void;
+  export let onComplete: () => void = () => {};
+  export let busy = false;
   export let onOpenChat: (conversationId: string) => void;
   export let onOpenChanges: (button:HTMLButtonElement)=>void=()=>{};
   export let changes:RunChanges|undefined=undefined;
@@ -56,7 +58,7 @@
   <div class="task-info" role="group" aria-label="任务信息">
   <header class="task-heading">
     <h3 tabindex="-1" bind:this={heading}>{task.title}</h3>
-    <button class="quiet metadata-edit" aria-label="修改任务信息" title="修改任务信息" on:click={onEditTask}><Pencil size={15}/></button>
+    <button class="quiet metadata-edit" disabled={busy} aria-label="修改任务信息" title="修改任务信息" on:click={onEditTask}><Pencil size={15}/></button>
   </header>
   {#if task.description}
     <p class="task-background" class:clamped={!expandedBackground}>{task.description}</p>
@@ -79,12 +81,17 @@
         <span class="run-facts"><span>{item.kind}</span><span class="status-badge" data-status={item.status}>{statuses[item.status]}</span></span>
         <small>{actorLabel(item.createdBy)} · {fmt(item.createdAt)}</small>
       </button>
+      <div class="run-card-footer">
       <div class="card-conversations" aria-label="执行关联对话">
         {#each item.agentConversation as conversation}
           {#if conversation.agent==='codex'&&conversation.verified}
             <button class="quiet conversation-link" title={conversation.conversationId} aria-label={`打开 ${actorLabel(conversation.agent)} 对话 ${conversation.conversationId}`} on:click={()=>onOpenChat(conversation.conversationId)}><LinkIcon size={11}/><span>{actorLabel(conversation.agent)} · {conversation.conversationId.slice(0,8)}</span><ExternalLink size={10}/></button>
           {:else}<small title={conversation.conversationId}>{actorLabel(conversation.agent)} · {conversation.conversationId.slice(0,8)}（待核实）</small>{/if}
         {:else}<small>未关联对话</small>{/each}
+      </div>
+      {#if item.id === currentRun(task).id && item.id === run.id && item.status === 'ready_for_delivery'}
+        <button class="quiet complete-run" disabled={busy} on:click={onComplete}><Check size={13}/>{busy ? '保存中…' : '标记完成'}</button>
+      {/if}
       </div>
       </div>
     {/each}
@@ -99,7 +106,7 @@
         <div><dt>方案</dt><dd><p class:clamped={!expandedSolution}>{run.solution || '尚未记录方案'}</p>{#if run.solution.length > 220}<button class="quiet text-toggle" aria-expanded={expandedSolution} on:click={() => expandedSolution = !expandedSolution}>{expandedSolution ? '收起方案' : '展开方案'}</button>{/if}</dd></div>
       </dl>
       {#if run.description.trim() && ![run.goal.trim(), run.solution.trim()].includes(run.description.trim())}<details class="historical-description"><summary>处理说明</summary><p class="preserve">{run.description}</p></details>{/if}
-      {#if run.closure}<p class="muted">{run.closure.accepted ? '人工验收通过' : '执行已结束'} · {run.closure.reason}</p>{/if}
+      {#if run.closure}<p class="muted">{#if run.closure.accepted}人工验收通过 · {/if}{run.closure.reason}</p>{/if}
     </section>
 
     <section aria-label="工作区" class="run-section workspace-section">
@@ -197,6 +204,8 @@
   .code-state[data-state="synced"] {color:var(--color-success);}
   .task-record .changes-toggle {padding:0;font-size:13px;min-height:22px;}
   .card-conversations {min-width:0;margin-top:4px;display:flex;flex-direction:column;align-items:flex-start;}
+  .run-card-footer {display:flex;gap:8px;align-items:flex-end;justify-content:space-between;min-width:0;flex-wrap:wrap;}
+  .task-record .complete-run {display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:0 2px;min-height:24px;flex:none;}
   .card-conversations small {font-size:12px;}
   .task-record .conversation-link {display:flex;align-items:center;gap:4px;max-width:100%;min-height:20px;padding:0;font-size:12px;border:0;color:var(--wb-info-text);}
   .conversation-link span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
