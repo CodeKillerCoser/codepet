@@ -10,6 +10,7 @@
   import * as Dialog from './ui/dialog/index';
   import { workbenchRequest as api, activity, dirty, unpushed, filterRows, statusMatches, branchLabel, changeLabel, gitSummary, type SourceInfo, type Project, type Snapshot, type Worktree, type Change } from './codexWorkbench';
   import { workbenchSession as session } from './codexWorkbenchSession';
+  export let view: 'code' | 'tasks' = 'code';
   const retained = session.page;
   let projects: Project[] = [], draft: string[] = [], projectSearch = '', pickerOpen = false;
   let projectInput: HTMLInputElement;
@@ -22,7 +23,7 @@
   let detailOpen = false, moreOpen = false, selectedButton: HTMLButtonElement | undefined;
   let chatQuery = '', chatLimit = 30;
   let alive = true;
-  let view: 'code' | 'tasks' = 'code';
+  $: if (view === 'tasks') detailOpen = false;
   let merge: MergeView | undefined, stop: (() => void) | undefined;
   $: ({ projects, draft, snapshot, loading, catalogLoading, error, catalogWarnings, sourceInfo, progress, rechecking } = $session);
   $: if (snapshot) filterProjects = filterProjects.filter(id => snapshot!.projects.some(p => p.id === id));
@@ -81,7 +82,6 @@
 <svelte:window on:keydown={(event) => {if (event.key === 'Escape' && moreOpen) {event.preventDefault(); moreOpen = false; document.querySelector<HTMLElement>('.more-filters summary')?.focus();}}}/>
 
 <section class="workbench" aria-label="Codex工作台" tabindex="-1">
-  <nav class="wb-tabs" aria-label="工作台视图"><button aria-pressed={view==='code'} on:click={()=>view='code'}>代码状态</button><button aria-pressed={view==='tasks'} on:click={()=>{detailOpen=false; view='tasks';}}>任务与验收</button></nav>
   {#if view==='tasks'}<TaskLedger workspaceHint={selected?.path??''}/>{:else}
   <div class="wb-body">
     <div class="scanbar">
@@ -198,17 +198,7 @@
   :is(button,input,select,summary):focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
   input, select { min-width: 0; }
   .workbench:focus { outline: none; }
-  .wb-tabs {
-    display: flex;
-    gap: 24px;
-    width: 100%;
-    margin: 0;
-    padding-top: 0;
-    border-bottom: 1px solid var(--wb-border);
-  }
-  .wb-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 12px 0 14px; color: var(--wb-muted); }
-  .wb-tabs button[aria-pressed="true"] { border-bottom-color: var(--wb-text); color: var(--wb-text); font-weight: 600; }
-  .wb-body { width: 100%; margin: 0; padding: 20px 0 0; }
+  .wb-body { width: 100%; margin: 0; padding: 0; }
   .scanbar { display: flex; gap: 8px; align-items: flex-start; }
   .project-picker { position: relative; flex: 1; min-width: 0; }
   .tags { min-height: 36px; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 5px; background: var(--wb-panel); border: 1px solid var(--wb-border); border-radius: 7px; }

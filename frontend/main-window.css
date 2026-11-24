@@ -106,8 +106,8 @@
 .main-theme .content-pane {
   grid-column: 2;
   grid-row: 2;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -117,6 +117,7 @@
   box-shadow: none;
 }
 .main-theme .topbar {
+  flex: none;
   min-height: 52px;
   padding: 12px var(--app-content-inset);
   align-items: center;
@@ -127,6 +128,7 @@
 .main-theme .topbar h2 { margin: 0; font-size: var(--font-size-lg); line-height: var(--line-height-page); font-weight: var(--font-weight-semibold); }
 .main-theme .topbar .error { font-size: var(--font-size-sm); max-height: 64px; overflow-y: auto; overflow-wrap: anywhere; }
 .main-theme .content {
+  flex: 1;
   display: block;
   min-width: 0;
   min-height: 0;
@@ -307,8 +309,10 @@
 .main-theme .runtime-operation-error { color: var(--app-danger); background: color-mix(in srgb, var(--app-danger) 6%, var(--app-surface)); }
 .main-theme .runtime-operation-notice { color: var(--color-success); background: var(--app-surface-soft); }
 
+/* Optional secondary navigation belongs to the content container, outside its scroll area. */
+.main-theme .content-navigation { flex: none; min-width: 0; padding: 8px var(--app-content-inset) 0; }
+.main-theme .content-navigation .horizontal-tabs { margin-bottom: 0; }
 /* Workbench omits the duplicate heading and keeps the shared content surface/inset. */
-.main-theme .content-pane.history-workbench { grid-template-rows: minmax(0, 1fr); }
 .main-theme .history-workbench > .content { scrollbar-gutter: auto; overflow-anchor: none; }
 
 /* Framework side panel: pages supply content; the shell owns the third column. */

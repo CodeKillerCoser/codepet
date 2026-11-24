@@ -9,6 +9,8 @@
   import { consumeReloadNotice, webcontentReloading } from "./lib/webcontent";
   import EventJournal from "./lib/EventJournal.svelte";
   import AppSidePanelHost from "./lib/shell/AppSidePanelHost.svelte";
+  import AppContentPane from "./lib/shell/AppContentPane.svelte";
+  import WorkbenchNavigation from "./lib/WorkbenchNavigation.svelte";
   import { provideSidePanel } from "./lib/shell/sidePanel";
   import CodexWorkbench from "./lib/CodexWorkbench.svelte";
   import MainNavigation from "./lib/MainNavigation.svelte";
@@ -54,6 +56,7 @@
   $: if (tab === "devices") void refreshRemoteAccess();
   let sidebarCollapsed = false;
   let contentElement: HTMLDivElement;
+  let workbenchView: 'code' | 'tasks' = 'code';
   let pageHeading: HTMLHeadingElement;
   let renderedRoute: AppRoute = "tasks";
   $: if (tab !== renderedRoute) {
@@ -1054,26 +1057,30 @@
     <MainNavigation current={tab} onNavigate={navigation.navigate} />
   </aside>
 
-  <section class="content-pane" class:history-workbench={tab === "tasks" || tab === "extraction"}>
-    {#if tab !== "tasks" && tab !== "extraction"}<header class="topbar">
+  {#snippet pageHeader()}
       <div>
         <div class="page-heading-row"><h2 bind:this={pageHeading} tabindex="-1">{pageTitle}</h2></div>
         {#if error}<p class="error">{error}</p>{/if}
       </div>
-    </header>{/if}
-
-    <div class="content" bind:this={contentElement}>
-    {#if isConnectionRoute(tab)}
+  {/snippet}
+  {#snippet workbenchNavigation()}<WorkbenchNavigation bind:view={workbenchView} />{/snippet}
+  {#snippet connectionNavigation()}
       <HorizontalTabs items={connectionRoutes} value={tab} label="连接接入分区" panelId="connection-panel" onChange={navigation.navigate} />
-    {/if}
+  {/snippet}
+  <AppContentPane
+    workbench={tab === "tasks" || tab === "extraction"}
+    heading={tab === "tasks" || tab === "extraction" ? undefined : pageHeader}
+    navigation={tab === "tasks" || tab === "extraction" ? workbenchNavigation : isConnectionRoute(tab) ? connectionNavigation : undefined}
+    bind:contentElement
+  >
     <!-- The panel is focusable only while it has the tabpanel role. -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-    <div id={isConnectionRoute(tab) ? "connection-panel" : undefined} role={isConnectionRoute(tab) ? "tabpanel" : undefined} aria-labelledby={isConnectionRoute(tab) ? `tab-${tab}` : undefined} tabindex={isConnectionRoute(tab) ? 0 : undefined}>
+    <div id={isConnectionRoute(tab) ? "connection-panel" : tab === "tasks" || tab === "extraction" ? "codex-workbench-panel" : undefined} role={isConnectionRoute(tab) || tab === "tasks" || tab === "extraction" ? "tabpanel" : undefined} aria-labelledby={isConnectionRoute(tab) ? `tab-${tab}` : tab === "tasks" || tab === "extraction" ? `tab-${workbenchView}` : undefined} tabindex={isConnectionRoute(tab) || tab === "tasks" || tab === "extraction" ? 0 : undefined}>
     {#if appearanceVisited && settings}
       <div hidden={tab !== "appearance"}><AppearanceSettings {settings} bind:pending={appearancePending} onChange={(next) => settings = next} onSave={persistSettings} /></div>
     {/if}
     {#if tab === "tasks" || tab === "extraction"}
-      <CodexWorkbench />
+      <CodexWorkbench bind:view={workbenchView} />
     {:else if tab === "connections"}
       <div class="agent-workspace">
         <section class="overview-grid" aria-label="运行概览">
@@ -1259,8 +1266,7 @@
       <EventJournal />
     {/if}
     </div>
-    </div>
-  </section>
+  </AppContentPane>
 
   <AppSidePanelHost />
 

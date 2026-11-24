@@ -1,3 +1,51 @@
+# 任务页标注修正验收（2026-11-24）
+
+范围：落实用户截图标注，以及内容区二级导航脱离滚动流的补充要求。Task / Round、存储与 MCP 协议维持现状；“任务 / 任务执行”的职责划分待单独讨论。
+
+## 对照证据
+
+- 源图：用户附件 `codex-clipboard-6711c22f-3824-4a8c-b0fb-203d5fcdb90f.png`，本地副本 `artifacts/task-ledger-qa/layout/reference-annotated.png`。
+- 实现：`artifacts/task-ledger-qa/layout/in-app-shell-light-1143.png`，完整 App 容器在内置浏览器中的截图。
+- 同图对照：`artifacts/task-ledger-qa/layout/comparison-full.png`；上半部为整页，下半部为导航、筛选与详情头部的局部对照。
+- 尺寸：源图 2286×1898，以 2× 密度归一为 1143×949 CSS px；实现视口及截图为 1143×949。对照页按相同 CSS 尺寸排列，未用生成式图片替代界面。
+- 状态：浅色、任务页、当前处理、验收首项展开。源图有三个用户任务；实现使用隔离的原生验收任务，列表数量、正文和验证结果不同，不据此判断布局偏差。密集列表另用明确标记的布局样例验证。
+
+## 发现与修正
+
+1. 标注要求导航进入框架、筛选上移、去掉重复摘要。`AppContentPane` 提供可选导航插槽，与 `.content` 滚动区并列；无导航时不渲染占位。工具栏合并搜索和筛选，接入入口收进更多菜单，列表显示处理次数。
+2. P2：更多菜单的原生 toggle 事件可能晚于 Escape 到达，菜单状态不一致。改为显式控制展开；键盘打开、Escape 和外部点击均按当前状态处理。
+3. P2：合并主干全局弹窗后，关闭接入弹窗可能试图聚焦已经隐藏的菜单项。共享 `Dialog.Modal` 增加可选 `returnFocus`，明确返回仍可见的更多按钮。Chromium、WebKit 与原生窗口均验证。
+
+上述修正后重新截图，并对照整页和顶部局部。没有剩余 P0/P1/P2 布局问题。
+
+## 五项视觉检查
+
+| 项目 | 结果 |
+| --- | --- |
+| 字体与层级 | 沿用 App 字体与现有字号，保留任务标题、状态和验收正文的层级；长标题、窄窗口正常换行。 |
+| 间距与布局 | 固定导航、紧凑工具栏和列表/详情结构符合标注；短窗口真实滚动后导航坐标不变。 |
+| 颜色与 token | 继承 App 明暗主题；仅状态小标签使用浅色背景，四类状态均检查文字对比度。WebKit 的 display-p3 颜色通过画布转换到 sRGB 后计算，避免测试误解析。 |
+| 图像与图标 | 无新增位图资产；沿用图标库，新增更多图标同属现有库。 |
+| 文案与内容 | 移除重复项目名和顶部推送提示；Git 明细仍在折叠区。单次处理不显示历史选择，多次处理可查看只读历史。 |
+
+## 验证
+
+- `npx vitest run frontend`：45 个文件、231 项通过。
+- `npm run check:frontend`：0 错误；6 项已有警告。
+- `npm run build`、`npm run check:source-size`：通过。
+- `node scripts/codex_workbench_ui_qa.mjs`，以及 `CODEPET_QA_ENGINE=webkit`：通过，覆盖侧栏、弹窗层级、导航返回、主题与尺寸。
+- `node scripts/task_ledger_ui_qa.mjs`，以及 `CODEPET_QA_ENGINE=webkit`：通过，覆盖 1280/820/600/390 与完整 App 的 1143 视口、实际滚动、菜单/表单焦点、历史和筛选。
+- `node scripts/task_ledger_native_qa.mjs`：真实 Rust IPC、HTTP 写入可见性、人工验收/结束/重开、冲突草稿和接入菜单焦点通过。
+- `env TMPDIR=/private/tmp npm run test:webcontent`：11 项通过。默认 macOS `/var` 临时路径别名会使原有路径字符串断言失败；使用规范临时目录后通过，未修改该逻辑。
+
+最终浏览器场景检查运行时错误，安装包人工验收仍待用户执行。
+
+final result: passed
+
+---
+
+# 历史验收记录
+
 # Provider 卡片与标准 Manifest 校验 QA（2026-11-15）
 
 final result: passed

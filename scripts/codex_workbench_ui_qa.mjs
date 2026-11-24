@@ -52,9 +52,11 @@ try {
     const canvas = await surface('.content-pane');
     assert.equal((await surface('.workbench')).background, canvas.background, 'Workbench uses the same canvas as other App pages');
     const content = await page.locator('.content').boundingBox();
-    const tabs = await page.locator('.wb-tabs').boundingBox();
+    const tabs = await page.locator('.content-navigation').boundingBox();
     const inset = await page.locator('.content').evaluate(element => parseFloat(getComputedStyle(element).paddingLeft));
-    assert.ok(Math.abs(tabs.x - content.x - inset) < 1, 'Workbench uses the framework content inset without a second margin');
+    const navigation = await page.locator('.content-navigation .horizontal-tabs').boundingBox();
+    assert.ok(Math.abs(navigation.x - content.x - inset) < 1, 'Workbench navigation uses the framework content inset');
+    assert.ok(tabs.y < content.y, 'Secondary navigation belongs to the content container outside the scroll area');
     return canvas;
   }
   await page.goto('http://127.0.0.1:1437/frontend/qa/codex-workbench.html');

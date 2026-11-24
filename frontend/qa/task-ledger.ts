@@ -3,7 +3,7 @@ import '../styles.css';
 import '../main-window.css';
 import { mockIPC } from '@tauri-apps/api/mocks';
 import { mount } from 'svelte';
-import TaskLedger from '../lib/TaskLedger.svelte';
+import WorkbenchFrameQa from './WorkbenchFrameQa.svelte';
 import { themeClassNames } from '../lib/theme/defaults';
 import type { Task } from '../lib/taskLedger';
 const report=await fetch('/artifacts/task-ledger-qa/native/report.json').then(r=>r.json());
@@ -11,6 +11,7 @@ if(!report.success||!report.taskSnapshot)throw new Error('Run native task accept
 const base:Task=report.taskSnapshot;
 for(const round of base.rounds)round.phase=['published','validating_release'].includes(round.phase)?'published':['ready_for_delivery','ready_to_publish','awaiting_acceptance','ready_for_release'].includes(round.phase)?'ready_for_delivery':'in_progress';
 const tasks=[base];
+if(new URLSearchParams(location.search).get('scenario')==='single')base.rounds=base.rounds.filter(round=>round.id===base.currentRoundId);
 // Additional layout-only samples exercise list density and different verification states.
 if(new URLSearchParams(location.search).get('scenario')==='dense') {
   const titles=['修复桌宠菜单点击失效','Codex 任务登记与验收清单','历史对话与项目关联','优化工作树差异预览','修复主窗口焦点恢复','完善更新资源包校验','验证新版本安装流程','工作树状态刷新'];
@@ -22,14 +23,15 @@ if(new URLSearchParams(location.search).get('scenario')==='dense') {
   round.verifications=[{id:'layout-local',actor:'agent',createdAt:tasks[0].updatedAt,workspaceObservation:null,planRevision:plan.revision,stage:'local',target:'布局验收样例 · 本地工作区',environment:'macOS 样例',results:plan.criteria.map(c=>({criterionId:c.id,result:'passed',evidence:'布局样例：本地测试通过'}))},{id:'layout-release',actor:'human',createdAt:tasks[0].updatedAt,workspaceObservation:null,planRevision:plan.revision,stage:'release',target:'布局验收样例 · 1.3.0',environment:'macOS 样例',results:plan.criteria.slice(0,2).map((c,i)=>({criterionId:c.id,result:i===0?'passed':'failed',evidence:i===0?'布局样例：菜单正常出现':'布局样例：首次启动时偶发无响应'}))}];
 }
 mockIPC(async(command,args:any)=>{
+  if(command.startsWith('plugin:event|'))return 1;
+  if(command==='codex_workbench_request')return args.request.op==='projects'?{projects:[],warnings:[]}:[];
   if(command!=='task_ledger_request')throw new Error(`Unexpected ${command}`);
   if(args.request.op==='list')return structuredClone(tasks);
-  if(args.request.op==='setup')return {config:'[mcp_servers.codepet]\ncommand = \"fixture\"',instructions:'在方案与验收节点登记任务。'};
+  if(args.request.op==='setup')return {config:'[mcp_servers.codepet_tasks]\nurl = "http://127.0.0.1:47623/mcp"',instructions:'布局验收样例，不写入本机配置。'};
   if(args.request.op==='save'&&(window as any).__holdTaskSave)return new Promise((_,reject)=>{(window as any).__rejectTaskSave=()=>reject(new Error('模拟保存失败：验证忙碌时不能关闭窗口'));});
   throw new Error('Layout QA does not simulate business writes');
 });
 const target=document.getElementById('app')!;
 target.className=`main-theme ${themeClassNames('light')}`;
 (window as any).__setTaskTheme=(mode:'light'|'dark')=>target.className=`main-theme ${themeClassNames(mode)}`;
-const section=document.createElement('section');section.className='workbench';target.appendChild(section);
-mount(TaskLedger,{target:section});
+mount(WorkbenchFrameQa,{target,props:{view:'tasks'}});
