@@ -1,3 +1,4 @@
+import {taskLedgerOverflow} from './taskLedgerOverflow';
 // Browser-only QA fixture. This entry is excluded from production build inputs.
 import { emit } from "@tauri-apps/api/event";
 import { mockIPC, mockWindows } from "@tauri-apps/api/mocks";
@@ -73,7 +74,7 @@ const runtimeConnections = () => runtimeInventory.map((item) => ({providerId:ite
 mockIPC((command, raw) => {
   if (command === "task_ledger_request") {
     const request = (raw as any).request;
-    if (request.op === "list") return fetch('/artifacts/task-ledger-qa/native/report.json').then(r => r.json()).then(report => [report.taskSnapshot]);
+    if (request.op === "list") return fetch('/artifacts/task-ledger-qa/native/report.json').then(r => r.json()).then(report => new URLSearchParams(location.search).has('taskOverflow') ? taskLedgerOverflow(report.taskSnapshot) : [report.taskSnapshot]);
     if (request.op === "setup") return {config: '[mcp_servers.codepet_tasks]\nurl = "http://127.0.0.1:47623/mcp"\nhttp_headers = { "X-CodePet-Agent" = "codex" }', instructions: '界面验收样例，不修改本机配置。'};
     throw new Error(`Unhandled task ledger fixture operation: ${request.op}`);
   }

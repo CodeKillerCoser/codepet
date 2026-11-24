@@ -53,6 +53,8 @@
   --app-accent-strong: var(--amber-12);
   --app-good: var(--grass-11);
   --app-danger: var(--red-11);
+  --color-main-scrollbar-thumb: color-mix(in srgb, var(--app-muted) 24%, transparent);
+  --color-main-scrollbar-hover: color-mix(in srgb, var(--app-muted) 40%, transparent);
   --app-shadow: color-mix(in srgb, var(--sand-12) 8%, transparent);
   --pixel-grid: transparent;
 }

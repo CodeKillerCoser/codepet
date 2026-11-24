@@ -1,6 +1,19 @@
 @import "./lib/theme/main-window.css";
 @import "./lib/ui/ui.css";
 
+/* Main-window scroll surfaces share a quiet theme; explicit hidden bars remain local. */
+.main-theme, .main-theme * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-main-scrollbar-thumb) transparent;
+}
+.main-theme::-webkit-scrollbar, .main-theme *::-webkit-scrollbar { width: 6px; height: 6px; }
+.main-theme::-webkit-scrollbar-track, .main-theme *::-webkit-scrollbar-track { background: transparent; }
+.main-theme::-webkit-scrollbar-thumb, .main-theme *::-webkit-scrollbar-thumb {
+  background: var(--color-main-scrollbar-thumb);
+  border-radius: 6px;
+}
+.main-theme::-webkit-scrollbar-thumb:hover, .main-theme *::-webkit-scrollbar-thumb:hover { background: var(--color-main-scrollbar-hover); }
+
 /* Shared shell: product content retains its own DOM, controls and ordering. */
 .main-theme { --app-content-inset: 24px; }
 .main-theme.app-shell {
@@ -312,6 +325,7 @@
 /* Optional secondary navigation belongs to the content container, outside its scroll area. */
 .main-theme .content-navigation { flex: none; min-width: 0; padding: 8px var(--app-content-inset) 0; }
 .main-theme .content-navigation .horizontal-tabs { margin-bottom: 0; }
+.main-theme .content-navigation + .content { padding-top: 12px; }
 /* Workbench omits the duplicate heading and keeps the shared content surface/inset. */
 .main-theme .history-workbench > .content { scrollbar-gutter: auto; overflow-anchor: none; }
 

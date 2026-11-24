@@ -109,6 +109,50 @@ try {
   await page.screenshot({path: resolve(output, 'editable-agent-prompt.png')});
   await page.keyboard.press('Escape');
 
+  // Regression: small horizontal overflow still renders a full-width scrollbar on macOS.
+  await page.goto(route('overflow')); await page.locator('.task-row').nth(5).waitFor();
+  for (const mode of ['light', 'dark']) {
+    await page.evaluate(mode => window.__setTaskTheme(mode), mode);
+    for (const width of [1280, 820, 390]) {
+      await page.setViewportSize({width, height: 920});
+      const back = page.getByRole('button', {name: '← 返回任务列表', exact: true});
+      if (await back.isVisible()) await back.click();
+      const titles = await page.locator('.task-row strong').evaluateAll(es => es.map(e => {
+        const s = getComputedStyle(e);
+        return {height:e.getBoundingClientRect().height,lineHeight:parseFloat(s.lineHeight),whiteSpace:s.whiteSpace,title:e.title,text:e.textContent};
+      }));
+      for (const title of titles) {
+        assert.equal(title.whiteSpace, 'nowrap');
+        assert.ok(title.height <= title.lineHeight + 1, 'Task title remains one line');
+        assert.equal(title.title, title.text, 'Full title is retained');
+      }
+      await page.locator('.task-row').first().click();
+      const detail = page.locator('.task-detail');
+      const assertFits = async () => {
+        const bounds = await detail.evaluate(e => ({client:e.clientWidth,scroll:e.scrollWidth,bar:getComputedStyle(e).scrollbarWidth,webkit:getComputedStyle(e,'::-webkit-scrollbar').display}));
+        assert.ok(bounds.scroll <= bounds.client + 1, `${engine}/${mode}/${width} detail overflow: ${JSON.stringify(bounds)}`);
+        assert.ok(bounds.bar === 'none' || bounds.webkit === 'none', 'Detail bar hidden');
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+      };
+      await assertFits();
+      await page.getByRole('button', {name: '查看变更', exact: true}).click();
+      await assertFits();
+      await page.getByRole('button', {name: '查看变更', exact: true}).click();
+      if (width === 1280) {
+        await detail.evaluate(e => {e.scrollTop = 0;}); await detail.focus();
+        await page.keyboard.press('PageDown');
+        await page.waitForFunction(() => document.querySelector('.task-detail').scrollTop > 0);
+      }
+      await page.screenshot({path:resolve(output, `compact-${mode}-${width}.png`),fullPage:true});
+    }
+  }
+  await page.setViewportSize({width:1280,height:920});
+  await page.goto(route('overflow&manyRuns=1')); await page.locator('.run-card').nth(11).waitFor();
+  assert.ok(await page.locator('.run-navigation').evaluate(e=>e.scrollWidth<=e.clientWidth+1), 'Run cards wrap instead of horizontal scrolling');
+  await page.locator('.run-card').last().focus(); await page.keyboard.press('Home');
+  assert.equal(await page.locator('.run-card').first().getAttribute('aria-selected'),'true');
+  await page.keyboard.press('End'); assert.equal(await page.locator('.run-card').last().getAttribute('aria-selected'),'true');
+
   await page.goto(route('dense')); await page.locator('.task-row').nth(7).waitFor();
   assert.equal(await page.locator('.criterion').count(), 3);
   assert.equal(await page.locator('.check-mark.passed').count(), 1);
@@ -138,6 +182,14 @@ try {
     assert.equal((await app.locator('.content-navigation').boundingBox()).y, top);
     await app.setViewportSize({width: 1143, height: 949});
   }
+  await app.goto('http://127.0.0.1:1438/frontend/qa/main-window.html?taskOverflow=1');
+  await app.getByRole('tab',{name:'任务与验收',exact:true}).click(); await app.locator('.task-row').nth(5).waitFor();
+  assert.equal(await app.locator('.content').evaluate(e=>parseFloat(getComputedStyle(e).paddingTop)),12);
+  assert.ok((await app.getByLabel('搜索任务',{exact:true}).boundingBox()).width<=281);
+  assert.ok(await app.locator('.task-detail').evaluate(e=>e.scrollWidth<=e.clientWidth+1));
+  const scrollStyle=await app.locator('.content').evaluate(e=>({width:getComputedStyle(e,'::-webkit-scrollbar').width,color:getComputedStyle(e,'::-webkit-scrollbar-thumb').backgroundColor}));
+  assert.ok(parseFloat(scrollStyle.width)<=6); assert.notEqual(scrollStyle.color,'rgb(128, 128, 128)');
+  await app.screenshot({path:resolve(output,'compact-app-shell.png')});
   const visual = await browser.newPage({viewport: {width: 579, height: 760}, deviceScaleFactor: 2});
   await visual.goto(`${route('design')}&detailOnly=1`); await visual.locator('.run-card').nth(2).waitFor();
   await visual.screenshot({path: resolve(output, 'approved-detail-visual.png'), fullPage: true});

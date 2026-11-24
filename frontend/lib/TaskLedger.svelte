@@ -201,7 +201,7 @@
       <div class="task-rows">
         {#each filtered as task (task.id)}
           <button class="task-row" class:selected={selected?.id === task.id} aria-pressed={selected?.id === task.id} on:click={e => select(task, e.currentTarget)}>
-            <span class="row-top"><strong>{task.title}</strong><span class="status-badge" data-status={currentRun(task).status}>{taskStatus(task)}</span></span>
+            <span class="row-top"><strong title={task.title}>{task.title}</strong><span class="status-badge" data-status={currentRun(task).status}>{taskStatus(task)}</span></span>
             <span class="row-context"><span>{task.projectName} · {task.runs.length} 次执行</span><small>{fmt(task.updatedAt)}</small></span>
           </button>
         {:else}
@@ -209,7 +209,7 @@
         {/each}
       </div>
     </section>
-    <aside class="task-detail" aria-label="任务详情">
+    <aside class="task-detail" aria-label="任务详情" tabindex="-1">
       {#if selected && run}
         <button class="back quiet" on:click={back}>← 返回任务列表</button>
         <TaskRunDetail task={selected} bind:runId bind:this={detail} onEditTask={() => editTask(selected)} onVerify={startVerification} onOpenChat={openChat}/>

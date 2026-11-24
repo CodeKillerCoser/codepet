@@ -1,3 +1,4 @@
+import {taskLedgerOverflow} from './taskLedgerOverflow';
 // Browser layout replay of isolated native evidence; no production writes.
 import '../styles.css';import '../main-window.css';
 import {mockIPC} from '@tauri-apps/api/mocks';import {mount} from 'svelte';
@@ -8,6 +9,11 @@ import {currentRun,type Task} from '../lib/taskLedger';
 const report=await fetch('/artifacts/task-ledger-qa/native/report.json').then(r=>r.json());
 if(!report.success||report.taskSnapshot?.schemaVersion!==4)throw Error('Run native task/run acceptance first');
 const base:Task=report.taskSnapshot,tasks=[base],scenario=new URLSearchParams(location.search).get('scenario');
+if(scenario==='overflow')tasks.splice(0,1,...taskLedgerOverflow(base));
+if(scenario==='overflow'&&new URLSearchParams(location.search).has('manyRuns')){
+ const task=tasks[0],run=currentRun(task);
+ task.runs=Array.from({length:12},(_,i)=>({...structuredClone(run),id:`overflow-many-${i}`,createdAt:run.createdAt+i*60000}));
+}
 if(scenario==='single')base.runs=[currentRun(base)];
 if(scenario==='long'){base.description='布局样例：任务背景需要保留，但默认只展示摘要。'.repeat(60);currentRun(base).goal='布局样例：这次处理的目标按需展开。'.repeat(60);currentRun(base).solution='布局样例：定位结论与实施方案按需展开。'.repeat(60);}
 if(scenario==='dense'){

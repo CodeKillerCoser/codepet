@@ -66,7 +66,7 @@
     {#each task.runs as item, index (item.id)}
       <button role="tab" id={`run-tab-${item.id}`} aria-controls={`run-panel-${item.id}`}
         aria-selected={run.id === item.id} tabindex={run.id === item.id ? 0 : -1}
-        class="run-card" class:selected={run.id === item.id} on:click={() => choose(item.id)}>
+        class="run-card" title={item.title} class:selected={run.id === item.id} on:click={() => choose(item.id)}>
         <span class="run-title"><span class="run-number">{String(index + 1).padStart(2, '0')}</span><span>{item.title}</span></span>
         <span class="run-facts"><span>{item.kind}</span><span class="status-badge" data-status={item.status}>{statuses[item.status]}</span></span>
         <small>{actorLabel(item.createdBy)} · {fmt(item.createdAt)}</small>
@@ -156,23 +156,24 @@
 <style>
   .task-record { min-width: 0; }
   .task-heading { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
-  h3 { margin: 0; font-size: 20px; line-height: 1.45; font-weight: 600; overflow-wrap: anywhere; }
+  h3 { min-width: 0; flex: 1; margin: 0; font-size: 20px; line-height: 1.45; font-weight: 600; overflow-wrap: anywhere; }
   h3:focus { outline: none; }
   .task-record .metadata-edit { flex: none; font-size: 10px; padding: 2px 0; min-height: 22px; }
   .task-background { font-size: 12px; line-height: 1.6; white-space: pre-wrap; overflow-wrap: anywhere; margin: 6px 0 6px; }
   .task-context { display: flex; gap: 4px 8px; flex-wrap: wrap; color: var(--wb-muted); font-size: 10px; }
   .task-context > :not(:last-child)::after { content: ' ·'; margin-left: 8px; }
   .task-divider { border: 0; border-top: 1px solid var(--wb-border); margin: 12px 0 16px; }
-  .run-navigation { display: flex; gap: 8px; overflow-x: auto; padding: 3px; margin: -3px; scroll-padding: 3px; }
-  .run-card { flex: 1 0 150px; max-width: 240px; display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; text-align: left; background: var(--wb-panel); border: 1px solid var(--wb-border); border-radius: 6px; }
+  .run-navigation { display: flex; flex-wrap: wrap; gap: 8px; min-width: 0; }
+  .run-card { flex: 1 1 150px; min-width: 0; max-width: 240px; display: flex; flex-direction: column; gap: 2px; padding: 8px 12px; text-align: left; background: var(--wb-panel); border: 1px solid var(--wb-border); border-radius: 6px; }
+  .run-card:focus-visible { outline-offset: -2px; }
   .run-card.selected { background: var(--wb-control); border-color: color-mix(in srgb, var(--wb-border) 65%, var(--wb-border-strong)); }
-  .run-title { display: flex; gap: 8px; font-size: 12px; line-height: 1.5; color: var(--wb-muted); }
-  .run-title > span:last-child { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .run-title { min-width: 0; width: 100%; display: flex; gap: 8px; font-size: 12px; line-height: 1.5; color: var(--wb-muted); }
+  .run-title > span:last-child { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .selected .run-title { color: var(--wb-text); font-weight: 500; }
-  .run-number { font-variant-numeric: tabular-nums; }
+  .run-number { flex: none; font-variant-numeric: tabular-nums; }
   .run-facts { display: flex; align-items: center; gap: 8px; color: var(--wb-muted); font-size: 10px; }
   .run-card .status-badge { padding: 0 4px; font-size: 10px; }
-  .run-card small { font-size: 10px; white-space: nowrap; }
+  .run-card small { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: 10px; white-space: nowrap; }
   .run-card:not(.selected) .status-badge { background: transparent; color: var(--wb-muted); font-weight: 400; padding: 0; }
   .run-section { margin-top: 20px; min-width: 0; }
   h4 { color: var(--wb-muted); font-size: 13px; font-weight: 500; margin: 0 0 8px; }
