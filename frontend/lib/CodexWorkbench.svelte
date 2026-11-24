@@ -10,6 +10,7 @@
   import * as Dialog from './ui/dialog/index';
   import { workbenchRequest as api, activity, dirty, unpushed, filterRows, statusMatches, branchLabel, changeLabel, gitSummary, type SourceInfo, type Project, type Snapshot, type Worktree, type Change } from './codexWorkbench';
   let projects: Project[] = [], draft: string[] = [], projectSearch = '', pickerOpen = false;
+  let projectInput: HTMLInputElement;
   let snapshot: Snapshot | null = null, loading = false, catalogLoading = true, error = '', catalogWarnings: string[] = [];
   let query = '', filterProjects: string[] = [], related = false, period = 'all', date = '', status = 'all', selectedId = '', archived = false;
   let progress = { checked: 0, total: 0, phase: 'history' }, sequence = 0, rechecking = new Set<string>(), actionMessage = '', actionError = '';
@@ -39,7 +40,16 @@
   }
   let saveQueue = Promise.resolve();
   function persist() { const projectIds = [...draft]; saveQueue = saveQueue.then(async () => { await api('saveSelection', { projectIds }); }).catch(e => { error = String(e); }); return saveQueue; }
-  function toggleProject(id: string) { draft = draft.includes(id) ? draft.filter(p => p !== id) : [...draft, id]; projectSearch = ''; void persist(); }
+  function updateProjectSelection(projectIds: string[]) {
+    draft = projectIds; projectSearch = ''; void persist();
+    void tick().then(() => projectInput?.focus({ preventScroll: true }));
+  }
+  function toggleProject(id: string) { updateProjectSelection(draft.includes(id) ? draft.filter(p => p !== id) : [...draft, id]); }
+  function retainProjectSearchFocus(event: PointerEvent) {
+    // macOS WebKit moves focus to the ancestor section before a button's click.
+    // Keep this popup mounted until selection, including touch/pen activation.
+    if (event.button === 0) event.preventDefault();
+  }
   async function scan() {
     if (previewOpen) closePreview();
     detailOpen = false;
@@ -84,8 +94,15 @@
   <div class="wb-body">
     <div class="scanbar">
       <div class="project-picker" on:focusout={(e) => { if (!(e.currentTarget.contains(e.relatedTarget as Node))) pickerOpen = false; }}>
-        <div class="tags">{#each draft as id}<span class="tag">{projects.find(p => p.id === id)?.name}<button aria-label={`移除 ${projects.find(p => p.id === id)?.name}`} on:click={() => toggleProject(id)}><X size={12}/></button></span>{/each}<input aria-label="搜索并选择项目" placeholder={draft.length ? '' : '选择项目，键入搜索…'} bind:value={projectSearch} on:focus={() => pickerOpen = true} on:input={() => pickerOpen = true} on:keydown={(e) => { if(e.key === 'Escape') {e.preventDefault(); pickerOpen = false;} if(e.key === 'ArrowDown') {e.preventDefault(); pickerOpen = true; tick().then(() => document.querySelector<HTMLButtonElement>('.project-options button')?.focus());} }} /></div>
-        {#if pickerOpen}<div class="project-options" role="group" aria-label="项目选项">{#each projects.filter(p => !draft.includes(p.id) && p.name.toLowerCase().includes(projectSearch.toLowerCase())) as p}<button on:click={() => toggleProject(p.id)}>{p.name}<small>{p.roots.join(' · ')}</small></button>{:else}<p>没有其他匹配项目</p>{/each}{#if draft.length}<button on:click={() => { draft = []; void persist(); }}>清空选择</button>{/if}</div>{/if}
+        <div class="tags">{#each draft as id}<span class="tag">{projects.find(p => p.id === id)?.name}<button aria-label={`移除 ${projects.find(p => p.id === id)?.name}`} on:click={() => toggleProject(id)}><X size={12}/></button></span>{/each}<input bind:this={projectInput} aria-label="搜索并选择项目" placeholder={draft.length ? '' : '选择项目，键入搜索…'} bind:value={projectSearch} on:focus={() => pickerOpen = true} on:click={() => pickerOpen = true} on:input={() => pickerOpen = true} on:keydown={(e) => { if(e.key === 'Escape') {e.preventDefault(); pickerOpen = false;} if(e.key === 'ArrowDown') {e.preventDefault(); pickerOpen = true; tick().then(() => document.querySelector<HTMLButtonElement>('.project-options button')?.focus());} }} /></div>
+        {#if pickerOpen}
+          <div class="project-options" role="group" aria-label="项目选项">
+            {#each projects.filter(p => !draft.includes(p.id) && p.name.toLowerCase().includes(projectSearch.toLowerCase())) as p}
+              <button on:pointerdown={retainProjectSearchFocus} on:click={() => toggleProject(p.id)}>{p.name}<small>{p.roots.join(' · ')}</small></button>
+            {:else}<p>没有其他匹配项目</p>{/each}
+            {#if draft.length}<button on:pointerdown={retainProjectSearchFocus} on:click={() => updateProjectSelection([])}>清空选择</button>{/if}
+          </div>
+        {/if}
       </div>
       <button class="refresh" aria-label="刷新项目列表" disabled={catalogLoading} on:click={() => loadProjects()}><RefreshCw size={18}/></button>
       <button class="confirm" disabled={!draft.length || catalogLoading} on:click={scan} title={loading ? '重新开始扫描' : '扫描所选项目'}>确认</button>
