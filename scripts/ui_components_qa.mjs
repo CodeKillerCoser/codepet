@@ -118,7 +118,7 @@ try {
   await page.goto('http://127.0.0.1:1449/frontend/qa/main-window.html?uiHistory');
   const history = page.getByRole('dialog', { name: '抽取历史', exact: true });
   await history.waitFor();
-  assert.equal(await history.getByRole('heading').evaluate(el => getComputedStyle(el).fontSize), '15px');
+  assert.equal(await history.getByRole('heading').evaluate(el => getComputedStyle(el).fontSize), '18px','Dialog headings use the shared section typography');
   assert.equal(await page.locator('.history-overlay').evaluate(el => getComputedStyle(el).backdropFilter), 'none');
   await page.keyboard.press('Escape'); await history.waitFor({ state: 'hidden' });
 

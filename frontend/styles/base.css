@@ -37,6 +37,13 @@ select {
   font: inherit;
 }
 
+.main-theme :where(.content) { font: var(--font-body); }
+.main-theme :is(h1, h2) { font: var(--font-title); }
+.main-theme h3 { font: var(--font-section); }
+.main-theme h4 { font: var(--font-subheading); }
+.main-theme :is(h5, h6) { font-size: var(--font-size-label); font-weight: var(--font-weight-medium); }
+.main-theme small { font: var(--font-caption); }
+
 button {
   cursor: pointer;
 }

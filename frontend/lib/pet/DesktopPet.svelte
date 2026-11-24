@@ -204,7 +204,7 @@
 
 <style>
   .pet-stage { min-height: var(--pet-stage-height); }
-  .pet-snap-hint { position: absolute; bottom: 0; white-space: nowrap; background: var(--pet-pill-bg); color: var(--pet-message); border-radius: 12px; padding: 3px 8px; font-size: 11px; pointer-events: none; }
-  .dock-button span { font-size: 17px; line-height: 1; }
+  .pet-snap-hint { position: absolute; bottom: 0; white-space: nowrap; background: var(--pet-pill-bg); color: var(--pet-message); border-radius: 12px; padding: 3px 8px; font-size: var(--font-size-xs); pointer-events: none; }
+  .dock-button span { font-size: var(--font-size-xl); line-height: var(--line-height-none); }
   .status-pill { cursor: default; }
 </style>

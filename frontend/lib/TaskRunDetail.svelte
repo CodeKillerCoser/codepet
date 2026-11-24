@@ -1,6 +1,7 @@
 <script lang="ts">
-  import {ChevronRight, Pencil, CheckCheck, GitBranch} from '@lucide/svelte';
-  import {currentRun,statuses,kinds,actorLabel,criterionCheck,formatTaskTime as fmt,type Task} from './taskLedger';
+  import {ChevronRight, Pencil, CheckCheck, ChevronDown, ChevronUp} from '@lucide/svelte';
+  import TaskStatus from './TaskStatus.svelte';
+  import {currentRun,kinds,actorLabel,criterionCheck,formatTaskTime as fmt,type Task} from './taskLedger';
 
   export let task:Task;
   export let runId='';
@@ -35,13 +36,13 @@
     </header>
     {#if task.description}
       <p class="task-background" class:clamped={!expandedBackground}>{task.description}</p>
-      {#if task.description.length>220}<button class="quiet text-toggle" aria-expanded={expandedBackground} on:click={()=>expandedBackground=!expandedBackground}>{expandedBackground?'收起任务背景':'展开任务背景'}</button>{/if}
+      {#if task.description.length>220}<button class="quiet text-toggle" aria-label={expandedBackground?'收起任务背景':'展开任务背景'} title={expandedBackground?'收起':'展开'} aria-expanded={expandedBackground} on:click={()=>expandedBackground=!expandedBackground}>{#if expandedBackground}<ChevronUp size={16}/>{:else}<ChevronDown size={16}/>{/if}</button>{/if}
     {/if}
     <div class="task-context"><span>{task.projectName}</span><span>{actorLabel(task.createdBy)} 创建</span><time datetime={new Date(task.createdAt).toISOString()}>{fmt(task.createdAt)}</time></div>
     <hr class="task-divider"/>
   </div>
   <div class="task-run-scroll" role="region" aria-label="任务执行列表" tabindex="-1">
-    <div class="executions-heading"><h4>任务执行 <span>{task.runs.length}</span></h4><small>最近活动优先</small></div>
+    <div class="executions-heading"><h4>任务执行 <span>{task.runs.length}</span></h4></div>
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions (Arrow keys supplement the ordinary execution buttons.) -->
     <div class="run-navigation" role="group" aria-label="任务执行" on:keydown={navigate}>
       {#each executions as {run,index} (run.id)}
@@ -52,13 +53,12 @@
           <span class="run-number">{String(index+1).padStart(2,'0')}</span>
           <span class="run-summary">
             <span class="run-title"><strong>{run.title}</strong>{#if run.id===currentRun(task).id}<small class="current-label">当前执行</small>{/if}</span>
-            {#if run.goal}<span class="run-preview">{run.goal}</span>{/if}
+            {#if run.goal.trim() && run.goal.trim()!==run.title.trim()}<span class="run-preview">{run.goal}</span>{/if}
             <span class="run-facts"><span>{kinds[run.kind]}</span><span>{actorLabel(run.createdBy)}</span><time datetime={new Date(run.updatedAt).toISOString()}>{fmt(run.updatedAt)}</time>
               {#if run.validationPlan.items.length}<span class="run-validation"><CheckCheck size={13}/>{passed}/{run.validationPlan.items.length}</span>{/if}
-              {#if run.agentWorkspace.branch}<span class="run-branch"><GitBranch size={13}/><span>{run.agentWorkspace.branch}</span></span>{/if}
             </span>
           </span>
-          <span class="run-state"><span class="status-badge" data-status={run.status}>{statuses[run.status]}</span><ChevronRight size={17}/></span>
+          <span class="run-state"><TaskStatus status={run.status}/><ChevronRight size={17}/></span>
         </button>
       {/each}
     </div>
@@ -70,38 +70,36 @@
   .task-info{flex:none;max-height:min(48%,300px);overflow:auto;scrollbar-width:none;}
   .task-info::-webkit-scrollbar{display:none;}
   .task-heading{display:flex;align-items:flex-start;gap:16px;}
-  h3{flex:1;min-width:0;margin:0;font-size:23px;font-weight:600;line-height:1.45;letter-spacing:-.025em;overflow-wrap:anywhere;}
+  h3{flex:1;min-width:0;margin:0;font:var(--font-title);letter-spacing:var(--letter-spacing-title);overflow-wrap:anywhere;}
   h3:focus{outline:none;}
   .task-record .metadata-edit{display:grid;place-items:center;flex:none;min-height:32px;width:32px;padding:0;}
-  .task-background{font-size:15px;line-height:1.8;margin:12px 0;color:var(--task-secondary);white-space:pre-wrap;overflow-wrap:anywhere;}
-  .task-context{display:flex;gap:6px 16px;flex-wrap:wrap;font-size:13px;color:var(--task-secondary);margin-top:14px;}
+  .task-background{font-size:var(--font-size-body);line-height:var(--line-height-reading-spacious);margin:12px 0;color:var(--task-secondary);white-space:pre-wrap;overflow-wrap:anywhere;}
+  .task-context{display:flex;gap:6px 16px;flex-wrap:wrap;font-size:var(--font-size-caption);color:var(--task-secondary);margin-top:14px;}
   .task-context > :not(:last-child)::after{content:'·';margin-left:16px;color:var(--wb-border-strong);}
   .task-divider{border:0;border-top:1px solid var(--wb-border);margin:22px 0 0;}
   .task-run-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;scrollbar-width:none;overscroll-behavior:contain;overflow-anchor:none;outline:none;padding:20px 1px 12px;}
   .task-run-scroll::-webkit-scrollbar{display:none;}
   .task-run-scroll:focus-visible{box-shadow:inset 2px 0 var(--color-focus-ring);}
   .executions-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px;}
-  h4{margin:0;font-size:16px;font-weight:600;}
-  h4 span{margin-left:6px;font-size:13px;font-weight:400;color:var(--task-secondary);}
-  .run-navigation{display:flex;flex-direction:column;gap:10px;}
-  .task-record .run-card{display:flex;align-items:flex-start;gap:14px;min-width:0;width:100%;padding:16px;border:1px solid var(--wb-border);border-radius:10px;background:var(--wb-panel);text-align:left;}
+  h4{margin:0;font:var(--font-section);}
+  h4 span{margin-left:6px;font-size:var(--font-size-caption);font-weight:var(--font-weight-regular);color:var(--task-secondary);}
+  .run-navigation{display:flex;flex-direction:column;}
+  .task-record .run-card{display:flex;align-items:flex-start;gap:14px;min-width:0;width:100%;padding:18px 10px;border:0;border-bottom:1px solid var(--wb-border);border-radius:0;background:transparent;text-align:left;}
   .task-record .run-card:hover{background:var(--wb-control);border-color:var(--wb-border-strong);}
   .task-record .run-card.selected{background:var(--wb-control);border-color:var(--wb-border-strong);}
-  .run-number{flex:none;min-width:22px;padding-top:1px;color:var(--task-secondary);font-size:13px;font-variant-numeric:tabular-nums;}
+  .run-number{flex:none;min-width:22px;padding-top:1px;color:var(--task-secondary);font-size:var(--font-size-caption);font-variant-numeric:tabular-nums;}
   .run-summary{flex:1;min-width:0;}
   .run-title{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;}
-  .run-title strong{font-size:16px;line-height:1.55;font-weight:600;overflow-wrap:anywhere;}
+  .run-title strong{font:var(--font-subheading);overflow-wrap:anywhere;}
   .current-label{white-space:nowrap;}
-  .run-preview{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;font-size:14px;line-height:1.7;color:var(--task-secondary);margin-top:5px;overflow-wrap:anywhere;}
-  .run-facts{display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap;font-size:13px;color:var(--task-secondary);margin-top:10px;}
-  .run-validation,.run-branch{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:100%;}
-  .run-branch span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .run-preview{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;font-size:var(--font-size-label);line-height:var(--line-height-reading);color:var(--task-secondary);margin-top:5px;overflow-wrap:anywhere;}
+  .run-facts{display:flex;align-items:center;gap:6px 14px;flex-wrap:wrap;font-size:var(--font-size-caption);color:var(--task-secondary);margin-top:10px;}
+  .run-validation{display:inline-flex;align-items:center;gap:4px;min-width:0;max-width:100%;}
   .run-state{display:flex;align-items:center;gap:10px;flex:none;padding-top:2px;color:var(--task-secondary);}
   @container(max-width:600px){
-    h3{font-size:21px;}
+    h3{font-size:var(--font-size-title-compact);}
     .task-record .run-card{gap:10px;padding:14px 12px;flex-wrap:wrap;}
     .run-state{margin-left:32px;padding-top:0;}
-    .run-title strong{font-size:15px;}
-    .run-branch{display:none;}
+    .run-title strong{font-size:var(--font-size-body);}
   }
 </style>

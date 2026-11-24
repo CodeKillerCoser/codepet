@@ -81,8 +81,8 @@
   .remove-provider:disabled { opacity: .5; cursor: default; }
   .provider-identity { flex: 1; min-width: 0; display: grid; gap: 5px; }
   .name-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .kind { font-size: 11px; color: var(--app-muted); padding: 2px 6px; border-radius: 4px; background: var(--app-surface-soft); white-space: nowrap; flex-shrink: 0; }
-  h3 { margin: 0; min-width: 0; font-size: var(--font-size-md); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kind { font-size: var(--font-size-xs); color: var(--app-muted); padding: 2px 6px; border-radius: 4px; background: var(--app-surface-soft); white-space: nowrap; flex-shrink: 0; }
+  h3 { margin: 0; min-width: 0; font: var(--font-subheading); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .provider-identity :global(.provider-connection) { margin: 0; }
   dl { display: grid; gap: 2px; margin: 0; }
   dl > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 32px; }

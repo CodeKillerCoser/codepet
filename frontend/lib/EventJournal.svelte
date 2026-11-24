@@ -155,16 +155,16 @@
   button { border: 1px solid var(--app-border); border-radius: 8px; padding: 9px 12px; color: var(--app-text); background: var(--app-surface-soft); cursor: pointer; }
   button:disabled { opacity: 0.5; cursor: default; }
   button:focus-visible, summary:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
-  .status { display: flex; gap: 12px; margin: 14px 0; opacity: 0.7; font-size: 12px; }
+  .status { display: flex; gap: 12px; margin: 14px 0; opacity: 0.7; font-size: var(--font-size-sm); }
   details { border-top: 1px solid var(--app-border); }
   summary { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 12px 4px; flex-wrap: wrap; }
   summary::before { content: "▸"; }
   details[open] summary::before { content: "▾"; }
   summary strong, .method { overflow-wrap: anywhere; }
-  .source { font-size: 10px; letter-spacing: 0.05em; opacity: 0.7; }
-  .method { flex: 1; font-size: 12px; }
-  time { font-size: 11px; opacity: 0.7; }
-  pre { max-height: 480px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; font-size: 12px; background: var(--app-surface-soft); }
+  .source { font-size: var(--font-size-2xs); letter-spacing: var(--letter-spacing-source); opacity: 0.7; }
+  .method { flex: 1; font-size: var(--font-size-sm); }
+  time { font-size: var(--font-size-xs); opacity: 0.7; }
+  pre { max-height: 480px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; font-size: var(--font-size-sm); background: var(--app-surface-soft); }
   .older { margin-top: 16px; }
   .empty { padding: 30px 0; text-align: center; opacity: 0.7; }
   @media (max-width: 600px) {

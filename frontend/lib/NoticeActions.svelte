@@ -50,6 +50,6 @@
   button { padding:4px 8px; border:1px solid var(--app-border); border-radius:5px; background:var(--app-surface); color:inherit; font:inherit; cursor:pointer; }
   button:disabled { opacity:.5; cursor:default; }
   button:focus-visible,textarea:focus-visible { outline:2px solid var(--app-accent); outline-offset:2px; }
-  label { display:block; font-size:12px; } textarea { display:block; box-sizing:border-box; width:100%; min-width:0; resize:vertical; margin:6px 0; background:var(--app-surface); color:inherit; border:1px solid var(--app-border); border-radius:4px; padding:6px; font:inherit; }
-  p { margin:5px 0; font-size:12px; overflow-wrap:anywhere; }.permission-options p { width:100%; }
+  label { display:block; font-size:var(--font-size-sm); } textarea { display:block; box-sizing:border-box; width:100%; min-width:0; resize:vertical; margin:6px 0; background:var(--app-surface); color:inherit; border:1px solid var(--app-border); border-radius:4px; padding:6px; font:inherit; }
+  p { margin:5px 0; font-size:var(--font-size-sm); overflow-wrap:anywhere; }.permission-options p { width:100%; }
 </style>

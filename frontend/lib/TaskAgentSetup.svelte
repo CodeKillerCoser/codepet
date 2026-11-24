@@ -1,5 +1,6 @@
 <script lang="ts">
   import * as Dialog from './ui/dialog/index';
+  import {X,Copy} from '@lucide/svelte';
   import {taskRequest, type AgentSetup} from './taskLedger';
 
   export let returnFocus: HTMLElement;
@@ -39,26 +40,27 @@
     <fieldset class="form-controls" disabled={busy}>
       <header>
         <h3>连接 Agent 任务登记</h3>
-        <button type="button" aria-label="关闭接入说明" on:click={() => dialog.close()}>×</button>
+        <button type="button" aria-label="关闭接入说明" title="关闭" on:click={() => dialog.close()}><X size={18}/></button>
       </header>
-      <p>替换 config.toml 中的 codepet_tasks 条目，在新对话或重新连接 MCP 后使用。</p>
+      <p>将配置加入 config.toml，重新连接 MCP 后生效。</p>
+      <details><summary>接入说明</summary>
       {#if setup?.transport === 'stdio'}
         <p class="muted">固定入口位于用户目录，移动或重命名 Code Pet 不影响连接。Agent 会自动启动独立程序，无需保持 App 运行；启动新版 App 后会更新程序和使用的数据目录。</p>
       {:else}
         <p class="muted">本机 HTTP 服务随 Code Pet 后台运行。</p>
       {/if}
-      <label>MCP 配置<textarea readonly rows="5" value={setup?.config ?? ''}></textarea></label>
-      <button type="button" on:click={copy}>复制配置</button>
       <p class="muted">{setup?.transport === 'stdio' ? 'CODEPET_AGENT' : 'X-CodePet-Agent'} 标记调用来源，默认 codex。</p>
+      </details>
+      <label>MCP 配置<textarea readonly rows="5" value={setup?.config ?? ''}></textarea></label>
+      <button type="button" class="quiet" aria-label="复制配置" title="复制" on:click={copy}><Copy size={16}/></button>
       <label>Agent 使用提示词
         <textarea aria-label="Agent 使用提示词" rows="10" maxlength="16000" required bind:value={draft}></textarea>
       </label>
-      <p class="muted">保存后在新对话或重新连接 MCP 时提供给 Agent，已连接的会话不会自动更新。</p>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       {#if message}<p class="message" role="status">{message}</p>{/if}
       <footer>
         <button type="button" class="quiet" disabled={!setup?.instructionsCustomized} on:click={() => save(true)}>恢复默认</button>
-        <button class="primary" disabled={!draft.trim() || draft === setup?.instructions}>{busy ? '保存中…' : '保存提示词'}</button>
+        <button class="primary" disabled={!draft.trim() || draft === setup?.instructions}>{busy ? '保存中…' : '确认'}</button>
       </footer>
     </fieldset>
   </form>

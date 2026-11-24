@@ -138,7 +138,7 @@
   background: var(--app-surface);
 }
 .main-theme .topbar > div { min-width: 0; width: 100%; }
-.main-theme .topbar h2 { margin: 0; font-size: var(--font-size-lg); line-height: var(--line-height-page); font-weight: var(--font-weight-semibold); }
+.main-theme .topbar h2 { margin: 0; font: var(--font-title); }
 .main-theme .topbar .error { font-size: var(--font-size-sm); max-height: 64px; overflow-y: auto; overflow-wrap: anywhere; }
 .main-theme .content {
   flex: 1;
@@ -159,8 +159,8 @@
 .main-theme .overview-card strong { font-size: var(--font-size-5xl); line-height: var(--line-height-page); font-variant-numeric: tabular-nums; }
 .main-theme .overview-card p { white-space: normal; overflow: visible; }
 .main-theme :is(.section-head, .panel-head) { align-items: center; gap: 12px; flex-wrap: wrap; }
-.main-theme :is(.section-head, .panel-head) h3 { font-size: var(--font-size-md); line-height: var(--line-height-section); }
-.main-theme :is(.agent-card, .runtime-card) h3 { font-size: var(--font-size-md); line-height: var(--line-height-section); }
+.main-theme :is(.section-head, .panel-head) h3 { font: var(--font-section); }
+.main-theme :is(.agent-card, .runtime-card) h3 { font: var(--font-subheading); }
 .main-theme :is(.eyebrow, .agent-kicker) { font-size: var(--font-size-sm); color: var(--app-muted); font-weight: var(--font-weight-regular); }
 .main-theme :is(.agent-card, .runtime-card, .robot-channel-card) { background: var(--app-surface); border-color: var(--app-border); padding: 16px; box-shadow: none; }
 .main-theme :is(.agent-description, .section-head p, .runtime-card-head p) { font-size: var(--font-size-sm-plus); line-height: var(--line-height-body); }
@@ -193,7 +193,7 @@
 }
 .main-theme :is(input, select, textarea) { accent-color: var(--color-main-accent-solid); }
 .main-theme :is(code, pre, .path) { font-family: var(--font-family-code); font-size: var(--font-size-sm); }
-.main-theme :is(.update-dialog, .pair-device-dialog) { background: var(--app-surface); backdrop-filter: none; border: 1px solid var(--app-border); border-radius: 10px; box-shadow: 0 12px 40px var(--app-shadow); }
+.main-theme :is(.update-dialog, .pair-device-dialog) { background: var(--app-surface); backdrop-filter: none; border: 1px solid var(--app-border); border-radius: 10px; }
 .main-theme svg.lucide { stroke-width: 1.75; }
 .main-theme .status-chip.online { background: var(--color-main-success-bg); color: var(--color-main-success-text); }
 .main-theme .status-chip.runtime-danger { background: var(--color-main-danger-bg); color: var(--color-main-danger-text); }
@@ -252,12 +252,12 @@
 .main-theme .content [hidden] { display: none; }
 .main-theme .settings-workspace:not(.pet-creation) { gap: 32px; }
 .main-theme .settings-page.settings-workspace { display: block; }
-.main-theme .settings-section > h3 { font-size: 14px; margin: 0 0 16px; }
+.main-theme .settings-section > h3 { font: var(--font-section); margin: 0 0 16px; }
 .main-theme .settings-card { min-width: 0; border: 1px solid var(--app-border); border-radius: 16px; padding: 0 20px; background: var(--app-surface); }
 .main-theme .settings-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-width: 0; padding: 18px 0; }
 .main-theme .settings-row + .settings-row { border-top: 1px solid var(--app-border); }
-.main-theme .settings-row-label { flex: 1; min-width: 0; font-weight: 500; }
-.main-theme .settings-row-label p { color: var(--app-muted); font-weight: 400; font-size: 12px; line-height: 1.6; margin: 5px 0 0; }
+.main-theme .settings-row-label { flex: 1; min-width: 0; font-weight: var(--font-weight-medium); }
+.main-theme .settings-row-label p { color: var(--app-muted); font-weight: var(--font-weight-regular); font-size: var(--font-size-sm); line-height: var(--line-height-body-relaxed); margin: 5px 0 0; }
 .main-theme .settings-row-value { display: flex; align-items: center; justify-content: flex-end; gap: 10px; flex-wrap: wrap; min-width: 0; max-width: 58%; text-align: right; }
 .main-theme .settings-row-value .path { margin: 0; overflow-wrap: anywhere; color: var(--app-muted); }
 .main-theme .settings-control-stack { display: grid; justify-items: end; gap: 12px; min-width: 0; }
@@ -308,12 +308,12 @@
 /* Provider information groups retain content height rather than stretching grid rows. */
 .main-theme .runtime-section { padding: 0; border: 0; background: transparent; box-shadow: none; align-content: start; gap: 24px; }
 .main-theme .runtime-group { display: grid; align-content: start; gap: 12px; min-width: 0; }
-.main-theme .runtime-group-title { margin: 0; font-size: var(--font-size-sm); font-weight: 500; color: var(--app-muted); }
+.main-theme .runtime-group-title { margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); color: var(--app-muted); }
 .main-theme .runtime-list { grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 16px; align-content: start; align-items: start; }
 .main-theme .runtime-actions { justify-content: flex-end; margin-top: 8px; }
 .main-theme .runtime-empty { margin: 20px 0; color: var(--app-muted); font-size: var(--font-size-sm-plus); }
 .main-theme .runtime-custom-provider { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 16px; border: 1px dashed var(--app-border); border-radius: 8px; }
-.main-theme .runtime-custom-provider h3 { margin: 0; flex: 1; font-size: var(--font-size-sm-plus); }
+.main-theme .runtime-custom-provider h3 { margin: 0; flex: 1; font: var(--font-subheading); }
 .main-theme .runtime-custom-provider p { flex-basis: 100%; margin: 0; color: var(--app-muted); overflow-wrap: anywhere; }
 .main-theme .runtime-add-provider { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid var(--app-border); border-radius: 10px; background: transparent; color: var(--app-text); }
 .main-theme .runtime-add-provider:hover:not(:disabled) { background: var(--color-main-hover); }

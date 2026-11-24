@@ -15,7 +15,6 @@
 .pixel-panel {
   border: 1px solid var(--app-border);
   background: var(--app-surface);
-  box-shadow: 0 16px 34px var(--app-shadow);
   backdrop-filter: blur(16px) saturate(1.08);
 }
 
@@ -173,9 +172,7 @@
 
 .content h2 {
   color: var(--app-text);
-  font-size: var(--font-size-display);
-  font-weight: var(--font-weight-bold);
-  line-height: var(--line-height-display);
+  font: var(--font-title);
 }
 
 .topbar-copy {

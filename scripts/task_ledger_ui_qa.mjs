@@ -79,7 +79,7 @@ try{
  for(const name of ['目标与方案','工作区','验收清单','活动时间线'])assert.equal(await panel.getByRole('region',{name,exact:true}).count(),1);
  assert.ok(await panel.evaluate(e=>!e.closest('.task-ledger')),'Uses the framework panel');
  assert.equal(await page.locator('button button').count(),0);
- assert.equal(await panel.getByRole('button',{name:'标记完成',exact:true}).count(),1);
+ assert.equal(await panel.getByRole('button',{name:'执行状态：待确认',exact:true}).count(),1);
  await panel.getByRole('button',{name:/打开 Codex 对话/}).click();
  assert.equal(await page.evaluate(()=>window.__openedTaskChat),'00000000-0000-4000-8000-000000000000');
  await panel.getByRole('button',{name:'查看变更',exact:true}).click();
@@ -89,7 +89,7 @@ try{
  await panel.getByRole('button',{name:'返回执行详情',exact:true}).click();
  assert.ok(await panel.getByRole('button',{name:'查看变更',exact:true}).evaluate(e=>e===document.activeElement));
  await close();assert.ok(await page.locator('.run-card').first().evaluate(e=>e===document.activeElement));
- await openRun(2);assert.equal(await panel.getByRole('button',{name:'标记完成',exact:true}).count(),0,'History stays read-only');await close();
+ await openRun(2);assert.equal(await panel.getByRole('button',{name:'执行状态：待确认',exact:true}).count(),0,'History stays read-only');await close();
  await page.locator('.run-card').first().focus();await page.keyboard.press('End');assert.ok(await page.locator('.run-card').last().evaluate(e=>e===document.activeElement));await page.keyboard.press('Home');assert.ok(await page.locator('.run-card').first().evaluate(e=>e===document.activeElement));
 
  for(const mode of ['light','dark']){
@@ -127,36 +127,40 @@ try{
 
  // Metadata and editable Agent instructions remain available on the overview.
  await page.getByRole('button',{name:'修改任务信息',exact:true}).click();await page.getByRole('dialog',{name:'修改任务信息',exact:true}).waitFor();
- await page.getByLabel('背景与现象').fill('保留未保存的背景草稿');await page.evaluate(()=>window.__holdTaskSave=true);await page.getByRole('button',{name:'保存任务',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.form-controls')?.disabled);
+ await page.getByLabel('背景与现象').fill('保留未保存的背景草稿');await page.evaluate(()=>window.__holdTaskSave=true);await page.getByRole('button',{name:'确认',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.form-controls')?.disabled);
  await page.keyboard.press('Escape');assert.ok(await page.getByRole('button',{name:'关闭任务编辑',exact:true}).isDisabled());
  await page.evaluate(()=>{window.__holdTaskSave=false;window.__rejectTaskSave();});await page.waitForFunction(()=>!document.querySelector('.form-controls')?.disabled);assert.equal(await page.getByLabel('背景与现象').inputValue(),'保留未保存的背景草稿');await page.keyboard.press('Escape');
  await page.getByLabel('更多任务操作').click();await page.getByRole('button',{name:'接入 Agent',exact:true}).click();
  const prompt=page.getByRole('textbox',{name:'Agent 使用提示词',exact:true});await prompt.waitFor();const defaultText=await prompt.inputValue();
  assert.ok((await page.getByLabel('MCP 配置').inputValue()).includes('--managed-stdio'));
- await prompt.fill('只在关键节点合并登记。');await page.getByRole('button',{name:'保存提示词',exact:true}).click();await page.getByRole('status').filter({hasText:'提示词已保存'}).waitFor();await page.keyboard.press('Escape');
+ await prompt.fill('只在关键节点合并登记。');await page.getByRole('button',{name:'确认',exact:true}).click();await page.getByRole('status').filter({hasText:'提示词已保存'}).waitFor();await page.keyboard.press('Escape');
  await page.getByLabel('更多任务操作').click();await page.getByRole('button',{name:'接入 Agent',exact:true}).click();assert.equal(await prompt.inputValue(),'只在关键节点合并登记。');
- await page.evaluate(()=>window.__promptConflict());await prompt.fill('冲突保留草稿');await page.getByRole('button',{name:'保存提示词',exact:true}).click();await page.getByRole('alert').filter({hasText:'revision='}).waitFor();assert.equal(await prompt.inputValue(),'冲突保留草稿');await page.keyboard.press('Escape');
+ await page.evaluate(()=>window.__promptConflict());await prompt.fill('冲突保留草稿');await page.getByRole('button',{name:'确认',exact:true}).click();await page.getByRole('alert').filter({hasText:'revision='}).waitFor();assert.equal(await prompt.inputValue(),'冲突保留草稿');await page.keyboard.press('Escape');
  await page.getByLabel('更多任务操作').click();await page.getByRole('button',{name:'接入 Agent',exact:true}).click();await page.getByRole('button',{name:'恢复默认',exact:true}).click();await page.getByRole('status').filter({hasText:'已恢复默认'}).waitFor();assert.equal(await prompt.inputValue(),defaultText);await page.keyboard.press('Escape');
 
  // Completion and restoration use the panel actions; a new run never changes old evidence.
  await goto('manual-completion');await openRun();
- const complete=page.getByRole('button',{name:'标记完成',exact:true});
+ const stateTrigger=panel.getByRole('button',{name:'执行状态：待确认',exact:true});
+ const complete=async()=>{await stateTrigger.click();await panel.getByRole('menuitem',{name:'已完成',exact:true}).click();};
+ await stateTrigger.focus();await page.keyboard.press('ArrowDown');await panel.getByRole('menu',{name:'修改执行状态',exact:true}).waitFor();
+ assert.ok(await panel.getByRole('menuitem',{name:'已完成',exact:true}).evaluate(e=>e===document.activeElement));
+ await page.keyboard.press('Escape');assert.equal(await panel.count(),1,'Escape closes only the state menu');assert.ok(await stateTrigger.evaluate(e=>e===document.activeElement));
  const oldEvidence=await page.evaluate(()=>JSON.stringify(window.__taskCompletionState()[0].runs.at(-1).validationPlan));
- await page.evaluate(()=>window.__holdTaskClose=true);await complete.click();await page.getByRole('button',{name:'保存中…',exact:true}).waitFor();
- assert.ok(await page.getByRole('button',{name:'保存中…',exact:true}).isDisabled());await page.evaluate(()=>{window.__holdTaskClose=false;window.__rejectTaskClose();});await complete.waitFor();
+ await page.evaluate(()=>window.__holdTaskClose=true);await complete();await page.waitForFunction(()=>document.querySelector('.run-status-trigger')?.disabled);
+ assert.ok(await stateTrigger.isDisabled());await page.evaluate(()=>{window.__holdTaskClose=false;window.__rejectTaskClose();});await panel.getByRole('alert').waitFor();
  assert.equal(await page.evaluate(()=>window.__taskCompletionState()[0].runs.at(-1).status),'ready_for_delivery');
- await page.evaluate(()=>window.__conflictTaskCompletion());await complete.click();await page.getByRole('alert').filter({hasText:'revision='}).waitFor();
+ await page.evaluate(()=>window.__conflictTaskCompletion());await complete();await page.getByRole('alert').filter({hasText:'revision='}).waitFor();
  await close();await page.getByRole('button',{name:'刷新任务',exact:true}).click();await page.getByRole('button',{name:'返回任务列表',exact:true}).click();await page.getByLabel('任务状态',{exact:true}).selectOption('ready_for_delivery');await page.locator('.task-row').first().click();await openRun();
- await complete.click();await panel.waitFor({state:'detached'});await page.getByRole('status').filter({hasText:'已标记完成'}).waitFor();
- assert.equal(await page.locator('.run-card .status-badge').first().innerText(),'已完成');
+ await complete();await panel.waitFor({state:'detached'});await page.getByRole('status').filter({hasText:'已标记完成'}).waitFor();
+ assert.equal(await page.locator('.run-card .task-status').first().innerText(),'已完成');
  assert.ok(await page.locator('.task-heading h3').evaluate(e=>e===document.activeElement));
  const beforeRestore=await page.evaluate(()=>window.__taskCompletionState()[0].runs);assert.equal(JSON.stringify(beforeRestore.at(-1).validationPlan),oldEvidence);assert.equal(beforeRestore.at(-1).closure.accepted,false);
- await openRun();const restore=page.getByRole('button',{name:'改为开发中',exact:true});await restore.click();const dialog=page.getByRole('dialog',{name:'改为开发中',exact:true});await dialog.waitFor();
+ await openRun();const restore=panel.getByRole('button',{name:'执行状态：已完成',exact:true});const restoreRun=async()=>{await restore.click();await panel.getByRole('menuitem',{name:'开发中',exact:true}).click();};await restoreRun();const dialog=page.getByRole('dialog',{name:'改为开发中',exact:true});await dialog.waitFor();
  assert.equal(await dialog.getByLabel('处理方案',{exact:true}).inputValue(),'');await page.keyboard.press('Escape');await dialog.waitFor({state:'detached'});assert.ok(await restore.evaluate(e=>e===document.activeElement));
- await restore.click();await dialog.waitFor();await dialog.getByLabel('执行标题',{exact:true}).fill('复发后继续处理');await page.evaluate(()=>window.__holdTaskSave=true);await dialog.getByRole('button',{name:'新增执行并改为开发中',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.form-controls')?.disabled);
+ await restoreRun();await dialog.waitFor();await dialog.getByLabel('执行标题',{exact:true}).fill('复发后继续处理');await page.evaluate(()=>window.__holdTaskSave=true);await dialog.getByRole('button',{name:'确认',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.form-controls')?.disabled);
  await page.evaluate(()=>{window.__holdTaskSave=false;window.__rejectTaskSave();});await dialog.getByRole('alert').waitFor();assert.equal(await dialog.getByLabel('执行标题',{exact:true}).inputValue(),'复发后继续处理');
- await dialog.getByRole('button',{name:'新增执行并改为开发中',exact:true}).click();await dialog.waitFor({state:'detached'});await panel.waitFor({state:'detached'});
+ await dialog.getByRole('button',{name:'确认',exact:true}).click();await dialog.waitFor({state:'detached'});await panel.waitFor({state:'detached'});
  const restored=await page.evaluate(()=>window.__taskCompletionState()[0]);assert.deepEqual(restored.runs.slice(0,-1),beforeRestore);assert.equal(restored.runs.at(-1).status,'in_progress');assert.equal(restored.runs.at(-1).validationPlan.records.length,0);
- await openRun(1);assert.equal(await page.getByRole('button',{name:'改为开发中',exact:true}).count(),0,'Closed historical run stays read-only');await close();
+ await openRun(1);assert.equal(await page.getByRole('button',{name:'执行状态：已完成',exact:true}).count(),0,'Closed historical run stays read-only');await close();
  assert.deepEqual(errors,[]);console.log(`Task UI passed (${engine}): Task board/table and filtering/sorting, overview hierarchy, framework run panel/diff return, responsive themes, keyboard focus, completion/history preservation, prompt editing/conflicts.`);
 }catch(e){console.error(e);throw e;}finally{await browser.close();await server.close();}

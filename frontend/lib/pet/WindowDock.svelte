@@ -408,12 +408,12 @@
   .window-dock {bottom:5px;display:flex;align-items:center;gap:4px;max-width:95%;padding:4px 6px;background:var(--gray-3);color:var(--gray-12);border:1px solid var(--gray-7);border-radius:12px;box-shadow:0 4px 16px #0006}
   button {color:inherit;font:inherit;cursor:pointer}
   .window-dock button,.drag-help button {background:transparent;border:0;border-radius:6px}
-  .window-dock button {display:grid;place-items:center;min-width:27px;height:27px;font-size:11px}
+  .window-dock button {display:grid;place-items:center;min-width:27px;height:27px;font-size:var(--font-size-xs)}
   .window-dock button[aria-pressed="true"],button:hover {background:var(--gray-5)}
   img {width:20px;height:20px;border-radius:4px}
   .items {display:flex;min-width:0;overflow-x:auto}
   .items:empty {display:none}
-  .drag-help {bottom:44px;max-height:calc(100% - 50px);overflow:auto;width:min(280px,95%);padding:8px;background:var(--gray-3);color:var(--gray-12);border:1px solid var(--gray-7);border-radius:9px;font-size:12px;box-sizing:border-box}
+  .drag-help {bottom:44px;max-height:calc(100% - 50px);overflow:auto;width:min(280px,95%);padding:8px;background:var(--gray-3);color:var(--gray-12);border:1px solid var(--gray-7);border-radius:9px;font-size:var(--font-size-sm);box-sizing:border-box}
   header {display:flex;align-items:center;gap:6px}
-  header {justify-content:space-between;font-weight:600}
+  header {justify-content:space-between;font-weight:var(--font-weight-semibold)}
 </style>

@@ -130,7 +130,6 @@
     padding: 8px;
     border: 0;
     background: var(--app-bg);
-    box-shadow: -12px 0 40px var(--color-history-drawer-shadow);
   }
   :global(.app-side-panel[data-mode="drawer"][data-state="open"]) { animation: app-panel-enter 220ms ease both; }
   :global(.app-side-panel[data-mode="drawer"][data-state="closed"]) { animation: app-panel-exit 220ms ease both; pointer-events: none; }
@@ -138,7 +137,7 @@
   @keyframes app-panel-exit { from { transform: translateX(0); } to { transform: translateX(100%); } }
   .panel-card { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; border: 1px solid var(--color-main-outline); border-radius: 16px; background: var(--app-surface); }
   .panel-header { display: flex; align-items: center; justify-content: space-between; flex: none; gap: 16px; min-height: 52px; padding: 10px var(--app-content-inset,24px); border-bottom: 1px solid var(--color-main-divider); }
-  .panel-header :global(h3) { margin: 0; min-width: 0; font-size: var(--font-size-lg); line-height: var(--line-height-page); overflow-wrap: anywhere; }
+  .panel-header :global(h3) { margin: 0; min-width: 0; font: var(--font-section); overflow-wrap: anywhere; }
   .panel-header :global(h3:focus) { outline: none; }
   .panel-header button { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--app-muted); cursor: pointer; }
   .panel-header button:hover { background: var(--app-surface-soft); }

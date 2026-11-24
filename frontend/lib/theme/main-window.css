@@ -13,14 +13,10 @@
   --font-weight-heavy: 600;
   --letter-spacing-caps: 0;
   --letter-spacing-caps-wide: 0;
-  --line-height-body: 1.5714286;
-  --line-height-label: 1.5384615;
-  --line-height-section: 1.5714286;
-  --line-height-page: 1.5;
   --color-main-chrome: #f0f3f6;
   --color-main-canvas: #ffffff;
-  --color-main-outline: #21201c08;
-  --color-main-divider: #21201c0a;
+  --color-main-outline: var(--gray-4);
+  --color-main-divider: var(--gray-4);
   --color-main-control: var(--sand-9);
   --color-main-hover: var(--sand-4);
   --color-main-selected: var(--amber-3);
@@ -44,8 +40,8 @@
   --app-surface: var(--color-main-canvas);
   --app-surface-strong: var(--color-main-canvas);
   --app-surface-soft: var(--sand-2);
-  --app-border: var(--sand-6);
-  --app-border-strong: var(--sand-9);
+  --app-border: var(--gray-6);
+  --app-border-strong: var(--gray-8);
   --app-text: var(--color-text-primary);
   --app-muted: var(--color-text-muted);
   --app-subtle: var(--color-text-subtle);
@@ -63,8 +59,6 @@
   color-scheme: dark;
   --color-main-chrome: #1c1e21;
   --color-main-canvas: #141516;
-  --color-main-outline: #ffffff08;
-  --color-main-divider: #ffffff0a;
   --app-shadow: #00000040;
 }
 

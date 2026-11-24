@@ -25,7 +25,7 @@
 </div>
 
 <style>
-  .provider-connection { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 12px; margin-bottom: 12px; }
+  .provider-connection { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: var(--font-size-sm); margin-bottom: 12px; }
   .provider-connection.compact { display: block; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .compact span + span { margin-left: 14px; }
   .online { color: var(--color-success); }

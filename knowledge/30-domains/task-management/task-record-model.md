@@ -148,3 +148,16 @@ TaskRunContent 单独承载执行正文，以 15px 正文、16px 分区标题和
 codexWorkbenchSession 保存上一次宽度范围，防止同宽度切页覆盖手动选中的表格。搜索、项目、状态、排序和 Task/TaskRun 数据均保持不变。回归覆盖 959/960px 边界、宽窄反复切换后筛选保留、明暗主题无横向溢出，以及完整 App 外框中同一窗口只展开/收起左导航就触发自动切换；对四个状态列检查相同顶部坐标。继续复用已有详情/全局侧栏与返回焦点回归。
 
 验证通过：`node scripts/task_ledger_ui_qa.mjs`（Chromium）、`CODEPET_QA_ENGINE=webkit node scripts/task_ledger_refinement_qa.mjs`、`npm run check:frontend`（0错误/5项既有警告）、`npm run check:source-size`、`npm run build:webcontent`。本机已安装 v28（builtAt=1795553146034，API32），实际 App 缩小窗口自动显示表格，放大后恢复四列同排，再次缩小/放大结果一致；保留原5个任务及 Task MCP 的7次执行，生产账本未写入。
+
+
+### 视觉层级与统一状态入口（2026-11-25）
+
+用户要求降低视觉重量，去掉无用备注，统一状态图标和字体 token，并补充边框必须使用中性灰阶。TaskCollection 移除重复的当前执行摘要，单项目看板省略重复项目名；四列/表格自动切换不变。TaskRunDetail 改为平面执行列表，移除“最近活动优先”和重复分支，保留标题、目标、类型、来源、时间和验收进度。卡片和视图按钮去掉阴影，边框统一走 Radix Gray 4/6/8；全局抽屉、共享面板和弹窗不再叠加装饰阴影。
+
+TaskStatus 统一看板、表格、执行列表、侧栏和筛选的四态图标；TaskWorkspaceStatus 统一工作区/变更详情的提交、推送和未知状态。当前执行通过 TaskRunStatus 点状态选择合法下一状态，替代“标记完成”“改为开发中”独立按钮及更多菜单里的重复入口。待确认可人工完成，已完成/已发布可通过原新执行表单转开发中；历史只读、Agent 完成锁、人工权限和验收结果隔离均不变。失败与冲突保留旧状态，恢复开发不改写旧执行。
+
+TaskLedger、TaskAgentSetup 用 Lucide 关闭、删除、复制、展开/收起及返回图标，保留 aria-label，确认动作使用短文案；接入原理放入说明折叠，变更版本选择本身承担标签，固定快照说明移入 tooltip，真实未知、错误与未核实来源仍可见。字体在 theme 统一为 24/18/16/15/14/13 的标题、分区、三级、正文、控件与备注层级，生产组件的字号、字重、行高、字距及 font 简写改用 token；旧紧凑桌宠尺寸仅迁移到已有 primitive。语义复合 font 在 .main-theme 重新解析，防止沿用 root 的桌宠字体族。
+
+回归覆盖：状态菜单键盘和 Escape 不关闭侧栏、完成忙碌/失败/冲突、恢复取消后的焦点与旧执行等值保留；字体来自当前主题、15px正文和明暗次要文本对比度；全局分栏/抽屉、四列/表格、390至1440宽度无横向溢出。前端244项测试通过，Chromium/WebKit任务UI、Chromium refinement和原生隔离账本通过；共享UI设置/弹窗和桌宠布局QA通过。首次无范围的 vitest 调用误收集了 Node/Bun/examples 独立测试，已按 frontend 范围重新运行；不宣称那些外部测试通过。浏览器样例不写入生产任务验收。
+
+交付复核：WebKit refinement（含当前主题字体族）和共享设置/弹窗QA也通过；前端检查0错误/5项既有警告，源码尺寸无违规。本机前端v30（builtAt=1795554630801/API32）已安装；实际App核对7次执行、全局状态菜单及Escape只关闭菜单，原Task MCP revision22/closed未变。生产任务未写入，原生程序未替换。

@@ -1,7 +1,8 @@
 <script lang="ts">
   import {onMount, onDestroy, tick} from 'svelte';
   import {open} from '@tauri-apps/plugin-dialog';
-  import {Ellipsis, Columns3, Table2, ArrowLeft, RefreshCw} from '@lucide/svelte';
+  import {Ellipsis, Columns3, Table2, ArrowLeft, RefreshCw, X, Trash2, ListFilter} from '@lucide/svelte';
+  import TaskStatus from './TaskStatus.svelte';
   import * as Dialog from './ui/dialog/index';
   import TaskRunDetail from './TaskRunDetail.svelte';
   import TaskRunContent from './TaskRunContent.svelte';
@@ -14,7 +15,7 @@
   import {
     taskRequest as api, currentRun, statuses, kinds, scopes,
     filterTasks,
-    type Task, type Criterion, type TaskKind, type Receipt
+    type Task, type Criterion, type TaskKind, type Receipt, type RunStatus
   } from './taskLedger';
   import './taskLedger.css';
 
@@ -194,7 +195,7 @@
         <label>预期结果<textarea required rows="2" bind:value={criterion.expected}></textarea></label>
         <div class="form-row"><label>适用阶段<select bind:value={criterion.scope}>{#each Object.entries(scopes) as [value, label]}<option {value}>{label}</option>{/each}</select></label>
           <label class="checkbox"><input type="checkbox" bind:checked={criterion.required}/>必验</label>
-          <button type="button" disabled={criteria.length === 1} on:click={() => criteria = criteria.filter((_, n) => n !== i)}>移除</button>
+          <button type="button" class="quiet" aria-label={`删除验收项 ${i+1}`} title="删除" disabled={criteria.length === 1} on:click={() => criteria = criteria.filter((_, n) => n !== i)}><Trash2 size={16}/></button>
         </div>
       </fieldset>
     {/each}
@@ -223,7 +224,7 @@
       <div class="filters" role="search" aria-label="筛选任务">
         <input aria-label="搜索任务" placeholder="搜索任务…" bind:value={query}/>
         <select aria-label="任务项目" bind:value={project}><option value="">全部项目</option>{#each projects as [id,name]}<option value={id}>{name}</option>{/each}</select>
-        <select aria-label="任务状态" bind:value={status}><option value="all">全部状态</option>{#each Object.entries(statuses) as [value,label]}<option {value}>{label}</option>{/each}</select>
+        <div class="status-filter"><span>{#if status==='all'}<ListFilter size={14}/>{:else}<TaskStatus status={status as RunStatus} label={false}/>{/if}</span><select aria-label="任务状态" bind:value={status}><option value="all">全部状态</option>{#each Object.entries(statuses) as [value,label]}<option {value}>{label}</option>{/each}</select></div>
       </div>
     {/if}
     <div class="toolbar-actions">
@@ -232,7 +233,6 @@
       <details class="ledger-more" open={moreOpen}>
         <summary aria-label="更多任务操作" aria-expanded={moreOpen} title="更多任务操作" bind:this={moreTrigger} on:click|preventDefault={()=>moreOpen=!moreOpen}><Ellipsis size={16}/></summary>
         <div class="more-menu"><button class="quiet" on:click={showSetup}>接入 Agent</button>
-          {#if selected&&['published','closed'].includes(currentRun(selected).status)}<button class="quiet" disabled={busy} on:click={()=>createRun(moreTrigger)}>{currentRun(selected).status==='closed'?'改为开发中':'新一次执行'}</button>{/if}
         </div>
       </details>
     </div>
@@ -253,7 +253,7 @@
     <div bind:this={panelPages}>
     {#if error}<div class="task-surface"><p role="alert" class="error">{error}</p></div>{/if}
     {#if panelView==='changes'}
-      <div class="task-surface"><button class="quiet panel-back" on:click={backToRun}><ArrowLeft size={16}/>返回执行详情</button></div>
+      <div class="task-surface"><button class="quiet panel-back" aria-label="返回执行详情" title="返回" on:click={backToRun}><ArrowLeft size={18}/></button></div>
       {#if changes}<TaskRunChanges taskId={selected.id} {run} {changes} {commits} loading={changesLoading} error={changesError}/>{/if}
     {/if}
     <div hidden={panelView!=='run'}>
@@ -265,7 +265,7 @@
 
 <Dialog.Modal title={taskDraft ? '修改任务信息' : '新建任务'} class="ledger-dialog" bind:this={taskDialog} onCancel={e => { if (busy) e.preventDefault(); }}>
   <form on:submit|preventDefault={saveTask}><fieldset class="form-controls" disabled={busy}>
-    <header><h3>{taskDraft ? '修改任务信息' : '新建任务'}</h3><button type="button" aria-label="关闭任务编辑" on:click={() => taskDialog.close()}>×</button></header>
+    <header><h3>{taskDraft ? '修改任务信息' : '新建任务'}</h3><button type="button" aria-label="关闭任务编辑" title="关闭" on:click={() => taskDialog.close()}><X size={18}/></button></header>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <label>任务标题<input required maxlength="160" bind:value={taskTitle} placeholder="一句话描述要解决什么"/></label>
     <label>背景与现象<textarea rows="3" maxlength="8000" bind:value={taskDescription}></textarea></label>
@@ -273,17 +273,17 @@
       <label>工作区<div class="directory"><input required bind:value={workspace}/><button type="button" on:click={directory}>选择</button></div></label>
       <details><summary>首次执行与验收（可选）</summary>{@render runEditor()}</details>
     {/if}
-    <footer><button class="primary">{busy ? '保存中…' : '保存任务'}</button></footer>
+    <footer><button class="primary">{busy ? '保存中…' : '确认'}</button></footer>
   </fieldset></form>
 </Dialog.Modal>
 
 <Dialog.Modal title={restoringDevelopment ? '改为开发中' : '新一次执行'} class="ledger-dialog" returnFocus={runReturnFocus} bind:this={runDialog} onCancel={e => { if (busy) e.preventDefault(); }}>
   <form on:submit|preventDefault={saveRun}><fieldset class="form-controls" disabled={busy}>
-    <header><h3>{restoringDevelopment ? '改为开发中' : '新一次执行'}</h3><button type="button" aria-label="关闭执行编辑" on:click={() => runDialog.close()}>×</button></header>
+    <header><h3>{restoringDevelopment ? '改为开发中' : '新一次执行'}</h3><button type="button" aria-label="关闭执行编辑" title="关闭" on:click={() => runDialog.close()}><X size={18}/></button></header>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <label>工作区<div class="directory"><input required bind:value={workspace}/><button type="button" on:click={directory}>选择</button></div></label>
     {@render runEditor()}
-    <footer><small>将新增一次执行，保留之前的验收和历史；新执行需要重新验收。</small><button class="primary" disabled={!runTitle.trim()}>{busy ? '保存中…' : restoringDevelopment ? '新增执行并改为开发中' : '创建执行'}</button></footer>
+    <footer><small>新增执行，保留历史。</small><button class="primary" disabled={!runTitle.trim()}>{busy ? '保存中…' : '确认'}</button></footer>
   </fieldset></form>
 </Dialog.Modal>
 

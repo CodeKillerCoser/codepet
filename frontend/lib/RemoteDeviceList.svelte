@@ -108,6 +108,6 @@
     .remote-device-actions { grid-column: 1 / -1; justify-content: flex-start; }
   }
   .connection-traffic { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; font-variant-numeric: tabular-nums; }
-  .connection-traffic .connection-channel { color: var(--app-text); font-weight: 600; }
+  .connection-traffic .connection-channel { color: var(--app-text); font-weight: var(--font-weight-semibold); }
   .connection-traffic .connection-total { flex-basis: 100%; white-space: normal; }
 </style>

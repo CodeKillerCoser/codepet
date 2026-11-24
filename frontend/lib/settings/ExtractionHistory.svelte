@@ -37,13 +37,13 @@
   :global(.history-drawer) { inset: 0 0 0 auto; transform: none; margin: 0; width: min(440px,100vw); max-width: 100vw; height: 100dvh; max-height: 100dvh; box-sizing: border-box; border: 0; border-left: 1px solid var(--app-border); padding: 0; background: var(--app-surface); color: var(--app-text); box-shadow: -12px 0 40px var(--color-history-drawer-shadow); }
   :global(.history-drawer[data-state="open"]) { display: flex; flex-direction: column; }
   .history-head { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 24px; border-bottom: 1px solid var(--app-border); }
-  .history-head :global(h3) { margin: 0; font-size: var(--font-size-md-plus); overflow-wrap: anywhere; }
-  .history-head :global(button) { border: 1px solid var(--app-border); border-radius: 6px; padding: 6px 10px; background: var(--app-surface); color: var(--app-text); font-size: 12px; }
+  .history-head :global(h3) { margin: 0; font: var(--font-section); overflow-wrap: anywhere; }
+  .history-head :global(button) { border: 1px solid var(--app-border); border-radius: 6px; padding: 6px 10px; background: var(--app-surface); color: var(--app-text); font-size: var(--font-size-sm); }
   .history-content { padding: 24px; overflow: auto; min-height: 0; }
-  .history-job { border: 1px solid var(--app-border); border-radius: 12px; padding: 16px; margin-top: 12px; font-size: 12px; overflow-wrap: anywhere; }
+  .history-job { border: 1px solid var(--app-border); border-radius: 12px; padding: 16px; margin-top: 12px; font-size: var(--font-size-sm); overflow-wrap: anywhere; }
   .history-job > div { display: flex; justify-content: space-between; gap: 12px; }
   .history-job time, .history-job span, .hint, .empty { color: var(--app-muted); }
-  .hint { font-size: 11px; margin: 6px 0 12px; overflow-wrap: anywhere; }
-  .empty { font-size: 12px; padding: 16px; }
+  .hint { font-size: var(--font-size-xs); margin: 6px 0 12px; overflow-wrap: anywhere; }
+  .empty { font-size: var(--font-size-sm); padding: 16px; }
   .error { color: var(--color-main-danger-text); overflow-wrap: anywhere; }
 </style>

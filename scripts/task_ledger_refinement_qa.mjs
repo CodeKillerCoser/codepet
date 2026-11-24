@@ -21,15 +21,16 @@ try{
  await page.locator('.table-task').filter({hasText:title}).click();await open();
  assert.equal(await panel.getAttribute('data-mode'),'column');assert.ok(await panel.evaluate(e=>!e.closest('.task-ledger')));
  const edit=page.getByRole('button',{name:'修改任务信息',exact:true});await edit.click();await page.getByRole('dialog',{name:'修改任务信息',exact:true}).waitFor();await page.keyboard.press('Escape');assert.equal(await panel.count(),1,'Editing is layered over the framework panel');
+ await page.waitForFunction(()=>!document.getAnimations().some(animation=>animation.playState==='running'));
  assert.equal(await panel.locator('.workspace-section .info-grid>div').count(),3);
  for(const mode of ['light','dark']){
   await page.evaluate(mode=>window.__setTaskTheme(mode),mode);
   const readability=await panel.locator('.info-grid').first().evaluate(e=>{
    const rgb=css=>{const x=document.createElement('canvas').getContext('2d');x.fillStyle=css;x.fillRect(0,0,1,1);return [...x.getImageData(0,0,1,1).data].slice(0,3);};
    const lum=rgb=>rgb.map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((a,v,i)=>a+v*[.2126,.7152,.0722][i],0);
-   const probe=document.createElement('span');probe.style.color='var(--wb-panel)';e.append(probe);const bg=lum(rgb(getComputedStyle(probe).color));probe.remove();const text=lum(rgb(getComputedStyle(e.querySelector('dt')).color));return {size:parseFloat(getComputedStyle(e).fontSize),contrast:(Math.max(bg,text)+.05)/(Math.min(bg,text)+.05)};
+   const probe=document.createElement('span');probe.style.color='var(--wb-panel)';probe.style.fontFamily='var(--font-family-ui)';e.append(probe);const bg=lum(rgb(getComputedStyle(probe).color));const familyMatches=getComputedStyle(e).fontFamily===getComputedStyle(probe).fontFamily;probe.remove();const text=lum(rgb(getComputedStyle(e.querySelector('dt')).color));return {size:parseFloat(getComputedStyle(e).fontSize),familyMatches,contrast:(Math.max(bg,text)+.05)/(Math.min(bg,text)+.05)};
   });
-  assert.ok(readability.size>=15);assert.ok(readability.contrast>=4.5,`Text contrast ${mode}: ${readability.contrast}`);
+  assert.ok(readability.size>=15);assert.ok(readability.familyMatches,'Typography resolves using the active App font family');assert.ok(readability.contrast>=4.5,`Text contrast ${mode}: ${readability.contrast}`);
   assert.ok(await panel.locator('.check-mark.passed').first().evaluate(e=>{const probe=document.createElement('span');probe.style.color='var(--color-success)';e.append(probe);const same=getComputedStyle(e).color===getComputedStyle(probe).color;probe.remove();return same;}));
   await page.screenshot({path:resolve(output,`overview-and-run-${mode}.png`)});
  }

@@ -65,12 +65,12 @@
 </section>
 
 <style>
-  .settings{margin:24px 0;font-size:12px;min-width:0}
-  h3{margin:0 0 16px;font-size:14px}.schedule-heading{margin-top:32px}
+  .settings{margin:24px 0;font-size:var(--font-size-sm);min-width:0}
+  h3{margin:0 0 16px;font:var(--font-section)}.schedule-heading{margin-top:32px}
   label{display:flex;gap:16px;align-items:center;justify-content:space-between;min-width:0}
   input,select,textarea{min-width:0;color:var(--app-text);background:var(--app-bg);border:1px solid var(--app-border);border-radius:6px;padding:7px;box-sizing:border-box}
   textarea{resize:vertical}
-  p{color:var(--app-muted);overflow-wrap:anywhere;line-height:1.6}
+  p{color:var(--app-muted);overflow-wrap:anywhere;line-height:var(--line-height-body-relaxed)}
   pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto}
   details{margin:12px 0}details .fields{margin-top:12px}
   button{padding:7px 10px;margin:16px 8px 6px 0;border:1px solid var(--app-border);border-radius:6px;color:var(--app-text);background:var(--app-surface)}

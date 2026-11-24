@@ -104,7 +104,7 @@
   .usage-controls { flex-wrap: wrap; align-items: end; }
   .usage-controls label { min-width: 0; max-width: 100%; }
   select, input { max-width: 100%; font: inherit; }
-  .usage-note { opacity: .75; font-size: .85rem; overflow-wrap: anywhere; }
+  .usage-note { opacity: .75; font-size: var(--font-size-relative-note); overflow-wrap: anywhere; }
   .usage-results { overflow-x: auto; max-width: 100%; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   th, td { padding: 10px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--app-border); }

@@ -35,14 +35,14 @@
 
 <style>
   section{min-width:0;color:var(--app-text);font-family:var(--font-family-ui)}
-  h3{font-size:14px;margin:24px 0 16px}
+  h3{font:var(--font-section);margin:24px 0 16px}
   form{padding:18px 0;border-top:1px solid var(--app-border)}
-  label{display:block;font-size:13px;margin-bottom:10px}
+  label{display:block;font-size:var(--font-size-caption);margin-bottom:10px}
   .address-row{display:flex;align-items:center;gap:12px}
   .address-row :global(input){flex:1;min-width:0;background:var(--app-bg);color:var(--app-text)}
-  .address-row :global(input),.address-row :global(button){padding:9px 12px;border:1px solid var(--app-border);border-radius:6px;font:inherit;font-size:13px}
+  .address-row :global(input),.address-row :global(button){padding:9px 12px;border:1px solid var(--app-border);border-radius:6px;font:inherit;font-size:var(--font-size-caption)}
   .address-row :global(button){flex-shrink:0;background:var(--app-surface);color:var(--app-text)}
-  p{font-size:12px;line-height:1.6;color:var(--app-muted);overflow-wrap:anywhere;margin:10px 0 0}
+  p{font-size:var(--font-size-sm);line-height:var(--line-height-body-relaxed);color:var(--app-muted);overflow-wrap:anywhere;margin:10px 0 0}
   .error{color:var(--color-main-danger-text)}
   .address-row :global(:is(input,button):focus-visible){outline:2px solid var(--color-focus-ring);outline-offset:2px}
 </style>

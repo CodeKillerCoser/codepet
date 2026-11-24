@@ -61,13 +61,13 @@
 </div>
 
 <style>
-  .permission-guide { border-top: 1px solid var(--app-border); padding-top: 16px; color: var(--app-muted); font-size: 13px; line-height: 1.7; }
+  .permission-guide { border-top: 1px solid var(--app-border); padding-top: 16px; color: var(--app-muted); font-size: var(--font-size-caption); line-height: var(--line-height-reading); }
   .permission-guide p { margin: 0 0 12px; }
   .permission-guide ol { margin: 0 0 18px; padding-left: 22px; }
   .permission-guide li + li { margin-top: 8px; }
   .permission-app { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 18px; }
   .permission-app .path { overflow-wrap: anywhere; min-width: 0; flex: 1 1 220px; }
   button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
-  .permission-note { font-size: 12px; }
-  .permission-feedback { margin: 12px 0; font-size: 13px; overflow-wrap: anywhere; }
+  .permission-note { font-size: var(--font-size-sm); }
+  .permission-feedback { margin: 12px 0; font-size: var(--font-size-caption); overflow-wrap: anywhere; }
 </style>

@@ -70,10 +70,44 @@
   --line-height-relaxed: 1.45;
   --line-height-loose: 1.5;
   --line-height-display: 1.04;
+  --line-height-body: 1.65;
+  --line-height-label: 1.5;
+  --line-height-section: 1.45;
+  --line-height-page: 1.35;
+  --line-height-reading: 1.7;
+  --line-height-copy-compact: 1.4;
+  --line-height-body-compact: 1.55;
+  --line-height-body-relaxed: 1.6;
+  --line-height-reading-loose: 1.75;
+  --line-height-reading-spacious: 1.8;
+  --line-height-caption-fixed: 20px;
 
   --letter-spacing-normal: 0;
   --letter-spacing-caps: 0.1em;
   --letter-spacing-caps-wide: 0.12em;
+  --letter-spacing-title: -.025em;
+  --letter-spacing-source: .05em;
+}
+
+/* Recompute semantic typography in the main theme so its font family and weights apply. */
+:root, .main-theme {
+  /* Product typography: content hierarchy, independent of color mode. */
+  --font-size-title: 24px;
+  --font-size-title-compact: var(--font-size-5xl);
+  --font-size-section: var(--font-size-2xl);
+  --font-size-subheading: var(--font-size-lg);
+  --font-size-body: var(--font-size-md-plus);
+  --font-size-label: var(--font-size-md);
+  --font-size-caption: var(--font-size-sm-plus);
+  --font-size-code: var(--font-size-sm-plus);
+  --font-size-relative-note: .85rem;
+
+  --font-title: var(--font-weight-semibold) var(--font-size-title)/var(--line-height-page) var(--font-family-ui);
+  --font-section: var(--font-weight-semibold) var(--font-size-section)/var(--line-height-section) var(--font-family-ui);
+  --font-subheading: var(--font-weight-medium) var(--font-size-subheading)/var(--line-height-section) var(--font-family-ui);
+  --font-body: var(--font-weight-regular) var(--font-size-body)/var(--line-height-body) var(--font-family-ui);
+  --font-caption: var(--font-weight-regular) var(--font-size-caption)/var(--line-height-label) var(--font-family-ui);
+
 }
 
 :root,

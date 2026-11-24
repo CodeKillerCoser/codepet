@@ -1,10 +1,13 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { readProjectStyles } from "./testSources";
 
 const styles = readProjectStyles(__dirname);
 const themeTokens = readFileSync(resolve(__dirname, "lib/theme/tokens.css"), "utf8");
+const componentStyles = readdirSync(resolve(__dirname, 'lib'), {recursive:true})
+  .filter((name):name is string=>typeof name==='string'&&!name.replaceAll('\\','/').startsWith('theme/')&&/\.(svelte|css)$/.test(name))
+  .map(name=>{const source=readFileSync(resolve(__dirname,'lib',name),'utf8');return name.endsWith('.css')?source:[...source.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m=>m[1]).join('\n');}).join('\n');
 const appearanceSource = readFileSync(resolve(__dirname, "lib/settings/AppearanceSettings.svelte"), "utf8");
 const appSource = readFileSync(resolve(__dirname, "App.svelte"), "utf8") + "\n" + appearanceSource;
 const petAppSource = readFileSync(resolve(__dirname, "PetApp.svelte"), "utf8");
@@ -70,10 +73,13 @@ describe("theme tokens", () => {
   });
 
   test("keeps production css typography on theme tokens", () => {
-    expect(styles).not.toMatch(/font-size:\s*[0-9]/);
-    expect(styles).not.toMatch(/font-weight:\s*[0-9]/);
-    expect(styles).not.toMatch(/line-height:\s*[0-9]/);
-    expect(styles).not.toMatch(/letter-spacing:\s*[0-9]/);
+    const typography=styles+'\n'+componentStyles;
+    expect(typography).not.toMatch(/font-size:\s*[-.0-9]/);
+    expect(typography).not.toMatch(/font-weight:\s*[0-9]/);
+    expect(typography).not.toMatch(/line-height:\s*[.0-9]/);
+    expect(typography).not.toMatch(/letter-spacing:\s*[-.0-9]/);
+    expect(typography).not.toMatch(/\bfont:\s*[.0-9]/);
+    for(const role of ['title','section','subheading','body','caption'])expect(themeTokens).toContain(`--font-${role}:`);
   });
 });
 

@@ -167,7 +167,7 @@
   .notch-drag-region:active { cursor: grabbing; }
   .notch-header { display: flex; align-items: center; gap: 8px; height: var(--notch-header-height); min-width: 0; }
   .dock-leading { flex: none; display: flex; align-items: center; }
-  .notch-summary { display: flex; align-items: center; flex: 1; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; font-size: 12px; line-height: 1.4; }
+  .notch-summary { display: flex; align-items: center; flex: 1; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; font-size: var(--font-size-sm); line-height: var(--line-height-copy-compact); }
   .notch-summary:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; border-radius: 6px; }
   .dock-indicator { display: flex; flex: none; margin-right: 8px; }
   .dock-status-reveal { width: calc((var(--dock-status-width, 0px) + 8px) * var(--dock-progress)); flex: none; overflow: hidden; opacity: var(--dock-progress); }

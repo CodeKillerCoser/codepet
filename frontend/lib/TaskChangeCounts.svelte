@@ -12,8 +12,8 @@
   {/if}
 </span>
 <style>
- .change-counts{display:inline-flex;gap:9px;align-items:center;flex-wrap:wrap;font:12px/1.5 var(--font-family-code);font-variant-numeric:tabular-nums}
- .count{white-space:nowrap;color:var(--wb-muted)} b{font-weight:500}
+ .change-counts{display:inline-flex;gap:9px;align-items:center;flex-wrap:wrap;font:var(--font-size-sm)/var(--line-height-loose) var(--font-family-code);font-variant-numeric:tabular-nums}
+ .count{white-space:nowrap;color:var(--wb-muted)} b{font-weight:var(--font-weight-medium)}
  .added{color:var(--color-success)}.modified,.renamed{color:var(--wb-info-text)}.deleted,.conflicted{color:var(--app-danger)}
- small{font:12px/1.5 var(--font-family-ui);color:var(--wb-muted)}
+ small{font:var(--font-size-sm)/var(--line-height-loose) var(--font-family-ui);color:var(--wb-muted)}
 </style>

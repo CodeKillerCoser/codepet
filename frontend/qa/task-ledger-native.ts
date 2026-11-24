@@ -77,7 +77,7 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   await taskRequest('close-run', {taskId: task.id, runId: currentRun(task).id, expectedRevision: task.revision, accepted: true, reason: '原生人工验收通过'});
   await button('刷新任务'); await pause();
   const acceptedHistory=JSON.stringify((await taskRequest<Task>('get',{taskId:task.id})).runs[0]);
-  await more('改为开发中');
+  await button('执行状态：已完成');await button('开发中',document.querySelector('.task-run-panel')!);
   let dialog = await modal();
   input('执行标题', '升级 1.3.0 后菜单再次失效', dialog);
   input('本次目标', '修复新版本的点击问题', dialog);
@@ -112,7 +112,7 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   await more('接入 Agent'); dialog = await modal();
   check(dialog.querySelector('textarea')?.value.includes('--managed-stdio'), 'Stable stdio config shown');
   const customPrompt = '原生验收：方案确定后登记，完成时合并更新；不要逐消息维护。';
-  input('Agent 使用提示词', customPrompt, dialog); await button('保存提示词', dialog);
+  input('Agent 使用提示词', customPrompt, dialog); await button('确认', dialog);
   await until(() => dialog.querySelector('[role="status"]')?.textContent?.includes('已保存'));
   let initialized = await invoke<{initializeInstructions: string}>('qa_http_task_write');
   check(initialized.initializeInstructions === customPrompt, 'Edited prompt reaches actual HTTP initialize');
@@ -120,7 +120,7 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(stdioInit.initializeInstructions === customPrompt, 'Edited prompt reaches stable stdio initialize');
   const setup = await taskRequest<AgentSetup>('setup');
   await taskRequest('save-instructions', {expectedRevision: setup.instructionsRevision, text: '其他窗口已保存的新提示词'});
-  input('Agent 使用提示词', '提示词草稿必须保留', dialog); await button('保存提示词', dialog);
+  input('Agent 使用提示词', '提示词草稿必须保留', dialog); await button('确认', dialog);
   await until(() => dialog.querySelector('[role="alert"]')?.textContent?.includes('revision='));
   check(dialog.querySelector<HTMLTextAreaElement>('[aria-label="Agent 使用提示词"]')?.value === '提示词草稿必须保留', 'Prompt conflict retains draft');
   await dismiss(dialog);
@@ -137,24 +137,24 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   const pendingTask=await taskRequest<Task>('get',{taskId:pendingReceipt.taskId}),oldPlan=JSON.stringify(currentRun(pendingTask).validationPlan);
   await button('刷新任务');await button('返回任务列表');await until(()=>[...document.querySelectorAll('.task-row')].find(e=>e.textContent?.includes(pendingTask.title)));
   const pendingRow=[...document.querySelectorAll<HTMLButtonElement>('.task-row')].find(e=>e.textContent?.includes(pendingTask.title))!;pendingRow.click();await tick();document.querySelector<HTMLButtonElement>('.run-card')!.click();
-  await until(()=>[...document.querySelectorAll('button')].find(e=>e.textContent?.trim()==='标记完成'));
-  await button('标记完成');await until(()=>document.querySelector('.run-card .status-badge')?.textContent==='已完成');
+  await until(()=>[...document.querySelectorAll('button')].find(e=>e.getAttribute('aria-label')==='执行状态：待确认'));
+  await button('执行状态：待确认');await button('已完成',document.querySelector('.task-run-panel')!);await until(()=>document.querySelector('.run-card .task-status')?.textContent?.trim()==='已完成');
   const completed=await taskRequest<Task>('get',{taskId:pendingTask.id}),completedRun=currentRun(completed);
   check(completedRun.status==='closed'&&completedRun.closure?.accepted===false,'Manual completion persists without human-acceptance fabrication');
   check(JSON.stringify(completedRun.validationPlan)===oldPlan,'Completing preserves the entire validation plan and records');
   check(completedRun.timeline.at(-1)?.actor==='human'&&completedRun.timeline.at(-1)?.summary==='用户标记完成','Human completion appears in timeline');
-  await button('刷新任务');await pause();check(document.querySelector('.run-card .status-badge')?.textContent==='已完成','Completion survives refresh');
+  await button('刷新任务');await pause();check(document.querySelector('.run-card .task-status')?.textContent?.trim()==='已完成','Completion survives refresh');
   check(document.activeElement===document.querySelector('.task-heading h3'),'Completion returns focus to task heading');
   const completedHistory=JSON.stringify(completed.runs[0]);
   document.querySelector<HTMLButtonElement>('.run-card')!.click();await until(()=>document.querySelector('.task-run-panel'));
-  await button('改为开发中',document.querySelector('.task-run-panel')!);dialog=await modal();
-  check(dialog.textContent?.includes('保留之前的验收和历史'),'Manual state change explains the new execution');
+  await button('执行状态：已完成');await button('开发中',document.querySelector('.task-run-panel')!);dialog=await modal();
+  check(dialog.textContent?.includes('保留历史'),'Manual state change explains the new execution');
   input('执行标题','人工确认复发，继续处理',dialog);submit(dialog);await until(()=>!dialog.isConnected);
   const restored=await taskRequest<Task>('get',{taskId:pendingTask.id});
   check(restored.id===pendingTask.id&&restored.runs.length===2&&currentRun(restored).status==='in_progress','Human state change creates one run in the same task');
   check(JSON.stringify(restored.runs[0])===completedHistory,'Completed execution stays immutable after human restoration');
   check(currentRun(restored).validationPlan.records.length===0&&currentRun(restored).createdBy==='human','New run requires fresh verification and records the human actor');
-  check(document.querySelector('.run-card .status-badge')?.textContent==='开发中','GUI shows development after restoration');
+  check(document.querySelector('.run-card .task-status')?.textContent?.trim()==='开发中','GUI shows development after restoration');
   await button('返回任务列表');[...document.querySelectorAll<HTMLButtonElement>('.task-row')].find(e=>e.textContent?.includes(task.title))!.click();await tick();
   await invoke('qa_report', {value: {
     success: true, mode: 'native-task-run-production-ipc', taskId: task.id, workspace: expected.workspace,
