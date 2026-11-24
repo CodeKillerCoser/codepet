@@ -8,7 +8,7 @@
 
 Task 保存 `id/title/description/projectId/createdBy/createdAt/runs`，后台另存 schemaVersion、revision、updatedAt。title 是一句话目标，description 是背景或现象；不再保存另一份 objective。Task 不再保存类型，类型属于每一次执行。项目名称属于读取时补充的投影，项目 ID 由规范化 Git common directory 映射；同仓库 worktree 共用项目。
 
-TaskRun 保存 `id/title/kind/goal/solution/description/status/validationPlan/agentWorkspace/agentConversation/timeline/createdBy/createdAt`，后台维护 updatedAt 与结束记录。title 是运行卡片的短标题；kind 为 bugfix/feature；goal 与 solution 分别记录本次目标和确定的方案。description 作为可选补充说明及旧自由文本保留，旧内容不自动猜分为结构化方案。这些执行字段不会改写 Task 的背景。runs 按创建顺序保存，最后一项是当前执行，Task 状态从它取得。
+TaskRun 保存 `id/title/kind/goal/solution/description/status/validationPlan/agentWorkspace/agentConversation/timeline/createdBy/createdAt`，后台维护 updatedAt 与结束记录。title 是运行卡片的短标题；kind 为 bugfix/feature；goal 与 solution 分别记录本次目标和确定的方案。description 作为可选补充说明及旧自由文本保留，旧内容不自动猜分为结构化方案。这些执行字段不会改写 Task 的背景。runs 按创建顺序保存，最后一项是当前执行；Task 状态由 Rust 汇总全部执行，不再取最后一项。
 
 - validationPlan：items 为当前清单，records 为实际验收，revision/revisions 保存清单修订与历史快照。检查项有稳定 ID、前提、步骤、预期、适用本地/发布范围及是否必验。验收记录绑定清单版本、阶段、实际被测目标、环境、执行者、逐项结果和证据，并记录当时工作区快照。界面勾表示对应阶段已验证通过，展开内容标明本地/发布、自测/人工；人工接受仍单独计算，不将自测当人工确认；不同目标或环境不能拼凑验收结果。
 - agentWorkspace：path、branch、head、upstream、changeStatus、changedFiles、relatedCommits、commitChanges、runFiles、observedAt、error。changeStatus 分别记录是否有未提交改动及待推送提交，允许未知。changedFiles 保存路径、变更类型、是否暂存、改名前路径；冲突不标为已暂存。Git 使用工作台的有界只读命令与 porcelain v2 NUL 解析器，不 fetch。推送状态基于本地上游；修改文件属于共享工作区，relatedCommits 仅接受明确关联的 SHA，不自动认领 HEAD 或全部分支提交。runFiles 是 Agent 在 finish-task-run 的必填 changedFiles 中明确申报的本次执行文件（仓库相对路径）；空数组明确表示没有代码变更，null 表示旧记录未申报，后续观测保留它，不冒充 Git 观测。commitChanges 按明确关联提交保存不可变文件清单（SHA、files、error），与当前未提交文件分开；提交后工作区干净不会清空提交文件。旧快照没有清单时通过 commit-files IPC 按需只读补查，不写回历史。
@@ -17,7 +17,7 @@ TaskRun 保存 `id/title/kind/goal/solution/description/status/validationPlan/ag
 
 ## 执行与状态
 
-主状态仍为 in_progress、ready_for_delivery、published、closed；中文显示开发中、待确认、已发布、已完成。创建 Task 同时建立首次执行。已发布后可以新增 TaskRun；用户标记已完成后则锁定，Agent 不能更新或追加执行。只有用户在 App 明确选择“改为开发中”时，由人工入口追加新的 TaskRun，以改变 Task 的当前状态；旧执行仍保持已完成。新执行默认开发中，省略计划时复用旧检查项并生成新 ID，验收结果清空；旧执行、验收证据、提交与时间线原样保留。
+主状态仍为 in_progress、ready_for_delivery、published、closed；中文显示开发中、待确认、已发布、已完成。创建 Task 同时建立首次执行。已发布后可以新增 TaskRun；用户标记已完成后则锁定，Agent 不能更新或追加执行。只有用户在 App 明确选择“改为开发中”时，由人工入口追加新的 TaskRun，并清除 Task 人工完成锁；旧执行仍保持已完成。新执行默认开发中，省略计划时复用旧检查项并生成新 ID，验收结果清空；旧执行、验收证据、提交与时间线原样保留。
 
 finish-task-run 原子保存非空 conclusion、必填对话、必填 changedFiles（无变更也显式 []）、逐项 verification 和工作区；必验本地项在相同计划/目标/环境全部通过才进入待验收，不完整或失败保持进行中，不关闭执行。只有发布项的清单可在明确记录发布待测及原因后完成开发；发布验证失败仍保持进行中。首次切到 published 必须附实际发布版本或记录，提交不代表发布。验收出现失败时回到进行中，旧证据及发布引用继续保留。closed 只能通过 App 人工操作；人工可注明原因结束，也可在必验项有相应人工证据后确认验收通过。Task 的标题和背景可以在 App 单独修订，没有暴露 update-task MCP 工具。
 
@@ -35,10 +35,10 @@ HTTP 请求携带 X-CodePet-Agent，默认配置为 codex。Rust 从每条请求
 
 ## 涉及模块与验证
 
-- tasks/model.rs、mod.rs、operations.rs：实际 v3 对象、写入职责与原子事务；records_tests.rs 验证 Task/Run 隔离、重试、并发和迁移。legacy/legacy_model 只用于旧数据读取、既有验收规则与迁移回归样本，生产入口不再调用旧写入 API。
+- tasks/model.rs、mod.rs、operations.rs、summary.rs：当前 Task/Run 对象、写入职责与原子事务；records_tests.rs 验证 Task/Run 隔离、重试、并发和迁移。legacy/legacy_model 只用于旧数据读取、既有验收规则与迁移回归样本，生产入口不再调用旧写入 API。
 - tasks/workspace.rs 与 workbench.rs：共用只读 Git 和 NUL 解析，验证改名、暂存、未跟踪、换行文件名及冲突。
 - task-mcp 与 HTTP 适配：验证五工具、官方 SDK、来源按请求隔离、缺失/无效 Header、不可冒充人工、重启及端口边界。
-- Tauri task_ledger 与 TaskLedger.svelte：复用同一 Ledger 的人工入口，分别编辑任务和执行。任务头部为标题、描述、项目/创建者/时间，分割线位于基本信息下方。主入口提供 Task 看板与表格，进入任务后展示执行摘要，点击执行在 App 框架侧栏查看目标与方案、工作区、验收和活动；对话链接位于侧栏的目标与方案下方。窗口会话保留视图、筛选与排序偏好。验收整行切换展开，空心圆表示未验收，通过后为独立勾，不显示多余箭头或右侧重复来源。单项记录只追加该 criterionId 的结果，复用相同版本/环境的其他有效项；不将历史或 Agent 自测变成人工通过。人工完成与恢复操作仅针对当前执行，权限及锁定规则由 Rust 保证。
+- Tauri task_ledger 与 TaskLedger.svelte：复用同一 Ledger 的人工入口，分别编辑任务和执行。任务头部为标题、描述、项目/创建者/时间，分割线位于基本信息下方。主入口提供 Task 看板与表格，进入任务后展示执行摘要，点击执行在 App 框架侧栏查看目标与方案、工作区、验收和活动；对话链接位于侧栏的目标与方案下方。窗口会话保留视图、筛选与排序偏好。验收整行切换展开，空心圆表示未验收，通过后为独立勾，不显示多余箭头或右侧重复来源。单项记录只追加该 criterionId 的结果，复用相同版本/环境的其他有效项；不将历史或 Agent 自测变成人工通过。逐轮完成继续针对当前执行；Task 状态入口的人工完成设置独立任务锁，恢复时追加新执行。权限及锁定规则由 Rust 保证。
 
 具体命令与实测证据见 [MCP 接入与验收](../../40-runbooks/codepet-task-mcp.md)。原生入口测试核对 HTTP 写入与 GUI 读取同一 revision，覆盖人工验收、结束、新执行、历史只读和冲突草稿。迁移测试比较 v2 原始字节，避免“保留历史”只停留在界面。
 
@@ -187,3 +187,27 @@ TaskRunAcceptance 独立维护验收列表及第一行图标对齐，验收方�
 原生只读截图显示400px侧栏中的短方案已被三行截断却没有展开入口；少于180字的活动仍铺开十余行。根因是截断按实际行数、入口按固定字数，现有长文本样例没有覆盖该组合。ExpandableText 统一按渲染溢出提供入口并随尺寸重测；TaskRunDetail/Content/Timeline复用，验收折叠行收紧到4px上下留白。实际替换中发现外层white-space:pre-wrap会把组件模板换行变成空行，已由正文自身保留内容换行，字段容器恢复普通排版；活动来源另加4px明确间距。
 
 验证包含少于180字的多行目标/方案/背景/活动、字段真实间隔及双引擎布局；本机v38（builtAt=1795557402872）已实际加载并复核验收双列、时间线摘要与展开后的末尾结论。完整实际截图和逐步记录在artifacts/task-ledger-qa/actual-audit/report.md。Task MCP仍为手动已完成状态；未写入生产任务、验收或历史。
+
+
+### 全部执行汇总与计数（2026-11-25）
+
+#### 背景与决策
+
+原 TaskCollection 的分组、筛选和状态都直接读取最后一个 Run，导致历史仍有开发中或待确认时，最后一轮完成就把整个任务显示完成。用户确认按全部 Run 汇总，Agent 不维护派生字段。采用优先级：开发中 > 待确认 > 已发布 > 已完成；只要还有前一类状态就不进入后一类，只有全部执行完成才自动汇总完成。手动完成整个 Task 是独立覆盖，不篡改各 Run 状态。
+
+#### 实现与边界
+
+Rust tasks/summary.rs 唯一计算 TaskSummary：status、runCounts（total/inProgress/readyForDelivery/published/closed）、manuallyCompleted。GUI list/get 的 summary 与 MCP find 的任务状态使用同一计算；MCP写入回执 status 仍指本次 Run，五工具和输入参数不变。TaskCollection、筛选和 TaskRunDetail 只消费后端投影；运行数展示开发中与待确认的非零计数，验收进度仍明确属于当前执行。
+
+Task 后台保存 completion 和 statusAggregationVersion，汇总与计数不落盘。记录schema提升5，继续使用既有tasks/v4路径以保持同一账本；读取4/5，读取4只在内存升级，下一次原子写入保存5。旧版MCP严格拒绝5，避免忽略新字段后丢失完成锁。首次读取旧记录时，旧当前 Run 的 closed 被视作原有人工完成意图，内存映射为 Task 完成锁；只读不改原文件或 revision。新记录的 close-run 只结束当前轮；若其他 Run 仍待确认，Task 继续待确认。App 专用 complete-task 原子保存任务完成锁与人工事件；Agent 无对应工具。手动恢复清锁、追加新 Run，不修改旧执行的验收与证据。
+
+#### 风险与验证
+
+- 完成一轮错误完成整项：Rust遍历64种三Run组合及逆序，核对优先级与精确计数；原生IPC验证旧Run已发布/新Run已完成仍汇总已发布。
+- 人工完成被自动重新开启：完成锁拒绝Agent写入和新增，重复/过期修订不覆盖；人工恢复才清锁并保留旧执行。
+- 旧任务误解锁：旧v4完成状态读取兼容测试对比文件原始字节、全部Run及revision；不批量更改生产记录。
+- 前后端版本不一致：backend API提升33，新前端缺summary时明确要求更新原生App，不回退到前端自行计算。App与独立MCP服务应一起升级，已有stdio连接需重连以运行新的后端；Agent调用方式和维护负担不变。
+- 展示拥挤或筛选不一致：浏览器混合状态样例验证看板四列、表格、任务头计数、人工完成与恢复入口；原生IPC与MCP测试验证同一任务投影。
+
+
+验证结果：Rust任务与MCP共87项（含64种状态组合、HTTP/stdio协议、旧数据只读、完成锁、人工恢复）通过；前端245项、Chromium/WebKit任务UI、WebKit字体/布局回归、原生隔离账本IPC通过。Mac本地API33预览包已构建并替换，真实账本的看板/表格/任务头已复核；原Task MCP文件散列、revision22和7次执行未改变。旧版已人工完成仍保持锁定，同时如实显示6次历史待确认。布局回放排除src-tauri/target产物监听，避免打包复制HTML时重载验收页面。

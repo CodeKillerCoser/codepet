@@ -5,7 +5,7 @@ import {resolve} from 'node:path';
 import assert from 'node:assert/strict';
 const engine=process.env.CODEPET_QA_ENGINE??'chromium';
 const output=resolve('artifacts/task-ledger-qa/refinement',engine);await mkdir(output,{recursive:true});
-const server=await createServer({cacheDir:resolve(`node_modules/.vite-task-refinement-${engine}`),server:{host:'127.0.0.1',port:1441,strictPort:true}});await server.listen();const port=server.httpServer.address().port;
+const server=await createServer({cacheDir:resolve(`node_modules/.vite-task-refinement-${engine}`),server:{watch:{ignored:['**/src-tauri/target/**']},host:'127.0.0.1',port:1441,strictPort:true}});await server.listen();const port=server.httpServer.address().port;
 const browser=await({chromium,webkit})[engine].launch({headless:true});
 try{
  const page=await browser.newPage({viewport:{width:1440,height:920}}),errors=[];page.on('pageerror',e=>errors.push(e.message));

@@ -12,6 +12,12 @@ describe('Task / TaskRun projections',()=>{
  it('distinguishes Agent evidence from human acceptance',()=>{const r=makeRun();r.validationPlan.records=[record({actor:'agent',agent:'codex'})];expect(acceptanceReady(r)).toBe(false);r.validationPlan.records.push(record());expect(acceptanceReady(r)).toBe(true);});
  it('does not mix targets or environments',()=>{const r=makeRun();r.validationPlan.records=[record(),record({target:'2.0',results:[{criterionId:'c1',result:'passed',evidence:'新版本'}]})];expect(latestResult(r,r.validationPlan.items[1],'release').result).toBe('not_tested');expect(acceptanceReady(r)).toBe(false);expect(stageProgress(r,'release')).toEqual({total:2,passed:1,failed:0});});
  it('invalidates previous plan and run results',()=>{const r=makeRun();r.validationPlan.records=[record()];r.validationPlan.revision=2;expect(acceptanceReady(r)).toBe(false);expect(acceptanceReady(makeRun())).toBe(false);});
- it('searches execution reasons with project and status filters',()=>{const r=makeRun();r.description='已确认新的处理结论';r.timeline=[{id:'e',at:1,actor:'codex',kind:'created',summary:'升级后复发'}];const t={id:'task',title:'目标',description:'背景',projectId:'p',runs:[r]} as Task;expect(filterTasks([t],'升级','p','open')).toEqual([t]);expect(filterTasks([t],'升级','other','all')).toEqual([]);expect(filterTasks([t],'','p','closed')).toEqual([]);});
- it('derives task status only from its current run',()=>{const r=makeRun(),t={title:'目标',description:'背景',projectId:'p',runs:[r]} as Task;expect(taskStatus(t)).toBe('开发中');r.status='published';expect(taskStatus(t)).toBe('已发布');r.status='closed';expect(taskStatus(t)).toBe('已完成');t.runs.push(makeRun());expect(taskStatus(t)).toBe('开发中');});
+ it('searches execution reasons with project and status filters',()=>{const r=makeRun();r.description='已确认新的处理结论';r.timeline=[{id:'e',at:1,actor:'codex',kind:'created',summary:'升级后复发'}];const t={id:'task',title:'目标',description:'背景',projectId:'p',runs:[r],summary:{status:'in_progress',runCounts:{total:1,inProgress:1,readyForDelivery:0,published:0,closed:0},manuallyCompleted:false}} as Task;expect(filterTasks([t],'升级','p','open')).toEqual([t]);expect(filterTasks([t],'升级','other','all')).toEqual([]);expect(filterTasks([t],'','p','closed')).toEqual([]);});
+ it('uses the backend Task summary for display and filtering, independent of the latest run',()=>{
+  const r=makeRun();r.status='closed';
+  const t={title:'目标',description:'背景',projectId:'p',runs:[r],summary:{status:'in_progress',runCounts:{total:2,inProgress:1,readyForDelivery:0,published:0,closed:1},manuallyCompleted:false}} as Task;
+  expect(taskStatus(t)).toBe('开发中');expect(filterTasks([t],'','p','in_progress')).toEqual([t]);expect(filterTasks([t],'','p','closed')).toEqual([]);
+  t.summary.status='closed';t.summary.manuallyCompleted=true;
+  expect(taskStatus(t)).toBe('已完成');expect(filterTasks([t],'','p','open')).toEqual([]);
+ });
 });

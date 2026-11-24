@@ -8,6 +8,8 @@ mod migration;
 mod model;
 mod operations;
 mod source;
+mod summary;
+pub use summary::{RunCounts, TaskSummary};
 mod validation;
 mod workspace;
 use crate::{stable_id, store::Store, Result};
@@ -99,10 +101,11 @@ impl Ledger {
     fn load(store: &Store, task_id: &str) -> Result<Task> {
         valid_id(task_id)?;
         for project in Self::projects(store)? {
-            if let Some(task) = store.read::<Task>(&Self::key(&project.id, task_id))? {
-                if task.schema_version != 4 || task.runs.is_empty() {
+            if let Some(mut task) = store.read::<Task>(&Self::key(&project.id, task_id))? {
+                if !matches!(task.schema_version, 4 | 5) || task.runs.is_empty() {
                     return Err("任务格式版本或执行历史无效".into());
                 }
+                task.normalize_completion();
                 return Ok(task);
             }
         }
@@ -119,9 +122,12 @@ impl Ledger {
         }
         if tasks
             .iter()
-            .any(|t| t.schema_version != 4 || t.runs.is_empty())
+            .any(|t| !matches!(t.schema_version, 4 | 5) || t.runs.is_empty())
         {
             return Err("任务格式版本或执行历史无效".into());
+        }
+        for task in &mut tasks {
+            task.normalize_completion();
         }
         tasks.sort_by_key(|t| std::cmp::Reverse(t.updated_at));
         Ok(tasks)
@@ -132,6 +138,7 @@ impl Ledger {
             .into_iter()
             .find(|p| p.id == task.project_id)
             .ok_or("项目不存在")?;
+        view["summary"] = json!(task.summary());
         view["projectName"] = json!(project.name);
         Ok(view)
     }
@@ -248,7 +255,7 @@ impl Ledger {
                 result
             });
             let progress = run.timeline.last().map(|entry| json!({"at":entry.at,"actor":entry.actor,"kind":entry.kind,"summary":entry.summary.chars().take(2000).collect::<String>(),"reference":entry.reference}));
-            let mut result = json!({"taskId":task.id,"title":task.title,"description":task.description,"createdBy":task.created_by,"revision":task.revision,"runCount":task.runs.len(),"run":{"id":run.id,"title":run.title,"kind":run.kind,"goal":run.goal,"solution":run.solution,"description":run.description,"status":run.status,"createdBy":run.created_by,"validationPlan":{"revision":run.validation_plan.revision,"items":run.validation_plan.items,"latestVerification":verification},"agentWorkspace":observed,"agentConversation":run.agent_conversation,"latestProgress":progress}});
+            let mut result = json!({"taskId":task.id,"title":task.title,"description":task.description,"createdBy":task.created_by,"revision":task.revision,"status":task.summary().status,"runCount":task.runs.len(),"run":{"id":run.id,"title":run.title,"kind":run.kind,"goal":run.goal,"solution":run.solution,"description":run.description,"status":run.status,"createdBy":run.created_by,"validationPlan":{"revision":run.validation_plan.revision,"items":run.validation_plan.items,"latestVerification":verification},"agentWorkspace":observed,"agentConversation":run.agent_conversation,"latestProgress":progress}});
             if input.history {
                 result["history"]=json!(task.runs.iter().rev().take(10).map(|r|json!({"id":r.id,"title":r.title,"kind":r.kind,"goal":r.goal,"description":r.description,"status":r.status,"createdBy":r.created_by,"createdAt":r.created_at})).collect::<Vec<_>>());
             }
@@ -286,7 +293,7 @@ impl Ledger {
             })
             .collect::<Vec<_>>();
         Ok(
-            json!({"total":matches.len(),"truncated":matches.len()>20,"tasks":matches.iter().take(20).map(|t|json!({"taskId":t.id,"title":t.title,"runKind":t.runs.last().unwrap().kind,"status":t.runs.last().unwrap().status,"runId":t.runs.last().unwrap().id,"runCount":t.runs.len(),"revision":t.revision,"createdBy":t.created_by,"project":projects.iter().find(|p|p.id==t.project_id).map(|p|&p.name),"updatedAt":t.updated_at})).collect::<Vec<_>>()}),
+            json!({"total":matches.len(),"truncated":matches.len()>20,"tasks":matches.iter().take(20).map(|t|json!({"taskId":t.id,"title":t.title,"runKind":t.runs.last().unwrap().kind,"status":t.summary().status,"runId":t.runs.last().unwrap().id,"runCount":t.runs.len(),"revision":t.revision,"createdBy":t.created_by,"project":projects.iter().find(|p|p.id==t.project_id).map(|p|&p.name),"updatedAt":t.updated_at})).collect::<Vec<_>>()}),
         )
     }
     fn request_key(
@@ -382,3 +389,6 @@ mod records_tests;
 
 #[cfg(test)]
 mod contract_tests;
+
+#[cfg(test)]
+mod summary_tests;

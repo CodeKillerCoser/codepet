@@ -69,6 +69,11 @@ pub(crate) async fn task_ledger_request(
                     serde_json::from_value(request["input"].clone()).map_err(|e| e.to_string())?;
                 value(ledger.edit_task(input)?)
             }
+            "complete-task" => value(ledger.complete_task(
+                id()?,
+                request["expectedRevision"].as_u64().ok_or("缺少修订号")?,
+                request["reason"].as_str().ok_or("缺少完成说明")?,
+            )?),
             "close-run" => value(ledger.close(
                 id()?,
                 request["runId"].as_str().ok_or("缺少执行 ID")?,

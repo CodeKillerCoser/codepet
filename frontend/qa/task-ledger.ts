@@ -5,10 +5,11 @@ import {mockIPC} from '@tauri-apps/api/mocks';import {mount} from 'svelte';
 import WorkbenchFrameQa from './WorkbenchFrameQa.svelte';import {themeClassNames} from '../lib/theme/defaults';
 import TaskRunDetail from '../lib/TaskRunDetail.svelte';
 import '../lib/taskLedger.css';
-import {currentRun,type Task} from '../lib/taskLedger';
+import {currentRun,type Task,type RunStatus} from '../lib/taskLedger';
 const report=await fetch('/artifacts/task-ledger-qa/native/report.json').then(r=>r.json());
-if(!report.success||report.taskSnapshot?.schemaVersion!==4)throw Error('Run native task/run acceptance first');
+if(!report.success||![4,5].includes(report.taskSnapshot?.schemaVersion))throw Error('Run native task/run acceptance first');
 const base:Task=report.taskSnapshot,tasks=[base],scenario=new URLSearchParams(location.search).get('scenario');
+(base as any).completion=null;
 if(scenario==='overflow')tasks.splice(0,1,...taskLedgerOverflow(base));
 if(scenario==='overflow'&&new URLSearchParams(location.search).has('manyRuns')){
  const task=tasks[0],run=currentRun(task);
@@ -72,9 +73,29 @@ if(scenario==='local-verification'){
 if(scenario==='manual-completion'){
  const run=currentRun(base);run.status='ready_for_delivery';run.closure=null;
  run.validationPlan.records=[{id:'previous-verification',actor:'agent',agent:'codex',createdAt:base.updatedAt,agentWorkspace:null,planRevision:run.validationPlan.revision,stage:'local',target:'old-build',environment:'test',results:run.validationPlan.items.map(c=>({criterionId:c.id,result:'passed',evidence:'旧验收结论'}))}];
- base.runs[0].status='ready_for_delivery';
+ for(const historical of base.runs.slice(0,-1))historical.status='closed';
  const developing=structuredClone(base);developing.id='completion-developing';developing.title='开发中的任务';currentRun(developing).id='developing-run';currentRun(developing).status='in_progress';
  tasks.push(developing);
+}
+if(scenario==='aggregate'){
+ tasks.splice(0,1,...([
+  ['开发中汇总',['in_progress','in_progress','ready_for_delivery','closed']],
+  ['待确认汇总',['ready_for_delivery','closed']],
+  ['已发布汇总',['published','closed']],
+  ['全部完成汇总',['closed','closed']]
+ ] as [string,RunStatus[]][]).map(([title,states],i)=>{
+  const task=structuredClone(base),template=structuredClone(currentRun(task));task.id=`aggregate-${i}`;task.title=title;
+  task.runs=states.map((status,n)=>({...structuredClone(template),id:`aggregate-${i}-${n}`,status}));return task;
+ }));
+}
+// Isolated IPC stand-in only. Production aggregation is exclusively Rust Task::summary.
+function qaView(task:Task):Task {
+ const counts={total:task.runs.length,inProgress:0,readyForDelivery:0,published:0,closed:0};
+ const keys={in_progress:'inProgress',ready_for_delivery:'readyForDelivery',published:'published',closed:'closed'} as const;
+ for(const run of task.runs)counts[keys[run.status]]++;
+ const manuallyCompleted=Boolean((task as any).completion);
+ const state:RunStatus=manuallyCompleted?'closed':counts.inProgress?'in_progress':counts.readyForDelivery?'ready_for_delivery':counts.published?'published':'closed';
+ return {...structuredClone(task),summary:{status:state,runCounts:counts,manuallyCompleted}};
 }
 (window as any).__taskCompletionState=()=>structuredClone(tasks);
 (window as any).__conflictTaskCompletion=()=>{base.revision++;};
@@ -85,7 +106,14 @@ mockIPC(async(command,args:any)=>{
  if(command.startsWith('plugin:event|'))return 1;
  if(command==='codex_workbench_request')return args.request.op==='projects'?{projects:[],warnings:[]}:[];
  if(command!=='task_ledger_request')throw Error(`Unexpected ${command}`);
- if(args.request.op==='list')return structuredClone(tasks);
+ if(args.request.op==='list')return tasks.map(qaView);
+ if(args.request.op==='get')return qaView(tasks.find(t=>t.id===args.request.taskId)!);
+ if(args.request.op==='complete-task'){
+  const task=tasks.find(t=>t.id===args.request.taskId)!;
+  if(args.request.expectedRevision!==task.revision)throw Error('任务已更新：revision='+task.revision);
+  (task as any).completion={accepted:false,reason:args.request.reason,closedAt:Date.now()};task.revision++;
+  return {taskId:task.id,revision:task.revision};
+ }
  if(args.request.op==='close-run'){
   if((window as any).__holdTaskClose)return new Promise((_,reject)=>{(window as any).__rejectTaskClose=()=>reject(Error('模拟完成保存失败'));});
   const task=tasks.find(t=>t.id===args.request.taskId);if(!task)throw Error('任务不存在');
@@ -110,10 +138,10 @@ mockIPC(async(command,args:any)=>{
  if(args.request.op==='create-task-run'){
   const input=args.request.input,task=tasks.find(t=>t.id===input.taskId);if(!task)throw Error('任务不存在');
   if(task.revision!==input.expectedRevision)throw Error('任务已更新：revision='+task.revision);
-  const previous=currentRun(task);if(!['closed','published'].includes(previous.status))throw Error('当前执行仍在处理中');
+  const previous=currentRun(task);if(!(task as any).completion&&!['closed','published'].includes(previous.status))throw Error('当前执行仍在处理中');
   const items=structuredClone(input.validationPlan?.items??previous.validationPlan.items).map(c=>({...c,id:crypto.randomUUID()}));
   const at=Date.now(),run={...structuredClone(previous),id:crypto.randomUUID(),title:input.title,kind:input.kind,goal:input.goal,solution:input.solution,description:'',status:'in_progress' as const,closure:null,createdAt:at,updatedAt:at,createdBy:'human',agentConversation:[],timeline:[{id:crypto.randomUUID(),at,actor:'human',kind:'created',summary:'用户手动改为开发中：'+input.title}],validationPlan:{revision:1,items,records:[],revisions:[{revision:1,createdAt:at,summary:'',affectedAreas:[],criteria:items}]},agentWorkspace:{...structuredClone(previous.agentWorkspace),path:input.agentWorkspace.path,runFiles:null,relatedCommits:[],commitChanges:[]}};
-  task.runs.push(run);task.revision++;task.updatedAt=at;
+  (task as any).completion=null;task.runs.push(run);task.revision++;task.updatedAt=at;
   return {taskId:task.id,runId:run.id,revision:task.revision,planRevision:1,criterionIds:items.map(c=>c.id),status:run.status,createdBy:'human'};
  }
  if(args.request.op==='save-instructions'){
@@ -126,5 +154,5 @@ const target=document.getElementById('app')!;target.className=`main-theme ${them
 (window as any).__setTaskTheme=(mode:'light'|'dark')=>target.className=`main-theme ${themeClassNames(mode)}`;
 if(new URLSearchParams(location.search).has('detailOnly')){
  target.classList.add('task-ledger');target.style.cssText='padding:12px 25px;container-type:inline-size';
- mount(TaskRunDetail,{target,props:{task:base,onEditTask:()=>{},onOpenRun:()=>{}}});
+ mount(TaskRunDetail,{target,props:{task:qaView(base),onEditTask:()=>{},onOpenRun:()=>{}}});
 }else mount(WorkbenchFrameQa,{target,props:{view:'tasks'}});

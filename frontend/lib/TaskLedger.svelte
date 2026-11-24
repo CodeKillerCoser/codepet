@@ -49,7 +49,7 @@
   $: filtered = filterTasks(tasks, query, project, status);
   $: selected = tasks.find(t => t.id === selectedId);
   $: run = selected?.runs.find(r => r.id === runId) ?? (selected && currentRun(selected));
-  $: restoringDevelopment = runTask ? currentRun(runTask).status === 'closed' : false;
+  $: restoringDevelopment = runTask ? runTask.summary.status === 'closed' : false;
   $: projects = [...new Map(tasks.map(t => [t.projectId, t.projectName])).entries()];
   $: if(panelTaskId!==(selected?.id??'')){panelTaskId=selected?.id??'';runPanelOpen=false;panelView='run';}
   $: nextChangesKey=selected&&run?[selected.id,run.id,run.agentWorkspace.observedAt,...run.agentWorkspace.relatedCommits].join('|'):'';
@@ -76,7 +76,7 @@
   const blank = (): Criterion => ({id: '', title: '', precondition: '', steps: '', expected: '', scope: 'both', required: true});
   async function load() {
     loading = true; error = '';
-    try { tasks = await api<Task[]>('list'); }
+    try { const loaded=await api<Task[]>('list');if(loaded.some(task=>!task.summary))throw Error('任务状态汇总需要更新原生 App（API 33）');tasks=loaded; }
     catch (e) { error = String(e); }
     finally { loading = false; }
   }
@@ -106,15 +106,15 @@
   }
   function createRun(returnFocus?: HTMLElement) {
     moreOpen = false;
-    if (busy || !selected || !['closed','published'].includes(currentRun(selected).status)) return;
+    if (busy || !selected || (selected.summary.status!=='closed'&&!['closed','published'].includes(currentRun(selected).status))) return;
     runTask = structuredClone(selected);
     const current = currentRun(runTask);
     runReturnFocus = returnFocus ?? moreTrigger;
-    runTitle = current.status === 'closed' ? '继续处理' : ''; runGoal = current.goal; runSolution = ''; runKind = 'bugfix';
+    runTitle = selected.summary.status === 'closed' ? '继续处理' : ''; runGoal = current.goal; runSolution = ''; runKind = 'bugfix';
     workspace = current.agentWorkspace.path;
     criteria = structuredClone(current.validationPlan.items).map(c => ({...c, id: '', steps: [c.precondition,c.steps].filter(Boolean).join('\n'),precondition:''}));
     if (!criteria.length) criteria = [blank()];
-    includePlan = current.status !== 'closed' && current.validationPlan.items.length > 0;
+    includePlan = selected.summary.status !== 'closed' && current.validationPlan.items.length > 0;
     error = ''; runDialog.showModal();
   }
   async function write(op: string, input: Record<string, unknown>) {
@@ -158,7 +158,7 @@
     finally { busy = false; }
   }
   async function completeRun() {
-    if (busy || !selected || !run || run.id !== currentRun(selected).id || run.status !== 'ready_for_delivery') return;
+    if (busy || !selected || selected.summary.manuallyCompleted || !run || run.id !== currentRun(selected).id || run.status !== 'ready_for_delivery') return;
     const taskId=selected.id, completedRunId=run.id, expectedRevision=selected.revision;
     busy=true;error='';message='';
     try {
@@ -171,6 +171,17 @@
       await tick();detail?.focusHeading();
     } catch(e) {error=String(e);}
     finally {busy=false;}
+  }
+  async function completeTask() {
+    if(busy||!selected||selected.summary.status==='closed')return;
+    const taskId=selected.id,expectedRevision=selected.revision;
+    busy=true;error='';message='';
+    try{
+      await api<Receipt>('complete-task',{taskId,expectedRevision,reason:'用户完成整个任务'});
+      if(status!=='all')status='all';
+      await load();runPanelOpen=false;message='任务已完成并锁定';
+      await tick();detail?.focusHeading();
+    }catch(e){error=String(e);}finally{busy=false;}
   }
   async function showSetup() {
     moreOpen = false; moreTrigger?.focus(); error = '';
@@ -241,7 +252,7 @@
   {#if message}<p class="message" role="status">{message}</p>{/if}
   {#if selected&&run}
     <section class="task-detail" aria-label="任务详情">
-      <TaskRunDetail task={selected} {runId} panelOpen={runPanelOpen} bind:this={detail} onEditTask={()=>editTask(selected)} {busy} onOpenRun={openRun}/>
+      <TaskRunDetail task={selected} {runId} panelOpen={runPanelOpen} bind:this={detail} onEditTask={()=>editTask(selected)} onCompleteTask={completeTask} onRestoreTask={createRun} {busy} onOpenRun={openRun}/>
     </section>
   {:else}
     <TaskCollection bind:this={collection} tasks={filtered} total={tasks.length} {loading} {view} {status} {project} {sort} onSort={value=>sort=value} onSelect={select}/>

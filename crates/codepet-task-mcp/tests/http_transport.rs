@@ -361,6 +361,7 @@ async fn request_header_is_required_and_each_writer_has_its_own_identity() {
             "用户标记完成",
         )
         .unwrap();
+    let closed = ledger.complete_task(&task.id, closed.revision, "用户完成整个任务").unwrap();
     let before = json!(ledger.get(&task.id).unwrap());
     for (name, input) in [
         (

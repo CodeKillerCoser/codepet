@@ -98,12 +98,18 @@ fn check_revision(task: &Task, expected: u64) -> Result<()> {
     }
 }
 fn check_new_run(task: &Task, actor: &Actor) -> Result<()> {
+    if task.summary().status == RunStatus::Closed || task.completion.is_some() {
+        return if actor.is_human() {
+            Ok(())
+        } else {
+            Err(
+                "任务已完成并锁定；请用户在 App 手动改为开发中，Agent 不能重新开启或新增执行"
+                    .into(),
+            )
+        };
+    }
     match task.runs.last().unwrap().status {
-        RunStatus::Published => Ok(()),
-        RunStatus::Closed if actor.is_human() => Ok(()),
-        RunStatus::Closed => Err(
-            "任务已完成并锁定；请用户在 App 手动改为开发中，Agent 不能重新开启或新增执行".into(),
-        ),
+        RunStatus::Published | RunStatus::Closed => Ok(()),
         _ => Err("当前执行仍在处理中，请更新当前执行".into()),
     }
 }
@@ -206,7 +212,7 @@ impl Ledger {
             };
             let at = now();
             Ok(Task {
-                schema_version: 4,
+                schema_version: 5,
                 id: id(),
                 title: input.title,
                 description: input.description,
@@ -214,6 +220,8 @@ impl Ledger {
                 created_by: actor.source().into(),
                 created_at: at,
                 runs: vec![run],
+                completion: None,
+                status_aggregation_version: 1,
                 revision: 0,
                 updated_at: at,
             })
@@ -270,7 +278,7 @@ impl Ledger {
         } else {
             input.description
         };
-        let summary = if last.status == RunStatus::Closed {
+        let summary = if previous.summary().status == RunStatus::Closed {
             format!("用户手动改为开发中：{summary}")
         } else {
             summary
@@ -281,6 +289,7 @@ impl Ledger {
             check_revision(&task, input.expected_revision)?;
             same_project(project(projects, &task)?, &ctx)?;
             check_new_run(&task, &actor)?;
+            task.completion = None;
             task.runs.push(run);
             Ok(task)
         })
@@ -391,6 +400,9 @@ impl Ledger {
             );
         }
         let previous = self.get(&input.task_id)?;
+        if previous.completion.is_some() {
+            return Err("任务已完成并锁定，请用户先手动恢复开发".into());
+        }
         let last = previous.runs.last().unwrap();
         let mut workspace = input.agent_workspace.clone().unwrap_or(WorkspaceInput {
             path: last.agent_workspace.path.clone(),
@@ -410,6 +422,9 @@ impl Ledger {
         self.transact(key, fingerprint, |store, projects| {
             let mut task = Self::load(store, &input.task_id)?;
             check_revision(&task, input.expected_revision)?;
+            if task.completion.is_some() {
+                return Err("任务已完成并锁定，请用户先手动恢复开发".into());
+            }
             let repository = project(projects, &task)?.path.clone();
             if let Some(ctx) = &ctx {
                 same_project(project(projects, &task)?, ctx)?;
@@ -525,6 +540,9 @@ impl Ledger {
         self.transact(key, fingerprint, |store, _| {
             let mut task = Self::load(store, task_id)?;
             check_revision(&task, expected_revision)?;
+            if task.completion.is_some() {
+                return Err("任务已完成并锁定，请用户先手动恢复开发".into());
+            }
             let run = task.runs.last_mut().unwrap();
             if run.id != run_id || run.status == RunStatus::Closed {
                 return Err("只能结束当前未关闭的执行".into());
@@ -539,6 +557,41 @@ impl Ledger {
                 closed_at: now(),
             });
             event(run, &actor, "closed", reason.into(), None);
+            Ok(task)
+        })
+    }
+    /// App-only Task completion. Preserve every Run and its verification evidence.
+    pub fn complete_task(
+        &self,
+        task_id: &str,
+        expected_revision: u64,
+        reason: &str,
+    ) -> Result<Receipt> {
+        text(reason, "完成说明", 2000)?;
+        let actor = Actor::human();
+        let input = json!({"taskId":task_id,"expectedRevision":expected_revision,"reason":reason});
+        let (key, fingerprint, cached) = self.request_key("complete-task", &input, None, &actor)?;
+        if let Some(r) = cached {
+            return Ok(r);
+        }
+        self.transact(key, fingerprint, |store, _| {
+            let mut task = Self::load(store, task_id)?;
+            check_revision(&task, expected_revision)?;
+            if task.completion.is_some() {
+                return Err("任务已经完成".into());
+            }
+            task.completion = Some(Closure {
+                accepted: false,
+                reason: reason.into(),
+                closed_at: now(),
+            });
+            event(
+                task.runs.last_mut().unwrap(),
+                &actor,
+                "task_completed",
+                reason.into(),
+                None,
+            );
             Ok(task)
         })
     }

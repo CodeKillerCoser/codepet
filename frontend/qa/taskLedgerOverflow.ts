@@ -25,6 +25,7 @@ export function taskLedgerOverflow(base: Task): Task[] {
     run.agentWorkspace.branch = 'codex/' + 'long-branch-name-'.repeat(12);
     run.agentWorkspace.relatedCommits = ['1234567890abcdef'.repeat(3)];
     run.agentWorkspace.changedFiles = [{path: 'frontend/' + 'long-file-name-'.repeat(12) + '.svelte', changeType: 'modified', staged: false, originalPath: null}];
+    task.summary={status:run.status,manuallyCompleted:false,runCounts:{total:1,inProgress:run.status==='in_progress'?1:0,readyForDelivery:run.status==='ready_for_delivery'?1:0,published:run.status==='published'?1:0,closed:run.status==='closed'?1:0}};
     return task;
   });
 }

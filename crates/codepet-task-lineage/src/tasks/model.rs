@@ -1,4 +1,4 @@
-//! Canonical v4 records. Transport inputs cannot supply authors or observed Git facts.
+//! Canonical v5 records in the stable task/run ledger. Transport inputs cannot supply authors or observed Git facts.
 pub use super::legacy_model::{CheckResult, Criterion, Plan, Scope, TestResult, VerificationInput};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -180,6 +180,11 @@ pub struct Task {
     pub created_by: String,
     pub created_at: i64,
     pub runs: Vec<TaskRun>,
+    /// Human Task completion is independent of the statuses of its historical runs.
+    #[serde(default)]
+    pub completion: Option<Closure>,
+    #[serde(default)]
+    pub status_aggregation_version: u32,
     pub revision: u64,
     pub updated_at: i64,
 }

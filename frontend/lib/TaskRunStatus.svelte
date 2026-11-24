@@ -5,12 +5,13 @@
   import {statuses,type RunStatus} from './taskLedger';
   export let status:RunStatus;
   export let current=false;
+  export let subject:'任务'|'执行'='执行';
   export let busy=false;
   export let onComplete:()=>void;
   export let onRestore:(button:HTMLButtonElement)=>void;
   let open=false,root:HTMLDivElement,trigger:HTMLButtonElement;
   let next:RunStatus|undefined;
-  $: next=current?(status==='ready_for_delivery'?'closed':['closed','published'].includes(status)?'in_progress':undefined):undefined;
+  $: next=current?(subject==='任务'?(status==='closed'?'in_progress':'closed'):status==='ready_for_delivery'?'closed':['closed','published'].includes(status)?'in_progress':undefined):undefined;
   $: if(busy||!next)open=false;
   async function toggle(){open=!open;if(open){await tick();root.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();}}
   function close(){open=false;trigger?.focus({preventScroll:true});}
@@ -21,12 +22,12 @@
 <svelte:window on:click={event=>{if(open&&event.target instanceof Node&&!root.contains(event.target))open=false;}}/>
 <div class="run-status-control" bind:this={root}>
   {#if next}
-    <button class="quiet run-status-trigger" aria-label={`执行状态：${statuses[status]}`} aria-haspopup="menu" aria-expanded={open}
+    <button class="quiet run-status-trigger" aria-label={`${subject}状态：${statuses[status]}`} aria-haspopup="menu" aria-expanded={open}
       disabled={busy} bind:this={trigger} on:click={toggle} on:keydown={event=>{escape(event);if(['ArrowDown','ArrowUp'].includes(event.key)){event.preventDefault();if(!open)void toggle();}}}>
       <TaskStatus {status}/><ChevronDown size={12}/>
     </button>
     {#if open}
-      <div class="status-menu" role="menu" tabindex="-1" aria-label="修改执行状态" on:keydown={event=>{escape(event);if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){event.preventDefault();root.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();}if(event.key==='Tab')close();}}>
+      <div class="status-menu" role="menu" tabindex="-1" aria-label={`修改${subject}状态`} on:keydown={event=>{escape(event);if(['ArrowDown','ArrowUp','Home','End'].includes(event.key)){event.preventDefault();root.querySelector<HTMLButtonElement>('[role="menuitem"]')?.focus();}if(event.key==='Tab')close();}}>
         <button role="menuitem" on:click={choose}><TaskStatus status={next}/></button>
       </div>
     {/if}

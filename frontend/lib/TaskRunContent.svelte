@@ -22,7 +22,7 @@
   $: changeSummary=changes??projectRunChanges(run.agentWorkspace,run.agentWorkspace.commitChanges??[]);
 </script>
 <div class="task-run-panel task-surface" aria-label="任务执行详情">
-  <div class="execution-meta"><TaskRunStatus status={run.status} current={run.id===currentRun(task).id} {busy} {onComplete} onRestore={onRestoreDevelopment}/><span>{kinds[run.kind]}</span><span>{actorLabel(run.createdBy)} · {fmt(run.createdAt)}</span></div>
+  <div class="execution-meta"><TaskRunStatus status={run.status} current={run.id===currentRun(task).id&&!task.summary.manuallyCompleted} {busy} {onComplete} onRestore={onRestoreDevelopment}/><span>{kinds[run.kind]}</span><span>{actorLabel(run.createdBy)} · {fmt(run.createdAt)}</span></div>
   <div class="run-content" id={`run-panel-${run.id}`}>
     {#if run.id !== currentRun(task).id}<p class="muted history-note">历史执行，只读</p>{/if}
     <section aria-label="目标与方案" class="run-section">

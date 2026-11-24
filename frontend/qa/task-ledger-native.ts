@@ -155,12 +155,27 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(JSON.stringify(restored.runs[0])===completedHistory,'Completed execution stays immutable after human restoration');
   check(currentRun(restored).validationPlan.records.length===0&&currentRun(restored).createdBy==='human','New run requires fresh verification and records the human actor');
   check(document.querySelector('.run-card .task-status')?.textContent?.trim()==='开发中','GUI shows development after restoration');
+  // Aggregate the whole task through real IPC: an older published Run outranks a closed latest Run.
+  const aggregate=await taskRequest<Receipt>('create-task',{input:{title:'全部执行状态汇总原生验收',agentWorkspace:{path:expected.workspace},initialRun:{agentConversation:[],title:'第一轮发布'}}});
+  const published=await taskRequest<Receipt>('update-task-run',{input:{taskId:aggregate.taskId,runId:aggregate.runId,expectedRevision:aggregate.revision,agentConversation:[],status:'published',delivery:'原生验收版本'}});
+  const next=await taskRequest<Receipt>('create-task-run',{input:{taskId:aggregate.taskId,expectedRevision:published.revision,agentConversation:[],title:'第二轮处理'}});
+  const ready=await taskRequest<Receipt>('update-task-run',{input:{taskId:aggregate.taskId,runId:next.runId,expectedRevision:next.revision,agentConversation:[],status:'ready_for_delivery'}});
+  let aggregateTask=await taskRequest<Task>('get',{taskId:aggregate.taskId});
+  check(aggregateTask.summary.status==='ready_for_delivery'&&aggregateTask.summary.runCounts.readyForDelivery===1&&aggregateTask.summary.runCounts.published===1,'Native aggregation counts every Run');
+  await taskRequest('close-run',{taskId:aggregate.taskId,runId:next.runId,expectedRevision:ready.revision,accepted:false,reason:'只确认第二轮'});
+  aggregateTask=await taskRequest<Task>('get',{taskId:aggregate.taskId});
+  check(aggregateTask.summary.status==='published'&&currentRun(aggregateTask).status==='closed','Latest Run completion does not complete an earlier published Run');
+  const oldRuns=aggregateTask.runs.map(r=>({id:r.id,status:r.status,plan:r.validationPlan}));
+  await taskRequest('complete-task',{taskId:aggregate.taskId,expectedRevision:aggregateTask.revision,reason:'人工完成整个任务'});
+  aggregateTask=await taskRequest<Task>('get',{taskId:aggregate.taskId});
+  check(aggregateTask.summary.status==='closed'&&aggregateTask.summary.manuallyCompleted,'Human Task completion is an independent lock');
+  check(JSON.stringify(aggregateTask.runs.map(r=>({id:r.id,status:r.status,plan:r.validationPlan})))===JSON.stringify(oldRuns),'Task completion preserves Run states and verification');
   await button('返回任务列表');[...document.querySelectorAll<HTMLButtonElement>('.task-row')].find(e=>e.textContent?.includes(task.title))!.click();await tick();
   await invoke('qa_report', {value: {
     success: true, mode: 'native-task-run-production-ipc', taskId: task.id, workspace: expected.workspace,
     runFields: true, headerSource: true, singleItemAcceptance: true, promptEditing: true,
     promptHttpInitialization: true, promptStdioInitialization: true, promptReset: true, promptConflictPreservesDraft: true,
-    manualRestoreDevelopment:true,manualCompletion:true,humanAcceptance: true, conflictPreservesDraft: true, changedFiles: true,
+    taskAggregation:true,taskManualCompletion:true,manualRestoreDevelopment:true,manualCompletion:true,humanAcceptance: true, conflictPreservesDraft: true, changedFiles: true,
     runCount: 2, taskSnapshot: await taskRequest<Task>('get', {taskId: task.id})
   }});
 }

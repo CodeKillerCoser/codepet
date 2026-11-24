@@ -227,6 +227,8 @@ pub(super) fn import(store: &Store, data: &Path) -> Result<()> {
             created_by: author(&old.rounds[0].events),
             created_at: old.created_at,
             runs,
+            completion: None,
+            status_aggregation_version: 0,
             revision: old.revision,
             updated_at: old.updated_at,
         };

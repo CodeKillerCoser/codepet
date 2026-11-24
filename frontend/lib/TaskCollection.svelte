@@ -1,5 +1,6 @@
 <script lang="ts">
   import {ArrowDown, ArrowUp, FolderClosed, Layers, ListChecks} from '@lucide/svelte';
+  import TaskRunCounts from './TaskRunCounts.svelte';
   import TaskStatus from './TaskStatus.svelte';
   import {currentRun,criterionCheck,statuses,formatTaskTime as fmt,type Task,type RunStatus} from './taskLedger';
   export let tasks:Task[]=[];
@@ -28,7 +29,7 @@
  {:else if view==='board'}
   <div class="task-board" class:single-column={columns.length===1}>
    {#each columns as state}
-    {@const group=ordered.filter(task=>currentRun(task).status===state)}
+    {@const group=ordered.filter(task=>task.summary.status===state)}
     <section class="board-column" aria-label={statuses[state]}>
      <header class="board-heading"><h3><TaskStatus status={state} heading/><span class="column-count">{group.length}</span></h3></header>
      <div class="board-cards">
@@ -37,6 +38,7 @@
        <button class="task-row board-task" data-task-id={task.id} aria-label={task.title} on:click={event=>onSelect(task,event.currentTarget)}>
         {#if showProject}<span class="card-project"><FolderClosed size={12}/>{task.projectName}</span>{/if}
         <strong title={task.title}>{task.title}</strong>
+        <TaskRunCounts summary={task.summary}/>
         <span class="card-summary"><span title="执行次数"><Layers size={12}/>{task.runs.length} 次执行</span>{#if checks.total}<span class="card-checks" title="当前执行验收进度"><ListChecks size={13}/>{checks.passed}/{checks.total}</span>{/if}<time title={fmt(task.updatedAt)} datetime={new Date(task.updatedAt).toISOString()}>{fmt(task.updatedAt)}</time></span>
        </button>
       {:else}<p class="column-empty">暂无任务</p>{/each}
@@ -46,7 +48,7 @@
   </div>
  {:else}
   <table class="task-table">
-   <caption class="sr-only">任务列表，每行代表一个任务，验收与状态来自当前执行</caption>
+   <caption class="sr-only">任务列表，每行代表一个任务，状态和执行计数由全部执行汇总</caption>
    <colgroup><col class="title-column"/><col class="project-column"/><col class="status-column"/><col class="current-column"/><col class="runs-column"/><col class="checks-column"/><col class="time-column"/></colgroup>
    <thead><tr>
     <th scope="col" aria-sort={sort==='title'?'ascending':'none'}><button class="sort-heading" on:click={()=>onSort(sort==='title'?'updated_desc':'title')}>任务{#if sort==='title'}<ArrowUp size={12}/>{/if}</button></th>
@@ -59,7 +61,7 @@
      <tr class="task-table-row">
       <th scope="row"><button class="task-row table-task" data-task-id={task.id} title={task.title} on:click={event=>onSelect(task,event.currentTarget)}>{task.title}</button></th>
       <td class="project-column"><span title={task.projectName}>{task.projectName}</span></td>
-      <td><TaskStatus status={run.status}/></td>
+      <td class="task-state-cell"><TaskStatus status={task.summary.status}/><TaskRunCounts summary={task.summary}/></td>
       <td class="current-column"><span title={run.title}>{run.title}</span></td>
       <td class="runs-column numeric">{task.runs.length}</td><td class="checks-column numeric">{checks.total?`${checks.passed}/${checks.total}`:'—'}</td>
       <td class="time-column"><time title={fmt(task.updatedAt)} datetime={new Date(task.updatedAt).toISOString()}>{fmt(task.updatedAt)}</time></td>
@@ -89,7 +91,7 @@
  .card-summary time{margin-left:auto;font-size:var(--font-size-caption);font-variant-numeric:tabular-nums;}
  .column-empty{font-size:var(--font-size-caption);text-align:center;color:var(--task-secondary);margin:28px 0 20px;}
  .task-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:var(--font-size-body);}
- .title-column{width:27%;}.project-column{width:11%;}.status-column{width:12%;}.current-column{width:21%;}.runs-column{width:6%;}.checks-column{width:7%;}.time-column{width:16%;}
+ .title-column{width:26%;}.project-column{width:10%;}.status-column{width:19%;}.current-column{width:16%;}.runs-column{width:6%;}.checks-column{width:7%;}.time-column{width:16%;}
  .task-table th,.task-table td{text-align:left;border-bottom:1px solid var(--wb-border);padding:10px 12px;min-width:0;vertical-align:middle;}
  .task-table thead{position:sticky;top:-18px;z-index:1;background:var(--wb-panel);}
  .task-table thead th{color:var(--task-secondary);font-weight:var(--font-weight-emphasis);font-size:var(--font-size-label);height:38px;}
@@ -100,11 +102,12 @@
  .task-collection .table-task:hover{color:var(--wb-text);background:transparent;}
  td>span{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;}
  .task-table .numeric{text-align:right;font-variant-numeric:tabular-nums;}
+ .task-state-cell :global(.run-counts){margin-top:var(--space-inline);}
  .time-column time{font-size:var(--font-size-caption);white-space:nowrap;color:var(--task-secondary);font-variant-numeric:tabular-nums;}
  .task-collection .sort-heading{display:inline-flex;align-items:center;gap:5px;min-height:24px;padding:0;border:0;background:transparent;font-size:var(--font-size-caption);color:var(--task-secondary);}
  .collection-empty{min-height:220px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;color:var(--task-secondary);padding:30px;}
  .collection-empty h3{font-size:var(--font-size-subheading);color:var(--wb-text);}.collection-empty p{font-size:var(--font-size-caption);margin:0;}
- @container(max-width:1050px){.task-board{gap:12px;}.current-column{display:none;}.title-column{width:35%;}.project-column{width:14%;}.status-column{width:15%;}.runs-column{width:7%;}.checks-column{width:9%;}.time-column{width:20%;}}
- @container(max-width:850px){.project-column{display:none;}.title-column{width:41%;}.status-column{width:17%;}.runs-column{width:8%;}.checks-column{width:10%;}.time-column{width:24%;}}
- @container(max-width:520px){.time-column,.checks-column{display:none;}.title-column{width:65%;}.status-column{width:25%;}.runs-column{width:10%;}.task-table th,.task-table td{padding:10px 5px;}.task-table :global(.task-status){font-size:var(--font-size-caption);gap:4px;}.board-task strong{font-size:var(--font-size-body);}}
+ @container(max-width:1050px){.task-board{gap:12px;}.current-column{display:none;}.title-column{width:30%;}.project-column{width:14%;}.status-column{width:20%;}.runs-column{width:7%;}.checks-column{width:9%;}.time-column{width:20%;}}
+ @container(max-width:850px){.project-column{display:none;}.title-column{width:36%;}.status-column{width:22%;}.runs-column{width:8%;}.checks-column{width:10%;}.time-column{width:24%;}}
+ @container(max-width:520px){.time-column,.checks-column{display:none;}.title-column{width:53%;}.status-column{width:37%;}.runs-column{width:10%;}.task-table th,.task-table td{padding:10px 5px;}.task-table :global(.task-status){font-size:var(--font-size-caption);gap:4px;}.board-task strong{font-size:var(--font-size-body);}}
 </style>

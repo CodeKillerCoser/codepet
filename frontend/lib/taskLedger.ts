@@ -14,10 +14,11 @@ export interface VerificationInput{planRevision:number;stage:Scope;target:string
 export interface Verification extends VerificationInput{id:string;actor:string;agent:string;createdAt:number;agentWorkspace:AgentWorkspace|null}
 export interface PlanRevision{revision:number;createdAt:number;summary:string;affectedAreas:string[];criteria:Criterion[]}
 export interface TaskRun{id:string;title:string;kind:TaskKind;goal:string;solution:string;description:string;status:RunStatus;validationPlan:{revision:number;items:Criterion[];records:Verification[];revisions:PlanRevision[]};agentWorkspace:AgentWorkspace;agentConversation:{agent:string;conversationId:string;verified:boolean}[];timeline:{id:string;at:number;actor:string;kind:string;summary:string;reference?:string;agentWorkspace?:AgentWorkspace}[];createdBy:string;createdAt:number;updatedAt:number;closure:{accepted:boolean;reason:string;closedAt:number}|null}
-export interface Task{schemaVersion:number;id:string;title:string;description:string;projectId:string;projectName:string;createdBy:string;createdAt:number;runs:TaskRun[];revision:number;updatedAt:number}
+export interface TaskSummary{status:RunStatus;runCounts:{total:number;inProgress:number;readyForDelivery:number;published:number;closed:number};manuallyCompleted:boolean}
+export interface Task{summary:TaskSummary;schemaVersion:number;id:string;title:string;description:string;projectId:string;projectName:string;createdBy:string;createdAt:number;runs:TaskRun[];revision:number;updatedAt:number}
 export interface Receipt{taskId:string;runId:string;revision:number;planRevision:number;criterionIds:string[];status:RunStatus;createdBy:string}
 export const currentRun=(task:Task)=>task.runs.at(-1)!;
-export const taskStatus=(task:Task)=>statuses[currentRun(task).status];
+export const taskStatus=(task:Task)=>statuses[task.summary.status];
 export const taskRequest=<T=unknown>(op:string,args:Record<string,unknown>={})=>invoke<T>('task_ledger_request',{request:{op,...args}});
 export function latestResult(run:TaskRun,criterion:Criterion,stage:Scope):{result:TestResult;evidence?:string;actor?:string;agent?:string}{
   const matching=run.validationPlan.records.filter(v=>v.planRevision===run.validationPlan.revision&&v.stage===stage),latest=matching.at(-1);
@@ -26,7 +27,7 @@ export function latestResult(run:TaskRun,criterion:Criterion,stage:Scope):{resul
 }
 export function acceptanceReady(run:TaskRun){const items=run.validationPlan.items.filter(c=>c.required);return items.length>0&&items.every(c=>{const result=latestResult(run,c,c.scope==='local'?'local':'release');return result.actor==='human'&&result.result==='passed';});}
 export function stageProgress(run:TaskRun,stage:'local'|'release'){const items=run.validationPlan.items.filter(c=>c.scope==='both'||c.scope===stage),checks=items.map(c=>latestResult(run,c,stage));return {total:items.length,passed:checks.filter(c=>c.result==='passed').length,failed:checks.filter(c=>c.result==='failed').length};}
-export function filterTasks(tasks:Task[],query:string,project:string,status:string){const q=query.trim().toLocaleLowerCase();return tasks.filter(t=>(!project||t.projectId===project)&&(status==='all'||(status==='open'?currentRun(t).status!=='closed':currentRun(t).status===status))&&(!q||[t.title,t.description,...t.runs.flatMap(r=>[r.title,r.goal,r.solution,r.description,...r.timeline.map(e=>e.summary)])].join(' ').toLocaleLowerCase().includes(q)));}
+export function filterTasks(tasks:Task[],query:string,project:string,status:string){const q=query.trim().toLocaleLowerCase();return tasks.filter(t=>(!project||t.projectId===project)&&(status==='all'||(status==='open'?t.summary.status!=='closed':t.summary.status===status))&&(!q||[t.title,t.description,...t.runs.flatMap(r=>[r.title,r.goal,r.solution,r.description,...r.timeline.map(e=>e.summary)])].join(' ').toLocaleLowerCase().includes(q)));}
 export const actorLabel=(source:string)=>source==='human'?'人工':source==='codex'?'Codex':source==='unknown'||source==='agent'?'历史 Agent':source;
 export const fileLabels:Record<string,string>={added:'新增',modified:'修改',deleted:'删除',renamed:'重命名',conflicted:'冲突',untracked:'未跟踪'};
 

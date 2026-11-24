@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 const engine=process.env.CODEPET_QA_ENGINE??'chromium';
 assert.ok(['chromium','webkit'].includes(engine));
 const output=resolve('artifacts/task-ledger-qa/layout',engine);await mkdir(output,{recursive:true});
-const server=await createServer({cacheDir:resolve(`node_modules/.vite-task-ui-${engine}`),server:{host:'127.0.0.1',port:0}});await server.listen();
+const server=await createServer({cacheDir:resolve(`node_modules/.vite-task-ui-${engine}`),server:{watch:{ignored:['**/src-tauri/target/**']},host:'127.0.0.1',port:0}});await server.listen();
 const port=server.httpServer.address().port;
 const browser=await({chromium,webkit})[engine].launch({headless:true});
 const errors=[];
@@ -20,7 +20,7 @@ try{
  const close=async()=>{await page.getByRole('button',{name:'关闭执行详情',exact:true}).click();await panel.waitFor({state:'detached'});};
  await goto('dense',false);
  assert.equal(await page.locator('.board-task').count(),8,'A card is a Task, never an individual TaskRun');
- assert.deepEqual(await page.locator('.column-count').allTextContents(),['2','2','2','2'],'Grouping uses the current run only');
+ assert.deepEqual(await page.locator('.column-count').allTextContents(),['2','2','2','2'],'Grouping uses the backend Task summary');
  const assertSingleRow=async()=>{
   const tops=await page.locator('.board-column').evaluateAll(es=>es.map(e=>e.getBoundingClientRect().top));
   assert.equal(tops.length,4);assert.ok(tops.every(top=>Math.abs(top-tops[0])<1),'All four states stay on one row');
@@ -146,7 +146,7 @@ try{
  assert.ok(await panel.getByRole('menuitem',{name:'已完成',exact:true}).evaluate(e=>e===document.activeElement));
  await page.keyboard.press('Escape');assert.equal(await panel.count(),1,'Escape closes only the state menu');assert.ok(await stateTrigger.evaluate(e=>e===document.activeElement));
  const oldEvidence=await page.evaluate(()=>JSON.stringify(window.__taskCompletionState()[0].runs.at(-1).validationPlan));
- await page.evaluate(()=>window.__holdTaskClose=true);await complete();await page.waitForFunction(()=>document.querySelector('.run-status-trigger')?.disabled);
+ await page.evaluate(()=>window.__holdTaskClose=true);await complete();await page.waitForFunction(()=>document.querySelector('.task-run-panel .run-status-trigger')?.disabled);
  assert.ok(await stateTrigger.isDisabled());await page.evaluate(()=>{window.__holdTaskClose=false;window.__rejectTaskClose();});await panel.getByRole('alert').waitFor();
  assert.equal(await page.evaluate(()=>window.__taskCompletionState()[0].runs.at(-1).status),'ready_for_delivery');
  await page.evaluate(()=>window.__conflictTaskCompletion());await complete();await page.getByRole('alert').filter({hasText:'revision='}).waitFor();
@@ -162,5 +162,19 @@ try{
  await dialog.getByRole('button',{name:'确认',exact:true}).click();await dialog.waitFor({state:'detached'});await panel.waitFor({state:'detached'});
  const restored=await page.evaluate(()=>window.__taskCompletionState()[0]);assert.deepEqual(restored.runs.slice(0,-1),beforeRestore);assert.equal(restored.runs.at(-1).status,'in_progress');assert.equal(restored.runs.at(-1).validationPlan.records.length,0);
  await openRun(1);assert.equal(await page.getByRole('button',{name:'执行状态：已完成',exact:true}).count(),0,'Closed historical run stays read-only');await close();
+ // A completed latest Run must not hide earlier active or pending work.
+ await goto('aggregate',false);assert.deepEqual(await page.locator('.column-count').allTextContents(),['1','1','1','1']);
+ const activeCard=page.locator('[data-task-id="aggregate-0"]');
+ await activeCard.getByLabel('开发中 2 次执行',{exact:true}).waitFor();await activeCard.getByLabel('待确认 1 次执行',{exact:true}).waitFor();
+ await page.getByRole('button',{name:'表格',exact:true}).click();
+ const activeRow=page.locator('tr').filter({has:page.locator('[data-task-id="aggregate-0"]')});
+ assert.equal(await activeRow.locator('.task-status').first().innerText(),'开发中');
+ await activeRow.getByLabel('待确认 1 次执行',{exact:true}).waitFor();
+ await activeRow.locator('.task-row').click();await page.getByRole('button',{name:'任务状态：开发中',exact:true}).click();
+ await page.getByRole('menuitem',{name:'已完成',exact:true}).click();await page.getByRole('status').filter({hasText:'任务已完成并锁定'}).waitFor();
+ await page.getByRole('button',{name:'任务状态：已完成',exact:true}).waitFor();
+ assert.equal(await page.locator('.run-card').filter({hasText:'开发中'}).count(),2,'Task completion never rewrites Run statuses');
+ await page.getByRole('button',{name:'任务状态：已完成',exact:true}).click();await page.getByRole('menuitem',{name:'开发中',exact:true}).click();
+ await page.getByRole('dialog',{name:'改为开发中',exact:true}).waitFor();await page.keyboard.press('Escape');
  assert.deepEqual(errors,[]);console.log(`Task UI passed (${engine}): Task board/table and filtering/sorting, overview hierarchy, framework run panel/diff return, responsive themes, keyboard focus, completion/history preservation, prompt editing/conflicts.`);
 }catch(e){console.error(e);throw e;}finally{await browser.close();await server.close();}

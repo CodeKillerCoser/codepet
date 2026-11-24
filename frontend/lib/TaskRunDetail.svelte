@@ -1,6 +1,8 @@
 <script lang="ts">
   import {ChevronRight, Pencil, CheckCheck} from '@lucide/svelte';
   import ExpandableText from './ExpandableText.svelte';
+  import TaskRunStatus from './TaskRunStatus.svelte';
+  import TaskRunCounts from './TaskRunCounts.svelte';
   import TaskStatus from './TaskStatus.svelte';
   import {currentRun,kinds,actorLabel,criterionCheck,formatTaskTime as fmt,type Task} from './taskLedger';
 
@@ -9,6 +11,8 @@
   export let panelOpen=false;
   export let busy=false;
   export let onEditTask:()=>void;
+  export let onCompleteTask:()=>void=()=>{};
+  export let onRestoreTask:(button:HTMLButtonElement)=>void=()=>{};
   export let onOpenRun:(id:string,button:HTMLButtonElement)=>void=()=>{};
   let heading:HTMLHeadingElement;
   $: executions=task.runs.map((run,index)=>({run,index})).reverse();
@@ -33,6 +37,7 @@
       <h3 tabindex="-1" bind:this={heading}>{task.title}</h3>
       <button class="quiet metadata-edit" disabled={busy} aria-label="修改任务信息" title="修改任务信息" on:click={onEditTask}><Pencil size={17}/></button>
     </header>
+    <div class="task-state"><TaskRunStatus subject="任务" status={task.summary.status} current {busy} onComplete={onCompleteTask} onRestore={onRestoreTask}/><TaskRunCounts summary={task.summary}/></div>
     {#if task.description}
       {#key task.id}<div class="task-background"><ExpandableText text={task.description} label="任务背景"/></div>{/key}
     {/if}
@@ -72,6 +77,7 @@
   h3:focus{outline:none;}
   .task-record .metadata-edit{display:grid;place-items:center;flex:none;min-height:32px;width:32px;padding:0;}
   .task-background{font:var(--font-body);margin:var(--space-related) 0;color:var(--task-secondary);overflow-wrap:anywhere;}
+  .task-state{display:flex;align-items:center;flex-wrap:wrap;gap:var(--space-related) var(--space-block);margin:var(--space-related) 0;}
   .task-context{display:flex;gap:var(--space-inline) var(--space-block);flex-wrap:wrap;font:var(--font-caption);color:var(--task-secondary);margin-top:var(--space-related);}
   .task-context > :not(:last-child)::after{content:'·';margin-left:16px;color:var(--wb-border-strong);}
   .task-divider{border:0;border-top:1px solid var(--wb-border);margin:var(--space-page) 0 0;}
