@@ -1,7 +1,8 @@
-//! Human-action adapter. The app-owned Rust HTTP MCP remains the Agent boundary.
-use codepet_task_lineage::tasks::{task_view, Actor, SaveInput};
+//! Human actions use the same canonical ledger; Agent authority stays in the HTTP adapter.
+use codepet_task_lineage::tasks::{
+    Actor, CreateTaskInput, CreateTaskRunInput, EditTaskInput, UpdateTaskRunInput,
+};
 use serde_json::Value;
-
 #[tauri::command]
 pub(crate) async fn task_ledger_request(
     window: tauri::WebviewWindow,
@@ -16,44 +17,56 @@ pub(crate) async fn task_ledger_request(
     }
     let ledger = runtime.ledger();
     tauri::async_runtime::spawn_blocking(move || {
-        let op = request["op"].as_str().ok_or("缺少任务操作")?;
-        match op {
+        let id = || request["taskId"].as_str().ok_or("缺少任务 ID".to_owned());
+        let value = |receipt| serde_json::to_value(receipt).map_err(|e| e.to_string());
+        match request["op"].as_str().ok_or("缺少任务操作")? {
             "list" => Ok(Value::Array(
                 ledger
                     .list()?
                     .iter()
-                    .map(task_view)
+                    .map(|t| ledger.view(t))
                     .collect::<Result<Vec<_>, _>>()?,
             )),
-            "get" => task_view(&ledger.get(request["taskId"].as_str().ok_or("缺少任务 ID")?)?),
-            "save" => {
-                let input: SaveInput =
+            "get" => ledger.view(&ledger.get(id()?)?),
+            "create-task" => {
+                let input: CreateTaskInput =
                     serde_json::from_value(request["input"].clone()).map_err(|e| e.to_string())?;
-                serde_json::to_value(ledger.save(input, Actor::Human)?).map_err(|e| e.to_string())
+                value(ledger.create_task(input, Actor::human())?)
             }
-            "close" => serde_json::to_value(
-                ledger.close(
-                    request["taskId"].as_str().ok_or("缺少任务 ID")?,
-                    request["expectedRevision"]
-                        .as_u64()
-                        .ok_or("缺少任务修订号")?,
-                    request["outcome"].as_str().ok_or("缺少结束结果")?,
-                    request["reason"].as_str().ok_or("缺少结束说明")?,
-                )?,
-            )
-            .map_err(|e| e.to_string()),
+            "create-task-run" => {
+                let input: CreateTaskRunInput =
+                    serde_json::from_value(request["input"].clone()).map_err(|e| e.to_string())?;
+                value(ledger.create_task_run(input, Actor::human())?)
+            }
+            "update-task-run" => {
+                let input: UpdateTaskRunInput =
+                    serde_json::from_value(request["input"].clone()).map_err(|e| e.to_string())?;
+                value(ledger.update_task_run(input, Actor::human())?)
+            }
+            "edit-task" => {
+                let input: EditTaskInput =
+                    serde_json::from_value(request["input"].clone()).map_err(|e| e.to_string())?;
+                value(ledger.edit_task(input)?)
+            }
+            "close-run" => value(ledger.close(
+                id()?,
+                request["runId"].as_str().ok_or("缺少执行 ID")?,
+                request["expectedRevision"].as_u64().ok_or("缺少修订号")?,
+                request["accepted"].as_bool().unwrap_or(false),
+                request["reason"].as_str().ok_or("缺少结束说明")?,
+            )?),
             "openChat" => {
-                let task = ledger.get(request["taskId"].as_str().ok_or("缺少任务 ID")?)?;
-                let thread = request["threadId"].as_str().ok_or("缺少对话 ID")?;
-                uuid::Uuid::parse_str(thread).map_err(|_| "对话 ID 无效")?;
-                if !task.rounds.iter().any(|r| {
-                    r.sources
-                        .iter()
-                        .any(|s| s.thread_id == thread && s.verified)
+                let task = ledger.get(id()?)?;
+                let conversation = request["conversationId"].as_str().ok_or("缺少对话 ID")?;
+                uuid::Uuid::parse_str(conversation).map_err(|_| "对话 ID 无效")?;
+                if !task.runs.iter().any(|r| {
+                    r.agent_conversation.iter().any(|c| {
+                        c.agent == "codex" && c.conversation_id == conversation && c.verified
+                    })
                 }) {
-                    return Err("对话尚未核实与此任务的关联".into());
+                    return Err("Codex 对话关联尚未核实".into());
                 }
-                open::that(format!("codex://threads/{thread}")).map_err(|e| e.to_string())?;
+                open::that(format!("codex://threads/{conversation}")).map_err(|e| e.to_string())?;
                 Ok(Value::Null)
             }
             _ => Err("未知任务操作".into()),

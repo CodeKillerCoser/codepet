@@ -1,3 +1,38 @@
+# Task / TaskRun 与四工具 MCP 验收（2026-11-24）
+
+## 当前范围与证据
+
+落实用户确认的 Task / TaskRun、bugfix/feature 标记、agentWorkspace、agentConversation、Agent 来源 Header，以及任务/执行两层界面。沿用原先 App 布局、主题、固定二级导航和全局弹窗。
+
+界面证据为 `artifacts/task-ledger-qa/layout/app-shell-light-1143.png`、`app-shell-dark-1143.png`、各尺寸截图与 `webkit/`；原生窗口为 `artifacts/task-ledger-qa/native/native-window.png`，结构化结果在 `native/report.json`。完整 App 视口 1143×949，截图按 2× 密度记录；另测 1280/820/600/390。截图使用隔离原生任务快照，密集/长文是明确的布局样例，均不代表生产任务的业务问题已验收。
+
+## 视觉与交互检查
+
+- 字体与层级：任务标题是主要目标，背景与创建信息辅助；执行说明和验收清单形成第二层，bugfix/feature 只作小标记。
+- 布局：移除重复目标和独立大块进度，工作区、对话、验收记录与时间线合并到折叠执行记录。长背景与处理摘要默认三行，可用键盘展开。内容滚动不移动框架二级导航。
+- 主题：沿用 App token，明暗两套主题和小面积四态标签；状态文字对比度验证至少 4.5:1，WebKit display-p3 先转换到 sRGB。
+- 图像与图标：没有新增位图或自绘装饰；沿用既有图标库。
+- 文案：分别使用“修改任务信息”“更新执行”“新一次执行”，表单职责分开；来源使用真实创建者，历史未记录的 Agent 显示历史 Agent。
+
+无剩余 P0/P1/P2 界面问题。第一次检查后补齐长文本的展开/收起，复测 Chromium/WebKit；默认查询去掉验收与时间线中重复的 Git 快照，完整证据仍保存在账本并供 App 展示。
+
+## 数据与协议验证
+
+- Rust 任务领域、旧格式回归及共享存储：51 项；集成 5 项；MCP 单元 2 项；HTTP/官方 SDK 5 项，均通过。
+- 迁移验证比较 v2 原文件字节、任务/执行/检查项 ID、验收证据和发布引用；新结构为 v3，旧记录不覆盖。
+- Header 验证来源逐请求隔离、缺失/重复/保留名称、创建者不可被后续写入改变，Agent 不能结束或冒充人工。
+- Git 验证修改、改名、暂存、换行文件名、未跟踪及冲突；MCP 默认最多返回 20 个文件，并避免在最新进展和验收记录中重复全量快照。
+- 独立与实际 App 二进制均完成真实 HTTP/stdio 黑盒；四工具定义约 8141 字节，创建回执约 225 字节。该数值不是模型 token 计量。
+- 原生生产 IPC/HTTP 流程验证任务背景与执行摘要双向隔离、人工验收、结束、新执行、历史只读、冲突草稿、文件观测、来源 Header 与弹窗返回焦点。
+
+## 检查命令
+
+`cargo test --manifest-path crates/Cargo.toml -p codepet-task-lineage -p codepet-task-mcp`、四种真实进程黑盒、原生任务 QA、Chromium/WebKit 任务 QA、工作台 QA、45 文件 231 项前端测试、生产前端构建、Svelte 检查、源码尺寸检查、11 项 webcontent 测试均通过。具体命令与环境在 `knowledge/40-runbooks/codepet-task-mcp.md`；webcontent 使用规范临时路径 `/private/tmp`。当前要求原生 backend API 28、MCP 0.2，安装版人工验收及长对话自主登记仍待实际使用。
+
+final result: passed
+
+---
+
 # 任务页标注修正验收（2026-11-24）
 
 范围：落实用户截图标注，以及内容区二级导航脱离滚动流的补充要求。Task / Round、存储与 MCP 协议维持现状；“任务 / 任务执行”的职责划分待单独讨论。

@@ -1,267 +1,259 @@
+//! Canonical v3 records. Transport inputs cannot supply authors or observed Git facts.
+pub use super::legacy_model::{CheckResult, Criterion, Plan, Scope, TestResult, VerificationInput};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
-pub enum Phase {
+pub enum TaskKind {
+    Bugfix,
+    #[default]
+    Feature,
+}
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RunStatus {
     #[default]
     InProgress,
     ReadyForDelivery,
     Published,
+    Closed,
 }
 
-// Read existing ledgers without exposing the old six-stage workflow to new clients.
-impl<'de> Deserialize<'de> for Phase {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = String::deserialize(deserializer)?;
-        match value.as_str() {
-            "in_progress" | "investigating" | "planning" | "implementing" | "validating_local" => {
-                Ok(Self::InProgress)
-            }
-            "ready_for_delivery"
-            | "ready_to_publish"
-            | "awaiting_acceptance"
-            | "ready_for_release" => Ok(Self::ReadyForDelivery),
-            "published" | "validating_release" => Ok(Self::Published),
-            _ => Err(serde::de::Error::custom(
-                "任务只能设为进行中、待交付或已发布；结束由用户操作",
-            )),
+#[derive(Clone, Debug)]
+pub struct Actor {
+    source: String,
+    human: bool,
+}
+impl Actor {
+    pub fn agent(source: &str) -> Result<Self, String> {
+        if source.is_empty()
+            || source.len() > 64
+            || !source
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+        {
+            return Err("X-CodePet-Agent 必须是 1–64 位字母、数字、点、下划线或短横线".into());
+        }
+        let source = source.to_ascii_lowercase();
+        if ["human", "user", "agent", "unknown"].contains(&source.as_str()) {
+            return Err("Agent 来源不能使用保留名称".into());
+        }
+        Ok(Self {
+            source,
+            human: false,
+        })
+    }
+    pub fn human() -> Self {
+        Self {
+            source: "human".into(),
+            human: true,
+        }
+    }
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+    pub fn is_human(&self) -> bool {
+        self.human
+    }
+    pub fn role(&self) -> &str {
+        if self.human {
+            "human"
+        } else {
+            "agent"
         }
     }
 }
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Scope {
-    Local,
-    Release,
-    #[default]
-    Both,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum TestResult {
-    Passed,
-    Failed,
-    NotTested,
-    Blocked,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Criterion {
-    /// Omit for a new item; reuse its returned ID when revising.
-    #[serde(default)]
-    pub id: String,
-    pub title: String,
-    #[serde(default)]
-    pub precondition: String,
-    pub steps: String,
-    pub expected: String,
-    #[serde(default)]
-    pub scope: Scope,
-    #[serde(default = "yes")]
-    pub required: bool,
-}
-fn yes() -> bool {
-    true
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct PlanInput {
-    pub summary: String,
-    #[serde(default)]
-    pub affected_areas: Vec<String>,
-    pub criteria: Vec<Criterion>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CheckResult {
-    pub criterion_id: String,
-    pub result: TestResult,
-    #[serde(default)]
-    pub evidence: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct VerificationInput {
-    pub plan_revision: u64,
-    /// local or release (both is not a test execution stage).
-    pub stage: Scope,
-    /// The actual tested worktree/commit or installed version. Never just say "latest".
-    pub target: String,
-    pub environment: String,
-    pub results: Vec<CheckResult>,
-}
-
-/// A single milestone write. No polling, per-message updates, or repeated full-task submission.
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct SaveInput {
-    /// Omit to create. Keep the returned taskId for further milestones.
-    pub task_id: Option<String>,
-    /// Required on updates. Reuse on a retry; conflicts do not overwrite user edits.
-    pub expected_revision: Option<u64>,
-    /// Optional retry key; otherwise derived from this exact request.
-    pub operation_id: Option<String>,
-    /// Absolute project/worktree directory. Required on create; omit on updates if unchanged.
-    pub workspace: Option<String>,
-    pub title: Option<String>,
-    pub objective: Option<String>,
-    pub description: Option<String>,
-    /// bug, feature, or investigation. Defaults to feature.
-    pub kind: Option<String>,
-    /// Actual Codex UUID if known; omit rather than inventing one.
-    pub thread_id: Option<String>,
-    /// in_progress (default), ready_for_delivery after implementation, published with an explicit delivery reference. Only a human closes a task.
-    pub phase: Option<Phase>,
-    /// A short milestone summary, not a transcript.
-    pub note: Option<String>,
-    /// Explicitly associated commit SHAs only. Never all commits on the branch.
-    #[serde(default)]
-    pub commits: Vec<String>,
-    pub plan: Option<PlanInput>,
-    pub verification: Option<VerificationInput>,
-    /// Only for a previously closed task. Reason for a new handling round.
-    pub reopen_reason: Option<String>,
-    /// Optional build/release URL or version. Registration is not proof of deployment.
-    pub delivery: Option<String>,
-}
-
-#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FindInput {
-    /// Return the current round and checklist for this task; otherwise compact search results.
-    pub task_id: Option<String>,
-    pub workspace: Option<String>,
-    pub query: Option<String>,
-    /// Opt in to historical round summaries. Defaults to false.
-    #[serde(default)]
-    pub history: bool,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct SourceRef {
-    pub thread_id: String,
-    #[serde(default)]
-    pub verified: bool,
+pub struct ChangeStatus {
+    pub has_uncommitted_changes: Option<bool>,
+    pub has_unpushed_commits: Option<bool>,
 }
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CodeObservation {
-    pub workspace: String,
+pub struct ChangedFile {
+    pub path: String,
+    pub change_type: String,
+    pub staged: bool,
+    pub original_path: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentWorkspace {
+    pub path: String,
     pub branch: Option<String>,
     pub head: Option<String>,
-    pub dirty: Option<bool>,
     pub upstream: Option<String>,
-    pub commits: Vec<CommitRef>,
+    pub change_status: ChangeStatus,
+    pub changed_files: Vec<ChangedFile>,
+    pub related_commits: Vec<String>,
     pub observed_at: i64,
     pub error: Option<String>,
 }
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct CommitRef {
-    pub sha: String,
-    /// Only checks the locally cached upstream ref; never implies a live remote query.
-    pub in_cached_upstream: Option<bool>,
+pub struct AgentConversation {
+    pub agent: String,
+    pub conversation_id: String,
+    pub verified: bool,
 }
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Plan {
-    pub revision: u64,
-    pub created_at: i64,
-    #[serde(flatten)]
-    pub input: PlanInput,
-}
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Verification {
     pub id: String,
     pub actor: String,
+    pub agent: String,
     pub created_at: i64,
-    pub workspace_observation: Option<CodeObservation>,
+    pub agent_workspace: Option<AgentWorkspace>,
     #[serde(flatten)]
     pub input: VerificationInput,
 }
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Closure {
-    pub outcome: String,
-    pub reason: String,
-    pub actor: String,
-    pub closed_at: i64,
-    pub verification_ids: Vec<String>,
+pub struct ValidationPlan {
+    pub revision: u64,
+    pub items: Vec<Criterion>,
+    pub records: Vec<Verification>,
+    // Immutable checklist snapshots support historical verification; hidden in the default UI.
+    pub revisions: Vec<Plan>,
 }
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Event {
+pub struct TimelineEvent {
     pub id: String,
     pub at: i64,
     pub actor: String,
     pub kind: String,
     pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_workspace: Option<AgentWorkspace>,
 }
-
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct Round {
-    pub id: String,
-    pub number: usize,
-    pub opened_at: i64,
-    pub opened_reason: String,
-    pub previous_round_id: Option<String>,
-    pub objective: String,
-    pub description: String,
-    pub phase: Phase,
-    pub sources: Vec<SourceRef>,
-    pub code_refs: Vec<CodeObservation>,
-    pub plans: Vec<Plan>,
-    pub verifications: Vec<Verification>,
-    pub deliveries: Vec<String>,
-    pub closure: Option<Closure>,
-    pub events: Vec<Event>,
+pub struct Closure {
+    pub accepted: bool,
+    pub reason: String,
+    pub closed_at: i64,
 }
-
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskRun {
+    pub id: String,
+    pub description: String,
+    pub status: RunStatus,
+    pub validation_plan: ValidationPlan,
+    pub agent_workspace: AgentWorkspace,
+    pub agent_conversation: Vec<AgentConversation>,
+    pub timeline: Vec<TimelineEvent>,
+    pub created_by: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub closure: Option<Closure>,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Task {
     pub schema_version: u32,
     pub id: String,
-    pub project_id: String,
-    pub project_name: String,
-    pub repository_path: String,
-    pub workspace: String,
     pub title: String,
-    pub objective: String,
     pub description: String,
-    pub kind: String,
-    pub current_round_id: String,
-    pub rounds: Vec<Round>,
-    pub revision: u64,
+    pub kind: TaskKind,
+    pub project_id: String,
+    pub created_by: String,
     pub created_at: i64,
+    pub runs: Vec<TaskRun>,
+    pub revision: u64,
     pub updated_at: i64,
 }
-
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct WorkspaceInput {
+    /// Absolute existing worktree/project path. Git facts are read by Rust.
+    pub path: String,
+    /// Only commits explicitly associated with this task; never all branch commits.
+    #[serde(default)]
+    pub related_commits: Vec<String>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ChecklistInput {
+    pub items: Vec<Criterion>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InitialRunInput {
+    #[serde(default)]
+    pub description: String,
+    pub validation_plan: Option<ChecklistInput>,
+    /// Actual current conversation IDs if available; omit rather than guessing.
+    #[serde(default)]
+    pub agent_conversation: Vec<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateTaskInput {
+    pub title: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub kind: TaskKind,
+    pub agent_workspace: WorkspaceInput,
+    #[serde(default)]
+    pub initial_run: InitialRunInput,
+    pub operation_id: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CreateTaskRunInput {
+    pub task_id: String,
+    pub expected_revision: u64,
+    pub description: String,
+    pub agent_workspace: Option<WorkspaceInput>,
+    pub validation_plan: Option<ChecklistInput>,
+    #[serde(default)]
+    pub agent_conversation: Vec<String>,
+    pub operation_id: Option<String>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateTaskRunInput {
+    pub task_id: String,
+    pub run_id: String,
+    pub expected_revision: u64,
+    pub description: Option<String>,
+    /// Closed is reserved for the human App action; Agent tools cannot close or accept.
+    pub status: Option<RunStatus>,
+    pub agent_workspace: Option<WorkspaceInput>,
+    pub validation_plan: Option<ChecklistInput>,
+    pub verification: Option<VerificationInput>,
+    #[serde(default)]
+    pub agent_conversation: Vec<String>,
+    /// Actual build/release reference. Required when first marking published.
+    pub delivery: Option<String>,
+    pub note: Option<String>,
+    pub operation_id: Option<String>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct FindTasksInput {
+    pub task_id: Option<String>,
+    pub run_id: Option<String>,
+    pub workspace: Option<String>,
+    pub query: Option<String>,
+    #[serde(default)]
+    pub history: bool,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Receipt {
     pub task_id: String,
-    pub round_id: String,
+    pub run_id: String,
     pub revision: u64,
-    pub plan_revision: Option<u64>,
+    pub plan_revision: u64,
     pub criterion_ids: Vec<String>,
-    pub source_linked: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<String>,
+    pub status: RunStatus,
+    pub created_by: String,
 }

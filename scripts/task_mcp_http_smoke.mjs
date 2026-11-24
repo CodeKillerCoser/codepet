@@ -34,7 +34,7 @@ async function start(){
  assert.ok((await realpath(metadata.tokenFile)).startsWith((await realpath(home))+'/'),'Credentials must remain in isolated app data');
  const token=await readFile(metadata.tokenFile,'utf8');let protocol;
  async function rpc(method,params={}){
-  const response=await post(metadata.url,{authorization:`Bearer ${token}`,...(protocol?{'MCP-Protocol-Version':protocol}:{})},{jsonrpc:'2.0',id:++sequence,method,params});
+  const response=await post(metadata.url,{authorization:`Bearer ${token}`,'X-CodePet-Agent':'codex',...(protocol?{'MCP-Protocol-Version':protocol}:{})},{jsonrpc:'2.0',id:++sequence,method,params});
   assert.equal(response.status,200,response.body);assert.equal(response.headers['mcp-session-id'],undefined);
   const body=JSON.parse(response.body);if(body.error)throw Error(JSON.stringify(body.error));return body.result;
  }
@@ -47,20 +47,21 @@ async function start(){
 let first,second;
 try{
  first=await start();
- const tools=await first.rpc('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['tasks_find','tasks_save']);
- const toolBytes=Buffer.byteLength(JSON.stringify(tools));assert.ok(toolBytes<14000);
- const input={workspace,title:'HTTP 验收样例',objective:'无前端也能通过本机 HTTP 登记任务',plan:{summary:'校验 HTTP 任务登记',criteria:[{title:'可登记并读取',steps:'通过 HTTP 保存，再查询',expected:'任务和修订一致'}]}};
- const created=await first.call('tasks_save',input);assert.equal(created.revision,1);
- const retry=await first.call('tasks_save',input);assert.equal(retry.taskId,created.taskId);
- const updated=await first.call('tasks_save',{taskId:created.taskId,expectedRevision:1,phase:'ready_for_delivery',note:'本机 HTTP 自测完成'});assert.equal(updated.revision,2);
+ const tools=await first.rpc('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['create-task','create-task-run','find-tasks','update-task-run']);
+ const toolBytes=Buffer.byteLength(JSON.stringify(tools));assert.ok(toolBytes<24000);
+ const input={agentWorkspace:{path:workspace},title:'HTTP 验收样例',description:'任务背景',kind:'bugfix',initialRun:{description:'通过 HTTP 登记并验证',validationPlan:{items:[{title:'可登记并读取',steps:'保存并查询',expected:'任务和执行一致'}]}}};
+ const created=await first.call('create-task',input);assert.equal(created.revision,1);assert.equal(created.createdBy,'codex');
+ const retry=await first.call('create-task',input);assert.equal(retry.taskId,created.taskId);
+ const updated=await first.call('update-task-run',{taskId:created.taskId,runId:created.runId,expectedRevision:1,status:'ready_for_delivery',description:'本机 HTTP 自测完成'});assert.equal(updated.revision,2);
  const denied=await post(first.metadata.url,{}, {jsonrpc:'2.0',id:1,method:'tools/list',params:{}});assert.equal(denied.status,401);
  const origin=await post(first.metadata.url,{authorization:`Bearer ${first.token}`,origin:'https://example.invalid'},{jsonrpc:'2.0',id:1,method:'tools/list',params:{}});assert.equal(origin.status,403);
+ const missingAgent=await post(first.metadata.url,{authorization:`Bearer ${first.token}`},{jsonrpc:'2.0',id:1,method:'tools/list',params:{}});assert.equal(missingAgent.status,400);
  const token=first.token;await first.stop();first=null;
  second=await start();assert.equal(second.token,token);
- const task=await second.call('tasks_find',{taskId:created.taskId});assert.equal(task.revision,2);assert.equal(task.status,'ready_for_delivery');assert.equal(task.latestCode.dirty,true);
- await assert.rejects(second.call('tasks_save',{taskId:created.taskId,expectedRevision:1,note:'stale'}),/revision=2/);
- await assert.rejects(second.call('tasks_save',{taskId:created.taskId,expectedRevision:2,actor:'human'}));
+ const task=await second.call('find-tasks',{taskId:created.taskId});assert.equal(task.revision,2);assert.equal(task.description,'任务背景');assert.equal(task.run.status,'ready_for_delivery');assert.equal(task.run.agentWorkspace.changeStatus.hasUncommittedChanges,true);assert.ok(task.run.agentWorkspace.changedFiles.length);assert.equal(task.run.createdBy,'codex');
+ await assert.rejects(second.call('update-task-run',{taskId:created.taskId,runId:created.runId,expectedRevision:1,note:'stale'}),/revision=2/);
+ await assert.rejects(second.call('update-task-run',{taskId:created.taskId,runId:created.runId,expectedRevision:2,actor:'human'}));
  await second.stop();second=null;
- const report={success:true,mode:'real-http-without-frontend',toolCount:2,toolDefinitionBytes:toolBytes,createReceiptBytes:Buffer.byteLength(JSON.stringify(created)),updateReceiptBytes:Buffer.byteLength(JSON.stringify(updated)),nativeCli:!!process.env.CODEPET_MCP_EMBEDDED,credentialsPersistedAcrossRestart:true,unauthorizedRejected:true,crossOriginRejected:true,agentCannotImpersonateHuman:true,taskPersistsAcrossRestart:true,revisionConflictPreserved:true,dirtyWorkspaceObserved:true};
+ const report={success:true,mode:'real-http-without-frontend',toolCount:4,toolDefinitionBytes:toolBytes,createReceiptBytes:Buffer.byteLength(JSON.stringify(created)),updateReceiptBytes:Buffer.byteLength(JSON.stringify(updated)),nativeCli:!!process.env.CODEPET_MCP_EMBEDDED,credentialsPersistedAcrossRestart:true,unauthorizedRejected:true,crossOriginRejected:true,agentCannotImpersonateHuman:true,taskPersistsAcrossRestart:true,revisionConflictPreserved:true,dirtyWorkspaceObserved:true,changedFilesObserved:true,agentSourceFromHeader:true,taskRunIsolation:true};
  await mkdir(join(root,'artifacts/task-ledger-qa'),{recursive:true});await writeFile(join(root,`artifacts/task-ledger-qa/http${process.env.CODEPET_MCP_EMBEDDED?'-embedded':''}-report.json`),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
 }finally{first?.child.kill();second?.child.kill();await rm(temporary,{recursive:true,force:true});}

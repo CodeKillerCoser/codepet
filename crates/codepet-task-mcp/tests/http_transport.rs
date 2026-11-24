@@ -36,6 +36,7 @@ impl Endpoint {
             .post(&self.url)
             .header("accept", "application/json, text/event-stream")
             .header("authorization", &self.authorization)
+            .header("X-CodePet-Agent", "codex")
             .header("MCP-Protocol-Version", "2025-06-18")
             .json(&json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}))
     }
@@ -112,13 +113,12 @@ async fn http_writes_share_the_app_ledger_and_survive_restart_without_sessions()
     let initialized = endpoint.rpc("initialize", init()).await;
     assert_eq!(initialized["serverInfo"]["name"], "codepet-tasks");
     let tools = endpoint.rpc("tools/list", json!({})).await;
-    assert_eq!(tools["tools"].as_array().unwrap().len(), 2);
-    assert!(serde_json::to_vec(&tools).unwrap().len() < 14000);
-    let input =
-        json!({"workspace":workspace,"title":"HTTP 任务","objective":"通过本机 HTTP 登记目标"});
+    assert_eq!(tools["tools"].as_array().unwrap().len(), 4);
+    assert!(serde_json::to_vec(&tools).unwrap().len() < 24000);
+    let input = json!({"agentWorkspace":{"path":workspace},"title":"HTTP 任务","description":"通过本机 HTTP 登记目标"});
     let (first, retry) = tokio::join!(
-        endpoint.call("tasks_save", input.clone()),
-        endpoint.call("tasks_save", input)
+        endpoint.call("create-task", input.clone()),
+        endpoint.call("create-task", input)
     );
     assert_eq!(first["taskId"], retry["taskId"]);
     assert_eq!(first["revision"], 1);
@@ -127,7 +127,7 @@ async fn http_writes_share_the_app_ledger_and_survive_restart_without_sessions()
         endpoint.runtime.ledger().get(task_id).unwrap().title,
         "HTTP 任务"
     );
-    let unauthorized_actor = endpoint.post("tools/call", json!({"name":"tasks_save","arguments":{"taskId":task_id,"expectedRevision":1,"actor":"human"}})).send().await.unwrap();
+    let unauthorized_actor = endpoint.post("tools/call", json!({"name":"create-task","arguments":{"taskId":task_id,"expectedRevision":1,"actor":"human"}})).send().await.unwrap();
     let value: Value = unauthorized_actor.json().await.unwrap();
     assert!(value.get("error").is_some() || value["result"]["isError"] == true);
     let port = reqwest::Url::parse(&endpoint.url).unwrap().port().unwrap();
@@ -138,7 +138,7 @@ async fn http_writes_share_the_app_ledger_and_survive_restart_without_sessions()
     let reopened = Endpoint::start(&data, port).await;
     assert_eq!(reopened.authorization, endpoint.authorization);
     assert_eq!(reopened.url, endpoint.url);
-    let task = reopened.call("tasks_find", json!({"taskId":task_id})).await;
+    let task = reopened.call("find-tasks", json!({"taskId":task_id})).await;
     assert_eq!(task["revision"], 1);
     reopened.runtime.shutdown_once().await;
 }
@@ -196,6 +196,16 @@ async fn rejects_unauthorized_and_cross_origin_requests_before_tool_dispatch() {
             .status(),
         StatusCode::FORBIDDEN
     );
+    assert_eq!(
+        endpoint
+            .post("initialize", init())
+            .header("X-CodePet-Agent", "another")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
     let origin = endpoint.url.trim_end_matches("/mcp");
     assert_eq!(
         endpoint
@@ -235,22 +245,111 @@ async fn official_sdk_client_negotiates_and_calls_the_http_tools() {
     };
     let data = tempfile::tempdir().unwrap();
     let endpoint = Endpoint::start(data.path(), 0).await;
-    let http = reqwest_mcp::Client::builder().no_proxy().build().unwrap();
+    let mut headers = reqwest_mcp::header::HeaderMap::new();
+    headers.insert(
+        "x-codepet-agent",
+        reqwest_mcp::header::HeaderValue::from_static("codex-sdk"),
+    );
+    let http = reqwest_mcp::Client::builder()
+        .no_proxy()
+        .default_headers(headers)
+        .build()
+        .unwrap();
     let transport = StreamableHttpClientTransport::with_client(
         http,
         StreamableHttpClientTransportConfig::with_uri(endpoint.url.clone())
             .auth_header(endpoint.authorization.trim_start_matches("Bearer ")),
     );
     let client = ClientConfig::default().serve(transport).await.unwrap();
-    assert_eq!(client.list_all_tools().await.unwrap().len(), 2);
+    assert_eq!(client.list_all_tools().await.unwrap().len(), 4);
     let result = client
         .call_tool(
-            CallToolRequestParams::new("tasks_find")
+            CallToolRequestParams::new("find-tasks")
                 .with_arguments(serde_json::from_value(json!({"query":"SDK client"})).unwrap()),
         )
         .await
         .unwrap();
     assert_ne!(result.is_error, Some(true));
     client.cancel().await.unwrap();
+    endpoint.runtime.shutdown_once().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn request_header_is_required_and_each_writer_has_its_own_identity() {
+    let data = tempfile::tempdir().unwrap();
+    let workspace = repository(data.path());
+    let endpoint = Endpoint::start(&data.path().join("data"), 0).await;
+    let rpc = |agent: Option<&str>, name: &str, input: Value| {
+        let mut request = endpoint
+            .client
+            .post(&endpoint.url)
+            .header("Authorization", &endpoint.authorization)
+            .header("accept", "application/json, text/event-stream")
+            .header("MCP-Protocol-Version", "2025-06-18");
+        if let Some(agent) = agent {
+            request = request.header("X-CodePet-Agent", agent);
+        }
+        request.json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":input}}))
+    };
+    let input = json!({"title":"来源测试","description":"任务背景","kind":"bugfix","agentWorkspace":{"path":workspace}});
+    for agent in [None, Some("human"), Some(""), Some("bad source")] {
+        assert_eq!(
+            rpc(agent, "create-task", input.clone())
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+    }
+    let task_a = rpc(Some("codex-a"), "create-task", input.clone())
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    let receipt: Value =
+        serde_json::from_str(task_a["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    let update = json!({"taskId":receipt["taskId"],"runId":receipt["runId"],"expectedRevision":1,"description":"第二个 Agent 确认方案","status":"published","delivery":"Release 1.0"});
+    let result = rpc(Some("codex-b"), "update-task-run", update)
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_ne!(result["result"]["isError"], true, "{result}");
+    let task = endpoint
+        .runtime
+        .ledger()
+        .get(receipt["taskId"].as_str().unwrap())
+        .unwrap();
+    assert_eq!(task.created_by, "codex-a");
+    assert_eq!(task.description, "任务背景");
+    assert_eq!(task.runs[0].created_by, "codex-a");
+    assert_eq!(task.runs[0].timeline.last().unwrap().actor, "codex-b");
+    let next =
+        json!({"taskId":task.id,"expectedRevision":task.revision,"description":"发布后复发"});
+    let result = rpc(Some("codex-c"), "create-task-run", next)
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_ne!(result["result"]["isError"], true, "{result}");
+    let task = endpoint.runtime.ledger().get(&task.id).unwrap();
+    assert_eq!(task.runs[1].created_by, "codex-c");
+    assert_eq!(task.runs[0].created_by, "codex-a");
+    let denied = json!({"taskId":task.id,"runId":task.runs[1].id,"expectedRevision":task.revision,"status":"closed"});
+    let result = rpc(Some("codex-c"), "update-task-run", denied)
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_eq!(result["result"]["isError"], true);
     endpoint.runtime.shutdown_once().await;
 }

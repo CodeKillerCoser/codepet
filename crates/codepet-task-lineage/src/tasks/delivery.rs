@@ -1,5 +1,5 @@
 //! Read projections of saved Git observations. No extra Git scan or model call.
-use super::{Round, Task};
+use super::legacy::{Round, Task};
 use crate::Result;
 use serde::Serialize;
 use serde_json::Value;

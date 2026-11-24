@@ -1,49 +1,74 @@
-# 本地任务 MCP 接入与验收
+# 本地 Task / TaskRun MCP 接入与验收
 
-## 适用范围与入口
+## 入口与升级
 
-2026-11-24 的 Codex 任务账本。当前默认入口是 App 的 Rust 后台提供的 Streamable HTTP；前端只展示配置和账本，不承载 MCP。关闭主窗口而 App 仍运行时服务保持，退出 App 时停止。旧 stdio 入口保留兼容。
-
-安装版须包含 backend API 27；仅更新前端不能获得 HTTP 服务。“Codex工作台 → 任务与验收 → 接入 Codex”在服务就绪后提供完整配置。替换 Codex config.toml 中原来的整个 codepet_tasks 条目，移除 command/args，然后在新对话中使用：
+2026-11-24 当前实现要求 backend API 28。仅更新前端不能获得新模型与工具，需安装新版 App。Codex工作台 → 任务与验收 → 更多 → 接入 Agent，从已就绪服务复制完整配置，替换 config.toml 的 codepet_tasks 条目，然后在新对话使用。
 
 ```toml
 [mcp_servers.codepet_tasks]
 url = "http://127.0.0.1:47623/mcp"
-http_headers = { Authorization = "Bearer <从 App 复制的本机凭据>" }
+http_headers = { Authorization = "Bearer <从 App 复制>", "X-CodePet-Agent" = "codex" }
 ```
 
-不要直接复制占位凭据；App 提供的是可用值。URL、http_headers 是 [Codex 支持的 HTTP MCP 配置](https://developers.openai.com/codex/mcp/)。HTTP 采用 [官方 Rust SDK](https://github.com/modelcontextprotocol/rust-sdk) 的 StreamableHttpService，保留 2025 客户端兼容，并通过官方 SDK 客户端协商验收。任务工具只需短请求，服务使用无会话 JSON 响应，不维护长对话状态。
+不要复制占位凭据，删除旧 command/args。X-CodePet-Agent 由配置自动附到每条 HTTP 请求，使用 1–64 位字母、数字、点、下划线、短横线，服务统一小写；human/user/agent/unknown 是保留值。它标记调用来源，不能取代认证或授予人工权限。缺失、重复或无效来源返回 400；无效凭据 401，错误 Host/Origin 403。
 
-服务只监听 IPv4 回环；固定端口被占用会报告启动失败，不跳到其他端口或把其他服务误报为可用。验证 Host/Origin 与本机 Bearer 凭据；不开放跨站浏览器写入。凭据自动保存在当前数据目录 tasks/mcp-http.token，Unix 权限 0600，重启不轮换，不写日志。正常使用只需从 App 复制一次完整配置。
+服务由 App Rust 后台托管，固定回环端口；关闭窗口而 App 仍运行时保持，退出时取消并释放。端口占用会报告失败，不跳到其他端口，也不生成假配置。Bearer 凭据位于当前 data/tasks/mcp-http.token，Unix 权限 0600，重启稳定、不写日志。数据目录切换在重启后统一应用。前端不代理 MCP。
 
-开发可用 `cargo build --manifest-path crates/Cargo.toml -p codepet-task-mcp` 后运行 `codepet-task-mcp --http`；显式端口 0 仅用于隔离验收。打包程序的 `--task-mcp-http` 是无窗口验收入口。旧 `--task-mcp` 和独立程序不带参数仍为 stdio，不再由 App 默认推荐。不要与正常 App 同时争用固定端口。
+## 四个工具
 
-## 日常使用
+| 工具 | 输入与职责 |
+| --- | --- |
+| create-task | title、description、kind、agentWorkspace.path，及可选 initialRun；一个事务同时创建任务与首次执行 |
+| create-task-run | taskId、expectedRevision、description，按需携带工作区/清单/对话；只为已发布或已结束目标开启新处理 |
+| update-task-run | taskId、runId、expectedRevision，以及变化的摘要、status、validationPlan、verification、明确关联提交或 delivery |
+| find-tasks | 按项目/关键词搜索简短列表；taskId 读当前执行，runId 选择历史，history 显式获取历史摘要 |
 
-项目 AGENTS.md 可加入 `crates/codepet-task-mcp/instructions.md` 的短约定。开发阶段通常只有两次 tasks_save：方案确定/开始实施时登记目标与清单，实施告一段落时登记简短进展、自测、明确关联的提交并设 phase=ready_for_delivery；实际发布后再合并一次 phase=published 与 delivery 版本/发布记录。主状态仅进行中、待交付、已发布、已结束，发布前的排查与验证不切分更多状态。待交付的提交/推送说明由 Rust 从已有 Git 观测生成，明确区分共享工作树和关联 SHA，不增加维护调用。首调 workspace 是项目或 worktree 的绝对路径；后续保留返回 taskId/revision，省略不变字段。无需为每个步骤建任务、反复查询状态或维护整个对话的摘要。
+没有 update-task MCP 工具；任务基本信息可在 App 单独修改。kind 只有 bugfix/feature。状态为 in_progress、ready_for_delivery、published、closed，Agent 不能关闭或记录人工验收。首次 published 要同时提供实际 delivery；提交不证明发布。
 
-恢复旧目标或复发时才 tasks_find。已结束的任务复发，用 tasks_save 的 reopenReason 新开轮次，旧清单自动沿用但没有通过结果。方案变化时可同时提交 plan；不要先重开再额外调用一次仅复制清单。
+最小创建示例（工具参数，不含创建来源和时间）：
 
-threadId 可省略；MCP 标准不会保证传来当前 Codex ID，也不从长对话猜造。显式提供后，Rust 只查询一次本地 state_5.sqlite 的 cwd 并核对仓库。不可核实的引用显示待核实，已知其他项目的引用拒绝关联；缺少引用不会阻塞任务登记。没有扫描 rollout 全文。
+```json
+{
+  "title": "修复首次点击无响应",
+  "description": "切换窗口后首次点击偶发无响应",
+  "kind": "bugfix",
+  "agentWorkspace": { "path": "/absolute/project/worktree" },
+  "initialRun": {
+    "description": "定位事件绑定并修复，验证窗口切换后的点击",
+    "validationPlan": {
+      "items": [{ "title": "窗口切换后点击", "steps": "切换窗口后点击菜单", "expected": "正常打开" }]
+    }
+  }
+}
+```
 
-## 数据与权限边界
+保留回执 taskId/runId/revision/planRevision/criterionIds。更新省略不变字段，agentWorkspace 只允许提交路径和 relatedCommits，Git 状态与文件由 Rust 观测，不能从参数伪造。新执行省略计划时复用旧清单，但生成新检查项 ID 并清空结果；不要把恢复同次处理当作新执行。
 
-实际位置为 App 路径管理器的 data/tasks/v2，默认 macOS 是 `~/Library/Application Support/code-pet/tasks/v2`，自定义目录从 bootstrap settings 加载。projects.json 保存服务生成的项目 UUID 与规范化仓库路径映射；每个任务在 projects/<projectId>/tasks/<taskId>.json。receipts 保存重试回执，prepared.json 是事务恢复日志，不手工编辑。
+通常开始实施一次 create-task，实现告一段落一次 update-task-run；发布和复发再按事实补记。初始化 instructions 自动携带这套规则，App 展示同一来源说明，无需手动复制 AGENTS。纯咨询不登记，不轮询，不逐文件维护。普通回执约 225 字节、四工具定义约 8 KB，实际数值见黑盒报告；不把这些字节数当作模型 token 计费或自动登记可靠性保证。
 
-MCP 固定写 agent，自测不会成为 human；人工验收和关闭仅通过主窗口 Rust 适配器。验收目标、环境、清单修订和结果分开，结束与通过分开。工作树 dirty 是共享观测；任务提交必须显式登记 SHA，不自动把 HEAD 或分支上的全部提交归给任务。上游比较只用本地缓存，不执行 fetch。
+agentConversation 输入是实际对话 ID 的数组，来源从请求上下文取得。ID 不确定可省略；只有来源 codex 的引用尝试只读查询本地 state_5.sqlite 并核对仓库，缺失保持待核实，已知跨项目引用拒绝。不读取其他 Agent 的历史。Header 不等于对话 ID。
 
-## 失败处理
+## 数据、迁移与并发
 
-- revision 冲突：保留草稿，用 tasks_find 读取当前任务并合并所需字段，使用新 revision；不得自动重写用户改动。
-- 请求超时：用原参数/operationId 重试。省略 operationId 时服务根据精确请求指纹幂等；不要在重试时更换参数却沿用显式操作键。
-- 账本忙：服务短暂重试文件锁；仍失败时不阻塞开发，在下一关键节点重试并说明未登记。
-- 仓库搬迁/清理：历史记录仍存在；目录映射自动修复未实现。只更新任务文字允许原工作目录不可读，Git 事实保持未知/历史观测。
-- HTTP 服务未启动：保持 App 运行；检查“接入 Codex”报告的端口/凭据错误。端口占用时停止冲突服务后重启；凭据文件损坏时先退出 App，再备份/移除该文件并重新复制生成的配置。切换数据目录需重启并重新复制本机凭据。
-- App 未及时显示 MCP 写入：返回窗口时刷新，或点击“刷新任务”；没有持续轮询或依赖前端同步任务状态。
+活动数据在 data/tasks/v3，项目映射为 projects.json，聚合为 projects/<projectId>/tasks/<taskId>.json。receipts 保存幂等回执，prepared.json 用于事务恢复；不手工修改。Task 元数据与 runs 分开，完整定义见 [领域文档](../30-domains/task-management/task-record-model.md)。
 
-## 已运行验证
+首次读取以原子事务导入 v2，v2 文件保持原样。旧任务/执行/检查项 ID 和证据保留，旧 objective 合入说明，bug/investigation 标记变为 bugfix。旧 Agent 没有具体名称时显示历史 Agent；缺失文件清单的旧观测不伪装成当前扫描，之后更新当前执行重新读取。不要让旧 App/MCP 进程在迁移后继续写 v2，升级后重启并替换配置。
 
-以下命令在本机 macOS 执行。真实 HTTP/stdio 测试隔离 HOME/CODEX_HOME 和应用数据，原生 UI 使用临时账本、真实生产 IPC 及样例任务/验收文本，不污染正式账本，不代表样例问题已真实发布。
+expectedRevision 是整个 Task 的聚合版本。冲突保留草稿，用 find-tasks 读取后合并，不自动覆盖人工修改。请求失败用相同参数/operationId 重试；不同参数不能复用显式键。重试先查回执，因此工作区被删除后仍能返回已提交结果。
+
+Git 状态属于共享工作区，上游只比较本地引用；不 fetch。relatedCommits 只接受可核实的 SHA。记录实际被测目标、环境、计划版本、执行者及证据，Agent 自测不能解锁人工通过；不同版本的结果不混用。结束执行仍可注明原因而不声称验收通过。
+
+## 排查
+
+- 400：检查新配置是否含唯一有效 X-CodePet-Agent；不要只保留 Authorization。
+- 401/403：重新复制本机配置，检查凭据、Host/Origin，不关闭鉴权。
+- 端口被占用：停止冲突服务后重启 App；不指向未知服务。
+- revision 冲突：保留草稿并读当前执行，核对 runId 是否仍是当前。
+- 原工作区已移除：更新进展可以继续，代码状态明确未知；新执行或切换工作区需要可用路径。
+- 界面没显示写入：回到窗口或刷新任务；没有持续轮询。
+- 凭据文件损坏：退出 App，备份异常文件后恢复凭据并重新复制配置，不输出 token 到日志。
+
+## 验收命令
 
 ```sh
 cargo test --manifest-path crates/Cargo.toml -p codepet-task-lineage -p codepet-task-mcp
@@ -55,26 +80,21 @@ CODEPET_MCP_BINARY="$PWD/src-tauri/target/debug/code-pet" CODEPET_MCP_EMBEDDED=1
 CODEPET_MCP_BINARY="$PWD/src-tauri/target/debug/code-pet" CODEPET_MCP_EMBEDDED=1 node scripts/task_mcp_smoke.mjs
 node scripts/task_ledger_native_qa.mjs
 node scripts/task_ledger_ui_qa.mjs
+CODEPET_QA_ENGINE=webkit node scripts/task_ledger_ui_qa.mjs
 node scripts/codex_workbench_ui_qa.mjs
 npx vitest run frontend
-npm run build
 npm run check:frontend
-CODEPET_SIZE_BASE=origin/main npm run check:source-size
+npm run check:source-size
+npm run build
 TMPDIR=/private/tmp npm run test:webcontent
 ```
 
-HTTP 传输测试覆盖官方 SDK 客户端、2025 兼容请求、并发写入幂等、同端口重启与凭据稳定、未授权和错误 Host/Origin 拒绝、端口占用时账本仍可用。真实进程验收在没有前端时完成初始化、两工具枚举、读写、重启读取与冲突拒绝。原生 QA 从 Rust 发出 HTTP MCP 写入，再由生产 UI/IPC 核对相同任务 ID 和修订，并验证配置包含 URL/凭据而不含 command。测试客户端直连回环，不继承执行环境代理。
+真实 HTTP/stdio 黑盒隔离 HOME/CODEX_HOME 与应用数据，验证四工具、创建来源、工作区文件、重启幂等、冲突和权限。官方 SDK 及原始 HTTP 验证每请求来源、Host/Origin、缺失来源和端口故障。原生测试用临时账本，HTTP 在 Rust 发出，GUI 通过生产 IPC 读取同一 revision，完整走人工验收、结束、新执行、历史只读和冲突草稿。样例不代表真实业务问题已发布。
 
-stdio 兼容检查创建/实现/发布三个关键节点写入、紧凑回执、真实 dirty 观测、来源核实、重启幂等、修订冲突与拒绝冒充 human。原生检查四个主状态的筛选、已发布在验收前保持独立、自测与人工验收隔离、结束勾选与可选说明、新轮次回到进行中且沿用清单但未测、旧轮只读、并发冲突保留草稿。布局检查复用原生验收快照，在 light/dark、1280/820/600/390 下检查溢出、动作可见性和焦点返回；另用显式布局样例覆盖 8 条任务、3 项清单、本地/发布不同进度与失败项。验证任务行不超过 100px、验收内容在第一屏、辅助信息默认折叠、键盘展开和失败项优先展开。状态标签覆盖浅蓝/琥珀/绿/灰四种背景，并在浅/暗两套主题检查文字对比度至少 4.5:1、小面积标签及不溢出。该样例仅存在 frontend/qa，不进入产品数据。
+浏览器复用原生快照，测试明暗、1280/820/600/390、完整 App 1143 视口与短窗口真实滚动。任务与执行分别编辑，长文字默认折叠，辅助记录默认折叠；验证历史选择、文件内容、菜单与弹窗焦点、忙碌取消拦截和状态标签对比度。WebKit 的 display-p3 颜色先转换到 sRGB 再计算。证据位于忽略目录 artifacts/task-ledger-qa/（mcp/http/embedded 报告、native/report.json、native-window.png、layout/）。
 
-证据在忽略目录 `artifacts/task-ledger-qa/`：mcp-report.json、http-report.json、http-embedded-report.json、native/report.json、native/native-window.png、layout/。具体工具定义与回执字节数记录在 mcp-report.json；预算测试防止无意扩大工具面。该测量不是实际模型 token 消耗或自动调用可靠性的保证。
+## 边界
 
-合入共享 UI 重构后的生产前端使用 `npm run check:frontend`，结果为 0 errors；源码长度检查没有超限。此前旧配置的全量 tsc 检查包含测试/QA 和资源声明错误，不作为生产检查通过的替代证据。webcontent 的默认临时目录 `/var` 与返回的 `/private/var` 别名使旧路径字符串断言失败，使用规范临时目录后 11 项通过。直接 cargo 构建沿用原生 QA 的 macOSPrivateApi=false 配置；正常发布应走现有 Tauri 打包入口。
+安装版退出/重启的人工验收、Windows 本机运行和真实长对话自主登记仍待实际使用。测试直接 cargo 编译的临时 macOSPrivateApi/resource 配置不替代正常发行构建；正式交付走 GitHub Build 的 mac 平台。webcontent 默认 /var 与 /private/var 路径别名会使已有测试字符串断言失败，使用 TMPDIR=/private/tmp 后验证。不会修改用户全局 Codex 配置、替换本机安装版或监控已触发的云端构建。
 
-## 尚未验收
-
-Windows 本机运行、安装版退出/重启的人工验收、当前 Codex 对话加载 MCP 后的自主调用行为，以及长对话中的漏登记率。接入不会自动修改用户 Codex 全局配置、替换本地安装版或改写项目 AGENTS；提交与打包结果以 Git 历史和 GitHub Actions 记录为准。
-
-## 本次修复的真实任务
-
-本轮通过已有 stdio MCP 在正式账本登记“任务 MCP 改为本机 HTTP”（回执在忽略目录 `artifacts/task-ledger-qa/current-http-fix-task.json`），关联当前对话与 4 项验收清单。实现完成后通过新 HTTP 接口记录同一任务的里程碑。它是实际开发任务；上文隔离验收任务是样本，二者不可混称。未通过主窗口人工验收前，不记录 human 通过或自动结束。
+本次真实开发任务“实现 Task / TaskRun 与四工具 Agent MCP”的初始回执在 artifacts/task-ledger-qa/task-runs-implementation.json；通过已有 MCP 登记，完成后使用新工具与 Header 更新同一任务。它与隔离的验收样本分开记录，Agent 不记录 human 通过或自动结束。

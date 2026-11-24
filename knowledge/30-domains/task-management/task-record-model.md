@@ -1,116 +1,47 @@
-# Task、处理轮次与验收记录的数据定义
+# Task 与 TaskRun 对象定义
 
-> 2026-11-24 领域设计，核心模型已落地首版；当前实现与后续目标的区别见文末。细化 [MCP 最小方案](../../20-product/codex-task-acceptance-mvp.md)，覆盖任务内容、背景、分支/提交、验收计划、人工状态与反复开启的历史。
+## 背景与目标
 
-## 背景
+任务表示持续追踪的目标；任务执行表示围绕该目标的一次具体处理。一个对话可以处理多个任务，一次执行也可以关联多个对话。2026-11-24 按用户确认的定义实现 schema v3，保留旧账本的执行与验收历史，减少 Agent 的维护和界面常驻内容。
 
-一项长期目标可能跨多个 Codex 对话，也可能多次修复和发布。用一个 description、一个 branch、一个 status 加完成布尔值，会把新旧修复混在一起，无法回答“哪轮修复、哪些提交、在哪个版本和环境验收过”。
+## 当前定义
 
-## 目标
+Task 保存 `id/title/description/kind/projectId/createdBy/createdAt/runs`，后台另存 schemaVersion、revision、updatedAt。title 是一句话目标，description 是背景或现象；不再保存另一份 objective。kind 只有 bugfix、feature，在界面作为小标记。项目名称属于读取时补充的投影，项目 ID 由规范化 Git common directory 映射；同仓库 worktree 共用项目。
 
-以 Task 保存长期问题/目标，以 Round 保存一轮处理，主状态只保留进行中、待交付、已发布、已结束，并保留每次验收、代码交付观测和人工决策。可以手动调整阶段和结束任务，但不能因结束而伪造验收通过或 Git 推送事实。
+TaskRun 保存 `id/description/status/validationPlan/agentWorkspace/agentConversation/timeline/createdBy/createdAt`，后台维护 updatedAt 与结束记录。description 记录本次处理原因、确认结论和方案；修改它不会更新 Task 背景。runs 按创建顺序保存，最后一项是当前执行，Task 状态从它取得。
 
-## 非目标
+- validationPlan：items 为当前清单，records 为实际验收，revision/revisions 保存清单修订与历史快照。检查项有稳定 ID、前提、步骤、预期、适用本地/发布范围及是否必验。验收记录绑定清单版本、阶段、实际被测目标、环境、执行者、逐项结果和证据，并记录当时工作区快照。自测和人工验收不能混为通过；不同目标或环境不能拼凑验收结果。
+- agentWorkspace：path、branch、head、upstream、changeStatus、changedFiles、relatedCommits、observedAt、error。changeStatus 分别记录是否有未提交改动及待推送提交，允许未知。changedFiles 保存路径、变更类型、是否暂存、改名前路径；冲突不标为已暂存。Git 使用工作台的有界只读命令与 porcelain v2 NUL 解析器，不 fetch。推送状态基于本地上游；修改文件属于共享工作区，relatedCommits 仅接受明确关联的 SHA，不自动认领 HEAD 或全部分支提交。
+- agentConversation：每项记录 agent、conversationId、verified。只有明确的 codex 来源读取本地 Codex 索引核实项目，其他来源保持待核实；没有 ID 可以为空。Header 不会自动提供对话 ID，不扫描完整历史、不猜造 ID。当前只有已核实 Codex 引用提供跳转。
+- timeline：服务记录时间、来源、类型、摘要，可附发布引用与工作区快照。执行摘要演变后，早先的处理原因仍可从时间线检索。Agent 不需要提交整条时间线。
 
-首期不做复杂事件溯源框架、全量源码快照、自动判定每份文件改动归属哪个任务或自动证明两条不同 SHA 的提交等价。不把分支名、对话 ID、worktree 路径或标题作为任务主键。
+## 执行与状态
 
-## 现状理解
+主状态仅 in_progress、ready_for_delivery、published、closed。创建 Task 同时建立首次执行；在同次请求携带初始说明和清单即可。继续同次处理只更新当前执行；已发布或已结束后需要重新处理时，创建新 TaskRun。新执行默认进行中，可直接携带新计划；省略计划则复用旧检查项并生成新 ID，验收结果清空。旧执行只读。
 
-旧 `domain.rs::Task` 有 title/detail、root_thread_id、Episode 和 manual_completion；旧 Store 已有原子替换、文件锁、prepared journal。新模型不能直接扩充一个完成布尔值解决，应使用独立 schema v2 和显式迁移。当前工作台的 Git 状态属于整棵工作树，不能自动归到共享它的单个任务。
+首次切到 published 必须附实际发布版本或记录，提交不代表发布。验收出现失败时回到进行中，旧证据及发布引用继续保留。closed 只能通过 App 人工操作；人工可注明原因结束，也可在必验项有相应人工证据后确认验收通过。Task 的标题、背景和标记可以在 App 单独修订，没有暴露 update-task MCP 工具。
 
-## 实现路径
+## MCP 与来源
 
-### 1. Task 保存长期身份和内容
+只有 create-task、create-task-run、update-task-run、find-tasks 四个工具。三个写入工具返回 taskId、runId、任务 revision、清单版本和检查项 ID 等紧凑回执；更新只提交变化字段。通常开始实施创建一次、实现告一段落更新一次；发布及重新处理再按事实补记。不轮询，不在每条消息后维护。
 
-| 字段 | 含义 |
-| --- | --- |
-| id / projectId | 服务生成的稳定任务 ID、所属项目；Codex 项目 ID 和仓库目录作为项目映射，不能让临时工作树消失导致任务失去身份 |
-| kind | bug / feature / investigation，用于展示及确定是否需要发布步骤 |
-| title | 列表中的简短标题 |
-| objective | 必填：要修复什么问题/实现什么能力，以及完成边界 |
-| description | 可选 Markdown：背景、现象、复现方式、期望、需求出发点、相关资料；首期不强拆成大量必填表单 |
-| sourceRefs | 来源对话/消息引用列表；标识缺失可待关联，不猜造 |
-| currentRoundId / rounds | 当前处理轮次及历史轮次 |
-| revision / createdAt / updatedAt | 并发控制和服务记录时间 |
+HTTP 请求携带 X-CodePet-Agent，默认配置为 codex。Rust 从每条请求的上下文取得来源，创建时固化 createdBy，后续更新者写进 timeline，不能改掉创建者。来源是客户端声明的标记；Bearer 认证与 agent/human 权限判断独立，Header 不能授予人工验收权限。保留的 stdio 入口使用 CODEPET_AGENT，缺省 codex，仍只暴露四工具。
 
-Task 可跨对话，一个对话也可关联多个 Task。scope 改成新的独立目标时新建 Task；标题改名保留原 ID。每轮保留 objective/description 的相关快照，避免后来修改任务描述使旧验收失去解释。
+## 存储与迁移
 
-### 2. Round 保存每轮处理
+活动账本在 data/tasks/v3/projects/<projectId>/tasks/<taskId>.json。聚合事务沿用 Store 的文件锁、原子 JSON 写入、事务恢复和幂等回执。expectedRevision 是整个 Task 聚合的版本；冲突保留人工草稿。重试先读取已提交回执，再访问工作区，所以路径被清理后仍可重试成功。查询默认返回紧凑摘要；详情只返回当前执行和当前清单，历史须显式请求，文件清单在 MCP 回复中最多显示 20 项并标记截断。
 
-每轮有独立 id、显示序号、openedAt、openedReason、previousRoundId，以及目标快照、方案摘要、关联对话、代码引用、清单修订、验收记录、阶段、关闭记录和历史事件。
+首次读取在一个事务中导入 v2，旧文件不修改。保留 Task/执行/检查项 ID、修订、计划与验证记录、旧 Git 快照、对话、时间线和发布引用；旧 objective 合并到说明。bug/investigation 映射 bugfix，feature 保持。旧 Agent 没有具体来源时记 unknown，不猜为 codex；旧观测缺文件清单时明确提示，之后的当前执行写入会重新观测。旧发布引用没有独立时间戳，迁移事件记录迁移时刻并注明原始发生时间未知。旧 v1 对话抽取不在迁移范围内。
 
-同一轮可以包含排查、实施、本地测试、多次提交、多次发布尝试和多条对话。换对话、重试一次测试、增加一个 commit，不自动开新轮。未关闭轮次里测试失败后继续修复，仍在本轮追加验收记录。
+## 涉及模块与验证
 
-已验收/已结束后，因复发或明确重新处理开启新 Round：保留旧轮已验收或已结束事实，新轮说明“版本 Y 复发”及来源。相同长期目标复发继续原 Task；新目标新建 Task，可建立 relatedTask 引用，避免不断扩大原任务边界。
+- tasks/model.rs、mod.rs、operations.rs：实际 v3 对象、写入职责与原子事务；records_tests.rs 验证 Task/Run 隔离、重试、并发和迁移。legacy/legacy_model 只用于旧数据读取、既有验收规则与迁移回归样本，生产入口不再调用旧写入 API。
+- tasks/workspace.rs 与 workbench.rs：共用只读 Git 和 NUL 解析，验证改名、暂存、未跟踪、换行文件名及冲突。
+- task-mcp 与 HTTP 适配：验证四工具、官方 SDK、来源按请求隔离、缺失/无效 Header、不可冒充人工、重启及端口边界。
+- Tauri task_ledger 与 TaskLedger.svelte：复用同一 Ledger 的人工入口，分别编辑任务和执行。默认只展示任务说明、当前执行、验收清单；长说明可展开，工作区、对话、验收历史和时间线归入折叠的执行记录。
 
-### 3. 代码引用保留多个仓库位置、分支和提交
+具体命令与实测证据见 [MCP 接入与验收](../../40-runbooks/codepet-task-mcp.md)。原生入口测试核对 HTTP 写入与 GUI 读取同一 revision，覆盖人工验收、结束、新执行、历史只读和冲突草稿。迁移测试比较 v2 原始字节，避免“保留历史”只停留在界面。
 
-Round.codeRefs 是列表，每项记录 repositoryId、worktreePath、branchRef（游离时为空）、baseCommit/headCommit 观测、关联 commits、必要的集成提交引用，以及各记录的来源和 observedAt。
+## 已知边界
 
-提交保存完整 SHA；一个任务可有多个提交，一个提交也可能实现多个任务。MCP 登记后，服务可核实 SHA 是否存在于对应仓库，但任务归属仍是 Agent/用户明确建立的关联，不能把分支上所有提交自动归给本任务。
-
-分支和路径可变，commit 引用保留。rebase/squash/cherry-pick 后原 SHA 不静默改写，追加最终集成 SHA 及所声明的替代/关联关系；无法核实等价时保留未知。仓库被清理、提交不再可达时显示引用不可用，而不删除历史。
-
-Git 交付状态单独作为带时间和来源的观测：工作树脏/干净、关联提交是否存在、相对本地上游引用的可达性，以及明确记录的推送/构建/发布引用。读取不到时为 unknown。界面必须区分“当前工作树还有改动（共享状态）”与“本任务关联提交的交付情况”，前者不能证明是本任务残留。
-
-### 4. 验收计划与结果分开
-
-AcceptancePlan 保存 id、revision、适用 round、方案摘要、affectedAreas 和检查项。affectedAreas 说明动到了什么以及为什么要回归，例如任务写入、历史展示、并发更新。
-
-每个检查项有稳定 id、前提、操作、预期结果、范围 local/release/both、适用环境和是否必测。检查项默认尚未测试，不能在计划里直接写通过。方案/清单修订生成新 revision；进入某次正式验收或发布时固定其采用的 revision，历史记录始终引用该版本。
-
-VerificationRun 保存 id、roundId、planRevision、stage（local/release）、actualTarget、environment、执行者、时间、逐项结果及证据。逐项结果为 passed / failed / not_tested / blocked，可附说明和豁免原因。新建一次结果，不覆盖上一次失败。
-
-本地未提交也可验收：actualTarget 记录 worktree、HEAD、dirty 和 observedAt，明确它是未提交工作区，不把 HEAD 当成已包含改动的代码版本；没有内容快照时不能声称可精确重建。发布后另建验收记录，关联实际安装/运行版本、commit 或包链接，本地通过不自动继承。Agent 自测和用户验收分开标记，不由 MCP 自填 actor=human。
-
-### 5. 只有四个主状态
-
-| 主状态 | 含义 |
-| --- | --- |
-| 进行中 | 正在排查、确定方案、实施或本地验证，不再逐个维护这些子阶段 |
-| 待交付 | 实现与自测告一段落，等待交付 |
-| 已发布 | 已登记实际发布版本或记录，可以继续验收 |
-| 已结束 | 用户结束本轮；是否验收通过另作为事实记录 |
-
-MCP 的 phase 只接受 in_progress / ready_for_delivery / published，结束走人工入口；主状态由当前轮 phase 与 closure 推导，不冗余存另一份状态。新建和重开默认进行中。提交或推送不自动变成已发布；切到已发布需在同次调用提供 delivery 版本或发布记录，该引用是明确登记的信息，首版不自动证明它在生产环境生效。验收记录出现失败时回到进行中，旧发布记录与失败证据保留。
-
-Git 提交/推送观测、本地/发布后的检查结果以及 Codex/人工执行者都作为事实展示，不成为新的任务状态。交付明细由 Rust 在读取时从已保存观测投影，不新增 Git 扫描、模型调用或持久化状态：最新工作树 dirty 显示“待提交（共享工作树）”；明确关联的 SHA 按各自最后一条本地缓存上游记录显示待推送/已推送，未知不猜；没有关联 SHA 时标待关联。待提交和待推送可并存，每项保留观测时间，不能把共享改动归给单个任务。不再要求用户选择排查、方案、本地验收等过程枚举。任务类型从主要界面和编辑表单移除，保留旧元数据兼容。
-
-结束弹窗只保留“验收已通过”勾选与可选说明。通过勾选仍要求当前清单必验项有相应人工通过结果；未测、失败或不再继续也可直接结束，不伪造通过。新 Closure 只记录 accepted 或 closed；取消、被替代等写入说明。旧结束结果保留读取，但统一显示已结束。
-
-旧 investigating/planning/implementing/validating_local 读取为进行中，ready_to_publish / ready_for_release 与过渡字段 awaiting_acceptance 读取为待交付，validating_release 读取为已发布。Schema 与新写入只暴露三个未结束状态。旧轮次与历史原文不覆盖。
-
-### 6. 历史线的定义
-
-历史线包含轮次分组与轮内事件：创建、方案更新、清单修订、关联对话/commit、交付观测、测试记录、人工阶段调整、关闭及重新开启。每个事件有 id、roundId、服务记录时间、可信入口确定的 actor、类型、简短说明和关联对象引用；事后补录可附 occurredAt，不能冒充当时服务已经观察到。
-
-旧轮次不重写；补充或纠正旧结论追加更正记录，指出被更正的对象。App 默认显示当前轮，展开历史可见“第一轮：版本 X 已验收；第二轮：版本 Y 复发，处理中”。同一轮的两次验收也能看到第一次失败、第二次通过及对应版本，避免只保留最后状态。
-
-### 7. 本地物理存储
-
-首期采用应用数据目录下 `tasks/v2/projects/<projectId>/tasks/<taskId>.json`，一份任务聚合保存 Task、Rounds、清单快照、验收记录和事件列表。只存短摘要、引用与必要证据，不复制完整对话或源码。查询索引是可重建缓存。
-
-App 和 MCP 共用领域/存储服务。短时文件锁内检查 expected revision，校验业务状态后，以临时文件原子替换并保存幂等回执；跨文件更新使用已有事务恢复方式。重复 operation ID 返回同一结果，参数不一致时报错。首期不实现独立事件流重放或全量事件数据库；事件随任务聚合事务更新，避免文件状态与历史线写到一半。
-
-## 涉及模块
-
-- 新 task domain/service：定义 Task/Round/CodeRef/AcceptancePlan/VerificationRun/Closure 及状态投影，隔离旧 root-thread Task。
-- 共享 store：复用原子更新、锁和 journal，实现修订冲突、幂等和迁移。
-- MCP 工具：登记内容、方案、清单、代码引用、进展和新轮次，写入来源与 Agent 身份。
-- Tauri 与任务 UI：展示四个主状态、当前轮与历史，提供人工验收、结束原因及阶段调整。
-
-## 风险
-
-任务与工作树事实混淆：专门验证同工作树两任务的残留不误归属。历史覆盖：冻结清单并追加验收/更正事件。代码换 SHA：保留原始与集成引用，不能假定等价。人工结束被误解为验收通过：分开 Closure outcome。多进程覆盖：文件锁/revision/幂等及故障恢复测试。
-
-## 测试计划
-
-覆盖一任务多提交多分支、两任务共用工作树或 commit、无提交的本地验收、已提交未推送、先推送后本地验收、方案修订不改变旧验收、同轮先失败后通过、已关闭后复发开第二轮、换对话不自动开轮、取消任务保留未测结果、rebase 后旧提交不可达、人工编辑与 MCP 并发、断线重试及写入中断恢复。
-
-## 知识沉淀
-
-本页保留完整领域目标；首版实现状态见 MCP 最小方案，接入与验收证据见 `knowledge/40-runbooks/codepet-task-mcp.md`。
-
-## 未知项
-
-首版已实现 Task/Round、清单修订、逐次验收、关闭、复发、事件、项目映射及幂等回执。代码引用采用分支/HEAD/dirty/显式 SHA 的观测，构建发布用交付引用，尚无结构化 SHA 替代关系、验收豁免或旧历史更正界面；不做旧 v1 数据迁移。对话 ID 显式提供时核对本地 SQLite cwd，不可核实时保持待关联。不保证工作树内容快照、远端实时推送状态或提交语义归属。
+不持有工作区完整源码快照，不保证历史内容可精确重建；本地上游不等于实时远端。仓库移动、旧进程在迁移后继续写 v2、其他 Agent 对话索引适配均不自动合并。升级需安装 backend API 28 的 App 并替换 MCP 配置；不依赖仅更新网页资源。安装版人工验收与长对话中主动登记的遗漏率仍需实际使用确认。

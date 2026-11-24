@@ -1,0 +1,392 @@
+use super::{
+    id,
+    model::*,
+    now, source, text, validation,
+    workspace::{self, Context},
+    Ledger, Project,
+};
+use crate::Result;
+use serde::Deserialize;
+use serde_json::json;
+
+fn event(run: &mut TaskRun, actor: &Actor, kind: &str, summary: String, reference: Option<String>) {
+    let at = now();
+    run.updated_at = at;
+    run.timeline.push(TimelineEvent {
+        id: id(),
+        at,
+        actor: actor.source().into(),
+        kind: kind.into(),
+        summary,
+        reference,
+        agent_workspace: Some(run.agent_workspace.clone()),
+    });
+}
+fn new_run(description: String, workspace: AgentWorkspace, actor: &Actor) -> TaskRun {
+    let at = now();
+    TaskRun {
+        id: id(),
+        description,
+        status: RunStatus::InProgress,
+        validation_plan: ValidationPlan::default(),
+        agent_workspace: workspace,
+        agent_conversation: vec![],
+        timeline: vec![],
+        created_by: actor.source().into(),
+        created_at: at,
+        updated_at: at,
+        closure: None,
+    }
+}
+fn link(run: &mut TaskRun, ids: &[String], actor: &Actor, repository: &str) -> Result<()> {
+    if ids.len() > 20 {
+        return Err("一次最多关联 20 条对话".into());
+    }
+    for conversation_id in ids {
+        text(conversation_id, "对话 ID", 160)?;
+        let agent = if actor.is_human() {
+            "codex"
+        } else {
+            actor.source()
+        };
+        let verified = if agent == "codex" {
+            super::valid_id(conversation_id)?;
+            crate::sources::local::directory(crate::sources::local::CODEX_ID)
+                .ok()
+                .map(|home| source::verify(&home, conversation_id, repository))
+                .transpose()?
+                .unwrap_or(false)
+        } else {
+            false
+        };
+        if let Some(existing) = run
+            .agent_conversation
+            .iter_mut()
+            .find(|c| c.agent == agent && c.conversation_id == *conversation_id)
+        {
+            existing.verified |= verified;
+        } else {
+            run.agent_conversation.push(AgentConversation {
+                agent: agent.into(),
+                conversation_id: conversation_id.clone(),
+                verified,
+            });
+        }
+    }
+    Ok(())
+}
+fn check_revision(task: &Task, expected: u64) -> Result<()> {
+    if task.revision != expected {
+        Err(format!(
+            "任务已更新：当前 revision={}；请读取后合并",
+            task.revision
+        ))
+    } else {
+        Ok(())
+    }
+}
+fn project<'a>(projects: &'a [Project], task: &Task) -> Result<&'a Project> {
+    projects
+        .iter()
+        .find(|p| p.id == task.project_id)
+        .ok_or("项目不存在".into())
+}
+fn same_project(project: &Project, ctx: &Context) -> Result<()> {
+    if project.path != ctx.repository {
+        Err("工作区不属于任务项目，请创建独立任务".into())
+    } else {
+        Ok(())
+    }
+}
+fn description(value: &str) -> Result<()> {
+    if value.chars().count() > 8000 {
+        Err("描述不能超过 8000 字".into())
+    } else {
+        Ok(())
+    }
+}
+
+impl Ledger {
+    pub fn create_task(&self, input: CreateTaskInput, actor: Actor) -> Result<Receipt> {
+        let (key, fingerprint, cached) =
+            self.request_key("create-task", &input, input.operation_id.as_deref(), &actor)?;
+        if let Some(r) = cached {
+            return Ok(r);
+        }
+        text(&input.title, "任务标题", 160)?;
+        description(&input.description)?;
+        description(&input.initial_run.description)?;
+        let ctx = workspace::inspect(&input.agent_workspace)?;
+        let mut run = new_run(
+            input.initial_run.description,
+            ctx.observation.clone(),
+            &actor,
+        );
+        if let Some(plan) = input.initial_run.validation_plan {
+            validation::set_plan(&mut run, plan)?;
+        }
+        link(
+            &mut run,
+            &input.initial_run.agent_conversation,
+            &actor,
+            &ctx.repository,
+        )?;
+        let summary = if run.description.is_empty() {
+            "开始首次执行".into()
+        } else {
+            run.description.clone()
+        };
+        event(&mut run, &actor, "created", summary, None);
+        self.transact(key, fingerprint, |_, projects| {
+            let project = if let Some(p) = projects.iter().find(|p| p.key == ctx.key) {
+                p.clone()
+            } else {
+                let p = Project {
+                    id: id(),
+                    key: ctx.key,
+                    name: ctx.name,
+                    path: ctx.repository,
+                };
+                projects.push(p.clone());
+                p
+            };
+            let at = now();
+            Ok(Task {
+                schema_version: 3,
+                id: id(),
+                title: input.title,
+                description: input.description,
+                kind: input.kind,
+                project_id: project.id,
+                created_by: actor.source().into(),
+                created_at: at,
+                runs: vec![run],
+                revision: 0,
+                updated_at: at,
+            })
+        })
+    }
+    pub fn create_task_run(&self, input: CreateTaskRunInput, actor: Actor) -> Result<Receipt> {
+        let (key, fingerprint, cached) = self.request_key(
+            "create-task-run",
+            &input,
+            input.operation_id.as_deref(),
+            &actor,
+        )?;
+        if let Some(r) = cached {
+            return Ok(r);
+        }
+        text(&input.description, "本次处理原因", 8000)?;
+        let previous = self.get(&input.task_id)?;
+        let last = previous.runs.last().unwrap();
+        let workspace = input.agent_workspace.clone().unwrap_or(WorkspaceInput {
+            path: last.agent_workspace.path.clone(),
+            related_commits: vec![],
+        });
+        let ctx = workspace::inspect(&workspace)?;
+        let mut run = new_run(input.description.clone(), ctx.observation.clone(), &actor);
+        let plan = input.validation_plan.or_else(|| {
+            if last.validation_plan.items.is_empty() {
+                None
+            } else {
+                let mut items = last.validation_plan.items.clone();
+                for item in &mut items {
+                    item.id.clear();
+                }
+                Some(ChecklistInput { items })
+            }
+        });
+        if let Some(plan) = plan {
+            validation::set_plan(&mut run, plan)?;
+        }
+        link(&mut run, &input.agent_conversation, &actor, &ctx.repository)?;
+        event(&mut run, &actor, "created", input.description, None);
+        self.transact(key, fingerprint, |store, projects| {
+            let mut task = Self::load(store, &input.task_id)?;
+            check_revision(&task, input.expected_revision)?;
+            same_project(project(projects, &task)?, &ctx)?;
+            if !matches!(
+                task.runs.last().unwrap().status,
+                RunStatus::Closed | RunStatus::Published
+            ) {
+                return Err("当前执行仍在处理中，请更新当前执行".into());
+            }
+            task.runs.push(run);
+            Ok(task)
+        })
+    }
+    pub fn update_task_run(&self, input: UpdateTaskRunInput, actor: Actor) -> Result<Receipt> {
+        let (key, fingerprint, cached) = self.request_key(
+            "update-task-run",
+            &input,
+            input.operation_id.as_deref(),
+            &actor,
+        )?;
+        if let Some(r) = cached {
+            return Ok(r);
+        }
+        if let Some(value) = &input.description {
+            description(value)?;
+        }
+        if let Some(value) = &input.note {
+            text(value, "进展摘要", 2000)?;
+        }
+        if let Some(value) = &input.delivery {
+            text(value, "发布引用", 2000)?;
+        }
+        if input.status == Some(RunStatus::Closed) {
+            return Err("结束执行只能通过 App 人工操作".into());
+        }
+        let previous = self.get(&input.task_id)?;
+        let last = previous.runs.last().unwrap();
+        let workspace = input.agent_workspace.clone().unwrap_or(WorkspaceInput {
+            path: last.agent_workspace.path.clone(),
+            related_commits: vec![],
+        });
+        // Milestone writes still work if a previously recorded worktree was removed.
+        let ctx = match workspace::inspect(&workspace) {
+            Ok(c) => Some(c),
+            Err(_) if input.agent_workspace.is_none() => None,
+            Err(e) => return Err(e),
+        };
+        self.transact(key, fingerprint, |store, projects| {
+            let mut task = Self::load(store, &input.task_id)?;
+            check_revision(&task, input.expected_revision)?;
+            let repository = project(projects, &task)?.path.clone();
+            if let Some(ctx) = &ctx {
+                same_project(project(projects, &task)?, ctx)?;
+            }
+            let run = task.runs.last_mut().unwrap();
+            if run.id != input.run_id {
+                return Err("历史执行只读，请更新当前执行".into());
+            }
+            if run.status == RunStatus::Closed {
+                return Err("执行已结束，请创建新的执行".into());
+            }
+            if let Some(value) = input.description {
+                run.description = value;
+            }
+            if let Some(ctx) = ctx {
+                let retained = run.agent_workspace.related_commits.clone();
+                run.agent_workspace = ctx.observation;
+                for sha in retained {
+                    if !run.agent_workspace.related_commits.contains(&sha) {
+                        run.agent_workspace.related_commits.push(sha);
+                    }
+                }
+            } else {
+                run.agent_workspace.change_status = ChangeStatus {
+                    has_uncommitted_changes: None,
+                    has_unpushed_commits: None,
+                };
+                run.agent_workspace.changed_files.clear();
+                run.agent_workspace.observed_at = now();
+                run.agent_workspace.error = Some("已记录工作区不可用；代码状态未知".into());
+            }
+            if input.status == Some(RunStatus::Published)
+                && run.status != RunStatus::Published
+                && input.delivery.is_none()
+            {
+                return Err("标为已发布时需要实际发布版本或记录".into());
+            }
+            if let Some(status) = input.status {
+                run.status = status;
+            }
+            if let Some(plan) = input.validation_plan {
+                validation::set_plan(run, plan)?;
+            }
+            if let Some(verification) = input.verification {
+                validation::verify(run, verification, &actor)?;
+            }
+            link(run, &input.agent_conversation, &actor, &repository)?;
+            let summary = input.note.unwrap_or_else(|| {
+                if run.description.is_empty() {
+                    "更新执行进展".into()
+                } else {
+                    run.description.clone()
+                }
+            });
+            event(
+                run,
+                &actor,
+                if input.delivery.is_some() {
+                    "delivery"
+                } else {
+                    "milestone"
+                },
+                summary,
+                input.delivery,
+            );
+            Ok(task)
+        })
+    }
+    pub fn close(
+        &self,
+        task_id: &str,
+        run_id: &str,
+        expected_revision: u64,
+        accepted: bool,
+        reason: &str,
+    ) -> Result<Receipt> {
+        text(reason, "结束说明", 2000)?;
+        let actor = Actor::human();
+        let input = json!({"taskId":task_id,"runId":run_id,"expectedRevision":expected_revision,"accepted":accepted,"reason":reason});
+        let (key, fingerprint, cached) = self.request_key("close", &input, None, &actor)?;
+        if let Some(r) = cached {
+            return Ok(r);
+        }
+        self.transact(key, fingerprint, |store, _| {
+            let mut task = Self::load(store, task_id)?;
+            check_revision(&task, expected_revision)?;
+            let run = task.runs.last_mut().unwrap();
+            if run.id != run_id || run.status == RunStatus::Closed {
+                return Err("只能结束当前未关闭的执行".into());
+            }
+            if accepted && !validation::human_acceptance_ready(run) {
+                return Err("当前清单尚未完成人工验收；可以注明原因直接结束".into());
+            }
+            run.status = RunStatus::Closed;
+            run.closure = Some(Closure {
+                accepted,
+                reason: reason.into(),
+                closed_at: now(),
+            });
+            event(run, &actor, "closed", reason.into(), None);
+            Ok(task)
+        })
+    }
+    // Human metadata correction is deliberately not an MCP tool.
+    pub fn edit_task(&self, input: EditTaskInput) -> Result<Receipt> {
+        text(&input.title, "标题", 160)?;
+        description(&input.description)?;
+        let actor = Actor::human();
+        let (key, fingerprint, cached) = self.request_key("edit-task", &input, None, &actor)?;
+        if let Some(r) = cached {
+            return Ok(r);
+        }
+        self.transact(key, fingerprint, |store, _| {
+            let mut task = Self::load(store, &input.task_id)?;
+            check_revision(&task, input.expected_revision)?;
+            task.title = input.title;
+            task.description = input.description;
+            task.kind = input.kind;
+            event(
+                task.runs.last_mut().unwrap(),
+                &actor,
+                "task_edited",
+                "修订任务基本信息".into(),
+                None,
+            );
+            Ok(task)
+        })
+    }
+}
+#[derive(serde::Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditTaskInput {
+    pub task_id: String,
+    pub expected_revision: u64,
+    pub title: String,
+    pub description: String,
+    pub kind: TaskKind,
+}

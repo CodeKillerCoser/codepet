@@ -11,7 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
     Router,
 };
-use codepet_task_lineage::tasks::Ledger;
+use codepet_task_lineage::tasks::{Actor, Ledger};
 use rmcp::transport::streamable_http_server::{
     session::local::LocalSessionManager, StreamableHttpServerConfig, StreamableHttpService,
 };
@@ -42,7 +42,11 @@ struct Access {
     authorization: String,
 }
 
-async fn authorize(State(access): State<Arc<Access>>, request: Request, next: Next) -> Response {
+async fn authorize(
+    State(access): State<Arc<Access>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
     // Validate before authentication too: invalid browser Origins always get 403.
     let hosts = request
         .headers()
@@ -92,6 +96,27 @@ async fn authorize(State(access): State<Arc<Access>>, request: Request, next: Ne
         )
             .into_response();
     }
+    let agents = request
+        .headers()
+        .get_all("x-codepet-agent")
+        .iter()
+        .collect::<Vec<_>>();
+    let actor = if agents.len() == 1 {
+        agents[0]
+            .to_str()
+            .ok()
+            .and_then(|value| Actor::agent(value).ok())
+    } else {
+        None
+    };
+    let Some(actor) = actor else {
+        return (
+            StatusCode::BAD_REQUEST,
+            "A valid X-CodePet-Agent header is required",
+        )
+            .into_response();
+    };
+    request.extensions_mut().insert(actor);
     next.run(request).await
 }
 
@@ -138,7 +163,7 @@ impl HttpServer {
     pub fn configuration(&self) -> Value {
         // JSON quoted strings are valid TOML basic strings for these ASCII values.
         let config = format!(
-            "[mcp_servers.codepet_tasks]\nurl = {}\nhttp_headers = {{ Authorization = {} }}\n",
+            "[mcp_servers.codepet_tasks]\nurl = {}\nhttp_headers = {{ Authorization = {}, \"X-CodePet-Agent\" = \"codex\" }}\n",
             json!(self.url),
             json!(self.access.authorization)
         );

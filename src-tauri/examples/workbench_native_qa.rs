@@ -44,7 +44,7 @@ async fn qa_http_task_write(
         .as_str().ok_or("missing local credential")?;
     let url = setup["url"].as_str().ok_or("missing HTTP URL")?;
     let client = reqwest::Client::builder().no_proxy().build().map_err(|e| e.to_string())?;
-    let init: Value = client.post(url).header("Authorization", authorization)
+    let init: Value = client.post(url).header("Authorization", authorization).header("X-CodePet-Agent", "native-qa")
         .header("Accept", "application/json, text/event-stream")
         .json(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
             "protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"native-qa","version":"1"}
@@ -52,11 +52,11 @@ async fn qa_http_task_write(
         .error_for_status().map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
     let task_id = QA_CONFIG.get().unwrap()["taskId"].as_str().ok_or("missing task ID")?;
     let task = runtime.ledger().get(task_id)?;
-    let result: Value = client.post(url).header("Authorization", authorization)
+    let result: Value = client.post(url).header("Authorization", authorization).header("X-CodePet-Agent", "native-qa")
         .header("Accept", "application/json, text/event-stream")
         .header("MCP-Protocol-Version", init["result"]["protocolVersion"].as_str().ok_or("missing protocol")?)
         .json(&json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
-            "name":"tasks_save","arguments":{"taskId":task_id,"expectedRevision":task.revision,
+            "name":"update-task-run","arguments":{"taskId":task_id,"runId":task.runs.last().unwrap().id,"expectedRevision":task.revision,
                 "note":"原生 HTTP MCP 写入，随后由生产 UI 与 IPC 读取"}
         }})).send().await.map_err(|e| e.to_string())?
         .error_for_status().map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
@@ -128,12 +128,12 @@ fn main() {
     )
     .unwrap();
     if expected["mode"] == "tasks" {
-        use codepet_task_lineage::tasks::{Actor, Ledger, SaveInput};
+        use codepet_task_lineage::tasks::{Actor, Ledger, CreateTaskInput, UpdateTaskRunInput};
         let ledger=Ledger::new(data.path());
-        let input:SaveInput=serde_json::from_value(json!({"workspace":expected["workspace"],"title":"修复桌宠菜单点击失效","objective":"切换窗口后点击桌宠，菜单仍能稳定打开","description":"发布后出现的偶发问题，需要本地自测和实际安装后复验。","kind":"bug","plan":{"summary":"恢复窗口焦点切换后的点击事件","affectedAreas":["点击事件","菜单与焦点"],"criteria":[{"title":"切换窗口后点击","precondition":"应用运行十分钟","steps":"切换到其他窗口，再点击桌宠","expected":"菜单正常打开"}]}})).unwrap();
-        let created=ledger.save(input,Actor::Agent).unwrap();
-        let update:SaveInput=serde_json::from_value(json!({"taskId":created.task_id,"expectedRevision":created.revision,"phase":"published","delivery":"原生任务验收样例 · 1.2.0","note":"本地实现和自测已完成，等待发布验收","verification":{"planRevision":1,"stage":"local","target":"当前未提交工作区","environment":"macOS","results":[{"criterionId":created.criterion_ids[0],"result":"passed","evidence":"本地实际点击验证通过"}]}})).unwrap();
-        ledger.save(update,Actor::Agent).unwrap();
+        let input:CreateTaskInput=serde_json::from_value(json!({"agentWorkspace":{"path":expected["workspace"]},"title":"修复桌宠菜单点击失效","description":"切换窗口后首次点击无响应，影响菜单操作。","kind":"bugfix","initialRun":{"description":"定位窗口焦点切换后的事件绑定，修复点击处理并验证菜单。","validationPlan":{"items":[{"title":"切换窗口后点击","precondition":"应用运行十分钟","steps":"切换到其他窗口，再点击桌宠","expected":"菜单正常打开"}]}}})).unwrap();
+        let created=ledger.create_task(input,Actor::agent("codex").unwrap()).unwrap();
+        let update:UpdateTaskRunInput=serde_json::from_value(json!({"taskId":created.task_id,"runId":created.run_id,"expectedRevision":created.revision,"status":"published","delivery":"原生任务验收样例 · 1.2.0","note":"本地实现和自测已完成，等待发布验收","verification":{"planRevision":1,"stage":"local","target":"当前未提交工作区","environment":"macOS","results":[{"criterionId":created.criterion_ids[0],"result":"passed","evidence":"本地实际点击验证通过"}]}})).unwrap();
+        ledger.update_task_run(update,Actor::agent("codex").unwrap()).unwrap();
         expected["taskId"]=json!(created.task_id);
     }
     std::fs::write(

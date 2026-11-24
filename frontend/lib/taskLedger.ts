@@ -1,62 +1,31 @@
 import { invoke } from '@tauri-apps/api/core';
-
-export type Phase = 'in_progress' | 'ready_for_delivery' | 'published';
-export type TaskStatus = Phase | 'closed';
-export type Scope = 'local' | 'release' | 'both';
-export type TestResult = 'passed' | 'failed' | 'not_tested' | 'blocked';
-export const phases: Record<Phase, string> = { in_progress:'进行中', ready_for_delivery:'待交付', published:'已发布' };
-export const statuses: Record<TaskStatus,string> = {...phases,closed:'已结束'};
-export const results: Record<TestResult, string> = {passed:'通过',failed:'失败',not_tested:'未测',blocked:'受阻'};
-export const scopes: Record<Scope, string> = {local:'本地',release:'发布后',both:'本地与发布后'};
-export const roundStatus = (round:Round):TaskStatus => round.closure?'closed':round.phase;
-export interface Criterion { id:string; title:string; precondition:string; steps:string; expected:string; scope:Scope; required:boolean }
-export interface PlanInput { summary:string; affectedAreas:string[]; criteria:Criterion[] }
-export interface Plan extends PlanInput { revision:number; createdAt:number }
-export interface CheckResult { criterionId:string; result:TestResult; evidence:string }
-export interface VerificationInput { planRevision:number; stage:Scope; target:string; environment:string; results:CheckResult[] }
-export interface CodeObservation { workspace:string; branch:string|null; head:string|null; dirty:boolean|null; upstream:string|null; commits:{sha:string;inCachedUpstream:boolean|null}[]; observedAt:number; error:string|null }
-export interface DeliveryFacts { summary:string; note:string; items:{label:string;scope:'shared_worktree'|'linked_commits';observedAt:number}[] }
-export interface Verification extends VerificationInput { id:string; actor:string; createdAt:number; workspaceObservation:CodeObservation|null }
-export interface Closure { outcome:string; reason:string; actor:string; closedAt:number; verificationIds:string[] }
-export interface TaskEvent { id:string; at:number; actor:string; kind:string; summary:string }
-export interface Round { id:string; number:number; openedAt:number; openedReason:string; previousRoundId:string|null; objective:string; description:string; phase:Phase; sources:{threadId:string;verified:boolean}[]; codeRefs:CodeObservation[]; deliveryFacts?:DeliveryFacts; plans:Plan[]; verifications:Verification[]; deliveries:string[]; closure:Closure|null; events:TaskEvent[] }
-export interface Task { schemaVersion:number; id:string; projectId:string; projectName:string; repositoryPath:string; workspace:string; title:string; objective:string; description:string; kind:string; currentRoundId:string; rounds:Round[]; revision:number; createdAt:number; updatedAt:number }
-export interface SaveInput { taskId?:string; expectedRevision?:number; operationId?:string; workspace?:string; title?:string; objective?:string; description?:string; kind?:string; threadId?:string; phase?:Phase; note?:string; commits?:string[]; plan?:PlanInput; verification?:VerificationInput; reopenReason?:string; delivery?:string }
-export interface Receipt { taskId:string; roundId:string; revision:number; planRevision:number|null; criterionIds:string[]; sourceLinked:boolean; status?:TaskStatus|null }
-export const taskRequest = <T>(op:string,args:Record<string,unknown>={}) => invoke<T>('task_ledger_request',{request:{op,...args}});
-export const currentRound = (task:Task) => task.rounds[task.rounds.length-1];
-export const taskStatus = (task:Task) => statuses[roundStatus(currentRound(task))];
-
-// Only compare results for the latest plan and actual target/environment of the selected stage.
-export function latestResult(round:Round, criterion:Criterion, stage:Scope):{result:TestResult; actor?:string; evidence?:string} {
-  const revision=round.plans.at(-1)?.revision;
-  const runs=round.verifications.filter(v=>v.planRevision===revision&&v.stage===stage);
-  const latest=runs.at(-1);
-  if(!latest) return {result:'not_tested'};
-  for(const run of [...runs].reverse()) {
-    if(run.target!==latest.target||run.environment!==latest.environment) continue;
-    const result=run.results.find(r=>r.criterionId===criterion.id);
-    if(result) return {...result,actor:run.actor};
-  }
+export type RunStatus='in_progress'|'ready_for_delivery'|'published'|'closed';
+export type Scope='local'|'release'|'both';
+export type TestResult='passed'|'failed'|'not_tested'|'blocked';
+export type TaskKind='bugfix'|'feature';
+export const statuses:Record<RunStatus,string>={in_progress:'进行中',ready_for_delivery:'待交付',published:'已发布',closed:'已结束'};
+export const phases={in_progress:'进行中',ready_for_delivery:'待交付',published:'已发布'};
+export const kinds:Record<TaskKind,string>={bugfix:'修复',feature:'功能'};
+export const results:Record<TestResult,string>={passed:'通过',failed:'失败',not_tested:'未测',blocked:'受阻'};
+export const scopes:Record<Scope,string>={local:'本地',release:'发布后',both:'本地与发布后'};
+export interface Criterion{id:string;title:string;precondition:string;steps:string;expected:string;scope:Scope;required:boolean}
+export interface AgentWorkspace{path:string;branch:string|null;head:string|null;upstream:string|null;changeStatus:{hasUncommittedChanges:boolean|null;hasUnpushedCommits:boolean|null};changedFiles:{path:string;changeType:string;staged:boolean;originalPath:string|null}[];relatedCommits:string[];observedAt:number;error:string|null}
+export interface VerificationInput{planRevision:number;stage:Scope;target:string;environment:string;results:{criterionId:string;result:TestResult;evidence:string}[]}
+export interface Verification extends VerificationInput{id:string;actor:string;agent:string;createdAt:number;agentWorkspace:AgentWorkspace|null}
+export interface PlanRevision{revision:number;createdAt:number;summary:string;affectedAreas:string[];criteria:Criterion[]}
+export interface TaskRun{id:string;description:string;status:RunStatus;validationPlan:{revision:number;items:Criterion[];records:Verification[];revisions:PlanRevision[]};agentWorkspace:AgentWorkspace;agentConversation:{agent:string;conversationId:string;verified:boolean}[];timeline:{id:string;at:number;actor:string;kind:string;summary:string;reference?:string;agentWorkspace?:AgentWorkspace}[];createdBy:string;createdAt:number;updatedAt:number;closure:{accepted:boolean;reason:string;closedAt:number}|null}
+export interface Task{schemaVersion:number;id:string;title:string;description:string;kind:TaskKind;projectId:string;projectName:string;createdBy:string;createdAt:number;runs:TaskRun[];revision:number;updatedAt:number}
+export interface Receipt{taskId:string;runId:string;revision:number;planRevision:number;criterionIds:string[];status:RunStatus;createdBy:string}
+export const currentRun=(task:Task)=>task.runs.at(-1)!;
+export const taskStatus=(task:Task)=>statuses[currentRun(task).status];
+export const taskRequest=<T=unknown>(op:string,args:Record<string,unknown>={})=>invoke<T>('task_ledger_request',{request:{op,...args}});
+export function latestResult(run:TaskRun,criterion:Criterion,stage:Scope):{result:TestResult;evidence?:string;actor?:string;agent?:string}{
+  const matching=run.validationPlan.records.filter(v=>v.planRevision===run.validationPlan.revision&&v.stage===stage),latest=matching.at(-1);
+  if(latest)for(const record of matching.filter(v=>v.target===latest.target&&v.environment===latest.environment).reverse()){const result=record.results.find(r=>r.criterionId===criterion.id);if(result)return {...result,actor:record.actor,agent:record.agent};}
   return {result:'not_tested'};
 }
-export function acceptanceReady(round:Round) {
-  const required=round.plans.at(-1)?.criteria.filter(c=>c.required)??[];
-  return required.length>0&&required.every(c=>{const r=latestResult(round,c,c.scope==='local'?'local':'release');return r.actor==='human'&&r.result==='passed';});
-}
-export function filterTasks(tasks:Task[],query:string,project:string,status:string) {
-  const q=query.trim().toLocaleLowerCase();
-  return tasks.filter(t=>(!project||t.projectId===project)&&(status==='all'||(status==='open'?!currentRound(t).closure:status==='closed'?!!currentRound(t).closure:roundStatus(currentRound(t))===status))&&(!q||[t.title,t.objective,t.description,...t.rounds.map(r=>r.openedReason)].join(' ').toLocaleLowerCase().includes(q)));
-}
-export function verificationSummary(round:Round) {
-  const criteria=round.plans.at(-1)?.criteria??[];
-  if(!criteria.length)return '尚无验收计划';
-  const counts=criteria.map(c=>latestResult(round,c,c.scope==='local'?'local':'release').result);
-  return `${counts.filter(r=>r==='passed').length}/${criteria.length} 项通过${counts.includes('failed')?' · 有失败项':''}`;
-}
-
-export function stageProgress(round:Round, stage:'local'|'release') {
-  const criteria=round.plans.at(-1)?.criteria.filter(c=>c.scope==='both'||c.scope===stage)??[];
-  const checks=criteria.map(c=>latestResult(round,c,stage));
-  return {total:criteria.length,passed:checks.filter(r=>r.result==='passed').length,failed:checks.filter(r=>r.result==='failed').length};
-}
+export function acceptanceReady(run:TaskRun){const items=run.validationPlan.items.filter(c=>c.required);return items.length>0&&items.every(c=>{const result=latestResult(run,c,c.scope==='local'?'local':'release');return result.actor==='human'&&result.result==='passed';});}
+export function stageProgress(run:TaskRun,stage:'local'|'release'){const items=run.validationPlan.items.filter(c=>c.scope==='both'||c.scope===stage),checks=items.map(c=>latestResult(run,c,stage));return {total:items.length,passed:checks.filter(c=>c.result==='passed').length,failed:checks.filter(c=>c.result==='failed').length};}
+export function filterTasks(tasks:Task[],query:string,project:string,status:string){const q=query.trim().toLocaleLowerCase();return tasks.filter(t=>(!project||t.projectId===project)&&(status==='all'||(status==='open'?currentRun(t).status!=='closed':currentRun(t).status===status))&&(!q||[t.title,t.description,...t.runs.flatMap(r=>[r.description,...r.timeline.map(e=>e.summary)])].join(' ').toLocaleLowerCase().includes(q)));}
+export const actorLabel=(source:string)=>source==='human'?'人工':source==='codex'?'Codex':source==='unknown'||source==='agent'?'历史 Agent':source;
+export const fileLabels:Record<string,string>={added:'新增',modified:'修改',deleted:'删除',renamed:'重命名',conflicted:'冲突',untracked:'未跟踪'};

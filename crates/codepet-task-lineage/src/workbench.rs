@@ -75,7 +75,7 @@ pub fn projects(home: &Path) -> Result<Value> {
         json!({"projects":items,"warnings":warnings,"sourceInfo":{"codexHome":home,"projectCatalog":project_catalog}}),
     )
 }
-fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
+pub(crate) fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let mut child = Command::new("git")
         .arg("-c")
         .arg("core.fsmonitor=false")

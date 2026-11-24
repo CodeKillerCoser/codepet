@@ -31,23 +31,22 @@ function client(){
 }
 let a,b;
 try{
-  a=client();await a.start();const tools=await a.request('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['tasks_find','tasks_save']);const toolBytes=Buffer.byteLength(JSON.stringify(tools));assert.ok(toolBytes<14000);
-  const create={workspace,title:'修复菜单点击',objective:'切换窗口后点击也能打开菜单',plan:{summary:'恢复点击事件',criteria:[{title:'切换窗口点击',steps:'切换窗口后点击桌宠',expected:'菜单出现'}]}};
-  const first=await a.call('tasks_save',create);assert.equal(first.revision,1);assert.equal(first.status,'in_progress');assert.equal(first.sourceLinked,false);assert.ok(Buffer.byteLength(JSON.stringify(first))<1000);
-  const repeat=await a.call('tasks_save',create);assert.equal(repeat.taskId,first.taskId);
-  const finish={taskId:first.taskId,expectedRevision:first.revision,phase:'ready_for_delivery',threadId,note:'实现和本地自测结束',commits:[git(['rev-parse','HEAD'])],verification:{planRevision:first.planRevision,stage:'local',target:'dirty worktree at HEAD',environment:process.platform,results:[{criterionId:first.criterionIds[0],result:'passed',evidence:'实际本地测试通过'}]}};
-  const second=await a.call('tasks_save',finish);assert.equal(second.revision,2);assert.equal(second.status,'ready_for_delivery');assert.equal(second.sourceLinked,true);
-  await assert.rejects(a.call('tasks_save',{taskId:first.taskId,expectedRevision:2,phase:'published'}),/发布版本/);
-  const publish={taskId:first.taskId,expectedRevision:2,phase:'published',delivery:'MCP 验收样例 · Release 1.3.0'};
-  const third=await a.call('tasks_save',publish);assert.equal(third.revision,3);assert.equal(third.status,'published');
-  await a.stop();a=null;
-  b=client();await b.start();const detail=await b.call('tasks_find',{taskId:first.taskId});assert.equal(detail.revision,3);assert.equal(detail.status,'published');assert.equal(detail.latestCode.dirty,true);assert.equal(detail.latestCode.commits.length,0);assert.equal(detail.latestVerification.actor,'agent');assert.equal(detail.closure,null);assert.equal(detail.plan.criteria[0].title,'切换窗口点击');
-  assert.equal(detail.deliveryFacts.items.find(f=>f.scope==='shared_worktree').label,'待提交');assert.equal(detail.deliveryFacts.items.find(f=>f.scope==='linked_commits').label,'推送待确认');
-  const persistedRetry=await b.call('tasks_save',publish);assert.equal(persistedRetry.revision,3);
-  await assert.rejects(b.call('tasks_save',{taskId:first.taskId,expectedRevision:1,note:'过期更改'}),/revision=3/);
-  await assert.rejects(b.call('tasks_save',{taskId:first.taskId,expectedRevision:3,actor:'human'}));
-  const found=await b.call('tasks_find',{workspace,query:'菜单'});assert.equal(found.total,1);assert.equal(found.tasks[0].taskId,first.taskId);
-  await b.stop();b=null;
-  const report={success:true,mode:'real-stdio-without-frontend',normalMilestoneWrites:3,toolCount:2,toolDefinitionBytes:toolBytes,createReceiptBytes:Buffer.byteLength(JSON.stringify(first)),updateReceiptBytes:Buffer.byteLength(JSON.stringify(second)),retryAcrossRestart:true,dirtyWorkspaceObserved:true,sourceMissingRemainsUnlinked:true,explicitSourceVerifiedLocally:true,agentCannotImpersonateHuman:true,conflictPreservesData:true,publishedRecordedSeparately:true,testCalls:count};
+  a=client();await a.start();const tools=await a.request('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['create-task','create-task-run','find-tasks','update-task-run']);const toolBytes=Buffer.byteLength(JSON.stringify(tools));assert.ok(toolBytes<24000);
+  const create={agentWorkspace:{path:workspace},title:'修复菜单点击',description:'切换窗口后的首次点击无响应',kind:'bugfix',initialRun:{description:'排查点击事件绑定',validationPlan:{items:[{title:'切换窗口点击',steps:'切换窗口后点击桌宠',expected:'菜单出现'}]}}};
+  const first=await a.call('create-task',create);assert.equal(first.revision,1);assert.equal(first.status,'in_progress');assert.equal(first.createdBy,'codex');assert.ok(Buffer.byteLength(JSON.stringify(first))<1000);
+  const repeat=await a.call('create-task',create);assert.equal(repeat.taskId,first.taskId);
+  const finish={taskId:first.taskId,runId:first.runId,expectedRevision:first.revision,status:'ready_for_delivery',agentConversation:[threadId],description:'确认事件绑定原因并修复',agentWorkspace:{path:workspace,relatedCommits:[git(['rev-parse','HEAD'])]},verification:{planRevision:first.planRevision,stage:'local',target:'dirty worktree at HEAD',environment:process.platform,results:[{criterionId:first.criterionIds[0],result:'passed',evidence:'实际本地测试通过'}]}};
+  const second=await a.call('update-task-run',finish);assert.equal(second.revision,2);
+  await assert.rejects(a.call('update-task-run',{taskId:first.taskId,runId:first.runId,expectedRevision:2,status:'published'}),/发布版本/);
+  const publish={taskId:first.taskId,runId:first.runId,expectedRevision:2,status:'published',delivery:'MCP 验收样例 1.3.0'};
+  await a.call('update-task-run',publish);await a.stop();a=null;
+  b=client();await b.start();const detail=await b.call('find-tasks',{taskId:first.taskId});assert.equal(detail.revision,3);assert.equal(detail.run.status,'published');assert.equal(detail.description,create.description);assert.equal(detail.run.agentWorkspace.changeStatus.hasUncommittedChanges,true);assert.equal(detail.run.agentWorkspace.relatedCommits.length,1);assert.equal(detail.run.validationPlan.latestVerification.actor,'agent');assert.equal(detail.run.agentConversation[0].verified,true);
+  assert.equal((await b.call('update-task-run',publish)).revision,3);
+  await assert.rejects(b.call('update-task-run',{taskId:first.taskId,runId:first.runId,expectedRevision:1,note:'stale'}),/revision=3/);
+  await assert.rejects(b.call('update-task-run',{taskId:first.taskId,runId:first.runId,expectedRevision:3,status:'closed'}),/人工操作/);
+  const next=await b.call('create-task-run',{taskId:first.taskId,expectedRevision:3,description:'发布后复发'});assert.notEqual(next.runId,first.runId);
+  const active=await b.call('find-tasks',{taskId:first.taskId,history:true});assert.equal(active.runCount,2);assert.equal(active.run.validationPlan.latestVerification,null);assert.notEqual(active.run.validationPlan.items[0].id,first.criterionIds[0]);
+  const found=await b.call('find-tasks',{workspace,query:'菜单'});assert.equal(found.total,1);await b.stop();b=null;
+  const report={success:true,mode:'real-stdio-without-frontend',toolCount:4,toolDefinitionBytes:toolBytes,receiptBytes:Buffer.byteLength(JSON.stringify(first)),retryAcrossRestart:true,taskRunIsolation:true,historyPreserved:true,changedFilesObserved:true,explicitSourceVerifiedLocally:true,agentCannotClose:true,testCalls:count};
   await mkdir(join(root,'artifacts/task-ledger-qa'),{recursive:true});await writeFile(join(root,'artifacts/task-ledger-qa/mcp-report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
 }finally{a?.child.kill();b?.child.kill();await rm(temporary,{recursive:true,force:true});}
