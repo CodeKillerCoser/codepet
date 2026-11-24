@@ -3,16 +3,19 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import assert from 'node:assert/strict';
 import { build, preview } from 'vite';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 
-const output = resolve('artifacts/ui-refactor'), outDir = resolve(output, 'site');
+const engine = process.env.CODEPET_QA_ENGINE ?? 'chromium';
+assert.ok(['chromium', 'webkit'].includes(engine), 'Supported engines: chromium, webkit');
+const output = resolve('artifacts/ui-refactor', engine), outDir = resolve(output, 'site');
 await mkdir(resolve(output, 'after'), { recursive: true });
 await build({ build: { outDir, emptyOutDir: false, rollupOptions: { input: resolve('frontend/qa/main-window.html') } } });
 const server = await preview({ build: { outDir }, preview: { host: '127.0.0.1', port: 1449, strictPort: true } });
 let browser, page;
 const errors = [], measurements = [];
 try {
-  browser = await chromium.launch({ headless: true, ...(process.env.CODEPET_QA_BROWSER ? { channel: process.env.CODEPET_QA_BROWSER } : {}) });
+  browser = await ({ chromium, webkit })[engine].launch({ headless: true,
+    ...(engine === 'chromium' && process.env.CODEPET_QA_BROWSER ? { channel: process.env.CODEPET_QA_BROWSER } : {}) });
   page = await browser.newPage({ viewport: { width: 980, height: 700 } });
   page.setDefaultTimeout(10_000);
   page.on('pageerror', error => errors.push(error.message));
@@ -65,6 +68,25 @@ try {
   await titleInput.fill('任务通知 {{status}}'); await titleInput.press('Tab');
   await page.waitForFunction(() => window.__getAppSettings().notifications.robot.template.title === '任务通知 {{status}}');
 
+  // Re-enter every connection page: native DOM refs must survive conditional mounting.
+  for (const query of ['', '?deviceCase=paired']) {
+    await go(query); await button('连接接入').click();
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      for (const label of ['远程设备', '本机运行时', '活动接入', '远程设备']) {
+        const tab = page.getByRole('tab', { name: label, exact: true });
+        await tab.click();
+        assert.equal(await tab.getAttribute('aria-selected'), 'true');
+        if (label === '远程设备') {
+          await page.getByText(query ? 'QA Phone' : '还没有已配对设备', { exact: true }).waitFor();
+          await fits(`devices-${query ? 'paired' : 'empty'}-${cycle}`);
+        }
+        if (label === '本机运行时') await button('添加自定义 Provider').waitFor();
+      }
+      await button('设置').click(); await button('返回主界面').click(); await button('连接接入').click();
+    }
+    await button('返回主界面').click();
+    await page.getByRole('region', { name: 'Agent工作台', exact: true }).waitFor();
+  }
   await go(); await button('连接接入').click();
   const firstTab = page.getByRole('tab', { name: '活动接入', exact: true });
   await firstTab.focus(); await page.keyboard.press('End');
@@ -84,6 +106,10 @@ try {
   await screenshot('pairing-small'); await page.keyboard.press('Escape');
   await dialog.waitFor({ state: 'detached' });
   await page.waitForFunction(() => window.__pairingCancellations.length === 1);
+  assert.equal(await add.evaluate(el => el === document.activeElement), true);
+  await add.click(); await dialog.getByAltText('设备配对二维码').waitFor();
+  await close.click(); await dialog.waitFor({ state: 'detached' });
+  await page.waitForFunction(() => window.__pairingCancellations.length === 2);
   assert.equal(await add.evaluate(el => el === document.activeElement), true);
 
   // Keep the upstream workbench route, and test the legacy history component in isolation.
@@ -108,7 +134,7 @@ try {
   await page.getByText('已在浏览器打开 DMG 下载，下载后请手动安装。', { exact: true }).waitFor();
   assert.deepEqual(errors, []);
   await writeFile(resolve(output, 'results.json'), JSON.stringify({ measurements, errors, passed: true }, null, 2));
-  console.log('UI QA passed: theme, sizes, settings persistence, tabs, pairing cleanup/focus, history and update dialogs.');
+  console.log(`UI QA passed (${engine}): theme, sizes, settings persistence, repeated connection navigation, pairing cleanup/focus/reopening, history and update dialogs.`);
 } catch (error) {
   await page?.screenshot({ path: resolve(output, "failure.png") });
   if (page) await writeFile(resolve(output, "failure.txt"), await page.locator("body").innerText());

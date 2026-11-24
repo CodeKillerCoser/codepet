@@ -108,7 +108,12 @@ mockIPC((command, raw) => {
   if (command === "set_launch_at_login_enabled") { launchAtLogin = args.enabled; return launchAtLogin; }
   if (command === "send_test_robot_notification") return "测试通知已发送";
   if (command === "path_manager_get") return {install:"/fixture/install",data:"/fixture/data",workspace:"/fixture/workspace"};
-  if (["recent_events", "list_remote_clients", "list_remote_pairing_requests"].includes(command)) return [];
+  if (command === "list_remote_clients") return permissionScenario.get("deviceCase") === "paired" ? [{
+    credentialId: "qa-device", remoteClientId: "qa-phone",
+    descriptor: { deviceName: "QA Phone", operatingSystem: "iOS", systemVersion: "18.0" },
+    createdAt: Date.now() - 60_000, lastSeenAt: Date.now(), revokedAt: null, onlineSessionCount: 1,
+  }] : [];
+  if (["recent_events", "list_remote_pairing_requests"].includes(command)) return [];
   if (command === "check_app_update") {
     const scenario = permissionScenario.get("updateCase");
     if (scenario === "error") throw new Error("无法获取最新发行版：网络连接失败（模拟）");

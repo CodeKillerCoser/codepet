@@ -3,7 +3,7 @@
 	import type { HTMLTextareaAttributes } from "svelte/elements";
 
 	let {
-		ref = $bindable(null),
+		ref = $bindable(),
 		value = $bindable(),
 		class: className,
 		"data-slot": dataSlot = "textarea",
