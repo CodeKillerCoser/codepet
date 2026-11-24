@@ -9,11 +9,14 @@
   import AppSidePanel from './shell/AppSidePanel.svelte';
   import * as Dialog from './ui/dialog/index';
   import { workbenchRequest as api, activity, dirty, unpushed, filterRows, statusMatches, branchLabel, changeLabel, gitSummary, type SourceInfo, type Project, type Snapshot, type Worktree, type Change } from './codexWorkbench';
+  import { workbenchSession as session } from './codexWorkbenchSession';
+  const retained = session.page;
   let projects: Project[] = [], draft: string[] = [], projectSearch = '', pickerOpen = false;
   let projectInput: HTMLInputElement;
   let snapshot: Snapshot | null = null, loading = false, catalogLoading = true, error = '', catalogWarnings: string[] = [];
-  let query = '', filterProjects: string[] = [], related = false, period = 'all', date = '', status = 'all', selectedId = '', archived = false;
-  let progress = { checked: 0, total: 0, phase: 'history' }, sequence = 0, rechecking = new Set<string>(), actionMessage = '', actionError = '';
+  let { query, filterProjects, related, period, date, status } = retained;
+  let selectedId = '', archived = false;
+  let progress = { checked: 0, total: 0, phase: 'history' }, rechecking = new Set<string>(), actionMessage = '', actionError = '';
   let warningDialog: HTMLDialogElement, previewOpen = false, previewElement: HTMLDivElement, previewChange: Change | null = null, previewRow: Worktree | null = null, version = 'workspace', previewError = '', previewLoading = false, previewSequence = 0;
   let sourceInfo: SourceInfo | undefined, sourceDialog: HTMLDialogElement;
   let detailOpen = false, moreOpen = false, selectedButton: HTMLButtonElement | undefined;
@@ -21,6 +24,8 @@
   let alive = true;
   let view: 'code' | 'tasks' = 'code';
   let merge: MergeView | undefined, stop: (() => void) | undefined;
+  $: ({ projects, draft, snapshot, loading, catalogLoading, error, catalogWarnings, sourceInfo, progress, rechecking } = $session);
+  $: if (snapshot) filterProjects = filterProjects.filter(id => snapshot!.projects.some(p => p.id === id));
   $: base = filterRows(snapshot?.worktrees ?? [], { query, projects: filterProjects, related, period, date });
   $: rows = base.filter(r => statusMatches(r, status));
   $: selected = snapshot?.worktrees.find(r => r.id === selectedId);
@@ -31,17 +36,9 @@
   $: archiveCount = selected?.conversations.filter(c => c.archived).length ?? 0;
   $: changed = !!snapshot && [...draft].sort().join() !== snapshot.projects.map(p => p.id).sort().join();
   const fmt = (n: number) => n ? new Date(n).toLocaleString('zh-CN', { month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false }) : '暂无活动';
-  async function loadProjects(initial = false) {
-    catalogLoading = true; error = '';
-    try { const result = await api<{ projects: Project[]; warnings: string[]; sourceInfo?: SourceInfo }>('projects'); projects = result.projects; catalogWarnings = result.warnings; sourceInfo = result.sourceInfo;
-      if (initial) draft = (await api<string[]>('preferences')).filter(id => projects.some(p => p.id === id));
-      else { draft = draft.filter(id => projects.some(p => p.id === id)); await persist(); }
-    } catch(e) { error = String(e); } finally { catalogLoading = false; }
-  }
-  let saveQueue = Promise.resolve();
-  function persist() { const projectIds = [...draft]; saveQueue = saveQueue.then(async () => { await api('saveSelection', { projectIds }); }).catch(e => { error = String(e); }); return saveQueue; }
+  const loadProjects = () => session.loadProjects();
   function updateProjectSelection(projectIds: string[]) {
-    draft = projectIds; projectSearch = ''; void persist();
+    projectSearch = ''; void session.selectProjects(projectIds);
     void tick().then(() => projectInput?.focus({ preventScroll: true }));
   }
   function toggleProject(id: string) { updateProjectSelection(draft.includes(id) ? draft.filter(p => p !== id) : [...draft, id]); }
@@ -53,20 +50,15 @@
   async function scan() {
     if (previewOpen) closePreview();
     detailOpen = false;
-    const seq = ++sequence; loading = true; error = ''; progress = { checked: 0, total: 0, phase: 'history' }; pickerOpen = false;
-    try { const result = await api<Snapshot>('scan', { projectIds: [...draft] }); if(seq !== sequence) return; snapshot = result; sourceInfo = result.sourceInfo ?? sourceInfo; selectedId = ''; detailOpen = false; chatQuery = ''; chatLimit = 30; filterProjects = filterProjects.filter(id => result.projects.some(p => p.id === id)); }
-    catch(e) { if(seq === sequence) { error = String(e); snapshot = null; } } finally { if(seq === sequence) loading = false; }
+    selectedId = ''; chatQuery = ''; chatLimit = 30; pickerOpen = false;
+    await session.scan();
   }
   function reset() { query = ''; filterProjects = []; related = false; period = 'all'; date = ''; status = 'all'; }
   function selectRow(row: Worktree, button: HTMLButtonElement) {
     selectedId = row.id; selectedButton = button; archived = false; chatQuery = ''; chatLimit = 30; actionMessage = ''; actionError = ''; detailOpen = true;
   }
   function showUnreadable() { related = false; filterProjects = []; query = ''; period = 'all'; status = 'error'; detailOpen = false; }
-  async function recheck(row: Worktree) {
-    if (!snapshot || rechecking.has(row.id)) return; const scanId = snapshot.scanId; rechecking = new Set([...rechecking, row.id]);
-    try { const updated = await api<Worktree>('recheck', { scanId, worktreeId: row.id }); if (snapshot?.scanId === scanId) snapshot = { ...snapshot, worktrees: snapshot.worktrees.map(r => r.id === row.id ? updated : r) }; }
-    catch(e) { error = String(e); } finally { rechecking = new Set([...rechecking].filter(id => id !== row.id)); }
-  }
+  const recheck = (row: Worktree) => session.recheck(row);
   async function action(op: string, row: Worktree, extra = {}) {
     actionMessage = ''; actionError = '';
     try { await api(op, { scanId: snapshot?.scanId, worktreeId: row.id, ...extra }); actionMessage = '已向系统发送打开请求'; } catch(e) { actionError = String(e); }
@@ -82,8 +74,8 @@
       merge = new MergeView({ parent: previewElement, a: { doc: text.before, extensions: [EditorView.editable.of(false), EditorState.readOnly.of(true)] }, b: { doc: text.after, extensions: [EditorView.editable.of(false), EditorState.readOnly.of(true)] }, collapseUnchanged: { margin: 3, minSize: 4 }, highlightChanges: true });
     } catch(e) { if(seq === previewSequence) previewError = String(e); } finally { if(seq === previewSequence) previewLoading = false; }
   }
-  onMount(() => { void loadProjects(true); void listen<typeof progress & { scanId: number }>('codex-workbench-progress', event => { if(loading) progress = event.payload; }).then(fn => { if(alive) stop = fn; else fn(); }).catch(e => { if(alive) error = String(e); }); });
-  onDestroy(() => { alive = false; if(loading) void api('cancel').catch(() => {}); ++sequence; ++previewSequence; stop?.(); merge?.destroy(); });
+  onMount(() => { void session.initialize(); void listen<typeof progress & { scanId: number }>('codex-workbench-progress', event => { if(loading) session.patch({ progress: event.payload }); }).then(fn => { if(alive) stop = fn; else fn(); }).catch(e => { if(alive) session.patch({ error: String(e) }); }); });
+  onDestroy(() => { alive = false; Object.assign(retained, { query, filterProjects, related, period, date, status }); ++previewSequence; stop?.(); merge?.destroy(); });
 </script>
 
 <svelte:window on:keydown={(event) => {if (event.key === 'Escape' && moreOpen) {event.preventDefault(); moreOpen = false; document.querySelector<HTMLElement>('.more-filters summary')?.focus();}}}/>
@@ -108,7 +100,7 @@
       <button class="confirm" disabled={!draft.length || catalogLoading} on:click={scan} title={loading ? '重新开始扫描' : '扫描所选项目'}>确认</button>
     </div>
     <div class="scan-status" role="status">{#if loading}{progress.phase === 'history' ? '读取项目与会话索引…' : `检测工作树 ${progress.checked}/${progress.total}`}{:else if snapshot}{snapshot.projects.length} 个项目 · 扫描于 {fmt(snapshot.scannedAt)}{/if}{#if changed}<span>范围已变更，等待确认</span>{/if}</div>
-    {#if error}<div class="error" role="alert">{error}<button aria-label="关闭错误" on:click={() => error = ''}>×</button></div>{/if}
+    {#if error}<div class="error" role="alert">{error}<button aria-label="关闭错误" on:click={() => session.patch({ error: '' })}>×</button></div>{/if}
     {#if warnings.length}<div class="read-notice" role="status"><span>{#if unreadable.length}<strong>{unreadable.length} 棵工作树读取失败</strong> · {/if}{warnings.length} 条读取提示</span><div>{#if unreadable.length}<button on:click={showUnreadable}>仅看失败工作树</button>{/if}<button on:click={() => warningDialog.showModal()}>查看详情</button></div></div>{/if}
     <div class="overview" aria-label="工作树概览">
       <button class:chosen={status === 'all'} aria-pressed={status === 'all'} on:click={() => status = 'all'}>全部工作树 <strong>{base.length}</strong></button>

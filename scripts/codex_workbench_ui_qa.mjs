@@ -182,6 +182,45 @@ try {
     }
     await reset();
   }
+  // Simulate route destruction while keeping the main webview and Rust session.
+  async function remountWorkbench() {
+    await page.evaluate(() => window.__setWorkbenchMounted(false));
+    await page.locator('.workbench').waitFor({ state: 'detached' });
+    await page.locator('.app-side-panel').waitFor({ state: 'hidden' });
+    await page.evaluate(() => window.__setWorkbenchMounted(true));
+    await page.getByRole('button', { name: '确认', exact: true }).waitFor();
+  }
+  await page.getByLabel('搜索工作树与对话').fill('history-workbench');
+  await page.getByLabel('提交状态', { exact: true }).selectOption('pushed');
+  const scanTime = await page.locator('.scan-status').innerText();
+  const callsBeforeReturn = await page.evaluate(() => window.__workbenchCalls.length);
+  await mainRow.click();
+  await remountWorkbench();
+  assert.equal(await page.locator('.worktree-row').count(), 1);
+  assert.equal(await page.getByLabel('搜索工作树与对话').inputValue(), 'history-workbench');
+  assert.equal(await page.getByLabel('提交状态', { exact: true }).inputValue(), 'pushed');
+  assert.equal(await page.locator('.tags .tag').count(), 3, 'Unconfirmed project selection survives remount');
+  assert.equal(await page.locator('.scan-status').innerText(), scanTime);
+  assert.equal(await page.locator('.overview button').nth(2).locator('strong').innerText(), '0', 'Rechecked facts survive remount');
+  assert.equal(await page.locator('.app-side-panel').count(), 0, 'Only transient details are cleared');
+  assert.equal(await page.evaluate(() => window.__workbenchCalls.length), callsBeforeReturn, 'Returning performs no catalog load or scan');
+  await mainRow.click();
+  assert.equal(await page.getByRole('button', { name: '预览 src/history.ts', exact: true }).count(), 0, 'Rechecked changes remain cleared');
+  await closeDetail();
+  await reset();
+  await page.evaluate(() => { window.__scanDelay = 600; });
+  await page.getByRole('button', { name: '确认', exact: true }).click();
+  await remountWorkbench();
+  await page.locator('.worktree-row').first().waitFor();
+  assert.equal(await page.locator('.worktree-row').count(), 8, 'Scan completes after page destruction');
+  assert.equal((await page.evaluate(() => window.__workbenchCalls)).filter(request => request.op === 'scan').length, 2);
+  assert.equal((await page.evaluate(() => window.__workbenchCalls)).filter(request => request.op === 'cancel').length, 0);
+  await remountWorkbench();
+  await mainRow.click();
+  await page.getByRole('button', { name: '预览 src/history.ts', exact: true }).click();
+  await page.locator('.cm-mergeView').waitFor();
+  await page.keyboard.press('Escape');
+  await closeDetail();
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.goto('http://127.0.0.1:1437/frontend/qa/main-window.html');
   await page.getByRole('button', { name: '确认', exact: true }).click();
@@ -214,6 +253,7 @@ try {
   assert.equal(await page.getByRole('button', { name: '任务抽取', exact: true }).count(), 0);
   await page.getByRole('button', { name: '后退', exact: true }).click();
   await page.getByRole('region', { name: 'Codex工作台', exact: true }).waitFor();
+  assert.equal(await page.locator('.worktree-row').count(), 1, 'Real App route navigation preserves the scan');
   assert.ok(await page.locator('.workbench').evaluate(element => element === document.activeElement));
   assert.equal(await page.locator('.wb-header').count(), 0);
   await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: 'Codex工作台', exact: true }).waitFor();

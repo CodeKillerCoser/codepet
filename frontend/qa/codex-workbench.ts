@@ -24,11 +24,12 @@ mockIPC(async(command,args:any)=>{
   const r=args.request;(window as any).__workbenchCalls.push(r);
   if(r.op==='projects')return {projects,warnings:[],sourceInfo};if(r.op==='preferences')return saved;
   if(r.op==='saveSelection'){saved=r.projectIds;return null;}
-  if(r.op==='scan'){await new Promise(resolve=>setTimeout(resolve,80));data={...data,scanId:data.scanId+1,projects:projects.filter(p=>r.projectIds.includes(p.id)),worktrees:worktrees.filter(w=>r.projectIds.includes(w.projectId))};return structuredClone(data);}
+  if(r.op==='scan'){await new Promise(resolve=>setTimeout(resolve,(window as any).__scanDelay ?? 80));data={...data,scanId:data.scanId+1,projects:projects.filter(p=>r.projectIds.includes(p.id)),worktrees:worktrees.filter(w=>r.projectIds.includes(w.projectId))};return structuredClone(data);}
   if(r.op==='recheck'){const row=structuredClone(data.worktrees.find(w=>w.id===r.worktreeId)!);row.git.changes=[];row.git.ahead=0;data.worktrees=data.worktrees.map(w=>w.id===row.id?row:w);return row;}
   if(r.op==='preview'){await new Promise(resolve=>setTimeout(resolve,r.version==='workspace'?120:10));return {before:'const message = "before";\n',after:`const message = "${r.version}";\n`};}
   return null;
 });
 document.getElementById('app')!.className = `main-theme ${themeClassNames('light')}`;
 (window as any).__setWorkbenchTheme = (mode: 'light' | 'dark') => document.getElementById('app')!.className = `main-theme ${themeClassNames(mode)}`;
-mount(WorkbenchFrameQa,{target:document.getElementById('app')!});
+const frame = mount(WorkbenchFrameQa,{target:document.getElementById('app')!});
+(window as any).__setWorkbenchMounted = frame.setVisible;

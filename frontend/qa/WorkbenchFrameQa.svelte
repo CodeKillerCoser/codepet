@@ -7,10 +7,12 @@
   const panel = provideSidePanel();
   const current = panel.current;
   const mode = panel.mode;
+  let visible = true;
+  export function setVisible(value: boolean) { visible = value; }
 </script>
 
 <main class="qa-frame" class:with-panel={!!$current && $mode === 'column'}>
-  <div class="frame-page"><CodexWorkbench /></div>
+  <div class="frame-page">{#if visible}<CodexWorkbench />{/if}</div>
   <AppSidePanelHost />
 </main>
 

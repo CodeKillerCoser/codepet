@@ -26,6 +26,18 @@
 
 不另建 Electron 安装包，不迁移现有历史抽取结果，不自动提取任务或调用模型。Git 不进行 fetch、提交、推送或工作区修改。旧任务领域代码与存储保留供兼容及独立测试使用。
 
+## 切页保留扫描结果（2026-11-24）
+
+证据：原 `CodexWorkbench.svelte` 将快照、扫描序号和重检结果保存在组件实例中，卸载时还会发送 `cancel`；App 路由切换后重建组件，因而结果丢失。Rust 已在进程内保留当前快照，但页面没有可复用的结果状态。具体引入提交未确认。
+
+修复采用应用会话缓存：`frontend/lib/codexWorkbenchSession.ts` 持有项目目录、草稿、扫描快照、读取提示及扫描/重检请求，项目偏好写入队列也跨页面延续。组件恢复关键词、项目、关联对话、日期和提交状态筛选，返回时不重新扫描或覆盖草稿。扫描和重检中离开页面仍会保存最终结果。组件只清理侧栏、预览编辑器和事件监听，继续沿用框架的导航焦点行为。
+
+新扫描会立即清除旧快照，并用序号拒绝旧扫描结果及旧重检响应，避免对已失效的 Rust 快照执行动作。缓存范围是当前主 WebView 会话，重载或退出应用后需要重新确认扫描；项目选择仍按既有逻辑写入本机。这样避免把进程内的 scan ID 当成可跨进程恢复的凭据。
+
+验证：`npx --no-install vitest run frontend/lib/codexWorkbenchSession.test.ts frontend/lib/codexWorkbench.test.ts frontend/lib/navigation.test.ts frontend/styles.test.ts` 共 40 项通过；新增会话测试覆盖无订阅者时扫描完成、重检结果保留与旧响应隔离。`node scripts/codex_workbench_ui_qa.mjs` 覆盖组件卸载/重建后结果、时间、草稿和筛选保持、无隐式扫描、扫描中切页、返回后预览，以及真实 App 设置页往返；原有主题、390–1440 px、焦点与动作可见性验收通过。`npm run check:frontend` 无错误（6 条既有警告），`npm run check:source-size` 与 `npm run build` 通过。QA 的 `WorkbenchFrameQa.svelte` / `codex-workbench.ts` 新增受控卸载入口以复现页面生命周期，生产路由不依赖该入口。
+
+回归约束记入 [只读快照与状态边界](../60-rules/codex-workbench-readonly-snapshots.md)。本次仅改前端会话生命周期，未改 Rust IPC；未重新执行安装包或 Windows/Linux 原生验收。
+
 ## 现状理解
 
 本地 `state_5.sqlite` 存在 `projects` / `project_roots` / `threads`。只读实测发现 4 个项目；Code Pet 范围枚举 15 棵工作树、13 条关联对话，其中 5 棵 Git 读取失败。这是当前机器的观测，不作为固定产品数字。用户截图和文档中的原型源码未随附件提供，视觉按截图重新实现。
