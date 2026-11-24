@@ -8,8 +8,9 @@ vi.mock('./noticeGateway',()=>({noticeActionExecute:vi.fn()}));
 let component:ReturnType<typeof mount>;
 afterEach(async()=>{if(component)await unmount(component);document.body.innerHTML='';vi.resetAllMocks();});
 const reply={id:'reply',kind:'reply' as const,label:'回复',enabled:true};
+const activate={id:'open',kind:'activate' as const,label:'打开应用',enabled:true,target:{kind:'application' as const,applicationId:'com.test.app'}};
 it('shows only enabled known actions, focuses input and sends the captured revision',async()=>{
- const n={...notice('n',7),actions:[reply,{...reply,id:'disabled',enabled:false},{kind:'future-action',id:'future',label:'未来',enabled:true}]};
+ const n={...notice('n',7),actions:[reply,activate,{...reply,id:'disabled',enabled:false},{kind:'future-action',id:'future',label:'未来',enabled:true}]};
  component=mount(NoticeActions,{target:document.body,props:{notice:n}});await tick();expect(document.querySelectorAll('button')).toHaveLength(1);
  document.querySelector<HTMLButtonElement>('button')!.click();await tick();await tick();const textarea=document.querySelector('textarea')!;await vi.waitFor(()=>expect(document.activeElement).toBe(textarea));
  textarea.value='你好';textarea.dispatchEvent(new Event('input',{bubbles:true}));await tick();vi.mocked(noticeActionExecute).mockResolvedValue({executionId:'e',status:'unknown'});
@@ -23,7 +24,8 @@ it('requires permission choice and never presents action controls for offline so
  component=mount(NoticeActions,{target:document.body,props:{notice:n}});await tick();document.querySelector<HTMLButtonElement>('button')!.click();await tick();expect(noticeActionExecute).not.toHaveBeenCalled();
  vi.mocked(noticeActionExecute).mockResolvedValue({executionId:'e',status:'succeeded'});[...document.querySelectorAll('button')].find(b=>b.textContent==='拒绝')!.click();await tick();expect(noticeActionExecute).toHaveBeenCalledWith('n','permit',1,expect.any(String),{kind:'permission',optionId:'deny'});
 });
-it('submits an activate action immediately after selecting it',async()=>{
- const n={...notice('n',4),actions:[{id:'open',kind:'activate' as const,label:'打开应用',enabled:true,target:{kind:'application' as const,applicationId:'com.test.app'}}]};
- vi.mocked(noticeActionExecute).mockResolvedValue({executionId:'e',status:'accepted'});component=mount(NoticeActions,{target:document.body,props:{notice:n}});await tick();document.querySelector<HTMLButtonElement>('button')!.click();await tick();await tick();expect(noticeActionExecute).toHaveBeenCalledWith('n','open',4,expect.any(String),{kind:'activate'});await vi.waitFor(()=>expect(document.body.textContent).toContain('已受理'));
+it('renders no action row for an activate-only notice',async()=>{
+ const n={...notice('n',4),actions:[activate]};
+ component=mount(NoticeActions,{target:document.body,props:{notice:n}});await tick();
+ expect(document.querySelector('.notice-actions')).toBeNull();expect(document.querySelector('button')).toBeNull();expect(noticeActionExecute).not.toHaveBeenCalled();
 });

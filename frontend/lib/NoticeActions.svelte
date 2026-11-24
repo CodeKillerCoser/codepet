@@ -9,13 +9,12 @@
   let trigger: HTMLButtonElement | undefined;
   let submitted = new Set<string>();
   const actionKey = (id: string) => `${notice.noticeId}:${notice.revision}:${id}`;
-  $: actions = notice.actions.filter(action => action.enabled && ['reply','activate','permission'].includes(action.kind));
+  $: actions = notice.actions.filter(action => action.enabled && ['reply','permission'].includes(action.kind));
   $: selected = actions.find(action => action.id === activeId);
   async function open(action: NoticeAction, event: MouseEvent) {
     event.stopPropagation(); if (busy || submitted.has(actionKey(action.id))) return; trigger = event.currentTarget as HTMLButtonElement;
     activeId = action.id; text = ''; result = ''; blocked = false; revision = notice.revision;
     await tick();
-    if (action.kind === 'activate') { await execute({ kind: 'activate' }); return; }
     if ('__TAURI_INTERNALS__' in window) {
       try { await getCurrentWindow().setFocus(); } catch (error) { result = `无法聚焦通知输入：${String(error)}`; }
     }

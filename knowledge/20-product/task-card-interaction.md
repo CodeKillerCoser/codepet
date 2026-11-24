@@ -12,7 +12,11 @@
 
 ## 操作与边界
 
-支持隐藏任务、桌面清除已完成任务、模式切换、打开主窗口、角色互动。隐藏记录在该任务有更新前有效，两套 UI 共用。回复、激活应用、授权入口仅根据 Notice 已启用的标准 action 展示，经 `notice.action.execute` 路由回 Provider。原始 Agent Hook 不自动获得这些动作。
+支持隐藏任务、桌面清除已完成任务、模式切换、打开主窗口、角色互动。隐藏记录在该任务有更新前有效，两套 UI 共用。回复、授权入口仅根据 Notice 已启用的标准 action 展示，经 `notice.action.execute` 路由回 Provider。原始 Agent Hook 不自动获得这些动作。
+
+2026-11-25 按用户要求移除通知卡片的“打开应用”按钮。该入口由 2026-11-16 的提交 `3a47f544` 随 Notice 动作支持引入；`NoticeActions.svelte` 是顶部面板与桌面气泡的共用动作组件，本次从其可展示动作中排除 `activate` 并删除直接执行分支。只有激活动作的通知不渲染操作行，混合动作的通知继续显示回复和授权；协议与 Provider 动作契约保持兼容。`NoticeActions.test.ts` 覆盖激活入口隐藏、操作行无空白占位，以及回复聚焦和授权执行，浏览器 QA 检查两套展示与窄屏布局。
+
+本次通过 `npx --no-install vitest run frontend/lib/NoticeActions.test.ts`（3 项）、`npm run check:frontend`（0 错误、5 项既有警告）、`npm run check:source-size` 和 `git diff --check`。浏览器验证使用 `node artifacts/remove-open-app-qa.mjs` 临时 runner，在 `scripts/pet_notch_ui_qa.mjs` 的 Notice 更新中注入激活动作，确认两种模式均隐藏入口、保留回复，并通过原有焦点、动作可见性及响应式矩阵；截图位于 `artifacts/pet-notch-qa/`，临时 runner 验证后删除。未运行原生 WKWebView 人工验收。
 
 顶部将 `finished: true` 的条目按完整 pluginId 归组，保留一个“已结束”标题。组收起时，垂直滚轮循环切换顶层任务，遍历整组而非仅三张可见堆叠层；不同组分别记忆选择，展开后恢复原排序和正常列表滚动。展开再收起保留所选任务；任务被隐藏、恢复运行或移出该组后回到组内第一项。单条任务、横向手势和捏合缩放不拦截。触控板微小增量累加到阈值才翻页，连续翻页间隔至少 160ms；减少动态效果偏好关闭堆叠位移动画。`NotchPet.svelte` 负责滚轮、展开与任务分组，`planeStackMotion.ts` 只负责 Plane Cards 运动，不改变共享任务顺序或协议。
 
