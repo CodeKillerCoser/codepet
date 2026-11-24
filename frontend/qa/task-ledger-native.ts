@@ -75,7 +75,8 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(document.querySelectorAll('.check-mark.passed').length === 2, 'Passed items show standalone checks');
   await taskRequest('close-run', {taskId: task.id, runId: currentRun(task).id, expectedRevision: task.revision, accepted: true, reason: '原生人工验收通过'});
   await button('刷新任务'); await pause();
-  await more('新一次执行');
+  const acceptedHistory=JSON.stringify((await taskRequest<Task>('get',{taskId:task.id})).runs[0]);
+  await more('改为开发中');
   let dialog = await modal();
   input('执行标题', '升级 1.3.0 后菜单再次失效', dialog);
   input('本次目标', '修复新版本的点击问题', dialog);
@@ -84,6 +85,7 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   task = await taskRequest<Task>('get', {taskId: task.id});
   check(task.runs.length === 2 && task.runs[0].closure?.accepted, 'New run retains historical evidence');
   check(!currentRun(task).validationPlan.records.length, 'New run clears results');
+  check(JSON.stringify(task.runs[0])===acceptedHistory,'The entire previously accepted execution is preserved');
   document.querySelectorAll<HTMLButtonElement>('.run-card')[0].click(); await tick();
   check(!document.querySelector('.record-result'), 'History read only');
   document.querySelectorAll<HTMLButtonElement>('.run-card')[1].click(); await tick();
@@ -142,12 +144,21 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(completedRun.timeline.at(-1)?.actor==='human'&&completedRun.timeline.at(-1)?.summary==='用户标记完成','Human completion appears in timeline');
   await button('刷新任务');await pause();check(document.querySelector('.task-row.selected .status-badge')?.textContent==='已完成','Completion survives refresh');
   check(document.activeElement===document.querySelector('.task-heading h3'),'Completion returns focus to task heading');
+  const completedHistory=JSON.stringify(completed.runs[0]);
+  await button('改为开发中',document.querySelector('.run-card-shell.selected .run-card-footer')!);dialog=await modal();
+  check(dialog.textContent?.includes('保留之前的验收和历史'),'Manual state change explains the new execution');
+  input('执行标题','人工确认复发，继续处理',dialog);submit(dialog);await until(()=>!dialog.isConnected);
+  const restored=await taskRequest<Task>('get',{taskId:pendingTask.id});
+  check(restored.id===pendingTask.id&&restored.runs.length===2&&currentRun(restored).status==='in_progress','Human state change creates one run in the same task');
+  check(JSON.stringify(restored.runs[0])===completedHistory,'Completed execution stays immutable after human restoration');
+  check(currentRun(restored).validationPlan.records.length===0&&currentRun(restored).createdBy==='human','New run requires fresh verification and records the human actor');
+  check(document.querySelector('.task-row.selected .status-badge')?.textContent==='开发中','GUI shows development after restoration');
   [...document.querySelectorAll<HTMLButtonElement>('.task-row')].find(e=>e.textContent?.includes(task.title))!.click();await tick();
   await invoke('qa_report', {value: {
     success: true, mode: 'native-task-run-production-ipc', taskId: task.id, workspace: expected.workspace,
     runFields: true, headerSource: true, singleItemAcceptance: true, promptEditing: true,
     promptHttpInitialization: true, promptStdioInitialization: true, promptReset: true, promptConflictPreservesDraft: true,
-    manualCompletion:true,humanAcceptance: true, conflictPreservesDraft: true, changedFiles: true,
+    manualRestoreDevelopment:true,manualCompletion:true,humanAcceptance: true, conflictPreservesDraft: true, changedFiles: true,
     runCount: 2, taskSnapshot: await taskRequest<Task>('get', {taskId: task.id})
   }});
 }

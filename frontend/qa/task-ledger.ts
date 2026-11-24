@@ -53,6 +53,7 @@ if(scenario==='local-verification'){
 }
 if(scenario==='manual-completion'){
  const run=currentRun(base);run.status='ready_for_delivery';run.closure=null;
+ run.validationPlan.records=[{id:'previous-verification',actor:'agent',agent:'codex',createdAt:base.updatedAt,agentWorkspace:null,planRevision:run.validationPlan.revision,stage:'local',target:'old-build',environment:'test',results:run.validationPlan.items.map(c=>({criterionId:c.id,result:'passed',evidence:'旧验收结论'}))}];
  base.runs[0].status='ready_for_delivery';
  const developing=structuredClone(base);developing.id='completion-developing';developing.title='开发中的任务';currentRun(developing).id='developing-run';currentRun(developing).status='in_progress';
  tasks.push(developing);
@@ -87,7 +88,16 @@ mockIPC(async(command,args:any)=>{
  }
  if(args.request.op==='file-diff')return {path:args.request.path,originalPath:null,changeType:'modified',added:2,deleted:1,error:null,patch:'diff --git a/sample.ts b/sample.ts\n--- a/sample.ts\n+++ b/sample.ts\n@@ -1,2 +1,3 @@\n-const old = true;\n+const current = true;\n+const retained = true;\n unchanged\n'};
  if(args.request.op==='setup')return {...setupState};
- if(['update-task-run','edit-task','save-instructions'].includes(args.request.op)&&(window as any).__holdTaskSave)return new Promise((_,reject)=>{(window as any).__rejectTaskSave=()=>reject(Error('模拟保存失败'));});
+ if(['update-task-run','edit-task','create-task-run','save-instructions'].includes(args.request.op)&&(window as any).__holdTaskSave)return new Promise((_,reject)=>{(window as any).__rejectTaskSave=()=>reject(Error('模拟保存失败'));});
+ if(args.request.op==='create-task-run'){
+  const input=args.request.input,task=tasks.find(t=>t.id===input.taskId);if(!task)throw Error('任务不存在');
+  if(task.revision!==input.expectedRevision)throw Error('任务已更新：revision='+task.revision);
+  const previous=currentRun(task);if(!['closed','published'].includes(previous.status))throw Error('当前执行仍在处理中');
+  const items=structuredClone(input.validationPlan?.items??previous.validationPlan.items).map(c=>({...c,id:crypto.randomUUID()}));
+  const at=Date.now(),run={...structuredClone(previous),id:crypto.randomUUID(),title:input.title,kind:input.kind,goal:input.goal,solution:input.solution,description:'',status:'in_progress' as const,closure:null,createdAt:at,updatedAt:at,createdBy:'human',agentConversation:[],timeline:[{id:crypto.randomUUID(),at,actor:'human',kind:'created',summary:'用户手动改为开发中：'+input.title}],validationPlan:{revision:1,items,records:[],revisions:[{revision:1,createdAt:at,summary:'',affectedAreas:[],criteria:items}]},agentWorkspace:{...structuredClone(previous.agentWorkspace),path:input.agentWorkspace.path,runFiles:null,relatedCommits:[],commitChanges:[]}};
+  task.runs.push(run);task.revision++;task.updatedAt=at;
+  return {taskId:task.id,runId:run.id,revision:task.revision,planRevision:1,criterionIds:items.map(c=>c.id),status:run.status,createdBy:'human'};
+ }
  if(args.request.op==='save-instructions'){
   if(args.request.expectedRevision!==setupState.instructionsRevision)throw Error('Agent 提示词已更新：revision='+setupState.instructionsRevision);
   setupState={...setupState,instructions:args.request.text??defaults,instructionsRevision:setupState.instructionsRevision+1,instructionsCustomized:args.request.text!==null};return {...setupState};

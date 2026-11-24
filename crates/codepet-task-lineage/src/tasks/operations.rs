@@ -97,6 +97,16 @@ fn check_revision(task: &Task, expected: u64) -> Result<()> {
         Ok(())
     }
 }
+fn check_new_run(task: &Task, actor: &Actor) -> Result<()> {
+    match task.runs.last().unwrap().status {
+        RunStatus::Published => Ok(()),
+        RunStatus::Closed if actor.is_human() => Ok(()),
+        RunStatus::Closed => Err(
+            "任务已完成并锁定；请用户在 App 手动改为开发中，Agent 不能重新开启或新增执行".into(),
+        ),
+        _ => Err("当前执行仍在处理中，请更新当前执行".into()),
+    }
+}
 fn project<'a>(projects: &'a [Project], task: &Task) -> Result<&'a Project> {
     projects
         .iter()
@@ -221,6 +231,7 @@ impl Ledger {
         }
         description(&input.description)?;
         let previous = self.get(&input.task_id)?;
+        check_new_run(&previous, &actor)?;
         let last = previous.runs.last().unwrap();
         let workspace = input.agent_workspace.clone().unwrap_or(WorkspaceInput {
             path: last.agent_workspace.path.clone(),
@@ -259,17 +270,17 @@ impl Ledger {
         } else {
             input.description
         };
+        let summary = if last.status == RunStatus::Closed {
+            format!("用户手动改为开发中：{summary}")
+        } else {
+            summary
+        };
         event(&mut run, &actor, "created", summary, None);
         self.transact(key, fingerprint, |store, projects| {
             let mut task = Self::load(store, &input.task_id)?;
             check_revision(&task, input.expected_revision)?;
             same_project(project(projects, &task)?, &ctx)?;
-            if !matches!(
-                task.runs.last().unwrap().status,
-                RunStatus::Closed | RunStatus::Published
-            ) {
-                return Err("当前执行仍在处理中，请更新当前执行".into());
-            }
+            check_new_run(&task, &actor)?;
             task.runs.push(run);
             Ok(task)
         })

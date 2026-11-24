@@ -350,6 +350,38 @@ async fn request_header_is_required_and_each_writer_has_its_own_identity() {
         .await
         .unwrap();
     assert_eq!(result["result"]["isError"], true);
+    let ledger = endpoint.runtime.ledger();
+    let task = ledger.get(&task.id).unwrap();
+    let closed = ledger
+        .close(
+            &task.id,
+            &task.runs.last().unwrap().id,
+            task.revision,
+            false,
+            "用户标记完成",
+        )
+        .unwrap();
+    let before = json!(ledger.get(&task.id).unwrap());
+    for (name, input) in [
+        (
+            "create-task-run",
+            json!({"taskId":task.id,"expectedRevision":closed.revision,"title":"自动复发处理","agentConversation":["conversation-test"]}),
+        ),
+        (
+            "update-task-run",
+            json!({"taskId":task.id,"runId":closed.run_id,"expectedRevision":closed.revision,"status":"in_progress","agentConversation":["conversation-test"]}),
+        ),
+    ] {
+        let result = rpc(Some("codex-c"), name, input)
+            .send()
+            .await
+            .unwrap()
+            .json::<Value>()
+            .await
+            .unwrap();
+        assert_eq!(result["result"]["isError"], true, "{result}");
+    }
+    assert_eq!(json!(ledger.get(&task.id).unwrap()), before);
     endpoint.runtime.shutdown_once().await;
 }
 

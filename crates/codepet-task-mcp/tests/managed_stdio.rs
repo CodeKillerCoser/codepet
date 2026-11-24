@@ -188,6 +188,33 @@ fn moved_app_and_concurrent_clients_share_the_pinned_ledger_without_http() {
         b.call("find-tasks", json!({"taskId":receipt["taskId"]}))["taskId"],
         receipt["taskId"]
     );
+    // A user-completed task remains locked even for existing connections and custom prompts.
+    let task = ledger.get(receipt["taskId"].as_str().unwrap()).unwrap();
+    let closed = ledger
+        .close(
+            &task.id,
+            &task.runs.last().unwrap().id,
+            task.revision,
+            false,
+            "用户标记完成",
+        )
+        .unwrap();
+    let before = json!(ledger.get(&task.id).unwrap());
+    for client in [&mut a, &mut b] {
+        let denied=client.request("tools/call",json!({"name":"create-task-run","arguments":{"taskId":task.id,"expectedRevision":closed.revision,"title":"试图自动重新开启","agentConversation":["managed-test-fixture"]}}));
+        assert_eq!(denied["isError"], true);
+        assert!(denied["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("已完成并锁定"));
+    }
+    assert_eq!(json!(ledger.get(&task.id).unwrap()), before);
+    let restored=ledger.create_task_run(serde_json::from_value(json!({"taskId":task.id,"expectedRevision":closed.revision,"title":"用户手动继续","agentConversation":[]})).unwrap(),codepet_task_lineage::tasks::Actor::human()).unwrap();
+    a.call("update-task-run",json!({"taskId":task.id,"runId":restored.run_id,"expectedRevision":restored.revision,"note":"用户恢复后更新当前执行","agentConversation":["managed-test-fixture"]}));
+    assert_eq!(
+        json!(ledger.get(&task.id).unwrap().runs[0]),
+        before["runs"][0]
+    );
     // Updating while clients run never replaces a locked bootstrap. The next
     // connection follows the new active data directory, old connections stay pinned.
     let updated_source = dir.path().join("new runner");

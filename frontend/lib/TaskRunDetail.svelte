@@ -1,6 +1,6 @@
 <script lang="ts">
   import {tick} from 'svelte';
-  import {Check, Circle, ExternalLink, Link as LinkIcon, Pencil} from '@lucide/svelte';
+  import {Check, Circle, ExternalLink, Link as LinkIcon, Pencil, RotateCcw} from '@lucide/svelte';
   import TaskChangeCounts from './TaskChangeCounts.svelte';
   import {projectRunChanges,workspaceCommitState,type RunChanges} from './taskChanges';
   import {
@@ -13,6 +13,7 @@
   export let runId = '';
   export let onEditTask: () => void;
   export let onComplete: () => void = () => {};
+  export let onRestoreDevelopment: (button: HTMLButtonElement) => void = () => {};
   export let busy = false;
   export let onOpenChat: (conversationId: string) => void;
   export let onOpenChanges: (button:HTMLButtonElement)=>void=()=>{};
@@ -91,6 +92,8 @@
       </div>
       {#if item.id === currentRun(task).id && item.id === run.id && item.status === 'ready_for_delivery'}
         <button class="quiet complete-run" disabled={busy} on:click={onComplete}><Check size={13}/>{busy ? '保存中…' : '标记完成'}</button>
+      {:else if item.id === currentRun(task).id && item.id === run.id && item.status === 'closed'}
+        <button class="quiet complete-run" disabled={busy} on:click={event => onRestoreDevelopment(event.currentTarget)}><RotateCcw size={13}/>改为开发中</button>
       {/if}
       </div>
       </div>

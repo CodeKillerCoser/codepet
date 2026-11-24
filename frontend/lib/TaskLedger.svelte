@@ -27,6 +27,7 @@
   let loading = true, busy = false, error = '', message = '', mobileDetail = false;
   let detail: TaskRunDetail, lastButton: HTMLButtonElement | undefined;
   let taskDialog: Dialog.ModalHandle, runDialog: Dialog.ModalHandle;
+  let runReturnFocus: HTMLElement | undefined;
   let setupDialog: TaskAgentSetup;
   let taskDraft: Task | null = null, taskTitle = '', taskDescription = '';
   let runTask: Task | null = null, runTitle = '', runKind: TaskKind = 'feature', runGoal = '', runSolution = '', workspace = '';
@@ -36,6 +37,7 @@
   $: filtered = filterTasks(tasks, query, project, status);
   $: selected = filtered.find(t => t.id === selectedId) ?? filtered[0];
   $: run = selected?.runs.find(r => r.id === runId) ?? (selected && currentRun(selected));
+  $: restoringDevelopment = runTask ? currentRun(runTask).status === 'closed' : false;
   $: projects = [...new Map(tasks.map(t => [t.projectId, t.projectName])).entries()];
   $: nextChangesKey=selected&&run?[selected.id,run.id,run.agentWorkspace.observedAt,...run.agentWorkspace.relatedCommits].join('|'):'';
   $: if(nextChangesKey!==changesKey){
@@ -87,16 +89,17 @@
     includePlan = false; criteria = [blank()]; error = '';
     taskDialog.showModal();
   }
-  function createRun() {
+  function createRun(returnFocus?: HTMLElement) {
     moreOpen = false;
-    if (!selected) return;
+    if (busy || !selected || !['closed','published'].includes(currentRun(selected).status)) return;
     runTask = structuredClone(selected);
     const current = currentRun(runTask);
-    runTitle = ''; runGoal = current.goal; runSolution = ''; runKind = 'bugfix';
+    runReturnFocus = returnFocus ?? moreTrigger;
+    runTitle = current.status === 'closed' ? '继续处理' : ''; runGoal = current.goal; runSolution = ''; runKind = 'bugfix';
     workspace = current.agentWorkspace.path;
     criteria = structuredClone(current.validationPlan.items).map(c => ({...c, id: '', steps: [c.precondition,c.steps].filter(Boolean).join('\n'),precondition:''}));
     if (!criteria.length) criteria = [blank()];
-    includePlan = current.validationPlan.items.length > 0;
+    includePlan = current.status !== 'closed' && current.validationPlan.items.length > 0;
     error = ''; runDialog.showModal();
   }
   async function write(op: string, input: Record<string, unknown>) {
@@ -104,6 +107,7 @@
     if (pending?.fingerprint !== fingerprint) pending = {fingerprint, operationId: crypto.randomUUID()};
     const receipt = await api<Receipt>(op, {input: {...input, ...(op === 'edit-task' ? {} : {operationId: pending.operationId})}});
     pending = null; selectedId = receipt.taskId;
+    if (op === 'create-task-run' && ['closed','published'].includes(status)) status = 'all';
     await load();
     return receipt;
   }
@@ -133,7 +137,8 @@
         title: runTitle, kind: runKind, goal: runGoal, solution: runSolution,
         agentWorkspace: {path: workspace}, ...(includePlan ? {validationPlan: {items: criteria}} : {})
       });
-      runId = receipt.runId; runDialog.close(); message = '已创建新的执行，历史记录已保留';
+      runId = receipt.runId; runDialog.close(); message = '已新增一次执行，状态为开发中；之前的验收和历史已保留';
+      await tick();detail?.focusHeading();
     } catch (e) { error = String(e); }
     finally { busy = false; }
   }
@@ -203,7 +208,7 @@
       <details class="ledger-more" open={moreOpen}>
         <summary aria-label="更多任务操作" aria-expanded={moreOpen} title="更多任务操作" bind:this={moreTrigger} on:click|preventDefault={() => moreOpen = !moreOpen}><Ellipsis size={16}/></summary>
         <div class="more-menu"><button class="quiet" on:click={showSetup}>接入 Agent</button>
-          {#if selected && ['published', 'closed'].includes(currentRun(selected).status)}<button class="quiet" on:click={createRun}>新一次执行</button>{/if}
+          {#if selected && ['published', 'closed'].includes(currentRun(selected).status)}<button class="quiet" disabled={busy} on:click={()=>createRun(moreTrigger)}>{currentRun(selected).status === 'closed' ? '改为开发中' : '新一次执行'}</button>{/if}
         </div>
       </details>
     </div>
@@ -227,7 +232,7 @@
     <aside class="task-detail" aria-label="任务详情" tabindex="-1">
       {#if selected && run}
         <button class="back quiet" on:click={back}>← 返回任务列表</button>
-        <TaskRunDetail task={selected} bind:runId bind:this={detail} onEditTask={() => editTask(selected)} onComplete={completeRun} {busy} onOpenChat={openChat} {changes} {changesLoading} {changesOpen} onOpenChanges={openChanges}/>
+        <TaskRunDetail task={selected} bind:runId bind:this={detail} onEditTask={() => editTask(selected)} onComplete={completeRun} onRestoreDevelopment={createRun} {busy} onOpenChat={openChat} {changes} {changesLoading} {changesOpen} onOpenChanges={openChanges}/>
       {:else}<div class="empty">选择任务查看执行记录</div>{/if}
     </aside>
   </div>
@@ -251,13 +256,13 @@
   </fieldset></form>
 </Dialog.Modal>
 
-<Dialog.Modal title="新一次执行" class="ledger-dialog" returnFocus={moreTrigger} bind:this={runDialog} onCancel={e => { if (busy) e.preventDefault(); }}>
+<Dialog.Modal title={restoringDevelopment ? '改为开发中' : '新一次执行'} class="ledger-dialog" returnFocus={runReturnFocus} bind:this={runDialog} onCancel={e => { if (busy) e.preventDefault(); }}>
   <form on:submit|preventDefault={saveRun}><fieldset class="form-controls" disabled={busy}>
-    <header><h3>新一次执行</h3><button type="button" aria-label="关闭执行编辑" on:click={() => runDialog.close()}>×</button></header>
+    <header><h3>{restoringDevelopment ? '改为开发中' : '新一次执行'}</h3><button type="button" aria-label="关闭执行编辑" on:click={() => runDialog.close()}>×</button></header>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     <label>工作区<div class="directory"><input required bind:value={workspace}/><button type="button" on:click={directory}>选择</button></div></label>
     {@render runEditor()}
-    <footer><small>新执行不继承旧验收结果。</small><button class="primary" disabled={!runTitle.trim()}>{busy ? '保存中…' : '创建执行'}</button></footer>
+    <footer><small>将新增一次执行，保留之前的验收和历史；新执行需要重新验收。</small><button class="primary" disabled={!runTitle.trim()}>{busy ? '保存中…' : restoringDevelopment ? '新增执行并改为开发中' : '创建执行'}</button></footer>
   </fieldset></form>
 </Dialog.Modal>
 

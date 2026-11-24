@@ -74,7 +74,7 @@ impl TaskServer {
     }
     #[tool(
         name = "create-task-run",
-        description = "Start another handling attempt for a published or closed task, with its reason. Continuing the same attempt uses update-task-run. An omitted checklist reuses prior items with new IDs and no results. agentConversation must contain the actual current conversation ID/link. Keep the returned runId and task revision."
+        description = "Start another handling attempt after publication, with its reason. A closed/completed task is locked: only the user can manually change it to development in the App; Agents cannot reopen it or create a replacement run. After that human action, use update-task-run on the new current run. An omitted checklist reuses prior items with new IDs and no results. agentConversation must contain the actual current conversation ID/link. Keep the returned runId and task revision."
     )]
     async fn create_task_run(
         &self,

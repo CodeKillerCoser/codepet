@@ -504,3 +504,59 @@ fn v3_migration_preserves_unstructured_text_evidence_and_original_bytes() {
     );
     assert_eq!(std::fs::read(source_path).unwrap(), original);
 }
+
+#[test]
+fn completed_task_is_locked_for_agents_until_human_creates_a_fresh_development_run() {
+    let data = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let ledger = Ledger::new(data.path());
+    let agent = Actor::agent("codex").unwrap();
+    let r = ledger
+        .create_task(create(work.path()), agent.clone())
+        .unwrap();
+    let r=ledger.update_task_run(serde_json::from_value(json!({"taskId":r.task_id,"runId":r.run_id,"expectedRevision":r.revision,"agentConversation":["00000000-0000-4000-8000-000000000001"],"verification":{"planRevision":r.plan_revision,"stage":"local","target":"local-build","environment":"test","results":[{"criterionId":r.criterion_ids[0],"result":"passed","evidence":"已有自测结论"}]}})).unwrap(),agent.clone()).unwrap();
+    let r = ledger
+        .close(&r.task_id, &r.run_id, r.revision, false, "用户标记完成")
+        .unwrap();
+    let closed = ledger.get(&r.task_id).unwrap();
+    let before = json!(closed);
+    let input = || {
+        serde_json::from_value::<CreateTaskRunInput>(json!({"taskId":r.task_id,"expectedRevision":r.revision,"title":"继续处理","agentConversation":["00000000-0000-4000-8000-000000000001"]})).unwrap()
+    };
+    let mut bad_workspace = input();
+    bad_workspace.agent_workspace = Some(WorkspaceInput {
+        path: "/nonexistent-completed-task-workspace".into(),
+        related_commits: vec![],
+    });
+    assert!(ledger
+        .create_task_run(bad_workspace, agent.clone())
+        .unwrap_err()
+        .contains("已完成并锁定"));
+    assert!(ledger
+        .create_task_run(input(), agent.clone())
+        .unwrap_err()
+        .contains("手动改为开发中"));
+    let update:UpdateTaskRunInput=serde_json::from_value(json!({"taskId":r.task_id,"runId":r.run_id,"expectedRevision":r.revision,"status":"in_progress","agentConversation":["00000000-0000-4000-8000-000000000001"]})).unwrap();
+    assert!(ledger.update_task_run(update, agent.clone()).is_err());
+    assert_eq!(json!(ledger.get(&r.task_id).unwrap()), before);
+    let restored = ledger.create_task_run(input(), Actor::human()).unwrap();
+    let task = ledger.get(&r.task_id).unwrap();
+    assert_eq!(task.runs.len(), 2);
+    assert_eq!(json!(task.runs[0]), before["runs"][0]);
+    let new = task.runs.last().unwrap();
+    assert_eq!(new.status, RunStatus::InProgress);
+    assert_eq!(new.created_by, "human");
+    assert!(new.validation_plan.records.is_empty());
+    assert!(new.closure.is_none());
+    assert_ne!(
+        new.validation_plan.items[0].id,
+        closed.runs[0].validation_plan.items[0].id
+    );
+    assert!(new.timeline[0].summary.contains("用户手动改为开发中"));
+    let update:UpdateTaskRunInput=serde_json::from_value(json!({"taskId":restored.task_id,"runId":restored.run_id,"expectedRevision":restored.revision,"note":"人工恢复后继续开发","agentConversation":["00000000-0000-4000-8000-000000000001"]})).unwrap();
+    ledger.update_task_run(update, agent).unwrap();
+    assert_eq!(
+        json!(ledger.get(&r.task_id).unwrap().runs[0]),
+        before["runs"][0]
+    );
+}
