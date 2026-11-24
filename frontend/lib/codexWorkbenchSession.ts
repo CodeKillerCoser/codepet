@@ -26,7 +26,7 @@ export function createWorkbenchSession(api = workbenchRequest) {
   let initialization: Promise<void> | undefined;
   let saveQueue = Promise.resolve();
   let sequence = 0;
-  const page = { taskListWidth:280, query: '', filterProjects: [] as string[], related: false, period: 'all', date: '', status: 'all' };
+  const page = { taskListWidth:280, taskListCollapsed:false, query: '', filterProjects: [] as string[], related: false, period: 'all', date: '', status: 'all' };
 
   function persist() {
     const projectIds = [...get(state).draft];

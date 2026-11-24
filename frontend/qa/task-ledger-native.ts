@@ -39,7 +39,7 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   mount(WorkbenchFrameQa, {target});
   await button('任务与验收'); await until(() => document.querySelector('.run-card'));
   check(!document.querySelector('.task-context')?.textContent?.includes('bugfix'), 'Type belongs to run');
-  check(document.querySelector('.run-card')?.textContent?.includes('bugfix'), 'Card contains run type');
+  check(document.querySelector('.run-card')?.textContent?.includes('修复'), 'Card contains run type');
   check(![...document.querySelectorAll('button')].some(b => ['更新执行', '结束执行'].includes(b.textContent?.trim() ?? '')), 'Removed run actions');
   check(!acceptanceReady(currentRun(task)), 'Agent self-test is not human acceptance');
 
@@ -47,10 +47,11 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(versions.length>0&&versions[0].files.length>0,'Real commit diff archive is exposed by production IPC');
   const nativeDiff=await taskRequest<{patch:string;error:string|null}>('file-diff',{taskId:task.id,runId:currentRun(task).id,version:versions[0].id,path:versions[0].files[0].path});
   check(!nativeDiff.error&&nativeDiff.patch.includes('@@'),'Actual archived Git diff through production IPC');
+  document.querySelector<HTMLButtonElement>('.run-card')!.click();await until(()=>document.querySelector('.task-run-panel'));
   await button('查看变更');await until(()=>document.querySelector('.change-file'));
   document.querySelector<HTMLElement>('.change-file>summary')!.click();await until(()=>document.querySelector('.diff-line'));
   check(document.querySelectorAll('.diff-line.added,.diff-line.deleted').length>0,'Native UI renders Git diff lines');
-  await button('关闭代码变更');await until(()=>!document.querySelector('.app-side-panel'));
+  await button('返回执行详情');await until(()=>document.querySelector('.task-run-panel'));
   check(!document.querySelector('.criterion-history'),'No acceptance history block');
 
   const recordItem = async (index: number) => {
@@ -86,9 +87,9 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(task.runs.length === 2 && task.runs[0].closure?.accepted, 'New run retains historical evidence');
   check(!currentRun(task).validationPlan.records.length, 'New run clears results');
   check(JSON.stringify(task.runs[0])===acceptedHistory,'The entire previously accepted execution is preserved');
-  document.querySelectorAll<HTMLButtonElement>('.run-card')[0].click(); await tick();
-  check(!document.querySelector('.record-result'), 'History read only');
   document.querySelectorAll<HTMLButtonElement>('.run-card')[1].click(); await tick();
+  check(!document.querySelector('.record-result'), 'History read only');
+  document.querySelectorAll<HTMLButtonElement>('.run-card')[0].click(); await tick();
   await taskRequest('update-task-run', {input: {agentConversation: [], taskId: task.id, runId: currentRun(task).id, expectedRevision: task.revision, title: '复发问题已修复', goal: '窗口切换后点击稳定响应', solution: '补齐新版事件注册', kind: 'feature', status: 'ready_for_delivery'}});
   await button('刷新任务'); await pause();
   task = await taskRequest<Task>('get', {taskId: task.id});
@@ -135,7 +136,7 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(pendingReady.status==='ready_for_delivery','Native completion scenario starts in a valid pending state');
   const pendingTask=await taskRequest<Task>('get',{taskId:pendingReceipt.taskId}),oldPlan=JSON.stringify(currentRun(pendingTask).validationPlan);
   await button('刷新任务');await until(()=>[...document.querySelectorAll('.task-row')].find(e=>e.textContent?.includes(pendingTask.title)));
-  const pendingRow=[...document.querySelectorAll<HTMLButtonElement>('.task-row')].find(e=>e.textContent?.includes(pendingTask.title))!;pendingRow.click();
+  const pendingRow=[...document.querySelectorAll<HTMLButtonElement>('.task-row')].find(e=>e.textContent?.includes(pendingTask.title))!;pendingRow.click();await tick();document.querySelector<HTMLButtonElement>('.run-card')!.click();
   await until(()=>[...document.querySelectorAll('button')].find(e=>e.textContent?.trim()==='标记完成'));
   await button('标记完成');await until(()=>document.querySelector('.task-row.selected .status-badge')?.textContent==='已完成');
   const completed=await taskRequest<Task>('get',{taskId:pendingTask.id}),completedRun=currentRun(completed);
@@ -145,7 +146,8 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   await button('刷新任务');await pause();check(document.querySelector('.task-row.selected .status-badge')?.textContent==='已完成','Completion survives refresh');
   check(document.activeElement===document.querySelector('.task-heading h3'),'Completion returns focus to task heading');
   const completedHistory=JSON.stringify(completed.runs[0]);
-  await button('改为开发中',document.querySelector('.run-card-shell.selected .run-card-footer')!);dialog=await modal();
+  document.querySelector<HTMLButtonElement>('.run-card')!.click();await until(()=>document.querySelector('.task-run-panel'));
+  await button('改为开发中',document.querySelector('.task-run-panel')!);dialog=await modal();
   check(dialog.textContent?.includes('保留之前的验收和历史'),'Manual state change explains the new execution');
   input('执行标题','人工确认复发，继续处理',dialog);submit(dialog);await until(()=>!dialog.isConnected);
   const restored=await taskRequest<Task>('get',{taskId:pendingTask.id});

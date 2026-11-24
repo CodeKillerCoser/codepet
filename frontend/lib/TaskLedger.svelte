@@ -1,9 +1,10 @@
 <script lang="ts">
   import {onMount, onDestroy, tick} from 'svelte';
   import {open} from '@tauri-apps/plugin-dialog';
-  import {Ellipsis} from '@lucide/svelte';
+  import {Ellipsis, PanelLeftClose, PanelLeftOpen, ArrowLeft, RefreshCw} from '@lucide/svelte';
   import * as Dialog from './ui/dialog/index';
   import TaskRunDetail from './TaskRunDetail.svelte';
+  import TaskRunContent from './TaskRunContent.svelte';
   import TaskAgentSetup from './TaskAgentSetup.svelte';
   import TaskListResizeHandle from './TaskListResizeHandle.svelte';
   import TaskRunChanges from './TaskRunChanges.svelte';
@@ -20,7 +21,12 @@
   export let workspaceHint = '';
   let tasks: Task[] = [], query = '', project = '', status = 'all', selectedId = '', runId = '';
   let layoutWidth=0, preferredListWidth=workbenchSession.page.taskListWidth;
-  let changesOpen=false, changesTrigger:HTMLElement|undefined, changesKey='', changesSequence=0;
+  let listCollapsed=workbenchSession.page.taskListCollapsed;
+  let runPanelOpen=false, panelView:'run'|'changes'='run', runTrigger:HTMLElement|undefined;
+  let runContent:TaskRunContent;
+  let panelPages:HTMLDivElement, runScrollPosition=0;
+  let panelTaskId='';
+  let changesKey='', changesSequence=0;
   let commits:CommitChange[]=[], changesLoading=false, changesError='';
   $: maxListWidth=Math.max(220,Math.min(440,Math.floor(layoutWidth*.45),layoutWidth-368));
   $: listWidth=Math.min(preferredListWidth,maxListWidth);
@@ -39,9 +45,11 @@
   $: run = selected?.runs.find(r => r.id === runId) ?? (selected && currentRun(selected));
   $: restoringDevelopment = runTask ? currentRun(runTask).status === 'closed' : false;
   $: projects = [...new Map(tasks.map(t => [t.projectId, t.projectName])).entries()];
+  $: listHidden=listCollapsed||(layoutWidth<=700&&mobileDetail);
+  $: if(panelTaskId!==(selected?.id??'')){panelTaskId=selected?.id??'';runPanelOpen=false;panelView='run';}
   $: nextChangesKey=selected&&run?[selected.id,run.id,run.agentWorkspace.observedAt,...run.agentWorkspace.relatedCommits].join('|'):'';
   $: if(nextChangesKey!==changesKey){
-    if(!changesKey.startsWith(`${selected?.id}|${run?.id}|`))changesOpen=false;
+    if(!changesKey.startsWith(`${selected?.id}|${run?.id}|`))panelView='run';
     changesKey=nextChangesKey;const sequence=++changesSequence;
     commits=run?.agentWorkspace.commitChanges??[];changesError='';changesLoading=false;
     if(run&&selected&&!run.agentWorkspace.relatedCommits.every(sha=>commits.some(c=>c.commit===sha&&!c.error))){
@@ -54,8 +62,11 @@
     catch(e){if(sequence===changesSequence)changesError=String(e);}
     finally{if(sequence===changesSequence)changesLoading=false;}
   }
-  function openChanges(button:HTMLButtonElement){mobileDetail=true;changesTrigger=button;changesOpen=!changesOpen;}
-  onDestroy(()=>{++changesSequence;workbenchSession.page.taskListWidth=preferredListWidth;});
+  function openRun(id:string,button:HTMLButtonElement){runId=id;runTrigger=button;panelView='run';runPanelOpen=true;mobileDetail=true;}
+  async function openChanges(button:HTMLButtonElement){runScrollPosition=button.closest('.panel-body')?.scrollTop??0;panelView='changes';await tick();panelPages?.closest('.panel-body')?.scrollTo({top:0});}
+  async function backToRun(){panelView='run';await tick();panelPages?.closest('.panel-body')?.scrollTo({top:runScrollPosition});runContent?.focusChanges();}
+  function toggleList(){if(listHidden){listCollapsed=false;mobileDetail=false;}else{listCollapsed=true;mobileDetail=true;}}
+  onDestroy(()=>{++changesSequence;workbenchSession.page.taskListWidth=preferredListWidth;workbenchSession.page.taskListCollapsed=listCollapsed;});
 
 
   const blank = (): Criterion => ({id: '', title: '', precondition: '', steps: '', expected: '', scope: 'both', required: true});
@@ -74,7 +85,7 @@
     return () => window.removeEventListener('focus', focus);
   });
   async function select(task: Task, button: HTMLButtonElement) {
-    selectedId = task.id; runId = ''; lastButton = button; mobileDetail = true;
+    selectedId = task.id; runId = ''; lastButton = button; mobileDetail = true;runPanelOpen=false;
     await tick(); detail?.focusHeading();
   }
   async function back() { mobileDetail = false; await tick(); lastButton?.focus({preventScroll: true}); }
@@ -137,7 +148,7 @@
         title: runTitle, kind: runKind, goal: runGoal, solution: runSolution,
         agentWorkspace: {path: workspace}, ...(includePlan ? {validationPlan: {items: criteria}} : {})
       });
-      runId = receipt.runId; runDialog.close(); message = '已新增一次执行，状态为开发中；之前的验收和历史已保留';
+      runId = receipt.runId; runPanelOpen=false;runDialog.close(); message = '已新增一次执行，状态为开发中；之前的验收和历史已保留';
       await tick();detail?.focusHeading();
     } catch (e) { error = String(e); }
     finally { busy = false; }
@@ -152,7 +163,7 @@
       // Keep the completed task visible when the current filter is pending confirmation.
       if (status==='ready_for_delivery') status='all';
       await load();
-      message='已标记完成';
+      runPanelOpen=false;message='已标记完成';
       await tick();detail?.focusHeading();
     } catch(e) {error=String(e);}
     finally {busy=false;}
@@ -197,13 +208,14 @@
 
 <section class="task-ledger" aria-label="任务与验收">
   <div class="toolbar">
+    <button class="quiet list-toggle" aria-label={listHidden?'展开任务列表':'收起任务列表'} title={listHidden?'展开任务列表':'收起任务列表'} aria-controls="task-ledger-list" aria-expanded={!listHidden} on:click={toggleList}>{#if listHidden}<PanelLeftOpen size={18}/>{:else}<PanelLeftClose size={18}/>{/if}</button>
     <div class="filters" role="search" aria-label="筛选任务">
       <input aria-label="搜索任务" placeholder="搜索任务、背景或处理结论" bind:value={query}/>
       <select aria-label="任务项目" bind:value={project}><option value="">全部项目</option>{#each projects as [id, name]}<option value={id}>{name}</option>{/each}</select>
       <select aria-label="任务状态" bind:value={status}><option value="all">全部状态</option>{#each Object.entries(statuses) as [value, label]}<option {value}>{label}</option>{/each}</select>
     </div>
     <div class="toolbar-actions">
-      <button class="quiet" disabled={busy || loading} on:click={load}>刷新任务</button>
+      <button class="quiet refresh-tasks" aria-label="刷新任务" title="刷新任务" disabled={busy || loading} on:click={load}><RefreshCw size={16}/></button>
       <button class="primary" disabled={busy} on:click={() => editTask(null)}>新建任务</button>
       <details class="ledger-more" open={moreOpen}>
         <summary aria-label="更多任务操作" aria-expanded={moreOpen} title="更多任务操作" bind:this={moreTrigger} on:click|preventDefault={() => moreOpen = !moreOpen}><Ellipsis size={16}/></summary>
@@ -213,10 +225,10 @@
       </details>
     </div>
   </div>
-  {#if error}<p role="alert" class="error">{error}</p>{/if}
+  {#if error && !runPanelOpen}<p role="alert" class="error">{error}</p>{/if}
   {#if message}<p class="message" role="status">{message}</p>{/if}
-  <div class="ledger-layout" class:detail-open={mobileDetail} bind:clientWidth={layoutWidth} style:--task-list-width={`${listWidth}px`}>
-    <section class="task-list" id="task-ledger-list" aria-label="任务列表"><small class="result-count">{filtered.length} 个结果</small>
+  <div class="ledger-layout" class:detail-open={mobileDetail} class:list-collapsed={listCollapsed} bind:clientWidth={layoutWidth} style:--task-list-width={`${listWidth}px`}>
+    <section class="task-list" id="task-ledger-list" aria-label="任务列表" inert={listHidden}><div class="list-heading"><strong>任务</strong><small class="result-count">{filtered.length}</small></div>
       <div class="task-rows">
         {#each filtered as task (task.id)}
           <button class="task-row" class:selected={selected?.id === task.id} aria-pressed={selected?.id === task.id} on:click={e => select(task, e.currentTarget)}>
@@ -228,18 +240,29 @@
         {/each}
       </div>
     </section>
-    <TaskListResizeHandle value={listWidth} max={maxListWidth} active={layoutWidth>700} onResize={value=>preferredListWidth=value}/>
+    {#if !listCollapsed}<TaskListResizeHandle value={listWidth} max={maxListWidth} active={layoutWidth>700} onResize={value=>preferredListWidth=value}/>{/if}
     <aside class="task-detail" aria-label="任务详情" tabindex="-1">
       {#if selected && run}
         <button class="back quiet" on:click={back}>← 返回任务列表</button>
-        <TaskRunDetail task={selected} bind:runId bind:this={detail} onEditTask={() => editTask(selected)} onComplete={completeRun} onRestoreDevelopment={createRun} {busy} onOpenChat={openChat} {changes} {changesLoading} {changesOpen} onOpenChanges={openChanges}/>
+        <TaskRunDetail task={selected} {runId} panelOpen={runPanelOpen} bind:this={detail} onEditTask={() => editTask(selected)} {busy} onOpenRun={openRun}/>
       {:else}<div class="empty">选择任务查看执行记录</div>{/if}
     </aside>
   </div>
 </section>
 
-<AppSidePanel open={changesOpen&&!!run} title="代码变更" description={selected?.title??'所选执行的代码变更'} closeLabel="关闭代码变更" returnFocus={changesTrigger} onClose={()=>changesOpen=false}>
-  {#if run&&changes}<TaskRunChanges taskId={selected!.id} {run} {changes} {commits} loading={changesLoading} error={changesError}/>{/if}
+<AppSidePanel open={runPanelOpen&&!!run} title={panelView==='changes'?'代码变更':run?.title??'执行详情'} description={selected?.title??'所选任务执行详情'} closeLabel="关闭执行详情" returnFocus={runTrigger} onClose={()=>runPanelOpen=false}>
+  {#if run&&selected}
+    <div bind:this={panelPages}>
+    {#if error}<div class="task-surface"><p role="alert" class="error">{error}</p></div>{/if}
+    {#if panelView==='changes'}
+      <div class="task-surface"><button class="quiet panel-back" on:click={backToRun}><ArrowLeft size={16}/>返回执行详情</button></div>
+      {#if changes}<TaskRunChanges taskId={selected.id} {run} {changes} {commits} loading={changesLoading} error={changesError}/>{/if}
+    {/if}
+    <div hidden={panelView!=='run'}>
+      {#key run.id}<TaskRunContent bind:this={runContent} task={selected} {run} {busy} {changes} {changesLoading} onComplete={completeRun} onRestoreDevelopment={createRun} onOpenChat={openChat} onOpenChanges={openChanges}/>{/key}
+    </div>
+    </div>
+  {/if}
 </AppSidePanel>
 
 <Dialog.Modal title={taskDraft ? '修改任务信息' : '新建任务'} class="ledger-dialog" bind:this={taskDialog} onCancel={e => { if (busy) e.preventDefault(); }}>

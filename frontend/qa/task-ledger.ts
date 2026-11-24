@@ -108,5 +108,5 @@ const target=document.getElementById('app')!;target.className=`main-theme ${them
 (window as any).__setTaskTheme=(mode:'light'|'dark')=>target.className=`main-theme ${themeClassNames(mode)}`;
 if(new URLSearchParams(location.search).has('detailOnly')){
  target.classList.add('task-ledger');target.style.cssText='padding:12px 25px;container-type:inline-size';
- mount(TaskRunDetail,{target,props:{task:base,onEditTask:()=>{},onOpenChat:()=>{}}});
+ mount(TaskRunDetail,{target,props:{task:base,onEditTask:()=>{},onOpenRun:()=>{}}});
 }else mount(WorkbenchFrameQa,{target,props:{view:'tasks'}});
