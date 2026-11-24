@@ -1,8 +1,13 @@
+---
+name: codepet-provider-sdk
+description: 开发、调试和维护 Code Pet Provider 插件，使用随包合同实现接入、能力、生命周期和原生 Harness 版本适配。适用于 Agent、通知观测和运行时目录插件，不用于修改 Gateway 协议。
+---
+
 # Provider SDK v2
 
 本 SDK 定义 Code Pet Host 与独立 Provider 进程之间的接入合同。Provider 可以用 TS、Python、Rust 等语言实现，也可以打包为自包含二进制。接入只需要本 SDK，无需 Host 源码或特定语言的桥接程序。
 
-README 说明如何使用 SDK、各模块的职责、通信生命周期和字节协议。对象字段、必填项、取值范围和字段含义统一以 JSON Schema 及其中的 `description` 为准，本文不重复列举。
+使用本技能实现 SDK 接入、通信生命周期和原生 Harness 适配。对象字段、必填项、取值范围和字段含义统一以随包 JSON Schema 及其中的 `description` 为准，本文不重复列举。
 
 ## SDK 的组织与使用
 
@@ -12,7 +17,7 @@ README 说明如何使用 SDK、各模块的职责、通信生命周期和字节
 provider-sdk/
 └── v2/
     ├── sdk-manifest.json
-    ├── README.md
+    ├── SKILL.md
     └── protocol/
         ├── manifest.schema.json          # 插件安装清单规范，手工填写
         └── sdk/                          # 通信 SDK 的生成输入
@@ -248,6 +253,43 @@ Provider 通过实例能力声明可用业务方法；对象、输入、选择�
 
 如果需要 Host 帮助选择外部 Harness，`runtime.getInstalled` 返回库存和当前选择，selectionRequired 缺省为 true。自行管理依赖的插件可显式返回 selectionRequired=false，此时清单应为空、selected 为 null、扫描不在进行且没有 scanError。App 显示“由 Provider 管理，无需选择”。这只表明选择职责，不保证依赖已安装；真实启动失败仍由实例诊断报告。
 
+
+## 原生 Harness 升级：逐接口兼容最佳实践
+
+当插件对接有可靠版本标识的原生 CLI/API 时，优先按发生变化的接口独立兼容。Harness 版本与插件发行号、SDK 目录版本、Provider/Gateway 业务版本分别记录；上游字段或行为变化在 Provider adapter 内消化，公共合同与业务调用方保持稳定。没有可靠版本契约时，根据明确的能力或协议探测证据选择实现，不编造版本上界。
+
+沿用已有 Client、DTO、Mapper 分层：Client 共用进程、RPC、请求关联和取消机制；`CompatibleVxxxx` 只封装本次变化接口的参数编码、专用官方 DTO 和必要转换；各实现返回同一种现有内部类型，Mapper 继续转换成稳定的 Provider DTO。专用 DTO 就近放在兼容模块，共用且未变的 DTO 继续复用，不把所有字段改成可选来掩盖契约差异。
+
+每个接口在自己的入口选择实现。以下为结构示意，`version_at_most` 比较已解析的完整原生版本：
+
+```rust
+fn project_list(client: &Client, input: ProjectListInput) -> Result<ProjectPage> {
+    if client.version_at_most(PROJECT_LIST_A_UPPER)? {
+        CompatibleVA::project_list(client, input)
+    } else if client.version_at_most(PROJECT_LIST_B_UPPER)? {
+        CompatibleVB::project_list(client, input)
+    } else {
+        CompatibleVC::project_list(client, input)
+    }
+}
+```
+
+`CompatibleVA/B/C` 是变化接口实现的容器，不代表整个 Provider 的完整版本。若只有 project_list 变化，新模块只新增 project_list；未变化的 thread_list 保持原实现，不新增版本判断、转发方法或完整接口 trait。各接口可以有不同的边界和分支数，不增加集中兼容注册表或整实例版本切换。
+
+最后的 `else` 默认处理当前已适配版本及更新版本。下次该接口变化时，把原最后分支封为 `else if version <= 原实现上界`，再增加新的最后分支；其他接口无需调整。入口条件是版本范围的执行依据，就近注明变化原因、上界依据、schema/fixture 来源和实际验证版本。区分用户指定的支持基线与已测试范围，不能把首次观察到新结构的版本直接当作旧上界，也不为每个未变化的小版本新建实现。
+
+从实际运行进程的握手或等价版本响应获取版本，进程重建后重新读取；不能用磁盘新 binary 的版本替代存活进程版本。遵循上游版本排序规则，SemVer 保留 alpha 等预发布数字段，忽略 build metadata 对优先级的影响，不按字符串或截断版本比较。无法确定版本时明确诊断。验证记录不作为更高版本的运行时门禁；默认向前调用也不代表未来版本已经验证通过，能力仍须真实探测并按实际支持声明。
+
+维护新版时按以下流程操作：
+
+1. 在开发/CI 中从明确版本的官方 binary 导出 schema，按接口适用范围保留稳定/实验合同、完整版本和构建/schema 指纹；导出 schema 不应启动旧 binary 访问用户当前数据库。
+2. 比较消费接口的请求、响应、相关事件及引用 DTO，检查 required、类型、默认值和语义，过滤描述文字等无关差异。共享 DTO 变化要检查所有引用接口；仅有新增可忽略字段时可复用现有实现。schema 相同仍需行为回归。
+3. 只为实际受影响的接口新增兼容方法、专用 DTO/转换和入口分界。schema 导出与差异检查是开发维护工具，不是生产启动或请求前置条件；不以超过已验证版本阻断最新分支。
+4. 保留新旧样本，覆盖等于上界、紧邻下一版本、预发布数字段和高于已验证版本的分派，以及参数编码、领域映射、取消/generation 和错误路径。用真实非空目录和真实业务验证实际行为，空目录或 fixture 通过不能替代端到端验收。
+
+先选兼容实现再发送请求。认证错误、超时、无效 JSON 不应触发另一版本的写入重试；请求已发送但结果未知时，保留现有结果未知及幂等语义，不能换分支重新创建或发送。错误沿用公共错误结构，诊断记录接口、运行版本、所选实现和标准错误 code，避免记录敏感 payload。独立能力域应隔离发现失败，例如项目探测失败不得丢弃已成功发现的模型和发送能力，也不得虚报失败域可用。
+
+适配有原生项目管理的 Harness 时，保留完整实例 route、原生项目/会话 ID，并显式传递所选项目身份。main/worktree 只影响执行目录，不能按 cwd 猜项目或静默改成无项目会话。用同一会话 ID 验证原生接口归属、原生 App 实际分组和跨端续聊；ID 已持久化不能代替分组验收。涉及排序字段移除时，按上游权威顺序做局部转换，确保首屏、续页、get/create/update 一致，并为额外查询设置总 deadline 和页数界限。
 
 ## 业务协议版本与前向兼容
 

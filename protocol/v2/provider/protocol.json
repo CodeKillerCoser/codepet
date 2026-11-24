@@ -76,6 +76,6 @@
   "profiles": "transport/profiles.json",
   "transportHandshakeSchema": "transport/handshake.schema.json",
   "sdkManifest": "sdk-manifest.json",
-  "guide": "README.md",
+  "guide": "SKILL.md",
   "minVersion": 4
 }

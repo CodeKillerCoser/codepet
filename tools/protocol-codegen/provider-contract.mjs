@@ -43,10 +43,10 @@ export async function loadProviderContract(protocolRoot) {
   }
   const hash=createHash('sha256');
   for(const [file,value]of [...files].sort(([a],[b])=>a.localeCompare(b))){hash.update(file);hash.update('\0');hash.update(encode(value));}
-  const readme = await readFile(path.join(root,index.guide),'utf8');
-  hash.update(readme);const sourceDigest=`sha256:${hash.digest('hex')}`;
+  const guideText = await readFile(path.join(root,index.guide),'utf8');
+  hash.update(guideText);const sourceDigest=`sha256:${hash.digest('hex')}`;
   const documentation={heartbeatIntervalSeconds:lifecycle.heartbeatIntervalMs/1000,heartbeatTimeoutSeconds:lifecycle.heartbeatTimeoutMs/1000,bootstrapTimeoutSeconds:wire.bootstrap.timeoutMs/1000,features:wire.bootstrap.features.map(v=>`\`${v}\``).join('、')};
-  return {root,index,files,profiles,wire,limits,constraints,lifecycle,methods,events,readme,documentation,sourceDigest,canonical};
+  return {root,index,files,profiles,wire,limits,constraints,lifecycle,methods,events,guideText,documentation,sourceDigest,canonical};
 }
 export function publishProviderContract(model) {
   const {index}=model;const files=new Map([...model.files].map(([name,value])=>[name,clone(value)]));
@@ -60,7 +60,7 @@ export function publishProviderContract(model) {
     const base=clone(envelope.$defs[name]);envelope.$defs[name]={description:base.description,oneOf:entries.map(entry=>{const d=clone(base);d.description=entry.description;d.properties.method={const:entry.name,description:entry.description};d.properties.params=rebase(entry[type]);return d;})};
   }
   const texts=new Map([...files].map(([name,value])=>[name,encode(value)]));
-  texts.set('README.md',model.readme.replace(/\{\{([\w.]+)\}\}/g,(_,key)=>{let v=model;for(const part of key.split('.'))v=v?.[part];assert(['string','number'].includes(typeof v),`unknown README value ${key}`);return String(v);}));
+  texts.set(index.guide,model.guideText.replace(/\{\{([\w.]+)\}\}/g,(_,key)=>{let v=model;for(const part of key.split('.'))v=v?.[part];assert(['string','number'].includes(typeof v),`unknown SDK guide value ${key}`);return String(v);}));
   return texts;
 }
 export { encode as encodeContractJson };

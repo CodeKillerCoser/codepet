@@ -17,6 +17,8 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
 mod title;
+mod projects;
+mod compatible;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{self, ChildStdin, ChildStdout, Stdio};
@@ -552,68 +554,6 @@ impl CodexAppServerSession {
             data: CodexConversationSnapshot::from_threads(response.data),
             next_cursor: response.next_cursor,
         })
-    }
-
-    pub fn project_list(
-        &self,
-        cursor: Option<String>,
-        limit: Option<u32>,
-    ) -> Result<CodexProjectPage, CodexAppServerError> {
-        let response: ProjectListResponse = self.request(
-            "project/list",
-            json!({ "cursor": cursor, "limit": limit }),
-        )?;
-        Ok(CodexProjectPage {
-            data: response.data,
-            next_cursor: response.next_cursor,
-        })
-    }
-
-    pub fn project_read(&self, project_id: &str) -> Result<CodexProject, CodexAppServerError> {
-        let response: ProjectResponse =
-            self.request("project/read", json!({ "projectId": project_id }))?;
-        Ok(response.project)
-    }
-
-    pub fn project_create(
-        &self,
-        request: CodexProjectCreateRequest,
-    ) -> Result<CodexProject, CodexAppServerError> {
-        let response: ProjectResponse = self.request(
-            "project/create",
-            json!({
-                "idempotencyKey": request.idempotency_key,
-                "name": request.name,
-                "roots": request.roots,
-                "metadata": request.metadata,
-            }),
-        )?;
-        Ok(response.project)
-    }
-
-    pub fn project_update(
-        &self,
-        request: CodexProjectUpdateRequest,
-    ) -> Result<CodexProject, CodexAppServerError> {
-        let mut params = serde_json::Map::new();
-        params.insert("projectId".to_string(), json!(request.project_id));
-        if let Some(name) = request.name {
-            params.insert("name".to_string(), json!(name));
-        }
-        if let Some(roots) = request.roots {
-            params.insert("roots".to_string(), json!(roots));
-        }
-        if let Some(metadata) = request.metadata {
-            params.insert("metadata".to_string(), json!(metadata));
-        }
-        let response: ProjectResponse = self.request("project/update", Value::Object(params))?;
-        Ok(response.project)
-    }
-
-    pub fn project_delete(&self, project_id: &str) -> Result<(), CodexAppServerError> {
-        let _: serde_json::Map<String, Value> =
-            self.request("project/delete", json!({ "projectId": project_id }))?;
-        Ok(())
     }
 
     pub fn account_read(&self) -> Result<Value, CodexAppServerError> {
@@ -2750,6 +2690,7 @@ mod tests {
     #[test]
     fn project_operations_use_the_experimental_app_server_contract() {
         let (session, peer_receiver, peer_sender) = mock_session();
+        *session.inner.harness_version.lock().unwrap() = Some("0.166.0-alpha.5.1".into());
         let operation_session = session.clone();
         let operations = thread::spawn(move || {
             let listed = operation_session

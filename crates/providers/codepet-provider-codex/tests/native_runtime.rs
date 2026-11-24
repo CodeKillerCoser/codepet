@@ -68,3 +68,65 @@ async fn codex_windows_install_layout_without_path() {
         );
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CODE_PET_CODEX_BIN and existing native projects; no model requests"]
+async fn installed_codex_projects_and_chat_capabilities() {
+    use codepet_provider_sdk::*;
+    use serde_json::json;
+    let executable = std::env::var("CODE_PET_CODEX_BIN").expect("explicit installed Codex path");
+    let provider = codepet_provider_codex::CodexProvider::new(std::sync::Arc::new(|_| Ok(())));
+    let route = ProviderInstanceRoute {
+        device_id: "native-project-check".into(),
+        provider_plugin_id: "dev.codepet.codex".into(),
+        provider_instance_id: "codex".into(),
+    };
+    provider
+        .provider_initialize(ProviderInitializeRequest {
+            directories: None,
+            host_client_id: "native-project-check".into(),
+            host_device_id: route.device_id.clone(),
+            host_version: "test".into(),
+            protocol: ProtocolVersionOffer {
+                version: PROTOCOL_VERSION,
+                min_version: MIN_PROTOCOL_VERSION,
+            },
+        })
+        .await
+        .unwrap();
+    let result: Result<(), ProtocolError> = async {
+        provider.instance_create(InstanceCreateRequest {
+            route: route.clone(), instance_kind: "codex".into(), display_name: "Native read-only compatibility check".into(),
+            settings: [("appServerExecutable".into(), json!(executable)), ("appServerArgs".into(), json!(["app-server","--listen","stdio://"]))].into(),
+        }).await?;
+        provider.instance_start(InstanceStartRequest { route: route.clone() }).await?;
+        let ready = tokio::time::timeout(std::time::Duration::from_secs(45), async {
+            loop {
+                let instance = provider.instance_start(InstanceStartRequest { route: route.clone() }).await?.instance;
+                if instance.status == InstanceStatus::Ready { return Ok::<_, ProtocolError>(instance); }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        }).await.expect("metadata deadline")?;
+        assert!(ready.capabilities.methods.contains(&ProviderCapability::TurnStart), "turn.start missing");
+        assert!(ready.capabilities.turn_send.is_some(), "turn options missing");
+        assert!(ready.capabilities.methods.contains(&ProviderCapability::ProjectList), "project.list missing");
+        let first = provider.project_list(ProjectListRequest { route: route.clone(), cursor: None, limit: Some(1) }).await?;
+        assert_eq!(first.projects.len(), 1, "this probe requires at least one existing native project to exercise its fields");
+        println!("native Codex {:?}: project.list + turn.start + turnSend ready; nonempty first page decoded", ready.harness.version);
+        if let Some(project) = first.projects.first() {
+            let resource = ProviderResourceId { device_id: route.device_id.clone(), provider_plugin_id: route.provider_plugin_id.clone(), provider_instance_id: route.provider_instance_id.clone(), native_resource_id: project.resource.native_resource_id.clone() };
+            let fetched = provider.project_get(ProjectGetRequest { project: resource }).await?;
+            assert_eq!(fetched.project.position, project.position);
+        }
+        if let Some(cursor) = first.page_info.next_cursor {
+            let second = provider.project_list(ProjectListRequest { route: route.clone(), cursor: Some(cursor), limit: Some(1) }).await?;
+            assert_eq!(second.projects.len(), 1);
+            assert!(second.projects[0].position > first.projects[0].position);
+            println!("native continuation order preserved");
+        }
+        Ok(())
+    }.await;
+    let shutdown = provider.provider_shutdown(ProviderShutdownRequest {}).await;
+    assert!(result.is_ok(), "native compatibility: {result:?}");
+    assert!(shutdown.is_ok(), "shutdown: {shutdown:?}");
+}

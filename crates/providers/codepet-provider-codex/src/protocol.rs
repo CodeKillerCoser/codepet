@@ -1077,6 +1077,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn legacy_project_requires_integer_position_and_known_fields() {
+        let mut value = json!({"id":"p","name":"P","roots":[{"path":"/p"}],"metadata":{},"createdAt":1,"updatedAt":2,"recencyAt":null});
+        assert!(serde_json::from_value::<CodexProject>(value.clone()).is_err());
+        value["position"] = json!(7);
+        assert_eq!(serde_json::from_value::<CodexProject>(value.clone()).unwrap().position, 7);
+        for invalid in [Value::Null, json!("7"), json!(false), json!(1.5)] {
+            value["position"] = invalid;
+            assert!(serde_json::from_value::<CodexProject>(value.clone()).is_err());
+        }
+        value["position"] = json!(7);
+        value.as_object_mut().unwrap().remove("name");
+        assert!(serde_json::from_value::<CodexProject>(value).is_err());
+    }
+
+    #[test]
     fn recognizes_unknown_methods_without_hiding_other_invalid_requests() {
         for (code, message, expected) in [
             (-32601, "method not found", true),

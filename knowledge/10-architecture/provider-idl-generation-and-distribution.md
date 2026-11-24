@@ -1,5 +1,8 @@
 # Provider IDL 统一生成与分发
 
+> 2026-11-25 更新：当前 Provider SDK v2 的开发说明源改为 `protocol/v2/provider/SKILL.md`，包含技能元信息和原生 Harness 逐接口兼容最佳实践。SDK 清单的 guide 与发布器统一输出 SKILL.md；导出/staging 验证入口、相对链接和原有协议值模板。仅说明入口与来源摘要变化，业务协议和 wire 不变。历史 v1 验收记录中的 README 保留其当时含义。验证使用 `npm run protocol:check`、`npm run providers:test` 及导出技能校验。
+
+
 > 历史实施记录（v1 阶段）。当前权威输入为 `protocol/v2/`，Provider SDK 目录为 `provider-sdk/v2/`，业务协议范围为 4/4；当前链路见 [Notice 发布、状态和动作](notice-publication-and-actions.md)。下文 v1 路径和兼容结论只记录当时状态。
 
 

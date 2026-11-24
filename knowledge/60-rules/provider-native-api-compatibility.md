@@ -2,7 +2,7 @@
 
 ## 规则
 
-Harness 版本差异收敛在对应 Provider 的原生 adapter 内，不为原生字段变化修改统一 Provider/Gateway 协议、生成 SDK 或业务调用方。版本字符串只作元数据，选择接口路径必须有实际探测证据。
+Harness 版本差异收敛在对应 Provider 的原生 adapter 内，不为原生字段变化修改统一 Provider/Gateway 协议、生成 SDK 或业务调用方。Codex 采用用户确定的逐接口兼容策略：按完整原生版本和有 schema/样本依据的分界选择实现，未变化接口保持原样，最新 else 默认处理更新版本。其他 Provider 的选择策略仍须由对应契约与探测证据确定，不机械套用版本阈值。
 
 ## 适用场景
 
@@ -19,11 +19,20 @@ Harness 版本差异收敛在对应 Provider 的原生 adapter 内，不为原�
 
 先在自有 Server 上验证握手，再固定本代 adapter；只以明确的缺失接口信号进入兼容探测，保留认证、总 deadline、消息大小和子进程所有权边界。对会产生副作用的请求先选择契约，不用失败后再次提交来猜测接口。
 
+Codex 的 CompatibleVxxxx 只收纳本次变化接口的参数编码、专用 DTO 和必要转换，不实现完整接口集合，不为未变化接口新增委托或版本分支。分派条件在对应入口就近维护，不重复放入注册表；各分支返回现有内部类型。新适配为原最新分支补上旧版本上界，再增加最后 else。已验证版本记在注释/测试证据中，不作为更高版本的运行时门禁；schema 导出与差异检查属于开发/CI 工具，不是生产调用前置条件。
+
 只转换正式 schema 与真实二进制确认的字段；未知时间不填本机时间，工具调用 ID 与展示内容 ID 独立，流式和历史内容身份一致。原生成功但为空的初始化快照可有界重试，网络错误不能伪装成空目录。新旧路径各自验证，明确区分新功能通过、旧路径回归和未覆盖平台。
+
+能力发现按独立业务域隔离失败。项目探测失败不得丢弃已经成功发现的模型和发送能力；失败的能力仍不声明支持，并记录 method/错误 code，不静默吞错或打印业务 payload。
+
+原生移除数值排序字段、改为保证数组顺序时，在 adapter 内将原生顺序转换成 Provider-defined rank，保留旧版显式位置和公共协议。首屏、续页及 get/create/update 必须一致，不能统一填 0 或逐页重新从 0 开始。必要的目录扫描应有页数和总 deadline 限制；重复游标、目标消失、已知字段损坏应明确报错，不能重放业务写入。
 
 ## 来源
 
 [OpenCode 2.2.6 兼容修复](../40-runbooks/opencode2-startup-compatibility.md)：认证、health/info、prompt、审批字段、事件和内容身份均在 OpenCode Provider 内适配。
+
+- [Codex 项目响应移除 position](../40-runbooks/codex-project-position-schema-drift.md)：0.171.0-alpha.13 真实 schema 和非空目录验证，新旧排序适配及能力发现故障隔离。
+- 2026-11-25 用户确认的[逐接口兼容方案](../10-architecture/codex-native-project-compatibility-plan.md)：保持公共协议及原生项目归属，只增加变化接口的实现和分派，最新分支默认向前调用。
 
 ## 验证方式
 

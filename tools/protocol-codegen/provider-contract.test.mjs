@@ -27,7 +27,7 @@ test('one IDL change reaches runtime constants, compatibility DTOs, registry env
   const runtime = providerRuntimeArtifacts(model, published), views = modularCompatibilityViews(model.canonical);
   assert.match(runtime.get('sdk/rust/codepet-provider-sdk/src/runtime/protocol.rs'), /from_millis\(15000\)/);
   assert.match(runtime.get('sdk/rust/codepet-transport/src/protocol.rs'), /normal_streams: 20/);
-  assert.match(published.get('README.md'), /等待 15 秒/);
+  assert.match(published.get(model.index.guide), /等待 15 秒/);
   assert.equal(JSON.parse(views.get('provider/v2/schema.json')).$defs.ProviderPingResponse.properties.sequence.description, 'IDL-owned reply sequence');
   assert.ok(JSON.parse(views.get('provider/v2/manifest.json')).methods.some(m => m.name === 'provider.identity'));
   const envelope = JSON.parse(published.get(model.index.rpcEnvelopeSchema));
@@ -71,5 +71,5 @@ test('published business minimum and guide derive from the Provider version rang
   assert.equal(JSON.parse(published.get('sdk-manifest.json')).minProtocolVersion,3);
   assert.equal(JSON.parse(published.get(model.index.methods)).minVersion,3);
   assert.equal(JSON.parse(published.get(model.index.events)).minVersion,3);
-  assert.match(published.get('README.md'),/业务区间为 4\/3/);
+  assert.match(published.get(model.index.guide),/业务区间为 4\/3/);
 });

@@ -137,7 +137,11 @@ fn main() {
                     "app-server-0.151-history" => "codex-cli/0.151.0",
                     "app-server-0.152-history" => "codex-cli/0.152.0",
                     "app-server-code-pet-history" => "code-pet/0.153.1 (Mac OS 26.3.2; arm64) iTerm.app/3.6.9 (code-pet; 0.1.0)",
-                    _ => "codex-app-server-fixture/1",
+                    "project-no-position-legacy" => "codex-cli/0.166.0-alpha.5.1",
+                    "project-no-position-next" => "codex-cli/0.166.0-alpha.5.2",
+                    "project-no-position-future" => "codex-cli/99.0.0",
+                    mode if mode.starts_with("project-no-position") => "codex-cli/0.171.0-alpha.13",
+                    _ => "codex-cli/0.166.0-alpha.5.1",
                 };
                 respond(
                     &mut writer,
@@ -267,6 +271,42 @@ fn main() {
                     );
                     continue;
                 }
+                if options.approval_mode == "project-probe-error" {
+                    write_json(&mut writer, json!({"id":id,"error":{"code":-32603,"message":"project discovery failed"}}));
+                    continue;
+                }
+                if options.approval_mode == "project-probe-malformed" {
+                    let mut row = project("project-fixture", "Fixture Project");
+                    row["position"] = json!("invalid");
+                    respond(&mut writer, id, json!({"data":[row],"nextCursor":null}));
+                    continue;
+                }
+                if options.approval_mode.starts_with("project-no-position") {
+                    if options.approval_mode == "project-no-position-empty" {
+                        if !params["cursor"].is_null() {
+                            respond(&mut writer,id,json!({"data":[],"nextCursor":null}));
+                            continue;
+                        }
+                        if params["limit"] == 100 {
+                            write_json(&mut writer,json!({"id":id,"error":{"code":-32603,"message":"empty continuation must not scan ordering"}}));
+                            continue;
+                        }
+                    }
+                    let offset = if params["cursor"].is_null() { 0 } else { 1 };
+                    let count = params["limit"].as_u64().unwrap_or(100) as usize;
+                    let mut rows = vec![project("project-z", "First Project"), project("project-a", "Second Project")];
+                    for row in &mut rows {
+                        row.as_object_mut().unwrap().remove("position");
+                        row["recencyAt"] = Value::Null;
+                    }
+                    if count == 100 && (options.approval_mode.ends_with("-loop") || options.approval_mode.ends_with("-missing")) {
+                        respond(&mut writer, id, json!({"data":[rows[0]],"nextCursor":if options.approval_mode.ends_with("loop") { Some("loop") } else { None }}));
+                        continue;
+                    }
+                    let end = (offset + count).min(rows.len());
+                    respond(&mut writer, id, json!({"data":rows[offset..end],"nextCursor":if end < rows.len() { Some("project-page-two") } else { None }}));
+                    continue;
+                }
                 respond(
                     &mut writer,
                     id,
@@ -277,37 +317,21 @@ fn main() {
                 );
             }
             "project/read" => {
-                respond(
-                    &mut writer,
-                    id,
-                    json!({
-                        "project": project(
-                            params["projectId"].as_str().unwrap_or("project-fixture"),
-                            "Fixture Project"
-                        )
-                    }),
-                );
+                let mut row = project(params["projectId"].as_str().unwrap_or("project-fixture"), "Fixture Project");
+                if options.approval_mode.starts_with("project-no-position") {
+                    row.as_object_mut().unwrap().remove("position");
+                }
+                respond(&mut writer, id, json!({"project": row}));
             }
-            "project/create" => {
-                respond(
-                    &mut writer,
-                    id,
-                    json!({
-                        "project": project("project-created", params["name"].as_str().unwrap_or("Created Project"))
-                    }),
-                );
-            }
-            "project/update" => {
-                respond(
-                    &mut writer,
-                    id,
-                    json!({
-                        "project": project(
-                            params["projectId"].as_str().unwrap_or("project-fixture"),
-                            params["name"].as_str().unwrap_or("Fixture Project")
-                        )
-                    }),
-                );
+            "project/create" | "project/update" => {
+                let project_id = if method == "project/create" {
+                    if options.approval_mode.starts_with("project-no-position") { "project-a" } else { "project-created" }
+                } else { params["projectId"].as_str().unwrap_or("project-fixture") };
+                let mut row = project(project_id, params["name"].as_str().unwrap_or("Fixture Project"));
+                if options.approval_mode.starts_with("project-no-position") {
+                    row.as_object_mut().unwrap().remove("position");
+                }
+                respond(&mut writer, id, json!({"project":row}));
             }
             "project/delete" => respond(&mut writer, id, json!({})),
             "thread/loaded/list" => {

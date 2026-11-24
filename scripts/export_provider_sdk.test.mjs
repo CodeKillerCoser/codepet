@@ -50,7 +50,7 @@ test('Notice-only authors receive the full contract without retired raw notifica
   await exportProviderSdk(output);
   const root=path.join(output,'v2');
   const read=async name=>JSON.parse(await readFile(path.join(root,name),'utf8'));
-  assert.deepEqual((await readdir(root)).sort(),['README.md','protocol','sdk-manifest.json']);
+  assert.deepEqual((await readdir(root)).sort(),['SKILL.md','protocol','sdk-manifest.json']);
   const index=await read('sdk-manifest.json');
   assert.equal(index.minProtocolVersion,4);
   const methods=(await read(index.methods)).methods;
@@ -64,7 +64,14 @@ test('Notice-only authors receive the full contract without retired raw notifica
   assert.ok(messages.NoticeFinishRequest.required.includes('status'));
   const descriptor=(await read(index.providerLifecycleSchema)).$defs.ProviderPluginDescriptor;
   assert.equal(descriptor.properties.instanceKinds.minItems,0);
+  assert.equal(index.guide,'SKILL.md');
   const guide=await readFile(path.join(root,index.guide),'utf8');
+  assert.match(guide,/^---\nname: codepet-provider-sdk\ndescription: [^\n]+\n---\n/);
+  assert.doesNotMatch(guide,/\{\{[\w.]+\}\}/);
+  for (const [,href] of guide.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
+    if (/^[a-z]+:/i.test(href)) continue;
+    await readFile(path.resolve(root,href.split('#')[0]));
+  }
   assert.match(guide,/features: \["observation"\]/);
   assert.match(guide,/Provider 请求 \/ 响应 \/ 事件/);
   assert.ok(!guide.includes('旧插件的运行时查询保持已有兼容入口'));

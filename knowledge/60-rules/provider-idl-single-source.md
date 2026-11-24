@@ -14,9 +14,9 @@ Provider 公共协议在 `protocol/v2/provider/` 定义，共享对象在 `proto
 
 ## 推荐做法
 
-先修改权威 Schema/注册表/传输描述，运行 `npm run protocol:generate` 更新兼容视图、语言代码与内部协议常量。字段解释放在 Schema description，交互和使用说明放在服务 README；涉及数值的协议说明从 IDL 渲染。安装清单不生成外部插件业务代码，但 Host 解析结构和验证遵循同一 Schema。
+先修改权威 Schema/注册表/传输描述，运行 `npm run protocol:generate` 更新兼容视图、语言代码与内部协议常量。字段解释放在 Schema description，交互和使用说明放在服务文档（Provider 为 SKILL.md，其他服务为 README）；涉及数值的协议说明从 IDL 渲染。安装清单不生成外部插件业务代码，但 Host 解析结构和验证遵循同一 Schema。
 
-`npm run sdk:export -- <空目录>` 与 App staging 使用同一个发布器，产物为 `<目录>/v2/`，携带源摘要。methods/events 和 profile ID 不在多个权威输入重复列举；发布联合类型及安装 transport 枚举由注册表派生。手写机制只能实现合同，不能自行改变协议值。语言生成器不支持的类型形状必须明确报错；Manifest 校验关键字原样交给标准 JSON Schema validator，不维护自定义关键词子集。
+`npm run sdk:export -- <空目录>` 与 App staging 使用同一个发布器，产物为 `<目录>/v2/`，携带源摘要。Provider 开发说明维护在 `protocol/v2/provider/SKILL.md`，SDK 清单的 guide 与发布器使用同一入口，禁止只改导出副本；逐接口原生版本兼容属于 Provider adapter 实践，不改变公共业务合同。methods/events 和 profile ID 不在多个权威输入重复列举；发布联合类型及安装 transport 枚举由注册表派生。手写机制只能实现合同，不能自行改变协议值。语言生成器不支持的类型形状必须明确报错；Manifest 校验关键字原样交给标准 JSON Schema validator，不维护自定义关键词子集。
 
 ## 安装清单校验
 
@@ -45,6 +45,6 @@ Manifest 只接受当前版本，必须包含 icon、command 和 transport；不
 
 通知动作执行前先持久化 executionId 回执，未知结果不得重放；原始观察 Hook 不得自行获得回复或授权能力。新增文本输入入口必须在原生桌宠的非激活窗口上验收键盘焦点；只在用户打开编辑器时请求焦点。
 
-SDK 发布元信息必须包含 protocolVersion/minProtocolVersion，均从当前 Provider IDL 的范围派生或校验；README 使用同一模型插值，不手写最低版本。导出回归要修改 IDL 的 minVersion，确认 SDK 清单、methods/events 和使用说明一起更新。目录版本、清单格式与业务区间分开说明，不能通过名称里的 v2 推断业务版本。
+SDK 发布元信息必须包含 protocolVersion/minProtocolVersion，均从当前 Provider IDL 的范围派生或校验；Provider SKILL.md 使用同一模型插值，不手写最低版本。导出回归要修改 IDL 的 minVersion，确认 SDK 清单、methods/events 和使用说明一起更新。目录版本、清单格式与业务区间分开说明，不能通过名称里的 v2 推断业务版本。
 
 协议迁移必须同步原生 IPC 的界面测试 mock。桌宠验收通过标准 `codepet_gateway_request` 的 `notice.list` 和 `notice.changed` 事件提供数据，不能保留已删除的私有 Pet RPC。简写测试场景只允许在 mock 内转换为 Notice；生产摘要与展开卡片都从 `content.title` 读取标题，分组使用完整 pluginId，更新通过递增 revision 的事件传递。执行 `test:pet:ui`、`test:pet:motion` 和 `test:pet:stack`，分别验证两个视图与焦点、窗口展开动画和完成卡片堆叠，避免生成代码正确但视图仍读旧字段。

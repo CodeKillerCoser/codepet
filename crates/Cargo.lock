@@ -645,6 +645,7 @@ dependencies = [
  "codepet-provider-sdk",
  "ring",
  "rusqlite",
+ "semver",
  "serde",
  "serde_json",
  "sysinfo",

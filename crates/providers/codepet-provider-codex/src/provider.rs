@@ -554,9 +554,22 @@ impl CodexInstanceRuntime {
                 let supported = match projects {
                     Ok(Ok(_)) => true,
                     Ok(Err(error)) if error.is_method_not_found("project/list") => false,
-                    _ => return None,
+                    Ok(Err(error)) => {
+                        eprintln!("Codex capability discovery failed: method=project/list code={}; chat discovery retained", CodexProtocolMapper::error(error).code);
+                        false
+                    }
+                    Err(_) => {
+                        eprintln!("Codex capability discovery failed: method=project/list code=worker_failed; chat discovery retained");
+                        false
+                    }
                 };
-                CodexProtocolMapper::capabilities(server.generation().to_string(), models, supported).ok()
+                match CodexProtocolMapper::capabilities(server.generation().to_string(), models, supported) {
+                    Ok(capabilities) => Some(capabilities),
+                    Err(error) => {
+                        eprintln!("Codex capability discovery failed: method=model/list code={}", error.code);
+                        None
+                    }
+                }
             };
             let authentication = async {
                 account.await.ok().and_then(Result::ok).map(|account| codex_authentication(&account))

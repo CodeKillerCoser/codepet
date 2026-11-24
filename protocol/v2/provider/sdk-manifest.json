@@ -3,7 +3,7 @@
   "formatVersion": 3,
   "package": "provider",
   "protocolVersion": 4,
-  "guide": "README.md",
+  "guide": "SKILL.md",
   "manifestSchema": "protocol/manifest.schema.json",
   "profiles": "protocol/sdk/transport/profiles.json",
   "transportHandshakeSchema": "protocol/sdk/transport/handshake.schema.json",

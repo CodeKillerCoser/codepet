@@ -131,7 +131,8 @@ test("staging contains Provider plugins and only the language-neutral extension 
     "{}",
   );
 
-  await cp(path.resolve(import.meta.dirname,"../protocol/v1"),path.join(root,"protocol/v1"),{recursive:true});
+  await cp(path.resolve(import.meta.dirname,"../protocol/v2"),path.join(root,"protocol/v2"),{recursive:true});
+  await writeFile(path.join(root,"protocol/codegen.json"),JSON.stringify({sourceVersion:2}));
   for (const [target, windowsTarget] of [
     [undefined, process.platform === "win32"],
     ["x86_64-unknown-linux-gnu", false],
@@ -175,12 +176,14 @@ test("staging contains Provider plugins and only the language-neutral extension 
       target,
       binaries,
     });
-    assert.deepEqual((await readdir(sdkStagingDirectory)).sort(),["v1"]);
-    const sdkRoot=path.join(sdkStagingDirectory,"v1");
-    assert.deepEqual((await readdir(sdkRoot)).sort(),["README.md","protocol","sdk-manifest.json"]);
+    assert.deepEqual((await readdir(sdkStagingDirectory)).sort(),["v2"]);
+    const sdkRoot=path.join(sdkStagingDirectory,"v2");
+    assert.deepEqual((await readdir(sdkRoot)).sort(),["SKILL.md","protocol","sdk-manifest.json"]);
     const index=JSON.parse(await readFile(path.join(sdkRoot,"sdk-manifest.json"),"utf8"));
-    assert.equal(index.package,"provider"); assert.equal(index.sdkVersion,1);
+    assert.equal(index.package,"provider"); assert.equal(index.sdkVersion,2);
     assert.equal(index.generator,undefined);
+    assert.equal(index.guide,"SKILL.md");
+    assert.ok((await stat(path.join(sdkRoot,index.guide))).isFile());
     assert.equal(index.methods,"protocol/sdk/provider/methods.json");
     assert.deepEqual((await readdir(path.join(sdkRoot,"protocol"))).sort(),["manifest.schema.json","sdk"]);
     for(const entry of [index.commonSchema,index.agentDomainSchema,index.providerLifecycleSchema,index.providerMessagesSchema])assert.ok((await stat(path.join(sdkRoot,entry))).isFile());
