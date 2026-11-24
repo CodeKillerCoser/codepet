@@ -51,15 +51,11 @@ try {
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       const criterion = page.locator('.criterion').first();
       if (!(await criterion.getAttribute('open') !== null)) await criterion.locator(':scope>summary').click();
-      await criterion.getByRole('button', {name: '记录结果', exact: true}).click();
-      const dialog = page.getByRole('dialog', {name: '记录验收结果', exact: true});
-      await dialog.waitFor();
-      assert.equal(await dialog.evaluate(e => getComputedStyle(e).colorScheme), mode);
-      assert.ok(await dialog.evaluate(e => e.parentElement.classList.contains('app-window-host')));
-      await page.getByLabel('验收结论', {exact: true}).focus();
-      await page.screenshot({path: resolve(output, `${mode}-${width}-result-editor.png`)});
-      await page.keyboard.press('Escape'); await dialog.waitFor({state: 'detached'});
-      assert.ok(await criterion.locator(':scope>summary').evaluate(e => e === document.activeElement));
+      assert.equal(await criterion.locator('.criterion-result,.record-result').count(),0,'Result body contains only the conclusion');
+      assert.deepEqual(await criterion.locator('.criterion-body>div>dt').allTextContents(),['验收方式','预期结果','验收结果']);
+      await page.screenshot({path:resolve(output,`${mode}-${width}-acceptance.png`)});
+      await criterion.locator(':scope>summary').focus();await page.keyboard.press('Enter');
+      assert.equal(await criterion.getAttribute('open'),null,'Acceptance remains keyboard collapsible');
       if (width <= 600) {
         await back.click();
         assert.ok(await page.locator('.task-row').evaluate(e => e === document.activeElement));
@@ -73,21 +69,18 @@ try {
   assert.equal(await page.getByLabel('执行类型', {exact: true}).count(), 0);
   await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({state: 'detached'});
 
-  // Busy state prevents cancellation and failure preserves the single-item draft.
-  const criterion = page.locator('.criterion').first();
+  // Metadata editing retains busy/cancel/draft behavior after removing the result editor.
   await page.evaluate(() => { window.__holdTaskSave = true; });
-  await criterion.getByRole('button', {name: '记录结果', exact: true}).click();
-  await page.getByLabel('实际验收版本').fill('1.3.0'); await page.getByLabel('验收环境').fill('macOS');
-  await page.getByLabel('验收结论').fill('待保存证据');
-  await page.getByLabel('验收状态', {exact:true}).selectOption('passed');
-  await page.getByRole('button', {name: '保存此项结果', exact: true}).click();
+  await page.getByRole('button',{name:'修改任务信息',exact:true}).click();
+  await page.getByLabel('背景与现象').fill('待保存的背景草稿');
+  await page.getByRole('button',{name:'保存任务',exact:true}).click();
   await page.waitForFunction(() => document.querySelector('.form-controls')?.disabled);
-  await page.keyboard.press('Escape'); assert.ok(await page.getByRole('dialog').isVisible());
-  assert.ok(await page.getByRole('button', {name: '关闭验收结果'}).isDisabled());
-  await page.evaluate(() => { window.__holdTaskSave = false; window.__rejectTaskSave(); });
+  await page.keyboard.press('Escape');assert.ok(await page.getByRole('dialog').isVisible());
+  assert.ok(await page.getByRole('button',{name:'关闭任务编辑',exact:true}).isDisabled());
+  await page.evaluate(() => { window.__holdTaskSave=false;window.__rejectTaskSave(); });
   await page.waitForFunction(() => !document.querySelector('.form-controls')?.disabled);
-  assert.equal(await page.getByLabel('验收结论').inputValue(), '待保存证据');
-  await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({state: 'detached'});
+  assert.equal(await page.getByLabel('背景与现象').inputValue(),'待保存的背景草稿');
+  await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'detached'});
 
   await page.getByLabel('更多任务操作').click();
   await page.getByRole('button', {name: '接入 Agent', exact: true}).click();
@@ -210,17 +203,15 @@ try {
   const visual = await browser.newPage({viewport: {width: 579, height: 760}, deviceScaleFactor: 2});
   await visual.goto(`${route('design')}&detailOnly=1`); await visual.locator('.run-card').nth(2).waitFor();
   await visual.screenshot({path: resolve(output, 'approved-detail-visual.png'), fullPage: true});
-  await writeFile(resolve(output, 'report.json'), JSON.stringify({success: true, engine, pageErrors: errors, singleItemResult: true, editablePrompt: true, promptConflicts: true, runCardNavigation: true, themes: ['light', 'dark'], widths: [1280, 820, 600, 390]}, null, 2));
+  await writeFile(resolve(output, 'report.json'), JSON.stringify({success: true, engine, pageErrors: errors, conclusionOnly: true, editablePrompt: true, promptConflicts: true, runCardNavigation: true, themes: ['light', 'dark'], widths: [1280, 820, 600, 390]}, null, 2));
   assert.deepEqual(errors, []);
   await page.goto(route('local-verification')); await page.locator('.task-row').waitFor();
   const checks = page.locator('.criterion');
   assert.equal(await page.locator('.check-mark.passed').count(), await checks.count(), 'Local self-tests have visible status before release');
   await checks.first().locator(':scope>summary').click();
-  await checks.first().getByRole('button',{name:'记录结果',exact:true}).click();
-  const resultDialog=page.getByRole('dialog',{name:'记录验收结果',exact:true});
-  assert.equal(await page.getByLabel('验收状态',{exact:true}).inputValue(),'');
-  assert.ok(!(await resultDialog.locator('form').evaluate(form=>form.checkValidity())), 'Status must be explicitly selected with a conclusion');
-  await page.keyboard.press('Escape');
+  const resultBody=checks.first().locator('.criterion-body>div').last();
+  assert.equal(await resultBody.locator('button').count(),0,'No result-writing entry remains in the conclusion');
+  assert.ok(!(await resultBody.innerText()).includes('本地自测通过'));
   for (const empty of [false,true]) {
     await page.goto(route('owned-files'+(empty?'&emptyFiles=1':'')));await page.locator('.task-row').waitFor();
     await page.getByRole('button',{name:'查看变更',exact:true}).click();
@@ -229,5 +220,5 @@ try {
     assert.ok(await page.locator('.commit-reference').count()>0,'Associated commits remain available separately from declared files');
     await closeChanges();
   }
-  console.log(`Task UI passed (${engine}): run cards, four groups, per-item results, prompt editing/reset/conflict, focus, themes, responsive layout and fixed navigation.`);
+  console.log(`Task UI passed (${engine}): run cards, four groups, conclusion-only results, prompt editing/reset/conflict, focus, themes, responsive layout and fixed navigation.`);
 } finally { await browser.close(); await server.close(); }

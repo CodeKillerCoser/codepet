@@ -11,9 +11,9 @@
   import {projectRunChanges,type CommitChange} from './taskChanges';
   import {workbenchSession} from './codexWorkbenchSession';
   import {
-    taskRequest as api, currentRun, taskStatus, statuses, kinds, scopes, results,
-    filterTasks, verificationContext, formatTaskTime as fmt,
-    type Task, type TaskRun, type Criterion, type Scope, type TestResult, type TaskKind, type Receipt
+    taskRequest as api, currentRun, taskStatus, statuses, kinds, scopes,
+    filterTasks, formatTaskTime as fmt,
+    type Task, type Criterion, type TaskKind, type Receipt
   } from './taskLedger';
   import './taskLedger.css';
 
@@ -26,14 +26,11 @@
   $: listWidth=Math.min(preferredListWidth,maxListWidth);
   let loading = true, busy = false, error = '', message = '', mobileDetail = false;
   let detail: TaskRunDetail, lastButton: HTMLButtonElement | undefined;
-  let taskDialog: Dialog.ModalHandle, runDialog: Dialog.ModalHandle, verifyDialog: Dialog.ModalHandle;
+  let taskDialog: Dialog.ModalHandle, runDialog: Dialog.ModalHandle;
   let setupDialog: TaskAgentSetup;
   let taskDraft: Task | null = null, taskTitle = '', taskDescription = '';
   let runTask: Task | null = null, runTitle = '', runKind: TaskKind = 'feature', runGoal = '', runSolution = '', workspace = '';
   let criteria: Criterion[] = [], includePlan = false;
-  let verifyTask: Task | null = null, verifyRun: TaskRun | null = null, verifyItem: Criterion | null = null;
-  let stage: Scope = 'release', target = '', environment = '', checkResult: TestResult | '' = '', evidence = '';
-  let verifyReturnFocus: HTMLElement;
   let moreOpen = false, moreTrigger: HTMLElement;
   let pending: {fingerprint: string; operationId: string} | null = null;
   $: filtered = filterTasks(tasks, query, project, status);
@@ -69,7 +66,7 @@
   onMount(() => {
     void load();
     const focus = () => {
-      if (!busy && ![taskDialog, runDialog, verifyDialog, setupDialog].some(d => d?.isOpen())) void load();
+      if (!busy && ![taskDialog, runDialog, setupDialog].some(d => d?.isOpen())) void load();
     };
     window.addEventListener('focus', focus);
     return () => window.removeEventListener('focus', focus);
@@ -137,32 +134,6 @@
         agentWorkspace: {path: workspace}, ...(includePlan ? {validationPlan: {items: criteria}} : {})
       });
       runId = receipt.runId; runDialog.close(); message = '已创建新的执行，历史记录已保留';
-    } catch (e) { error = String(e); }
-    finally { busy = false; }
-  }
-  function setVerificationContext() {
-    if (verifyRun) ({target, environment} = verificationContext(verifyRun, stage));
-  }
-  function startVerification(item: Criterion, returnFocus: HTMLElement) {
-    if (!selected || !run) return;
-    verifyTask = structuredClone(selected); verifyRun = structuredClone(run); verifyItem = structuredClone(item);
-    stage = item.scope === 'local' ? 'local' : 'release';
-    setVerificationContext(); checkResult = ''; evidence = ''; error = '';
-    verifyReturnFocus = returnFocus;
-    verifyDialog.showModal();
-  }
-  async function saveVerification() {
-    if (!verifyTask || !verifyRun || !verifyItem) return;
-    if (!checkResult || !evidence.trim()) { error = '请选择验收状态并填写结论'; return; }
-    busy = true; error = '';
-    try {
-      await write('update-task-run', {
-        agentConversation: [], taskId: verifyTask.id, runId: verifyRun.id, expectedRevision: verifyTask.revision,
-        verification: {planRevision: verifyRun.validationPlan.revision, stage, target, environment,
-          results: [{criterionId: verifyItem.id, result: checkResult, evidence}]},
-        note: `${scopes[stage]}验收「${verifyItem.title}」：${results[checkResult]} · ${target}`
-      });
-      verifyDialog.close(); message = '此项验收结果已记录';
     } catch (e) { error = String(e); }
     finally { busy = false; }
   }
@@ -241,7 +212,7 @@
     <aside class="task-detail" aria-label="任务详情" tabindex="-1">
       {#if selected && run}
         <button class="back quiet" on:click={back}>← 返回任务列表</button>
-        <TaskRunDetail task={selected} bind:runId bind:this={detail} onEditTask={() => editTask(selected)} onVerify={startVerification} onOpenChat={openChat} {changes} {changesLoading} {changesOpen} onOpenChanges={openChanges}/>
+        <TaskRunDetail task={selected} bind:runId bind:this={detail} onEditTask={() => editTask(selected)} onOpenChat={openChat} {changes} {changesLoading} {changesOpen} onOpenChanges={openChanges}/>
       {:else}<div class="empty">选择任务查看执行记录</div>{/if}
     </aside>
   </div>
@@ -272,23 +243,6 @@
     <label>工作区<div class="directory"><input required bind:value={workspace}/><button type="button" on:click={directory}>选择</button></div></label>
     {@render runEditor()}
     <footer><small>新执行不继承旧验收结果。</small><button class="primary" disabled={!runTitle.trim()}>{busy ? '保存中…' : '创建执行'}</button></footer>
-  </fieldset></form>
-</Dialog.Modal>
-
-<Dialog.Modal title="记录验收结果" class="ledger-dialog" returnFocus={verifyReturnFocus} bind:this={verifyDialog} onCancel={e => { if (busy) e.preventDefault(); }}>
-  <form on:submit|preventDefault={saveVerification}><fieldset class="form-controls" disabled={busy}>
-    <header><h3>记录验收结果</h3><button type="button" aria-label="关闭验收结果" on:click={() => verifyDialog.close()}>×</button></header>
-    <p>{verifyItem?.title}</p>
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
-    <label>验收阶段<select bind:value={stage} on:change={setVerificationContext}>
-      {#if verifyItem?.scope !== 'release'}<option value="local">本地</option>{/if}
-      {#if verifyItem?.scope !== 'local'}<option value="release">发布后</option>{/if}
-    </select></label>
-    <label>实际验收版本<input required bind:value={target}/></label>
-    <label>验收环境<input required bind:value={environment}/></label>
-    <label>验收状态<select aria-label="验收状态" required bind:value={checkResult}><option value="" disabled>选择验收状态</option>{#each Object.entries(results) as [value, label]}<option {value}>{label}</option>{/each}</select></label>
-    <label>验收结论<textarea required rows="3" maxlength="3000" bind:value={evidence}></textarea></label>
-    <footer><button class="primary">{busy ? '保存中…' : '保存此项结果'}</button></footer>
   </fieldset></form>
 </Dialog.Modal>
 

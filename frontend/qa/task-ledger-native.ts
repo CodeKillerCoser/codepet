@@ -54,16 +54,16 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(!document.querySelector('.criterion-history'),'No acceptance history block');
 
   const recordItem = async (index: number) => {
-    const item = document.querySelectorAll<HTMLDetailsElement>('.criterion')[index];
-    item.open = true;
-    await button('记录结果', item);
-    const dialog = await modal();
-    input('实际验收版本', '1.2.0 已安装包', dialog);
-    input('验收环境', 'macOS', dialog);
-    input('验收状态', 'passed', dialog);
-    input('验收结论', `实际检查第 ${index + 1} 项，符合预期`, dialog);
-    submit(dialog); await until(() => !dialog.isConnected);
-    check(document.activeElement === item.querySelector('summary'), 'Result dialog returns to visible row');
+    task=await taskRequest<Task>('get',{taskId:task.id});const run=currentRun(task);
+    const evidence=`实际检查第 ${index+1} 项，符合预期`;
+    await taskRequest('update-task-run',{input:{agentConversation:[],taskId:task.id,runId:run.id,expectedRevision:task.revision,
+      verification:{planRevision:run.validationPlan.revision,stage:'release',target:'1.2.0 已安装包',environment:'macOS',results:[{criterionId:run.validationPlan.items[index].id,result:'passed',evidence}]}}});
+    await button('刷新任务');
+    await until(()=>document.querySelectorAll('.criterion')[index]?.querySelector('.criterion-body>div:last-child dd')?.textContent?.trim()===evidence);
+    const item=document.querySelectorAll<HTMLDetailsElement>('.criterion')[index];item.open=true;await tick();
+    const result=item.querySelector('.criterion-body>div:last-child dd');
+    check(result?.textContent?.trim()===evidence,'Result contains the structured conclusion only');
+    check(!result?.querySelector('button'),'No result-writing entry in the conclusion');
   };
   await recordItem(0);
   task = await taskRequest<Task>('get', {taskId: task.id});
@@ -93,13 +93,11 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(task.description === background && currentRun(task).kind === 'feature', 'Run fields independent of Task');
   check(currentRun(task).agentWorkspace.changedFiles.length > 0 && currentRun(task).agentWorkspace.changeStatus.hasUncommittedChanges, 'Actual dirty workspace observed');
 
-  const pending = document.querySelector<HTMLDetailsElement>('.criterion')!;
-  pending.open = true; await button('记录结果', pending); dialog = await modal();
-  input('实际验收版本', '1.3.0', dialog); input('验收环境', 'macOS', dialog);
-  input('验收结论', '过期草稿必须保留', dialog); input('验收状态', 'passed', dialog);
+  await button('修改任务信息');dialog=await modal();
+  input('背景与现象','过期草稿必须保留',dialog);
   await taskRequest('update-task-run', {input: {agentConversation: [], taskId: task.id, runId: currentRun(task).id, expectedRevision: task.revision, note: '并发写入'}});
   submit(dialog); await until(() => dialog.querySelector('[role="alert"]')?.textContent?.includes('revision='));
-  check(dialog.isConnected && dialog.querySelector('textarea')?.value === '过期草稿必须保留', 'Conflict retains result draft');
+  check(dialog.isConnected && dialog.querySelector('textarea')?.value === '过期草稿必须保留', 'Conflict retains metadata draft');
   await dismiss(dialog); await button('刷新任务'); await pause();
   task = await taskRequest<Task>('get', {taskId: task.id});
   const solution = currentRun(task).solution;

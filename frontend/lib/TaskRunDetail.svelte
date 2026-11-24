@@ -4,15 +4,14 @@
   import TaskChangeCounts from './TaskChangeCounts.svelte';
   import {projectRunChanges,workspaceCommitState,type RunChanges} from './taskChanges';
   import {
-    currentRun, statuses, actorLabel, results, scopes,
+    currentRun, statuses, actorLabel,
     criterionCheck, formatTaskTime as fmt,
-    type Task, type Criterion
+    type Task
   } from './taskLedger';
 
   export let task: Task;
   export let runId = '';
   export let onEditTask: () => void;
-  export let onVerify: (criterion: Criterion, returnFocus: HTMLElement) => void;
   export let onOpenChat: (conversationId: string) => void;
   export let onOpenChanges: (button:HTMLButtonElement)=>void=()=>{};
   export let changes:RunChanges|undefined=undefined;
@@ -25,7 +24,6 @@
   $: run = task.runs.find(r => r.id === runId) ?? currentRun(task);
   $: if (shownTask !== task.id) { shownTask = task.id; expandedBackground = false; }
   $: if (shownRun !== run.id) { shownRun = run.id; expandedGoal = expandedSolution = false;runScroll?.scrollTo({top:0}); }
-  $: writable = run.id === currentRun(task).id && run.status !== 'closed';
   $: codeState=workspaceCommitState(run.agentWorkspace);
   $: items = run.validationPlan.items;
   $: passed = items.filter(c => criterionCheck(run, c).passed).length;
@@ -51,10 +49,7 @@
     navigation.querySelector<HTMLElement>('[aria-selected="true"]')?.focus();
   }
   const clock = (n: number) => new Date(n).toLocaleTimeString('zh-CN', {hour: '2-digit', minute: '2-digit', hour12: false});
-  function record(criterion: Criterion, button: HTMLButtonElement) {
-    const summary = button.closest('details')?.querySelector('summary');
-    if (summary) onVerify(criterion, summary);
-  }
+
 </script>
 
 <div class="task-record">
@@ -138,10 +133,7 @@
               <dl class="info-grid criterion-body">
                 <div><dt>验收方式</dt><dd>{#if criterion.precondition}<p class="method-context">{criterion.precondition}</p>{/if}{criterion.steps}</dd></div>
                 <div><dt>预期结果</dt><dd>{criterion.expected}</dd></div>
-                <div><dt>验收结果</dt><dd>
-                  <div class="criterion-result"><span class:failed={check.result === 'failed'}>{check.result === 'passed' ? `${scopes[check.stage]}${check.actor === 'agent' ? '自测' : '验收'}通过` : check.result === 'not_tested' ? '未验收' : results[check.result]}</span>{#if writable}<button class="quiet text-link record-result" on:click={event => record(criterion, event.currentTarget)}>记录结果</button>{/if}</div>
-                  {#if check.evidence}<p class="result-conclusion">{check.evidence}</p>{/if}
-                </dd></div>
+                <div><dt>验收结果</dt><dd>{check.evidence || '暂无验收结论'}</dd></div>
               </dl>
             </details>
           {:else}<p class="muted">尚未登记验收清单</p>{/each}
@@ -219,10 +211,7 @@
   .criterion-title { font-size: 14px; font-weight: 400; overflow-wrap: anywhere; }
   .criterion[open] .criterion-title { font-weight: 500; }
   .criterion-body { margin: 4px 0 10px 26px; }
-  .criterion-result { display: flex; align-items: baseline; flex-wrap: wrap; gap: 12px; }
-  .record-result { font-size: 13px; padding: 0; min-height: 24px; }
   .method-context {margin-bottom:4px;color:var(--task-secondary);}
-  .result-conclusion {margin-top:4px;}
   .activity-timeline { list-style: none; padding: 0; margin: 0 0 0 5px; }
   .activity-timeline li { display: grid; grid-template-columns: 43px minmax(0, 1fr); gap: 12px; position: relative; border-left: 1px solid var(--wb-border); padding: 0 0 8px 16px; font-size: 13px; }
   .activity-timeline li:last-child { padding-bottom: 0; }
