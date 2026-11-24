@@ -316,10 +316,12 @@
 .main-theme .history-workbench > .content { scrollbar-gutter: auto; overflow-anchor: none; }
 
 /* Framework side panel: pages supply content; the shell owns the third column. */
-.main-theme.app-shell.has-side-panel-column { grid-template-columns: 192px minmax(0,1fr) 400px; }
-.main-theme.app-shell.sidebar-collapsed.has-side-panel-column { grid-template-columns: 0 minmax(0,1fr) 400px; }
+.main-theme.app-shell.has-side-panel-column { grid-template-columns: 192px minmax(0,1fr) var(--app-side-panel-width,400px); }
+.main-theme.app-shell.sidebar-collapsed.has-side-panel-column { grid-template-columns: 0 minmax(0,1fr) var(--app-side-panel-width,400px); }
 @media (max-width: 1179px) {
   /* Switching to a drawer must release the old column immediately on resize. */
   .main-theme.app-shell.has-side-panel-column { grid-template-columns: 192px minmax(0,1fr) 0px; }
   .main-theme.app-shell.sidebar-collapsed.has-side-panel-column { grid-template-columns: 0 minmax(0,1fr) 0px; }
 }
+
+.main-theme.app-shell.resizing-side-panel { transition: none; user-select: none; cursor: col-resize; }

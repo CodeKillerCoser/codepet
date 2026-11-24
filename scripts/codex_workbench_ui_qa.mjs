@@ -48,6 +48,78 @@ try {
   });
   const finishMotion = () => page.evaluate(() => { window.__trackPanel = false; return window.__panelFrames; });
   function moved(frames, field, minimum) { return Math.max(...frames.map(f => f[field])) - Math.min(...frames.map(f => f[field])) > minimum; }
+  async function checkResizableColumn() {
+    await page.setViewportSize({ width: 1440, height: 900 }); await settle();
+    const handle = page.getByRole('separator', { name: '调整侧栏宽度', exact: true });
+    await page.waitForFunction(() => Number(document.querySelector('[role="separator"]').getAttribute('aria-valuemax')) > 600);
+    const width = async () => Number(await handle.getAttribute('aria-valuenow'));
+    const mainWidth = async () => (await page.locator('.content-pane').boundingBox()).width;
+    async function dragBy(delta) {
+      const box = await handle.boundingBox();
+      await page.mouse.move(box.x + box.width / 2, box.y + 80);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + delta, box.y + 80, { steps: 8 });
+      assert.equal(await page.locator('.app-shell').evaluate(e => getComputedStyle(e).transitionDuration), '0s', 'Dragging follows the pointer without the open/close transition');
+      assert.ok(Math.abs((await page.locator('.app-side-panel').boundingBox()).width - await width()) < 1);
+      await page.mouse.up(); await settle();
+    }
+    const before = await mainWidth();
+    await dragBy(-120);
+    assert.equal(await width(), 520);
+    assert.ok(Math.abs(before - await mainWidth() - 120) < 1, 'Dragging grows the panel and shrinks main content together');
+    await settle(); await page.screenshot({ path: resolve(output, 'app-shell-resized-column.png') });
+    await dragBy(64); assert.equal(await width(), 456);
+    await dragBy(-800); assert.equal(await width(), Number(await handle.getAttribute('aria-valuemax')));
+    assert.ok(await mainWidth() >= 480);
+    await dragBy(700); assert.equal(await width(), 320);
+    await handle.press('End'); await settle();
+    assert.equal(await width(), 760);
+    await handle.press('Shift+ArrowRight'); await settle(); assert.equal(await width(), 710);
+    await handle.press('ArrowLeft'); await settle(); assert.equal(await width(), 726);
+    await handle.press('Home'); await settle(); assert.equal(await width(), 320);
+    await handle.dblclick(); await settle(); assert.equal(await width(), 400);
+
+    let box = await handle.boundingBox();
+    await page.mouse.move(box.x + 4, box.y + 80); await page.mouse.down();
+    await page.mouse.move(box.x - 96, box.y + 80, { steps: 4 });
+    assert.equal(await width(), 500);
+    await page.keyboard.press('Escape'); await page.mouse.up(); await settle();
+    assert.equal(await width(), 400, 'Escape cancels a drag without dismissing the column');
+    assert.equal(await page.locator('.app-side-panel').count(), 1);
+    assert.equal(await page.locator('.resizing-side-panel').count(), 0);
+
+    await handle.evaluate(e => e.addEventListener('pointerdown', event => { window.__resizePointer = event.pointerId; }, { once: true }));
+    box = await handle.boundingBox();
+    await page.mouse.move(box.x + 4, box.y + 80); await page.mouse.down();
+    await page.mouse.move(box.x - 66, box.y + 80, { steps: 4 });
+    await handle.evaluate(e => e.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: window.__resizePointer })));
+    await page.mouse.up(); await settle();
+    assert.equal(await width(), 400, 'Pointer cancellation releases the resize state and restores the start width');
+
+    await handle.press('End'); await settle();
+    await page.setViewportSize({ width: 1180, height: 900 }); await settle();
+    await page.waitForFunction(() => Number(document.querySelector('[role="separator"]').getAttribute('aria-valuenow')) === 500);
+    await settle();
+    assert.ok(await mainWidth() >= 480); assert.ok(await noOverflow());
+    await page.setViewportSize({ width: 1440, height: 900 }); await settle();
+    await page.waitForFunction(() => Number(document.querySelector('[role="separator"]').getAttribute('aria-valuenow')) === 760);
+    await settle();
+    await handle.press('Home'); await handle.press('ArrowLeft'); await settle();
+    assert.equal(await width(), 336);
+    await closeDetail();
+    await page.locator('.row-select').click(); await settle(); assert.equal(await width(), 336, 'The chosen column width survives reopening');
+    await page.setViewportSize({ width: 390, height: 900 });
+    await page.locator('.app-side-panel[data-mode="drawer"]').waitFor(); await settle();
+    assert.equal(await handle.count(), 0, 'A modal drawer has no column resize handle');
+    assert.equal(await page.locator('.panel-card > .panel-header').count(), 1);
+    assert.equal(await page.locator('.panel-card > .panel-body').count(), 1);
+    assert.ok(await noOverflow());
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator('.app-side-panel[data-mode="column"]').waitFor(); await settle();
+    assert.equal(await width(), 336, 'Returning from the drawer restores the preferred column width');
+    await handle.dblclick(); await settle();
+    await page.setViewportSize({ width: 1200, height: 900 }); await settle();
+  }
   async function sharedContentSurface() {
     const canvas = await surface('.content-pane');
     assert.equal((await surface('.workbench')).background, canvas.background, 'Workbench uses the same canvas as other App pages');
@@ -282,15 +354,18 @@ try {
   assert.ok(moved(openingFrames, 'x', 2), 'The column slides into view');
   const titleBox = await page.locator('.panel-header h3').boundingBox(), closeBox = await page.getByRole('button', { name: '关闭工作树详情', exact: true }).boundingBox();
   assert.ok(titleBox.x < closeBox.x, 'Consumer title sits left of the close button');
-  const cardBox = await page.locator('.panel-body').boundingBox(), headerBox = await page.locator('.panel-header').boundingBox();
-  assert.ok(cardBox.y >= headerBox.y + headerBox.height, 'The rounded body card is separate from the title area');
+  const cardBox = await page.locator('.panel-card').boundingBox(), headerBox = await page.locator('.panel-header').boundingBox();
+  assert.ok(headerBox.y >= cardBox.y && headerBox.y + headerBox.height < cardBox.y + cardBox.height, 'The rounded surface includes the entire title area');
+  assert.equal(await page.locator('.panel-card > .panel-header').count(), 1);
+  assert.equal(await page.locator('.panel-card > .panel-body').count(), 1);
   const shellDrawer = await page.locator('.app-side-panel').boundingBox();
   assert.ok(Math.abs(shellDrawer.x + shellDrawer.width - 1192) < 2, 'App framework column aligns with the shell inset');
   const hostParentIsShell = await page.locator('.app-side-panel').evaluate(element => element.parentElement.classList.contains('app-shell'));
   assert.ok(hostParentIsShell, 'Third column is a direct App framework child');
   const columnSurface = await sharedContentSurface();
-  assert.deepEqual(await surface('.app-side-panel .panel-body'), columnSurface, 'Third column and main content share background, border and radius');
+  assert.deepEqual(await surface('.app-side-panel .panel-card'), columnSurface, 'Third column and main content share background, border and radius');
   await settle(); await page.screenshot({ path: resolve(output, 'app-shell-third-column.png') });
+  await checkResizableColumn();
   await page.getByRole('button', { name: '收起导航栏', exact: true }).click();
   await page.waitForTimeout(240);
   assert.ok((await page.locator('.content-pane').boundingBox()).width > 750, 'The third column coexists with collapsed navigation');
@@ -330,13 +405,13 @@ try {
   await page.getByRole('button', { name: '确认', exact: true }).click();
   await page.locator('.row-select').click(); await settle();
   const darkSurface = await sharedContentSurface();
-  assert.deepEqual(await surface('.app-side-panel .panel-body'), darkSurface, 'Dark third column matches the dark main content surface');
+  assert.deepEqual(await surface('.app-side-panel .panel-card'), darkSurface, 'Dark third column matches the dark main content surface');
   await settle(); await page.screenshot({ path: resolve(output, 'app-shell-third-column-dark.png') });
   await closeDetail();
   await page.emulateMedia({ colorScheme: 'light' });
   await page.waitForFunction(() => getComputedStyle(document.querySelector('.workbench')).colorScheme === 'light');
   assert.deepEqual(errors, []);
-  console.log(`Workbench UI passed (${engine}): global modal hit-testing/layers/focus, separate title and body card, column/drawer entry/exit/reopening, reduced motion, scan persistence, responsive layout and themes.`);
+  console.log(`Workbench UI passed (${engine}): global modal hit-testing/layers/focus, one rounded card around title and body, pointer/keyboard column resizing, column/drawer entry/exit/reopening, reduced motion, scan persistence, responsive layout and themes.`);
 } finally {
   await browser.close();
   await server.close();

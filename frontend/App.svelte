@@ -49,6 +49,8 @@
   const sidePanel = provideSidePanel();
   const sidePanelCurrent = sidePanel.current;
   const sidePanelMode = sidePanel.mode;
+  const sidePanelWidth = sidePanel.width;
+  const sidePanelResizing = sidePanel.resizing;
   const resourceReloaded = consumeReloadNotice();
   const navigation = createNavigation(resourceReloaded ? "about" : "tasks");
   let pendingSettingsSaves = 0;
@@ -1051,7 +1053,7 @@
   $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
 </script>
 
-<main class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed} class:has-side-panel-column={!!$sidePanelCurrent && $sidePanelMode === "column"} inert={$webcontentReloading}>
+<main data-side-panel-layout style:--app-side-panel-width={`${$sidePanelWidth}px`} class:resizing-side-panel={$sidePanelResizing} class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed} class:has-side-panel-column={!!$sidePanelCurrent && $sidePanelMode === "column"} inert={$webcontentReloading}>
   <WindowToolbar bind:collapsed={sidebarCollapsed} canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onHome={() => navigation.navigate("tasks")} onBack={navigation.back} onForward={navigation.forward} settingsActive={isSettingsRoute(tab)} onSettings={() => navigation.navigate("settings")} onError={(message) => error = message} />
   <aside id="main-sidebar" class="sidebar" inert={sidebarCollapsed}>
     <MainNavigation current={tab} onNavigate={navigation.navigate} />

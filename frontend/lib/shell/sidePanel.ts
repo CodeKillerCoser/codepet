@@ -2,6 +2,10 @@ import { getContext, setContext, tick, type Snippet } from 'svelte';
 import { get, writable } from 'svelte/store';
 
 const contextKey = Symbol('app-side-panel');
+export const SIDE_PANEL_DEFAULT_WIDTH = 400;
+export const SIDE_PANEL_MIN_WIDTH = 320;
+export const SIDE_PANEL_MAX_WIDTH = 760;
+const MAIN_CONTENT_MIN_WIDTH = 480;
 export type SidePanelMode = 'column' | 'drawer';
 export interface SidePanelContent {
   title: string;
@@ -17,10 +21,32 @@ export interface SidePanelEntry extends SidePanelContent { owner: symbol }
 export function createSidePanel() {
   const current = writable<SidePanelEntry | null>(null);
   const mode = writable<SidePanelMode>('drawer');
+  const width = writable(SIDE_PANEL_DEFAULT_WIDTH);
+  const resizing = writable(false);
+  const bounds = writable({ min: SIDE_PANEL_MIN_WIDTH, max: SIDE_PANEL_MAX_WIDTH });
+  let preferredWidth = SIDE_PANEL_DEFAULT_WIDTH;
   let revision = 0;
   return {
     current: { subscribe: current.subscribe },
     mode: { subscribe: mode.subscribe },
+    width: { subscribe: width.subscribe },
+    resizing: { subscribe: resizing.subscribe },
+    bounds: { subscribe: bounds.subscribe },
+    setResizing: resizing.set,
+    setWidth(next: number) {
+      if (!Number.isFinite(next)) return;
+      const { min, max } = get(bounds);
+      preferredWidth = Math.max(min, Math.min(max, Math.round(next)));
+      width.set(preferredWidth);
+    },
+    setAvailableWidth(available: number) {
+      if (!Number.isFinite(available)) return;
+      const max = Math.max(SIDE_PANEL_MIN_WIDTH, Math.min(SIDE_PANEL_MAX_WIDTH, Math.floor(available - MAIN_CONTENT_MIN_WIDTH)));
+      if (get(bounds).max !== max) bounds.set({ min: SIDE_PANEL_MIN_WIDTH, max });
+      // A smaller window temporarily clamps the panel; widening restores the
+      // user's chosen size instead of permanently replacing that preference.
+      width.set(Math.min(preferredWidth, max));
+    },
     setMode: mode.set,
     show(owner: symbol, content: SidePanelContent) {
       const previous = get(current);

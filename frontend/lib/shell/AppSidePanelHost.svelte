@@ -4,12 +4,15 @@
   import { X } from '@lucide/svelte';
   import * as Dialog from '../ui/dialog/index';
   import { useSidePanel, type SidePanelEntry } from './sidePanel';
+  import SidePanelResizeHandle from './SidePanelResizeHandle.svelte';
   import { fly } from 'svelte/transition';
 
   const controller = useSidePanel();
   const current = controller.current;
   const mode = controller.mode;
+  const resizing = controller.resizing;
   const headingId = $props.id();
+  const panelCardId = `${headingId}-card`;
   let heading: HTMLElement | null = $state(null);
   let presented = $state<SidePanelEntry | null>(null);
   let reducedMotion = $state(false);
@@ -56,12 +59,13 @@
 </script>
 
 <svelte:window onkeydown={(event) => {
-  if ($mode === 'column' && $current && event.key === 'Escape' && !event.defaultPrevented && !hasForegroundDialog()) {
+  if ($mode === 'column' && !$resizing && $current && event.key === 'Escape' && !event.defaultPrevented && !hasForegroundDialog()) {
     event.preventDefault(); controller.dismiss();
   }
 }}/>
 
 {#snippet panelContent(entry: SidePanelEntry)}
+  <div class="panel-card" id={panelCardId}>
   <header class="panel-header">
     {#if $mode === 'drawer'}
       <Dialog.Title id={headingId} bind:ref={heading} tabindex={-1}>{entry.title}</Dialog.Title>
@@ -71,6 +75,7 @@
     <button aria-label={entry.closeLabel} onclick={() => controller.dismiss()}><X size={18}/></button>
   </header>
   <div class="panel-body">{@render entry.content()}</div>
+  </div>
 {/snippet}
 
 {#if $mode === 'column'}
@@ -78,6 +83,7 @@
     <aside class="app-side-panel" data-mode="column" aria-labelledby={headingId}
       inert={!$current || $current.owner !== entry.owner}
       transition:fly={{ x: 24, duration: reducedMotion ? 0 : 220 }}>
+      <SidePanelResizeHandle controls={panelCardId} />
       {@render panelContent(entry)}
     </aside>
   {/each}
@@ -108,7 +114,8 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
-    margin-left: 8px;
+    position: relative;
+    padding-left: 8px;
     overflow: hidden;
   }
   :global(.cn-dialog-content.app-side-panel) {
@@ -120,7 +127,7 @@
     max-height: 100dvh;
     display: flex;
     flex-direction: column;
-    padding: 0 8px 8px;
+    padding: 8px;
     border: 0;
     background: var(--app-bg);
     box-shadow: -12px 0 40px var(--color-history-drawer-shadow);
@@ -129,13 +136,14 @@
   :global(.app-side-panel[data-mode="drawer"][data-state="closed"]) { animation: app-panel-exit 220ms ease both; pointer-events: none; }
   @keyframes app-panel-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
   @keyframes app-panel-exit { from { transform: translateX(0); } to { transform: translateX(100%); } }
-  .panel-header { display: flex; align-items: center; justify-content: space-between; flex: none; gap: 16px; min-height: 52px; padding: 10px var(--app-content-inset,24px); }
+  .panel-card { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; border: 1px solid var(--color-main-outline); border-radius: 16px; background: var(--app-surface); }
+  .panel-header { display: flex; align-items: center; justify-content: space-between; flex: none; gap: 16px; min-height: 52px; padding: 10px var(--app-content-inset,24px); border-bottom: 1px solid var(--color-main-divider); }
   .panel-header :global(h3) { margin: 0; min-width: 0; font-size: var(--font-size-lg); line-height: var(--line-height-page); overflow-wrap: anywhere; }
   .panel-header :global(h3:focus) { outline: none; }
   .panel-header button { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--app-muted); cursor: pointer; }
   .panel-header button:hover { background: var(--app-surface-soft); }
   .panel-header button:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
-  .panel-body { flex: 1; padding: 24px var(--app-content-inset,24px); min-height: 0; overflow: auto; overscroll-behavior: contain; border: 1px solid var(--color-main-outline); border-radius: 16px; background: var(--app-surface); }
+  .panel-body { flex: 1; padding: 24px var(--app-content-inset,24px); min-height: 0; overflow: auto; overscroll-behavior: contain; }
   @media (prefers-reduced-motion: reduce) {
     :global(.app-side-panel[data-mode="drawer"][data-state]) { animation: none; }
   }

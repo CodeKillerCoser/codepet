@@ -10,7 +10,7 @@
 
 业务组件使用 `shell/AppSidePanel.svelte` 提供 open、title、description、关闭回调、返回焦点的元素和 children snippet。该组件不渲染容器，只按自身 owner 登记或撤销内容。新的 owner 替换旧内容时通知旧页关闭；旧页晚到的卸载不能清掉新页的面板。不得在业务页添加备用 host，否则会重新形成页面私有抽屉。
 
-框架在窗口宽度至少 1180 px 时，将原来的导航与内容网格扩成第三列，宽 400 px；无面板时不保留宽度。第三栏不加遮罩或限制背景焦点，可以直接选择列表另一行或使用全局导航。导航收起时，内容继续使用释放的宽度。
+框架在窗口宽度至少 1180 px 时，将原来的导航与内容网格扩成第三列，默认宽 400 px，支持拖动调宽；无面板时不保留宽度。第三栏不加遮罩或限制背景焦点，可以直接选择列表另一行或使用全局导航。导航收起时，内容继续使用释放的宽度。
 
 较窄窗口由同一个 host 使用共享 Dialog 显示右侧抽屉，统一提供遮罩、焦点约束、标题和关闭按钮。显式关闭恢复原触发元素焦点；路由切换清理面板且不抢走导航焦点。新内容替换已经排队的焦点恢复时，旧恢复动作失效。详情自身的关键词、归档等业务状态仍留在页面。
 
@@ -20,7 +20,7 @@
 
 用户进一步要求主内容区背景和样式一致。工作台原先将 `--wb-bg` 接到窗口外壳 `--app-bg`，并以 92% 宽度自行留白；现在它指向内容画布 `--app-surface`，工作台和任务账本填满框架内容区。主窗口的 `.content`、标题栏及侧栏左右内边距统一使用 `--app-content-inset`：常规 24 px、840 px 以下 20 px、600 px 以下 12 px。侧栏正文的内边距由 host 管理，页面不重复加边距。
 
-2026-11-24 再次按用户要求拆开标题区与内容区：标题区位于卡片外，左侧使用业务方必填的 title，右侧仅放关闭按钮；`.panel-body` 独立包裹正文，与主内容卡片共用画布色、轮廓色和 16 px 圆角。窄屏抽屉也采用这一结构，外层使用 App 壳层背景。
+2026-11-24 用户截图验收否决了标题在圆角卡片外的实现。当前用同一个 `.panel-card` 包裹 `.panel-header` 与 `.panel-body`，整张卡片与主内容区共用画布色、轮廓色和 16 px 圆角。标题与正文仍为独立区域，但标题必须在圆角背景内；左侧使用业务方必填的 title，右侧仅放关闭按钮。窄屏抽屉同样包裹完整标题与正文，卡片外围使用 App 壳层背景。
 
 浏览器验收比较工作台、设置页和右侧第三栏的计算样式，检查浅暗主题下背景、边框、圆角相等，以及页签与框架内边距对齐。任务账本额外运行 `scripts/task_ledger_ui_qa.mjs`，覆盖两个主题及 390–1280 px。
 
@@ -32,7 +32,7 @@
 
 `Dialog.Modal` 提供 showModal / close / isOpen 的轻量入口，用同一套 Dialog、portal、窗口栈和焦点能力替换工作台来源/错误提示及任务页四个原生 dialog，避免浏览器 top layer 与应用 z-index 混排。任务表单保留保存期间禁止 Escape 和关闭按钮的行为；正文样式仍由各业务组件管理，弹窗定位和层级统一由共享组件负责。
 
-桌面侧栏使用 220 ms 进退过渡，App 网格固定保留零宽第三列以便连续展开到 400 px；退出期间保留内容但设为 inert。窄屏使用共享 Dialog 的右侧滑入/滑出及遮罩渐变，动画结束释放内容引用；减少动态效果时停用动效。验收截图等待动画结束，同时单独逐帧检查位移与主区宽度变化，避免把过渡帧误当最终布局。
+桌面侧栏使用 220 ms 进退过渡，App 网格固定保留零宽第三列以便连续展开到用户选定宽度；退出期间保留内容但设为 inert。窄屏使用共享 Dialog 的右侧滑入/滑出及遮罩渐变，动画结束释放内容引用；减少动态效果时停用动效。验收截图等待动画结束，同时单独逐帧检查位移与主区宽度变化，避免把过渡帧误当最终布局。
 
 新增受影响模块：`ui/dialog` 负责全局挂载、层级和焦点；`ui/ui.css` 负责共享遮罩动效；`TaskLedger.svelte` 与 `CodexWorkbench.svelte` 替换原生弹窗，其中任务弹窗移出容器后改用 viewport 媒体查询保持窄屏页脚排版。工作台“更多”菜单复用项目选择器的 pointerdown 焦点保持，防止 WebKit 在按钮/复选框 click 之前触发 focusout 收起菜单。
 
@@ -40,9 +40,23 @@
 
 本轮上述浏览器检查均通过，并覆盖侧栏退出途中快速重新打开。`npx --no-install vitest run frontend` 共 231 项通过；`npm run check:frontend` 无错误（6 条既有警告），`npm run check:source-size`、`npm run build`、`git diff --check` 通过。最新截图在 `artifacts/codex-workbench-qa/`，WebKit 在 `webkit/` 子目录，窄屏叠层示例为 `preview-390.png`。本次未修改 Rust 或重新打包原生应用。
 
+## 用户验收修正：完整卡片与可调分栏（2026-11-24）
+
+证据：用户提供的实际 App 截图中，标题 main 位于灰色背景，白色圆角只从正文开始；源码 `5c9ade3b` 的 `.panel-body` 承担圆角背景，而分栏轨道固定为 400 px。这与“圆角背景包裹标题和内容，分栏可拖动调宽”的验收要求不符；上一轮自动化通过不能替代本次用户验收。
+
+修复将背景、边框和圆角提升到标题与正文共同的 `.panel-card`；标题保持可见，正文独立滚动。新增 `shell/SidePanelResizeHandle.svelte`，统一管理分隔条的 pointer capture、键盘操作、容器测量和取消清理。分栏轨道由 `sidePanel.ts` 的 width/bounds/resizing 状态驱动，App 和隔离 QA 框架只绑定 `--app-side-panel-width`，业务内容不管理分栏尺寸。
+
+默认轨道宽 400 px，最小 320 px、最大 760 px，同时按导航和窗口可用宽度限制上限，为主内容保留 480 px。拖动期间暂停网格过渡，避免指针移动与分栏宽度脱节；展开和收起仍保留动画。双击分隔条恢复默认；左右键按 16 px 调整，Shift 按 50 px，Home/End 到边界；Escape 或 pointercancel 取消拖动且不关闭面板。关闭、切页再返回会保留当前 App 会话选择；窗口临时缩小时限宽，重新变宽后恢复偏好。窄屏抽屉不显示分隔条，也不改变桌面宽度偏好。未将宽度写入磁盘。
+
+回归防线：`sidePanel.test.ts` 覆盖宽度上下限、无效值、关闭后保留、临时限宽恢复及 App 实例隔离；工作台 Chromium/WebKit QA 使用真实鼠标拖动，检查主内容与侧栏同步、拖动期间无过渡、键盘/双击/取消、窗口尺寸边界和抽屉往返。卡片验收同时检查标题与正文都是 `.panel-card` 的直接子元素、标题矩形位于卡片内，以及浅暗主题的卡片计算样式，避免再次只检查正文圆角。桌面新示例截图为 `artifacts/codex-workbench-qa/app-shell-resized-column.png`，WebKit 在同目录 `webkit/` 下；均为固定数据样例。
+
+风险与验证：拖动中取消或页面卸载可能遗留 pointer capture/调整状态，组件在取消、失焦和卸载时清理，并用真实拖动取消验证；过窄窗口可能挤压主区，用 1180 px 限宽与 390 px 抽屉往返验证；标题背景再次遗漏，用结构、几何和截图三种检查覆盖。此前全局预览点击命中、层级、焦点、主题及进退动画回归同时执行。本轮未替换已安装 App 或重跑原生安装包验收。
+
+本轮结果：`node scripts/codex_workbench_ui_qa.mjs` 与 `CODEPET_QA_ENGINE=webkit node scripts/codex_workbench_ui_qa.mjs` 通过；`npx --no-install vitest run frontend` 共 233 项通过；`npm run check:frontend` 无错误（6 条既有警告）、`npm run check:source-size`、`npm run build` 和 `git diff --check` 通过。上述为开发验证，尚待用户重新验收。
+
 ## 受影响模块
 
-- `frontend/lib/shell/sidePanel.ts`：按 App 隔离的登记、替换、撤销、关闭及焦点恢复。
+- `frontend/lib/shell/sidePanel.ts`：按 App 隔离的登记、替换、撤销、关闭、焦点恢复与分栏宽度/约束状态。
 - `shell/AppSidePanel.svelte` 与 `AppSidePanelHost.svelte`：分别定义页面内容入口和框架唯一展示容器。
 - `App.svelte` 与 `main-window.css`：创建框架上下文、挂载 host、切页清理及三列网格。
 - `CodexWorkbench.svelte`：移除局部详情 Dialog、标题栏与几何样式，只提供工作树内容；扫描与 IPC 不变。
@@ -58,4 +72,4 @@
 
 ## 未知项
 
-本轮未实测 Windows 原生窗口，也未实际触发 Finder、终端或 Codex 深链。未将旧抽取历史等非当前入口批量迁移到新框架。后端接口与资源 API 26 保持不变。
+本轮未实测 Windows 原生窗口，也未实际触发 Finder、终端或 Codex 深链。未将旧抽取历史等非当前入口批量迁移到新框架。本轮不修改后端接口或资源契约。

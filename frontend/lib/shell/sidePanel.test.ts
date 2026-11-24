@@ -62,3 +62,33 @@ test('framework state is isolated between app instances', () => {
   expect(get(second.current)).toBeNull();
   expect(get(second.mode)).toBe('drawer');
 });
+
+test('column width stays within usable bounds and survives content changes', () => {
+  const panel = createSidePanel();
+  panel.setAvailableWidth(1000);
+  expect(get(panel.bounds)).toEqual({ min: 320, max: 520 });
+  panel.setWidth(600);
+  expect(get(panel.width)).toBe(520);
+  panel.setWidth(100);
+  expect(get(panel.width)).toBe(320);
+  panel.setWidth(480);
+  panel.show(Symbol(), entry());
+  panel.dismiss(false);
+  panel.show(Symbol(), entry());
+  expect(get(panel.width)).toBe(480);
+  panel.setWidth(NaN);
+  expect(get(panel.width)).toBe(480);
+  expect(get(createSidePanel().width)).toBe(400);
+});
+
+test('window shrinking clamps the column temporarily and restores the chosen width', () => {
+  const panel = createSidePanel();
+  panel.setAvailableWidth(1500);
+  panel.setWidth(700);
+  panel.setAvailableWidth(1000);
+  expect(get(panel.width)).toBe(520);
+  panel.setAvailableWidth(1500);
+  expect(get(panel.width)).toBe(700);
+  panel.setAvailableWidth(Infinity);
+  expect(get(panel.bounds).max).toBe(760);
+});
