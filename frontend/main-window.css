@@ -93,7 +93,7 @@
 .main-theme .sidebar .tabs, .main-theme .sidebar .brand { white-space: nowrap; }
 .main-theme .sidebar .tabs svg { flex-shrink: 0; }
 .main-theme .brand { display: flex; gap: 0; height: 36px; min-height: 36px; padding: 6px 8px; }
-.main-theme .brand h1 { font-size: var(--font-size-xl); line-height: var(--line-height-page); font-weight: var(--font-weight-semibold); }
+.main-theme .brand h1 { font: var(--font-title); }
 .main-theme .tabs { gap: 4px; }
 .main-theme .tabs button {
   justify-content: flex-start;

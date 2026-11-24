@@ -49,14 +49,25 @@
   --font-size-pet-title: 13.5px;
 
   --font-weight-regular: 400;
-  --font-weight-normal: 480;
-  --font-weight-medium: 520;
-  --font-weight-medium-strong: 560;
-  --font-weight-semibold: 620;
-  --font-weight-semibold-strong: 640;
-  --font-weight-semibold-heavy: 650;
-  --font-weight-bold: 680;
-  --font-weight-heavy: 700;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-normal: var(--font-weight-regular);
+  --font-weight-medium-strong: var(--font-weight-medium);
+  --font-weight-semibold-strong: var(--font-weight-semibold);
+  --font-weight-semibold-heavy: var(--font-weight-semibold);
+  --font-weight-bold: var(--font-weight-semibold);
+  --font-weight-heavy: var(--font-weight-semibold);
+  --font-weight-heading: var(--font-weight-semibold);
+  --font-weight-emphasis: var(--font-weight-medium);
+  --font-weight-content: var(--font-weight-regular);
+  --font-weight-control: var(--font-weight-regular);
+  --font-weight-active: var(--font-weight-medium);
+
+  --space-inline: 4px;
+  --space-related: 8px;
+  --space-block: 12px;
+  --space-section: 28px;
+  --space-page: 24px;
 
   --line-height-none: 1;
   --line-height-tight: 1.18;
@@ -92,8 +103,8 @@
 /* Recompute semantic typography in the main theme so its font family and weights apply. */
 :root, .main-theme {
   /* Product typography: content hierarchy, independent of color mode. */
-  --font-size-title: 24px;
-  --font-size-title-compact: var(--font-size-5xl);
+  --font-size-title: var(--font-size-4xl);
+  --font-size-title-compact: var(--font-size-title);
   --font-size-section: var(--font-size-2xl);
   --font-size-subheading: var(--font-size-lg);
   --font-size-body: var(--font-size-md-plus);
@@ -102,11 +113,11 @@
   --font-size-code: var(--font-size-sm-plus);
   --font-size-relative-note: .85rem;
 
-  --font-title: var(--font-weight-semibold) var(--font-size-title)/var(--line-height-page) var(--font-family-ui);
-  --font-section: var(--font-weight-semibold) var(--font-size-section)/var(--line-height-section) var(--font-family-ui);
-  --font-subheading: var(--font-weight-medium) var(--font-size-subheading)/var(--line-height-section) var(--font-family-ui);
-  --font-body: var(--font-weight-regular) var(--font-size-body)/var(--line-height-body) var(--font-family-ui);
-  --font-caption: var(--font-weight-regular) var(--font-size-caption)/var(--line-height-label) var(--font-family-ui);
+  --font-title: var(--font-weight-heading) var(--font-size-title)/var(--line-height-page) var(--font-family-ui);
+  --font-section: var(--font-weight-heading) var(--font-size-section)/var(--line-height-section) var(--font-family-ui);
+  --font-subheading: var(--font-weight-heading) var(--font-size-subheading)/var(--line-height-section) var(--font-family-ui);
+  --font-body: var(--font-weight-content) var(--font-size-body)/var(--line-height-body) var(--font-family-ui);
+  --font-caption: var(--font-weight-content) var(--font-size-caption)/var(--line-height-label) var(--font-family-ui);
 
 }
 

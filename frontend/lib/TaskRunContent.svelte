@@ -1,10 +1,12 @@
 <script lang="ts">
-  import {Check, Circle, X, ExternalLink, Link as LinkIcon, ChevronDown, ChevronUp} from '@lucide/svelte';
+  import {ExternalLink, Link as LinkIcon, ChevronDown, ChevronUp} from '@lucide/svelte';
   import TaskRunStatus from './TaskRunStatus.svelte';
+  import TaskRunAcceptance from './TaskRunAcceptance.svelte';
+  import TaskRunTimeline from './TaskRunTimeline.svelte';
   import TaskWorkspaceStatus from './TaskWorkspaceStatus.svelte';
   import TaskChangeCounts from './TaskChangeCounts.svelte';
   import {projectRunChanges,type RunChanges} from './taskChanges';
-  import {currentRun,kinds,actorLabel,criterionCheck,formatTaskTime as fmt,type Task,type TaskRun} from './taskLedger';
+  import {currentRun,kinds,actorLabel,formatTaskTime as fmt,type Task,type TaskRun} from './taskLedger';
   export let task:Task;
   export let run:TaskRun;
   export let busy=false;
@@ -18,10 +20,6 @@
   let changesTrigger:HTMLButtonElement;
   export function focusChanges(){changesTrigger?.focus({preventScroll:true});}
   $: changeSummary=changes??projectRunChanges(run.agentWorkspace,run.agentWorkspace.commitChanges??[]);
-  $: items=run.validationPlan.items;
-  $: passed=items.filter(c=>criterionCheck(run,c).passed).length;
-  $: firstPending=items.findIndex(c=>!criterionCheck(run,c).passed);
-  const clock=(n:number)=>new Date(n).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit',hour12:false});
 </script>
 <div class="task-run-panel task-surface" aria-label="任务执行详情">
   <div class="execution-meta"><TaskRunStatus status={run.status} current={run.id===currentRun(task).id} {busy} {onComplete} onRestore={onRestoreDevelopment}/><span>{kinds[run.kind]}</span><span>{actorLabel(run.createdBy)} · {fmt(run.createdAt)}</span></div>
@@ -59,38 +57,8 @@
       </dl>
     </section>
 
-    <section aria-label="验收清单" class="run-section acceptance-section">
-      <div class="section-heading"><h4>验收</h4><small>{passed} / {items.length} 通过</small></div>
-      {#key `${task.id}-${run.id}`}
-        <div class="criteria">
-          {#each items as criterion, index (criterion.id)}
-            {@const check = criterionCheck(run, criterion)}
-            <details class="criterion" open={index === firstPending}>
-              <summary aria-label={criterion.title}>
-                <span class="check-mark" class:passed={check.passed} class:failed={check.result === 'failed'} aria-label={check.passed ? '通过' : check.result === 'failed' ? '失败' : '未验收'}>
-                  {#if check.passed}<Check size={15} strokeWidth={2}/>{:else if check.result==='failed'}<X size={15}/>{:else}<Circle size={13} strokeWidth={1.5}/>{/if}
-                </span>
-                <span class="criterion-title" title="验收点">{criterion.title}</span>
-              </summary>
-              <dl class="info-grid criterion-body">
-                <div><dt>验收方式</dt><dd>{#if criterion.precondition}<p class="method-context">{criterion.precondition}</p>{/if}{criterion.steps}</dd></div>
-                <div><dt>预期结果</dt><dd>{criterion.expected}</dd></div>
-                <div><dt>验收结果</dt><dd>{check.evidence || '暂无验收结论'}</dd></div>
-              </dl>
-            </details>
-          {:else}<p class="muted">尚未登记验收清单</p>{/each}
-        </div>
-      {/key}
-    </section>
-
-    <section aria-label="活动时间线" class="run-section activity-section">
-      <h4>活动</h4>
-      <ol class="activity-timeline">
-        {#each [...run.timeline].reverse() as entry (entry.id)}
-          <li><Circle class="timeline-dot" size={6} fill="currentColor"/><time title={fmt(entry.at)} datetime={new Date(entry.at).toISOString()}>{clock(entry.at)}</time><div><p><span class="timeline-author">{actorLabel(entry.actor)}</span> {entry.summary}</p>{#if entry.reference}<p class="preserve muted">{entry.reference}</p>{/if}</div></li>
-        {:else}<li><small>暂无活动</small></li>{/each}
-      </ol>
-    </section>
+    <TaskRunAcceptance {run}/>
+    <TaskRunTimeline {run}/>
   </div>
 
 </div>
@@ -98,36 +66,19 @@
 <style>
   .task-run-panel{min-width:0;color:var(--wb-text);font:var(--font-body);}
   .execution-meta{display:flex;align-items:center;gap:8px 12px;flex-wrap:wrap;font-size:var(--font-size-caption);color:var(--task-secondary);}
-  .run-section{min-width:0;margin-top:26px;}
-  h4{color:var(--wb-text);font:var(--font-subheading);margin:0 0 12px;}
+  .run-section{min-width:0;margin-top:var(--space-section);}
+  h4{color:var(--wb-text);font:var(--font-subheading);margin:0 0 var(--space-related);}
   .info-grid{margin:0;font-size:var(--font-size-body);}
-  .info-grid>div{margin:12px 0;}
-  dt{font-size:var(--font-size-caption);color:var(--task-secondary);margin-bottom:3px;}
+  .info-grid>div{display:grid;grid-template-columns:2.8em minmax(0,1fr);gap:var(--space-related);align-items:baseline;margin:var(--space-related) 0;}
+  dt{font-size:var(--font-size-caption);color:var(--task-secondary);margin-bottom:0;}
   dd{margin:0;min-width:0;white-space:pre-wrap;overflow-wrap:anywhere;}
   dd p{margin:0;}
-  .goal{font-weight:var(--font-weight-medium);}
   code,.path{font:var(--font-size-caption)/var(--line-height-reading) var(--font-family-code);overflow-wrap:anywhere;}
-  .workspace-section .info-grid>div{display:grid;grid-template-columns:42px minmax(0,1fr);gap:10px;align-items:baseline;}
+  .workspace-section .info-grid>div{grid-template-columns:2.8em minmax(0,1fr);}
   .code-summary{display:flex;gap:8px 12px;align-items:baseline;flex-wrap:wrap;}
   .task-run-panel .changes-toggle{padding:0;min-height:24px;font-size:var(--font-size-label);}
-  .panel-conversations{margin-top:12px;}
+  .panel-conversations{margin-top:var(--space-related);}
   .task-run-panel .conversation-link{display:inline-flex;align-items:center;gap:6px;font-size:var(--font-size-caption);padding:2px 0;min-height:28px;color:var(--wb-info-text);}
-  .historical-description{margin-top:14px;font-size:var(--font-size-label);color:var(--task-secondary);}
-  .section-heading{display:flex;justify-content:space-between;align-items:baseline;gap:12px;}
-  .criterion>summary{display:grid;grid-template-columns:16px minmax(0,1fr);gap:12px;align-items:baseline;padding:9px 0;cursor:pointer;list-style:none;}
-  .criterion>summary::-webkit-details-marker{display:none;}
-  .check-mark{align-self:center;display:flex;align-items:center;color:var(--task-secondary);}
-  .check-mark.passed{color:var(--color-success);}
-  .check-mark.failed{color:var(--wb-danger-text);}
-  .criterion-title{font-size:var(--font-size-body);font-weight:var(--font-weight-medium);line-height:var(--line-height-body);overflow-wrap:anywhere;}
-  .criterion-body{padding:2px 12px 10px 14px;margin:0 0 8px 26px;border-left:2px solid var(--wb-border);}
-  .method-context{margin-bottom:4px;color:var(--task-secondary);}
-  .activity-timeline{list-style:none;padding:0;margin:0 0 0 5px;}
-  .activity-timeline li{position:relative;display:grid;grid-template-columns:40px minmax(0,1fr);gap:10px;border-left:1px solid var(--wb-border);padding:0 0 16px 16px;font-size:var(--font-size-label);}
-  .activity-timeline li:last-child{padding-bottom:0;}
-  .activity-timeline :global(.timeline-dot){position:absolute;left:-3.5px;top:8px;color:var(--task-secondary);}
-  .activity-timeline time{color:var(--task-secondary);font-variant-numeric:tabular-nums;}
-  .activity-timeline p{margin:0 0 6px;white-space:pre-wrap;overflow-wrap:anywhere;}
-  .timeline-author{color:var(--task-secondary);}
+  .historical-description{margin-top:var(--space-related);font-size:var(--font-size-label);color:var(--task-secondary);}
   .history-note{font-size:var(--font-size-caption);margin:14px 0 0;}
 </style>

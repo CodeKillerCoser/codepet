@@ -81,6 +81,12 @@ describe("theme tokens", () => {
     expect(typography).not.toMatch(/\bfont:\s*[.0-9]/);
     for(const role of ['title','section','subheading','body','caption'])expect(themeTokens).toContain(`--font-${role}:`);
   });
+
+  test('uses one three-weight scale for content, emphasis and headings',()=>{
+    const weights=[...themeTokens.matchAll(/--font-weight-[\w-]+:\s*(\d+);/g)].map(match=>Number(match[1]));
+    expect([...new Set(weights)].sort()).toEqual([400,500,600]);
+    for(const role of ['heading','content','emphasis','control','active'])expect(themeTokens).toContain(`--font-weight-${role}:`);
+  });
 });
 
 describe("pet message bubble activity", () => {

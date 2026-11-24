@@ -48,6 +48,35 @@ try{
   const before=await page.locator('.task-info').boundingBox();await panel.locator('.panel-body').evaluate(e=>e.scrollTop=e.scrollHeight);assert.equal((await page.locator('.task-info').boundingBox()).y,before.y);
   await page.screenshot({path:resolve(output,`run-drawer-${viewport.width}.png`)});await page.keyboard.press('Escape');await panel.waitFor({state:'detached'});assert.ok(await page.locator('.run-card').first().evaluate(e=>e===document.activeElement));
  }
+ // Long acceptance titles/results and long activities must remain readable, not just fit.
+ for(const width of [1440,820,390,320]){
+  await page.setViewportSize({width,height:900});await goto('reading');await open();
+  const criterion=panel.locator('.criterion').first();await criterion.locator('summary').click();
+  const alignment=await criterion.evaluate(e=>{
+   const title=e.querySelector('.criterion-title').getBoundingClientRect(),mark=e.querySelector('.check-mark').getBoundingClientRect();
+   const field=e.querySelector('.criterion-body>div'),label=field.querySelector('dt').getBoundingClientRect(),body=field.querySelector('dd').getBoundingClientRect();
+   return {title:title.y,mark:mark.y,label:label.y,body:body.y,labelRight:label.right,bodyLeft:body.x};
+  });
+  assert.ok(Math.abs(alignment.mark-alignment.title)<1,'Check aligns with the first line of a wrapped acceptance title');
+  if(width>360){assert.ok(Math.abs(alignment.label-alignment.body)<6);assert.ok(alignment.bodyLeft>alignment.labelRight,'Acceptance fields keep label/content columns');}
+  else assert.ok(alignment.body>alignment.label,'Only very narrow fields stack labels above content');
+  const hierarchy=await panel.evaluate(e=>{
+   const read=selector=>{const style=getComputedStyle(e.querySelector(selector));return {size:parseFloat(style.fontSize),weight:parseFloat(style.fontWeight)};};
+   return [read('.panel-header h3'),read('.acceptance-section h4'),read('.criterion-title'),read('.criterion-body dd'),read('.timeline-content p')];
+  });
+  assert.ok(hierarchy.every((value,i)=>!i||hierarchy[i-1].size>=value.size),'A child never visually outranks its parent heading');
+  assert.deepEqual(hierarchy.map(value=>value.weight),[600,600,500,400,400]);
+  const spacing=await panel.evaluate(e=>({group:parseFloat(getComputedStyle(e.querySelector('.acceptance-section')).marginTop),related:parseFloat(getComputedStyle(e.querySelector('.criterion-body')).rowGap)}));
+  assert.ok(spacing.group>spacing.related*2,'Related fields stay closer than separate content groups');
+  const paragraph=panel.locator('.timeline-content>p').first(),expand=panel.getByRole('button',{name:'展开活动',exact:true}).first();
+  const compact=(await paragraph.boundingBox()).height;await expand.click();assert.ok((await paragraph.boundingBox()).height>compact*2);
+  assert.ok((await paragraph.textContent()).includes('末尾证据仍可读取'));await panel.getByRole('button',{name:'收起活动',exact:true}).first().click();
+  assert.ok(Math.abs((await paragraph.boundingBox()).height-compact)<1);
+  assert.ok(await panel.locator('.panel-body').evaluate(e=>e.scrollWidth<=e.clientWidth+1));
+  await criterion.scrollIntoViewIfNeeded();await page.screenshot({path:resolve(output,`acceptance-reading-${width}.png`)});
+  await paragraph.scrollIntoViewIfNeeded();await page.screenshot({path:resolve(output,`timeline-reading-${width}.png`)});
+  await close();
+ }
  const app=await browser.newPage({viewport:{width:1440,height:760}});app.on('pageerror',e=>errors.push(e.message));
  await app.goto(`http://127.0.0.1:${port}/frontend/qa/main-window.html?taskOverflow=1`);await app.getByRole('tab',{name:'任务与验收',exact:true}).click();await app.locator('.task-row').nth(5).waitFor();
  await app.setViewportSize({width:1180,height:760});await app.locator('.task-table').waitFor();
@@ -57,6 +86,7 @@ try{
  await app.getByRole('button',{name:'展开导航栏',exact:true}).click();await app.locator('.task-table').waitFor();
  await app.setViewportSize({width:1440,height:760});await app.locator('.task-board').waitFor();
  await app.locator('.task-row').first().click();await app.locator('.run-card').first().click();await app.locator('.task-run-panel').waitFor();
+ const sizes=await app.locator('.brand h1,.task-heading h3').evaluateAll(es=>es.map(e=>parseFloat(getComputedStyle(e).fontSize)));assert.ok(sizes[0]>=sizes[1],'Task title does not outrank the App heading');
  const infoTop=(await app.locator('.task-info').boundingBox()).y,navTop=(await app.locator('.content-navigation').boundingBox()).y;
  await app.locator('.panel-body').evaluate(e=>e.scrollTop=e.scrollHeight);assert.equal((await app.locator('.task-info').boundingBox()).y,infoTop);assert.equal((await app.locator('.content-navigation').boundingBox()).y,navTop);assert.equal(await app.locator('.content').evaluate(e=>e.scrollTop),0);
  await app.screenshot({path:resolve(output,'actual-shell-run-panel.png')});

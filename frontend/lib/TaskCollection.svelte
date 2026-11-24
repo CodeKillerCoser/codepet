@@ -30,7 +30,7 @@
    {#each columns as state}
     {@const group=ordered.filter(task=>currentRun(task).status===state)}
     <section class="board-column" aria-label={statuses[state]}>
-     <header class="board-heading"><h3><TaskStatus status={state}/><span class="column-count">{group.length}</span></h3></header>
+     <header class="board-heading"><h3><TaskStatus status={state} heading/><span class="column-count">{group.length}</span></h3></header>
      <div class="board-cards">
       {#each group as task (task.id)}
        {@const checks=progress(task)}
@@ -92,7 +92,7 @@
  .title-column{width:27%;}.project-column{width:11%;}.status-column{width:12%;}.current-column{width:21%;}.runs-column{width:6%;}.checks-column{width:7%;}.time-column{width:16%;}
  .task-table th,.task-table td{text-align:left;border-bottom:1px solid var(--wb-border);padding:10px 12px;min-width:0;vertical-align:middle;}
  .task-table thead{position:sticky;top:-18px;z-index:1;background:var(--wb-panel);}
- .task-table thead th{color:var(--task-secondary);font-weight:var(--font-weight-regular);font-size:var(--font-size-caption);height:38px;}
+ .task-table thead th{color:var(--task-secondary);font-weight:var(--font-weight-emphasis);font-size:var(--font-size-label);height:38px;}
  .task-table tbody tr{height:48px;}
  .task-table tbody tr:hover,.task-table tbody tr:focus-within{background:var(--wb-control);}
  .task-table th:first-child{padding-left:4px;}

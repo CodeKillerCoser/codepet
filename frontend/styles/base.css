@@ -43,6 +43,7 @@ select {
 .main-theme h4 { font: var(--font-subheading); }
 .main-theme :is(h5, h6) { font-size: var(--font-size-label); font-weight: var(--font-weight-medium); }
 .main-theme small { font: var(--font-caption); }
+.main-theme :is(strong, b, th) { font-weight: var(--font-weight-emphasis); }
 
 button {
   cursor: pointer;

@@ -23,7 +23,7 @@ if(scenario==='dense'){
   run.validationPlan.records=[{id:'local',actor:'agent',agent:'codex',createdAt:tasks[0].updatedAt,agentWorkspace:null,planRevision:run.validationPlan.revision,stage:'local',target:'布局样例工作区',environment:'macOS',results:run.validationPlan.items.map(c=>({criterionId:c.id,result:'passed',evidence:'布局样例：本地通过'}))},{id:'release',actor:'human',agent:'human',createdAt:tasks[0].updatedAt,agentWorkspace:null,planRevision:run.validationPlan.revision,stage:'release',target:'布局样例 1.3.0',environment:'macOS',results:run.validationPlan.items.slice(0,2).map((c,i)=>({criterionId:c.id,result:i?'failed':'passed',evidence:'布局样例：发布后验证'}))}];
 }
 // The design scenario is an explicit visual fixture matching the approved mock, not production evidence.
-if(scenario==='design'){
+if(scenario==='design'||scenario==='reading'){
  base.title='保留工作台扫描结果';base.description='切换页面或重启 App 后，希望继续查看上一次扫描结果。';
  base.createdAt=new Date('2026-11-22T14:30:00+08:00').getTime();base.createdBy='codex';
  const template=structuredClone(currentRun(base));
@@ -41,6 +41,16 @@ if(scenario==='design'){
   run.timeline=[{id:'design-e1',at:run.createdAt,actor:'codex',kind:'created',summary:'创建第 3 次执行'},{id:'design-e2',at:run.createdAt+26*60000,actor:'codex',kind:'milestone',summary:'更新方案与验证计划'},{id:'design-e3',at:run.createdAt+42*60000,actor:'human',kind:'verification',summary:'验收通过 2 项'}];
   return run;
  });
+}
+if(scenario==='reading'){
+ const run=currentRun(base);
+ run.title='核对验收与时间线的字体层级、长文本换行和展开收起';
+ run.validationPlan.items[0].title='长标题验收点：同一项在多行展示时，勾选图标仍与标题第一行对齐。'.repeat(3);
+ run.validationPlan.items[0].steps='打开全局执行侧栏，展开验收项。\n检查标签与正文对齐，并分别在窄屏和桌面分栏下阅读。';
+ run.validationPlan.items[0].expected='同组字段紧凑排列，验收与活动之间留有清楚间隔，长路径和结论完整换行。';
+ run.validationPlan.records[0].results[0].evidence='布局样例：长验收结论包含实际观察、环境和证据，保留全文而不改变任何验收状态。'.repeat(5);
+ run.timeline.at(-1)!.summary='布局样例：记录实际检查的结论与处理进展，长事件默认显示摘要，展开后完整查看，不覆盖历史。'.repeat(12)+'末尾证据仍可读取。';
+ run.timeline.at(-1)!.reference='/Users/qa/project/artifacts/'+'evidence-long-path-'.repeat(12)+'.png';
 }
 if(scenario==='cached-files'){
  const run=currentRun(base);run.agentWorkspace.runFiles=null;run.agentWorkspace.relatedCommits=['cached-a','cached-b'];

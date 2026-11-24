@@ -140,3 +140,10 @@ TMPDIR=/private/tmp npm run test:webcontent
 待验收使用原 ready_for_delivery 值；有必验本地项未测/失败/受阻时仍进行中。表单必须主动选状态并填结论，不能只写一段“验收通过”的进度摘要。新工具不会录入 human 结果。历史关联提交文件可在展开时通过 commit-files IPC 读取；文件不在时报告读取失败。API 30 必须更新原生 App，单换前端不能获得第五个工具。
 
 finish-task-run 的 changedFiles 必须显式传入；省略拒绝，空数组表示本次无代码修改。路径是仓库相对路径，拒绝空白、绝对路径、父级跳转、仓库元数据路径和重复项。持久化到 agentWorkspace.runFiles，和当前共享未提交文件、明确关联提交文件分开，后续工作区清洁或其他更新不会清空它。
+
+
+## 任务侧栏的字体与长文本排版检查
+
+调整全局字体、字重或间距后，不能只检查 token 字符串和横向溢出。先运行原生隔离验收生成 report.json，再运行 `node scripts/task_ledger_refinement_qa.mjs` 及其 `CODEPET_QA_ENGINE=webkit` 版本；reading 场景覆盖长验收标题、换行操作、长结论、长活动及证据路径。检查实际计算的标题/正文大小与400/500/600字重、第一行图标对齐、字段双列和极窄屏纵排、活动展开完整性及组间/组内间距。截图位于 refinement/<engine>/acceptance-reading-<width>.png 与 timeline-reading-<width>.png。
+
+全局样式可能覆盖组件 CSS，且 root 定义的复合 font 会提前解析字体族，因此应核对真实 .main-theme 和全局侧栏里的计算样式。原生构建会写入 QA HTML 产物，先完成原生构建再启动 Vite 浏览器回归，避免开发服务器因产物变化刷新正在验收的页面。最后在本机安装版只读复核，不把布局样例或 Agent 自测写成生产任务人工验收。
