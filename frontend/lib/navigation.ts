@@ -17,7 +17,7 @@ export const settingsRoutes = [
 export const isSettingsRoute = (route: AppRoute) => settingsRoutes.some(entry => entry.route === route);
 export const isConnectionRoute = (route: AppRoute) => connectionRoutes.some(entry => entry.route === route);
 export const routeTitle = (route: AppRoute) => settingsRoutes.find(entry => entry.route === route)?.label
-  ?? (isConnectionRoute(route) ? "连接接入" : (route === "tasks" || route === "extraction") ? "Agent工作台" : route === "usage" ? "用量" : "宠物制作");
+  ?? (isConnectionRoute(route) ? "连接接入" : (route === "tasks" || route === "extraction") ? "Codex工作台" : route === "usage" ? "用量" : "宠物制作");
 
 export function createNavigation(initial: AppRoute = "tasks") {
   const state = writable<{ entries: AppRoute[]; index: number }>({ entries: [initial], index: 0 });

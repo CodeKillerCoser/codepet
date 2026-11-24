@@ -20,7 +20,7 @@ async function run() {
   const actual=await invoke<Snapshot>('codex_workbench_request',{request:{op:'scan',projectIds:[expected.projectId]}});
   document.getElementById('app')!.className=`main-theme ${themeClassNames('light')}`;
   mount(CodexWorkbench,{target:document.getElementById('app')!});
-  const scan=await until(()=>{const e=document.querySelector<HTMLButtonElement>('.primary');return e&&!e.disabled?e:undefined;});
+  const scan=await until(()=>{const e=document.querySelector<HTMLButtonElement>('.confirm');return e&&!e.disabled?e:undefined;});
   scan.click();
   await until(()=>document.querySelector('.worktree-row'));
   const target=actual.worktrees.find(row=>row.path===expected.workspace);
