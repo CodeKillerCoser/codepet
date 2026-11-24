@@ -1,4 +1,5 @@
-//! Thin stdio adapter. stdout is exclusively owned by rmcp; no desktop window is needed.
+//! Rust MCP adapters sharing the same task tools and ledger with the desktop app.
+pub mod http;
 use codepet_task_lineage::tasks::{Actor, FindInput, Ledger, SaveInput};
 use rmcp::{
     handler::server::wrapper::Parameters,

@@ -1,0 +1,129 @@
+use super::{HttpServer, HttpShutdown};
+use codepet_task_lineage::tasks::Ledger;
+use serde_json::Value;
+use std::{
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+use tokio::{
+    sync::{watch, Mutex},
+    task::JoinHandle,
+};
+
+#[derive(Clone)]
+enum EndpointStatus {
+    Starting,
+    Ready(Value),
+    Failed(String),
+    Stopped,
+}
+struct Inner {
+    ledger: Ledger,
+    status: watch::Receiver<EndpointStatus>,
+    shutdown: HttpShutdown,
+    completed: Arc<AtomicBool>,
+    task: Mutex<Option<JoinHandle<()>>>,
+}
+impl Drop for Inner {
+    fn drop(&mut self) {
+        self.shutdown.cancel();
+    }
+}
+
+/// Owned by the Rust application, independent of any frontend window.
+#[derive(Clone)]
+pub struct HttpRuntime {
+    inner: Arc<Inner>,
+}
+impl HttpRuntime {
+    /// Call within the application's Tokio runtime. Binding failures do not disable the ledger.
+    pub fn start(data: PathBuf, port: u16) -> Self {
+        Self::start_on(&tokio::runtime::Handle::current(), data, port)
+    }
+    pub fn start_on(executor: &tokio::runtime::Handle, data: PathBuf, port: u16) -> Self {
+        let ledger = Ledger::new(&data);
+        let shutdown = HttpShutdown::default();
+        let completed = Arc::new(AtomicBool::new(false));
+        let (tx, status) = watch::channel(EndpointStatus::Starting);
+        let (task_ledger, stop, finished) = (ledger.clone(), shutdown.clone(), completed.clone());
+        let task = executor.spawn(async move {
+            match HttpServer::bind(task_ledger, &data, port, stop).await {
+                Ok(server) => {
+                    let _ = tx.send(EndpointStatus::Ready(server.configuration()));
+                    let result = server.serve().await;
+                    let _ = tx.send(match result {
+                        Ok(()) => EndpointStatus::Stopped,
+                        Err(error) => {
+                            EndpointStatus::Failed(format!("任务 MCP HTTP 服务中断：{error}"))
+                        }
+                    });
+                }
+                Err(error) => {
+                    let _ = tx.send(EndpointStatus::Failed(format!(
+                        "本机任务 MCP HTTP 服务启动失败（端口 {port}）：{error}"
+                    )));
+                }
+            }
+            finished.store(true, Ordering::Release);
+        });
+        Self {
+            inner: Arc::new(Inner {
+                ledger,
+                status,
+                shutdown,
+                completed,
+                task: Mutex::new(Some(task)),
+            }),
+        }
+    }
+    /// Human IPC and MCP share this exact active data directory until application restart.
+    pub fn ledger(&self) -> Ledger {
+        self.inner.ledger.clone()
+    }
+    pub fn shutdown_completed(&self) -> bool {
+        self.inner.completed.load(Ordering::Acquire)
+    }
+    pub async fn configuration(&self) -> Result<Value, String> {
+        let mut status = self.inner.status.clone();
+        tokio::time::timeout(Duration::from_secs(5), async move {
+            loop {
+                let value = status.borrow().clone();
+                match value {
+                    EndpointStatus::Starting => {}
+                    EndpointStatus::Ready(config) => {
+                        if status.has_changed().is_err() {
+                            return Err("本机任务 MCP HTTP 服务已退出".into());
+                        }
+                        return Ok(config);
+                    }
+                    EndpointStatus::Failed(error) => return Err(error),
+                    EndpointStatus::Stopped => return Err("本机任务 MCP HTTP 服务已停止".into()),
+                }
+                status
+                    .changed()
+                    .await
+                    .map_err(|_| "本机任务 MCP HTTP 服务已退出")?;
+            }
+        })
+        .await
+        .map_err(|_| "本机任务 MCP HTTP 服务启动超时，请重试".to_string())?
+    }
+    pub async fn shutdown_once(&self) {
+        self.inner.shutdown.cancel();
+        let mut guard = self.inner.task.lock().await;
+        if let Some(mut task) = guard.take() {
+            if tokio::time::timeout(Duration::from_secs(3), &mut task)
+                .await
+                .is_err()
+            {
+                task.abort();
+                let _ = task.await;
+            }
+        }
+        self.inner.completed.store(true, Ordering::Release);
+    }
+}

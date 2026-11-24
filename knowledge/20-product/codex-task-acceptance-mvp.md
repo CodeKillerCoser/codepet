@@ -22,9 +22,11 @@ Codex 在关键节点自主登记任务、方案、验收点和进展；App 展�
 
 ### Rust 独立入口与共享账本
 
-`codepet-task-mcp` 使用官方 Rust SDK rmcp 的 stdio 服务。可运行独立可执行程序，桌面主程序也提供 `--task-mcp`，在创建 Tauri 窗口和单实例插件之前处理。Codex → stdio MCP → Rust Ledger → 本地 JSON；前端没有请求转发、服务生命周期或模型上下文维护责任。
+`codepet-task-mcp` 使用官方 Rust SDK rmcp 的 Streamable HTTP。App 启动时由 Rust 后台在 `127.0.0.1:47623/mcp` 提供服务，主窗口只展示可复制的 URL/凭据配置。Codex → 本机 HTTP MCP → Rust Ledger → 本地 JSON；前端没有请求转发、服务生命周期或模型上下文维护责任。关闭界面而 App 仍运行时服务保持，退出时统一取消并释放监听。旧 stdio/`--task-mcp` 只作为兼容入口保留。
 
-桌面经 `task_ledger_request` 直接调用相同 Ledger，Actor 固定为 human；MCP Actor 固定为 agent，工具参数不能覆盖。账本在应用 data/tasks/v2；自定义数据目录沿用 bootstrap settings，App 关闭后仍可写入。
+人工 IPC 与 HTTP 使用 App 托管的同一个活动 Ledger，数据目录切换在重启后生效，避免同一 App 内两个入口写到不同账本。未就绪或端口占用时不生成可用配置；凭据、Host/Origin 及回环监听边界在 Rust 校验。传输改动不增加工具或日常维护调用。资源 API 升至 27，避免 API 26 的旧二进制误展示 HTTP 配置。
+
+桌面经 `task_ledger_request` 直接调用相同 Ledger，Actor 固定为 human；MCP Actor 固定为 agent，工具参数不能覆盖。账本在应用 data/tasks/v2；自定义数据目录沿用 bootstrap settings，关闭窗口而 App 仍运行时可写；退出 App 后 HTTP 服务停止。
 
 ### 两个工具与两次常规写入
 
@@ -35,7 +37,7 @@ Codex 在关键节点自主登记任务、方案、验收点和进展；App 展�
 
 开发阶段通常只在方案确定/开始实施与实现或自测告一段落时各保存一次；实际发布时再保存一次已发布与版本引用。切换独立任务、方案明显变化、复发时才额外补记。保留返回 taskId/revision，更新省略不变字段，不在每条消息、每个文件或每次工具调用后写入，不轮询。AGENTS 简短规约放在 `crates/codepet-task-mcp/instructions.md`，App 提供复制入口；MCP 初始化也携带相同原则。
 
-服务生成 UUID、轮次、修订、时间、验收项 ID 与事件，读取分支、HEAD、dirty 及显式关联 SHA 的本地缓存上游可达性。普通保存只返回回执。真实 stdio 验收会记录工具定义与回执字节数，并用预算测试避免无意扩大工具面，避免让历史账本进入日常上下文。
+服务生成 UUID、轮次、修订、时间、验收项 ID 与事件，读取分支、HEAD、dirty 及显式关联 SHA 的本地缓存上游可达性。普通保存只返回回执。真实 HTTP 和 stdio 验收会记录工具定义与回执字节数，并用预算测试避免无意扩大工具面，避免让历史账本进入日常上下文。
 
 ### 并发、重试与来源
 
@@ -61,7 +63,7 @@ Codex 在关键节点自主登记任务、方案、验收点和进展；App 展�
 
 - `crates/codepet-task-lineage/src/tasks/`：新领域、项目身份、轮次、清单、验收、来源核实和紧凑投影。
 - `crates/codepet-task-lineage/src/store.rs`：共享存储；补显式释放锁，防止复制描述符延长操作生命周期。
-- `crates/codepet-task-mcp/`：两个工具、stdio、开发规约和独立进程入口。
+- `crates/codepet-task-mcp/`：两个工具、本机 HTTP、stdio 兼容、开发规约和独立进程入口。
 - `src-tauri/src/task_ledger.rs`、`app/cli.rs`、`lib.rs`：桌面人工入口及打包内 MCP 入口，主窗口限制。
 - `frontend/lib/TaskLedger.svelte`、`taskLedger.ts`、`CodexWorkbench.svelte`：展示和人工操作，复用主题。
 - `webcontent-contract.json`：新增原生命令，backend API 升至 26，旧安装版需升级原生程序。
@@ -72,7 +74,7 @@ Codex 在关键节点自主登记任务、方案、验收点和进展；App 展�
 
 ## 测试计划与结果
 
-已执行共享领域/存储测试、真实 stdio 无前端验收、桌面二进制 `--task-mcp` 入口、原生 Tauri IPC 的人工验收/关闭/重开/历史与冲突草稿验证、主题和响应式布局。具体命令、证据目录及环境限制见接入 runbook；测试任务与验收文本是临时样例，不代表样例描述的业务问题真实发布过。
+已执行共享领域/存储测试、真实 HTTP/stdio 无前端验收、官方 SDK HTTP 客户端、桌面二进制 HTTP/stdio 入口、原生 Tauri IPC 的人工验收/关闭/重开/历史与冲突草稿验证、主题和响应式布局。具体命令、证据目录及环境限制见接入 runbook；测试任务与验收文本是临时样例，不代表样例描述的业务问题真实发布过。
 
 ## 知识沉淀
 

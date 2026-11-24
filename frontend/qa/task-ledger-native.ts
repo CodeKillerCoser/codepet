@@ -14,6 +14,9 @@ function submit(dialog:HTMLDialogElement){dialog.querySelector<HTMLFormElement>(
 
 export async function runTaskLedgerNativeQa(expected:{workspace:string;taskId:string}) {
   document.getElementById('app')!.className=`main-theme ${themeClassNames('light')}`;
+  const httpReceipt = await invoke<{taskId:string;revision:number}>('qa_http_task_write');
+  const httpTask = await taskRequest<Task>('get',{taskId:expected.taskId});
+  check(httpReceipt.taskId === httpTask.id && httpReceipt.revision === httpTask.revision,'HTTP MCP writes are visible through production UI IPC');
   mount(WorkbenchFrameQa,{target:document.getElementById('app')!});await button('任务与验收');
   await until(()=>document.querySelector<HTMLButtonElement>('.task-row'));
   const filter=document.querySelector<HTMLSelectElement>('[aria-label="任务状态"]')!;
@@ -38,6 +41,6 @@ export async function runTaskLedgerNativeQa(expected:{workspace:string;taskId:st
   await taskRequest('save',{input:{taskId:task.id,expectedRevision:task.revision,note:'并发更新'}});input('进展摘要','使用过期表单保存',dialog);submit(dialog);await until(()=>dialog.querySelector('[role="alert"]')?.textContent?.includes('revision='));check(dialog.open,'Conflicting form retains user draft');dialog.close();
   await taskRequest('get',{taskId:task.id});await button('刷新任务');await delay();
   document.getElementById('app')!.className=`main-theme ${themeClassNames('dark')}`;
-  await button('接入 Codex');dialog=await until(()=>document.querySelector<HTMLDialogElement>('dialog[open]')??undefined);check(dialog.textContent?.includes('Rust'),'Setup explains native service');check(dialog.querySelector('textarea')?.value.includes('--task-mcp'),'Config starts native CLI');dialog.close();
-  await invoke('qa_report',{value:{success:true,mode:'native-task-ledger-production-ipc',taskId:task.id,workspace:expected.workspace,roundCount:2,agentSelfTestSeparate:true,humanAcceptance:true,reopenPreservesHistory:true,reusedChecklistStartsUntested:true,conflictPreservesDraft:true,frontendIsNotMcpTransport:true,taskSnapshot:await taskRequest<Task>('get',{taskId:task.id})}});
+  await button('接入 Codex');dialog=await until(()=>document.querySelector<HTMLDialogElement>('dialog[open]')??undefined);check(dialog.textContent?.includes('HTTP'),'Setup explains local HTTP service');const mcpConfig=dialog.querySelector('textarea')?.value??'';check(mcpConfig.includes('url = \"http://127.0.0.1:')&&mcpConfig.includes('/mcp\"'),'Config connects to native HTTP endpoint');check(mcpConfig.includes('http_headers')&&!mcpConfig.includes('command ='),'Config includes local credential without launching a subprocess');dialog.close();
+  await invoke('qa_report',{value:{success:true,mode:'native-task-ledger-production-ipc',taskId:task.id,workspace:expected.workspace,roundCount:2,agentSelfTestSeparate:true,humanAcceptance:true,reopenPreservesHistory:true,reusedChecklistStartsUntested:true,conflictPreservesDraft:true,frontendIsNotMcpTransport:true,httpAgentWriteSeenByUi:true,httpUrlConfigured:true,taskSnapshot:await taskRequest<Task>('get',{taskId:task.id})}});
 }

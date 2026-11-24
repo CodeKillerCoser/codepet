@@ -1,4 +1,4 @@
-//! Local, project-owned task ledger. The app and stdio MCP use this same service.
+//! Local, project-owned task ledger. The app and Rust MCP transports share this service.
 mod delivery;
 mod model;
 mod source;

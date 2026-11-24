@@ -2,6 +2,7 @@
 //! Only QA preferences/reports are written; the installed application is left running.
 use serde_json::{json, Value};
 use std::{path::PathBuf, sync::OnceLock};
+use tauri::Manager;
 static QA_DATA: OnceLock<PathBuf> = OnceLock::new();
 static QA_CONFIG: OnceLock<Value> = OnceLock::new();
 static QA_REPORT: OnceLock<PathBuf> = OnceLock::new();
@@ -31,6 +32,41 @@ async fn qa_config() -> Value {
     eprintln!("native QA config requested");
     QA_CONFIG.get().unwrap().clone()
 }
+// QA-only client: HTTP originates in Rust, never in the production frontend.
+#[tauri::command]
+async fn qa_http_task_write(
+    runtime: tauri::State<'_, codepet_task_mcp::http::HttpRuntime>,
+) -> Result<Value, String> {
+    let setup = runtime.configuration().await?;
+    let config = setup["config"].as_str().ok_or("missing HTTP config")?
+        .parse::<toml_edit::DocumentMut>().map_err(|e| e.to_string())?;
+    let authorization = config["mcp_servers"]["codepet_tasks"]["http_headers"]["Authorization"]
+        .as_str().ok_or("missing local credential")?;
+    let url = setup["url"].as_str().ok_or("missing HTTP URL")?;
+    let client = reqwest::Client::builder().no_proxy().build().map_err(|e| e.to_string())?;
+    let init: Value = client.post(url).header("Authorization", authorization)
+        .header("Accept", "application/json, text/event-stream")
+        .json(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+            "protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"native-qa","version":"1"}
+        }})).send().await.map_err(|e| e.to_string())?
+        .error_for_status().map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+    let task_id = QA_CONFIG.get().unwrap()["taskId"].as_str().ok_or("missing task ID")?;
+    let task = runtime.ledger().get(task_id)?;
+    let result: Value = client.post(url).header("Authorization", authorization)
+        .header("Accept", "application/json, text/event-stream")
+        .header("MCP-Protocol-Version", init["result"]["protocolVersion"].as_str().ok_or("missing protocol")?)
+        .json(&json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+            "name":"tasks_save","arguments":{"taskId":task_id,"expectedRevision":task.revision,
+                "note":"原生 HTTP MCP 写入，随后由生产 UI 与 IPC 读取"}
+        }})).send().await.map_err(|e| e.to_string())?
+        .error_for_status().map_err(|e| e.to_string())?.json().await.map_err(|e| e.to_string())?;
+    if result.get("error").is_some() || result["result"]["isError"] == true {
+        return Err(format!("native HTTP MCP write failed: {result}"));
+    }
+    serde_json::from_str(result["result"]["content"][0]["text"].as_str().ok_or("missing receipt")?)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 async fn qa_trace(value: Value) {
     eprintln!("native QA trace: {value}");
@@ -119,11 +155,15 @@ fn main() {
             codex_workbench::codex_workbench_request,
             task_ledger::task_ledger_request,
             qa_config,
+            qa_http_task_write,
             qa_trace,
             qa_report
         ])
         .setup(|app| {
             eprintln!("native QA setup ready");
+            app.manage(codepet_task_mcp::http::HttpRuntime::start_on(
+                tauri::async_runtime::handle().inner(), crate::QA_DATA.get().unwrap().clone(), 0,
+            ));
             let app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(90)).await;

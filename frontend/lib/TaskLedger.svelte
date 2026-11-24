@@ -195,7 +195,7 @@
   <label>{closeMode==='reopen'?'复发或重新处理的原因':'结束说明（可选）'}<textarea required={closeMode==='reopen'} rows="3" maxlength="2000" bind:value={closeReason}></textarea></label><footer><button class="primary" disabled={busy}>{closeMode==='reopen'?'开启新一轮':'确认结束'}</button></footer>
 </fieldset></form></dialog>
 
-<dialog class="ledger-dialog" bind:this={setupDialog}><header><h3>连接 Codex 任务登记</h3><button aria-label="关闭接入说明" on:click={()=>setupDialog.close()}>×</button></header><p>将配置添加到 Codex 的 config.toml，然后在新对话中使用。MCP 在本机 Rust 进程运行，App 关闭后仍可登记。</p><label>MCP 配置<textarea readonly rows="5" value={setup.config}></textarea></label><button on:click={()=>copy(setup.config,'配置')}>复制配置</button><p>将下面的简短约定加入项目 AGENTS.md，让登记集中在关键节点。</p><label>项目约定<textarea readonly rows="6" value={setup.instructions}></textarea></label><button on:click={()=>copy(setup.instructions,'项目约定')}>复制项目约定</button><p role="status">{copied}</p></dialog>
+<dialog class="ledger-dialog" bind:this={setupDialog}><header><h3>连接 Codex 任务登记</h3><button aria-label="关闭接入说明" on:click={()=>setupDialog.close()}>×</button></header><p>将下面配置替换 config.toml 中的 codepet_tasks 条目，然后在新对话中使用。本机 HTTP 服务由 Code Pet 后台提供，关闭窗口不影响连接；退出应用后停止。</p><label>MCP 配置<textarea readonly rows="5" value={setup.config}></textarea></label><button on:click={()=>copy(setup.config,'配置')}>复制配置</button><p>将下面的简短约定加入项目 AGENTS.md，让登记集中在关键节点。</p><label>项目约定<textarea readonly rows="6" value={setup.instructions}></textarea></label><button on:click={()=>copy(setup.instructions,'项目约定')}>复制项目约定</button><p role="status">{copied}</p></dialog>
 
 <style>
   .task-ledger{width:100%;margin:0;padding:12px 0 0;color:var(--wb-text);font:13px/1.6 var(--font-family-ui);min-width:0}

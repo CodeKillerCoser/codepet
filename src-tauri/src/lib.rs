@@ -409,6 +409,19 @@ pub fn run() {
                 };
                 app.manage(std::sync::Mutex::new(guard));
             }
+            let task_mcp = codepet_task_mcp::http::HttpRuntime::start_on(
+                tauri::async_runtime::handle().inner(),
+                paths::for_package(app.package_info())?.data,
+                codepet_task_mcp::http::DEFAULT_HTTP_PORT,
+            );
+            let mcp_status = task_mcp.clone();
+            app.manage(task_mcp);
+            tauri::async_runtime::spawn(async move {
+                match mcp_status.configuration().await {
+                    Ok(config) => app_log::info("task_mcp", config["url"].as_str().unwrap_or("HTTP service ready")),
+                    Err(error) => app_log::error("task_mcp", &error),
+                }
+            });
             let handle = app.handle().clone();
             let (provider_host_state, remote_access_runtime) =
                 match ProviderHostState::from_app(&handle) {
@@ -624,12 +637,14 @@ fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
         tauri::RunEvent::ExitRequested { code, api, .. } => {
             let provider_host = app.state::<ProviderHostState>().inner().clone();
             let remote_access = app.state::<RemoteAccessRuntime>().inner().clone();
-            if provider_host.shutdown_completed() && remote_access.shutdown_completed() {
+            let task_mcp = app.state::<codepet_task_mcp::http::HttpRuntime>().inner().clone();
+            if provider_host.shutdown_completed() && remote_access.shutdown_completed() && task_mcp.shutdown_completed() {
                 return;
             }
             api.prevent_exit();
             let app = app.clone();
             tauri::async_runtime::spawn(async move {
+                task_mcp.shutdown_once().await;
                 remote_access.shutdown_once().await;
                 if provider_host.shutdown_once().await {
                     request_app_exit(&app, code.unwrap_or(0));
@@ -645,8 +660,10 @@ fn handle_run_event(app: &AppHandle, event: tauri::RunEvent) {
             }
             let provider_host = app.state::<ProviderHostState>().inner().clone();
             let remote_access = app.state::<RemoteAccessRuntime>().inner().clone();
-            if !provider_host.shutdown_completed() || !remote_access.shutdown_completed() {
+            let task_mcp = app.state::<codepet_task_mcp::http::HttpRuntime>().inner().clone();
+            if !provider_host.shutdown_completed() || !remote_access.shutdown_completed() || !task_mcp.shutdown_completed() {
                 tauri::async_runtime::block_on(async move {
+                    task_mcp.shutdown_once().await;
                     remote_access.shutdown_once().await;
                     provider_host.shutdown_once().await;
                 });
