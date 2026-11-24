@@ -10,22 +10,22 @@ Git 工作台回答工作区是否残留改动；任务账本追踪“要解决�
 
 ## 实现与数据流
 
-Task 保存目标标题、背景、bugfix/feature 标记、项目、创建来源/时间和 runs。TaskRun 保存本次说明、四态、验收计划及结果、agentWorkspace、agentConversation 和 timeline。首次创建包含首个执行；更新执行不改变任务背景。旧执行与验收历史保留，新执行清空通过结果。完整字段与边界见 [领域定义](../30-domains/task-management/task-record-model.md)。
+Task 保存目标标题、背景、项目、创建来源/时间和 runs。TaskRun 保存执行标题、bugfix/feature 类型、goal/solution、本次补充说明、四态、验收计划及结果、agentWorkspace、agentConversation 和 timeline。首次创建包含首个执行；更新执行不改变任务背景。旧执行与验收历史保留，新执行清空通过结果。完整字段与边界见 [领域定义](../30-domains/task-management/task-record-model.md)。
 
-MCP 由 App Rust 后台在 127.0.0.1:47623/mcp 提供。四工具为 create-task、create-task-run、update-task-run、find-tasks；HTTP Header X-CodePet-Agent 记录客户端来源。创建者固定，更新者写时间线；权限仍区分 Agent 与人工。初始化说明与界面展示使用同一 instructions.md，安装接入后无需另行复制 AGENTS 约定。
+MCP 由 App Rust 后台在 127.0.0.1:47623/mcp 提供。四工具为 create-task、create-task-run、update-task-run、find-tasks；HTTP Header X-CodePet-Agent 记录客户端来源。创建者固定，更新者写时间线；权限仍区分 Agent 与人工。初始化和接入面板使用同一份 Rust 提示词配置，默认来源为 instructions.md；用户可编辑保存并恢复默认，安装接入后无需另行复制 AGENTS 约定。
 
-原子事务、版本冲突和幂等回执沿用现有 Store。活动数据为 tasks/v3，首次从 v2 原子导入且不修改旧文件。历史未记录具体 Agent 时保留 unknown。backend API 28 阻止旧二进制加载新前端接口；需安装新 App，旧 stdio 入口保留但同样改为四工具。
+原子事务、版本冲突和幂等回执沿用现有 Store。活动数据为 tasks/v4，首次优先从 v3、否则从 v2 原子导入且不修改旧文件。历史未记录具体 Agent 时保留 unknown。backend API 29 阻止旧二进制加载新前端接口；需安装新 App，旧 stdio 入口保留但同样改为四工具。
 
 ## 界面
 
-沿用 App 主题、容器级固定二级导航与列表/详情布局。任务头部显示目标、标记、项目、创建来源/时间及背景；执行区显示本次说明、当前状态与历史选择；验收清单显示检查项和实际结果。背景及处理摘要过长时默认三行，可展开。工作区路径/分支/状态/文件、对话、验收记录和时间线合并在“执行记录”折叠区，减少常驻信息块。任务信息与执行分别编辑。
+沿用 App 主题、容器级固定二级导航与列表/详情布局。任务头部按标题、描述、基本信息排列，分割线在基本信息下方。低对比运行卡片承载执行标题/类型/状态/创建者/时间；详情是目标与方案、工作区、逐项验收和活动时间线四区，对话链接紧邻方案。验收点击整行展开，未验收为空心圆，人工通过显示独立勾，结果按单项记录，来源/版本在展开记录中保留。移除“更新执行”“结束执行”两个入口；后台人工关闭权限不变。长背景/目标/方案按需展开，变更文件也可展开查看。
 
 ## 涉及模块
 
 - tasks/：新对象、执行写入、旧数据迁移和验收规则，保证背景与执行独立、历史不丢失。
 - workbench.rs：向同 crate 的任务观测公开已有有界 Git 命令，保持统一平台业务边界。
 - task-mcp/http 与 task_ledger：按请求取得来源，Agent 与人工共享同一活动 Ledger，前端不代理 MCP。
-- TaskLedger.svelte、taskLedger.ts：两层信息与单独表单，沿用主题和框架弹窗焦点。
+- TaskLedger.svelte、taskLedger.ts：任务列表与协调，TaskRunDetail 四区详情，TaskAgentSetup 可编辑接入提示词与独立表单，沿用主题和框架弹窗焦点。
 - webcontent-contract.json：提升原生 API，防止旧 App 误展示新命令。
 
 ## 风险及验证
@@ -35,3 +35,11 @@ MCP 由 App Rust 后台在 127.0.0.1:47623/mcp 提供。四工具为 create-task
 ## 验证与知识
 
 运行任务领域/HTTP SDK 测试、独立与打包二进制的 HTTP/stdio 黑盒、原生 IPC/GUI、Chromium/WebKit、前端测试、生产构建和源码尺寸检查。命令及证据在 [接入 runbook](../40-runbooks/codepet-task-mcp.md)，传输权限约束在 [规约](../60-rules/local-task-mcp-transport.md)。安装版人工验收及模型在真实长对话中主动登记的可靠性尚待实际使用，协议可用不能代替这两项。
+
+## 2026-11-24 执行详情与提示词调整
+
+用户已确认视觉稿：任务头部按标题、描述、基本信息排列，分割线在基本信息下方；低对比卡片只用于切换执行，并在卡片内展示类型、状态、创建者和时间。详情保持目标与方案、工作区、逐项验收、活动时间线四个区域，移除更新执行/结束执行两个入口。验收项点击整行展开，未验收为空心圆，通过为独立勾；记录结果按单项打开，不常驻表单。自测来源仍留在展开记录中，不能误算成人工通过。
+
+数据变化：kind 从 Task 移到 TaskRun，补齐 title/goal/solution；新工具参数围绕执行，工具仍为四个。历史长描述保留，不猜测拆分。旧 v3/v2 原子导入 v4，源账本不覆盖。接入面板增加提示词编辑、保存、恢复默认，配置持久化由 Rust 管理，HTTP/stdio 新初始化读取同一配置。
+
+风险与验证：迁移丢历史用源文件字节和 ID/证据断言；单项结果串项用实际原生 IPC 验证两项独立累积；提示词仅界面生效用官方 HTTP 初始化/重启验证；冲突覆盖用任务和提示词双 revision 测试；布局与焦点用明暗、窄屏和键盘回归。实现涉及 tasks 模型/迁移/投影，MCP 初始化与设置，Tauri 人工入口，TaskRunDetail/TaskAgentSetup 与共享样式；它们分别负责结构、实际协议、权限和展示。

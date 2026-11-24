@@ -63,8 +63,9 @@ async fn qa_http_task_write(
     if result.get("error").is_some() || result["result"]["isError"] == true {
         return Err(format!("native HTTP MCP write failed: {result}"));
     }
-    serde_json::from_str(result["result"]["content"][0]["text"].as_str().ok_or("missing receipt")?)
-        .map_err(|e| e.to_string())
+    let mut receipt: Value = serde_json::from_str(result["result"]["content"][0]["text"].as_str().ok_or("missing receipt")?).map_err(|e| e.to_string())?;
+    receipt["initializeInstructions"] = init["result"]["instructions"].clone();
+    Ok(receipt)
 }
 
 #[tauri::command]
@@ -130,7 +131,7 @@ fn main() {
     if expected["mode"] == "tasks" {
         use codepet_task_lineage::tasks::{Actor, Ledger, CreateTaskInput, UpdateTaskRunInput};
         let ledger=Ledger::new(data.path());
-        let input:CreateTaskInput=serde_json::from_value(json!({"agentWorkspace":{"path":expected["workspace"]},"title":"修复桌宠菜单点击失效","description":"切换窗口后首次点击无响应，影响菜单操作。","kind":"bugfix","initialRun":{"description":"定位窗口焦点切换后的事件绑定，修复点击处理并验证菜单。","validationPlan":{"items":[{"title":"切换窗口后点击","precondition":"应用运行十分钟","steps":"切换到其他窗口，再点击桌宠","expected":"菜单正常打开"}]}}})).unwrap();
+        let input:CreateTaskInput=serde_json::from_value(json!({"agentWorkspace":{"path":expected["workspace"]},"title":"修复桌宠菜单点击失效","description":"切换窗口后首次点击无响应，影响菜单操作。","initialRun":{"title":"定位点击事件","kind":"bugfix","goal":"切换窗口后菜单正常响应","solution":"修复焦点切换后的点击事件绑定","description":"定位窗口焦点切换后的事件绑定，修复点击处理并验证菜单。","validationPlan":{"items":[{"title":"切换窗口后点击","precondition":"应用运行十分钟","steps":"切换到其他窗口，再点击桌宠","expected":"菜单正常打开"},{"title":"连续点击仍保持响应","steps":"连续打开和关闭菜单","expected":"每次点击均正常响应"}]}}})).unwrap();
         let created=ledger.create_task(input,Actor::agent("codex").unwrap()).unwrap();
         let update:UpdateTaskRunInput=serde_json::from_value(json!({"taskId":created.task_id,"runId":created.run_id,"expectedRevision":created.revision,"status":"published","delivery":"原生任务验收样例 · 1.2.0","note":"本地实现和自测已完成，等待发布验收","verification":{"planRevision":1,"stage":"local","target":"当前未提交工作区","environment":"macOS","results":[{"criterionId":created.criterion_ids[0],"result":"passed","evidence":"本地实际点击验证通过"}]}})).unwrap();
         ledger.update_task_run(update,Actor::agent("codex").unwrap()).unwrap();

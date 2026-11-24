@@ -94,10 +94,15 @@ impl HttpRuntime {
                 let value = status.borrow().clone();
                 match value {
                     EndpointStatus::Starting => {}
-                    EndpointStatus::Ready(config) => {
+                    EndpointStatus::Ready(mut config) => {
                         if status.has_changed().is_err() {
                             return Err("本机任务 MCP HTTP 服务已退出".into());
                         }
+                        let settings = self.instructions().await?;
+                        config
+                            .as_object_mut()
+                            .unwrap()
+                            .extend(settings.as_object().unwrap().clone());
                         return Ok(config);
                     }
                     EndpointStatus::Failed(error) => return Err(error),
@@ -111,6 +116,24 @@ impl HttpRuntime {
         })
         .await
         .map_err(|_| "本机任务 MCP HTTP 服务启动超时，请重试".to_string())?
+    }
+    pub async fn instructions(&self) -> Result<Value, String> {
+        let ledger = self.ledger();
+        tokio::task::spawn_blocking(move || crate::instructions::read(&ledger))
+            .await
+            .map_err(|e| e.to_string())?
+    }
+    pub async fn save_instructions(
+        &self,
+        expected_revision: u64,
+        text: Option<String>,
+    ) -> Result<Value, String> {
+        let ledger = self.ledger();
+        tokio::task::spawn_blocking(move || {
+            crate::instructions::save(&ledger, expected_revision, text.as_deref())
+        })
+        .await
+        .map_err(|e| e.to_string())?
     }
     pub async fn shutdown_once(&self) {
         self.inner.shutdown.cancel();

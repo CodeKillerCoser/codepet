@@ -49,7 +49,7 @@ try{
  first=await start();
  const tools=await first.rpc('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['create-task','create-task-run','find-tasks','update-task-run']);
  const toolBytes=Buffer.byteLength(JSON.stringify(tools));assert.ok(toolBytes<24000);
- const input={agentWorkspace:{path:workspace},title:'HTTP 验收样例',description:'任务背景',kind:'bugfix',initialRun:{description:'通过 HTTP 登记并验证',validationPlan:{items:[{title:'可登记并读取',steps:'保存并查询',expected:'任务和执行一致'}]}}};
+ const input={agentWorkspace:{path:workspace},title:'HTTP 验收样例',description:'任务背景',initialRun:{title:'首次实现',kind:'bugfix',goal:'修复目标',solution:'修复方案',description:'通过 HTTP 登记并验证',validationPlan:{items:[{title:'可登记并读取',steps:'保存并查询',expected:'任务和执行一致'}]}}};
  const created=await first.call('create-task',input);assert.equal(created.revision,1);assert.equal(created.createdBy,'codex');
  const retry=await first.call('create-task',input);assert.equal(retry.taskId,created.taskId);
  const updated=await first.call('update-task-run',{taskId:created.taskId,runId:created.runId,expectedRevision:1,status:'ready_for_delivery',description:'本机 HTTP 自测完成'});assert.equal(updated.revision,2);

@@ -1,135 +1,262 @@
 <script lang="ts">
-  import {onMount,tick} from 'svelte';
+  import {onMount, tick} from 'svelte';
   import {open} from '@tauri-apps/plugin-dialog';
-  import {ChevronRight,Ellipsis} from '@lucide/svelte';
+  import {Ellipsis} from '@lucide/svelte';
   import * as Dialog from './ui/dialog/index';
-  import {taskRequest as api,currentRun,taskStatus,statuses,phases,kinds,scopes,results,latestResult,acceptanceReady,filterTasks,actorLabel,fileLabels,type Task,type TaskRun,type Criterion,type Scope,type TestResult,type TaskKind,type RunStatus,type Receipt} from './taskLedger';
-  export let workspaceHint='';
-  let tasks:Task[]=[],query='',project='',status='all',selectedId='',runId='',loading=true,busy=false,error='',message='',mobileDetail=false;
-  let heading:HTMLHeadingElement,lastButton:HTMLButtonElement|undefined;
-  let taskDialog:Dialog.ModalHandle,runDialog:Dialog.ModalHandle,verifyDialog:Dialog.ModalHandle,closeDialog:Dialog.ModalHandle,setupDialog:Dialog.ModalHandle;
-  let taskDraft:Task|null=null,taskTitle='',taskDescription='',taskKind:TaskKind='feature';
-  let runTask:Task|null=null,newRun=false,runDescription='',runStatus:RunStatus='in_progress',workspace='',commits='',delivery='';
-  let criteria:Criterion[]=[],includePlan=false,originalPlan='';
-  let verifyTask:Task|null=null,verifyRun:TaskRun|null=null,stage:Scope='release',target='',environment='',checks:Record<string,{result:TestResult;evidence:string}>={};
-  let closeTask:Task|null=null,closeAccepted=false,closeReason='';
-  let setup={config:'',instructions:''},copied='',moreOpen=false,moreTrigger:HTMLElement;
-  let pending:{fingerprint:string;operationId:string}|null=null;
-  let expandedTask=false,expandedRun=false,shownTask='',shownRun='';
-  $: filtered=filterTasks(tasks,query,project,status);
-  $: selected=filtered.find(t=>t.id===selectedId)??filtered[0];
-  $: run=selected?.runs.find(r=>r.id===runId)??(selected&&currentRun(selected));
-  $: if(selected?.id!==shownTask){shownTask=selected?.id??'';expandedTask=false;}
-  $: if(run?.id!==shownRun){shownRun=run?.id??'';expandedRun=false;}
-  $: isCurrent=!!selected&&run?.id===currentRun(selected).id;
-  $: canWrite=isCurrent&&run?.status!=='closed';
-  $: items=run?.validationPlan.items??[];
-  $: projects=[...new Map(tasks.map(t=>[t.projectId,t.projectName])).entries()];
-  $: failures=new Set(items.filter(c=>run&&(['local','release'] as const).some(s=>(c.scope==='both'||c.scope===s)&&latestResult(run,c,s).result==='failed')).map(c=>c.id));
-  const fmt=(n:number)=>new Date(n).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
-  const blank=():Criterion=>({id:'',title:'',precondition:'',steps:'',expected:'',scope:'both',required:true});
-  async function load(){loading=true;error='';try{tasks=await api<Task[]>('list');}catch(e){error=String(e);}finally{loading=false;}}
-  onMount(()=>{void load();const focus=()=>{if(!busy&&![taskDialog,runDialog,verifyDialog,closeDialog,setupDialog].some(d=>d?.isOpen()))void load();};window.addEventListener('focus',focus);return()=>window.removeEventListener('focus',focus);});
-  async function select(task:Task,button:HTMLButtonElement){selectedId=task.id;runId='';lastButton=button;mobileDetail=true;await tick();heading?.focus({preventScroll:true});}
-  async function back(){mobileDetail=false;await tick();lastButton?.focus({preventScroll:true});}
-  async function directory(){const path=await open({directory:true,multiple:false});if(typeof path==='string')workspace=path;}
-  function editTask(task:Task|null){taskDraft=task?structuredClone(task):null;taskTitle=task?.title??'';taskDescription=task?.description??'';taskKind=task?.kind??'feature';workspace=workspaceHint;runDescription='';includePlan=false;criteria=[blank()];error='';taskDialog.showModal();}
-  function editRun(create=false){if(!selected)return;runTask=structuredClone(selected);newRun=create;const current=currentRun(runTask);runDescription=create?'':current.description;runStatus=create?'in_progress':current.status;workspace=current.agentWorkspace.path;commits='';delivery='';criteria=structuredClone(current.validationPlan.items);if(create)criteria.forEach(c=>c.id='');if(!criteria.length)criteria=[blank()];includePlan=current.validationPlan.items.length>0;originalPlan=JSON.stringify(criteria);error='';runDialog.showModal();}
-  async function write(op:string,input:Record<string,unknown>){
-    const fingerprint=JSON.stringify({op,input});if(pending?.fingerprint!==fingerprint)pending={fingerprint,operationId:crypto.randomUUID()};
-    const receipt=await api<Receipt>(op,{input:{...input,...(op==='edit-task'?{}:{operationId:pending.operationId})}});
-    pending=null;selectedId=receipt.taskId;runId='';await load();return receipt;
+  import TaskRunDetail from './TaskRunDetail.svelte';
+  import TaskAgentSetup from './TaskAgentSetup.svelte';
+  import {
+    taskRequest as api, currentRun, taskStatus, statuses, kinds, scopes, results,
+    filterTasks, verificationContext, formatTaskTime as fmt,
+    type Task, type TaskRun, type Criterion, type Scope, type TestResult, type TaskKind, type Receipt
+  } from './taskLedger';
+  import './taskLedger.css';
+
+  export let workspaceHint = '';
+  let tasks: Task[] = [], query = '', project = '', status = 'all', selectedId = '', runId = '';
+  let loading = true, busy = false, error = '', message = '', mobileDetail = false;
+  let detail: TaskRunDetail, lastButton: HTMLButtonElement | undefined;
+  let taskDialog: Dialog.ModalHandle, runDialog: Dialog.ModalHandle, verifyDialog: Dialog.ModalHandle;
+  let setupDialog: TaskAgentSetup;
+  let taskDraft: Task | null = null, taskTitle = '', taskDescription = '';
+  let runTask: Task | null = null, runTitle = '', runKind: TaskKind = 'feature', runGoal = '', runSolution = '', workspace = '';
+  let criteria: Criterion[] = [], includePlan = false;
+  let verifyTask: Task | null = null, verifyRun: TaskRun | null = null, verifyItem: Criterion | null = null;
+  let stage: Scope = 'release', target = '', environment = '', checkResult: TestResult = 'not_tested', evidence = '';
+  let verifyReturnFocus: HTMLElement;
+  let moreOpen = false, moreTrigger: HTMLElement;
+  let pending: {fingerprint: string; operationId: string} | null = null;
+  $: filtered = filterTasks(tasks, query, project, status);
+  $: selected = filtered.find(t => t.id === selectedId) ?? filtered[0];
+  $: run = selected?.runs.find(r => r.id === runId) ?? (selected && currentRun(selected));
+  $: projects = [...new Map(tasks.map(t => [t.projectId, t.projectName])).entries()];
+
+  const blank = (): Criterion => ({id: '', title: '', precondition: '', steps: '', expected: '', scope: 'both', required: true});
+  async function load() {
+    loading = true; error = '';
+    try { tasks = await api<Task[]>('list'); }
+    catch (e) { error = String(e); }
+    finally { loading = false; }
   }
-  async function saveTask(){busy=true;error='';try{
-    if(taskDraft)await write('edit-task',{taskId:taskDraft.id,expectedRevision:taskDraft.revision,title:taskTitle,description:taskDescription,kind:taskKind});
-    else{await write('create-task',{title:taskTitle,description:taskDescription,kind:taskKind,agentWorkspace:{path:workspace},initialRun:{description:runDescription,...(includePlan?{validationPlan:{items:criteria}}:{})}});status='all';}
-    taskDialog.close();message='任务已保存';
-  }catch(e){error=String(e);}finally{busy=false;}}
-  async function saveRun(){if(!runTask)return;busy=true;error='';try{
-    const current=currentRun(runTask);const input:Record<string,unknown>={taskId:runTask.id,expectedRevision:runTask.revision,description:runDescription};
-    if(newRun||workspace!==current.agentWorkspace.path||commits.trim())input.agentWorkspace={path:workspace,relatedCommits:commits.split(/[\s,]+/).filter(Boolean)};
-    if(includePlan&&(newRun||JSON.stringify(criteria)!==originalPlan))input.validationPlan={items:criteria};
-    if(!newRun){input.runId=current.id;input.status=runStatus;if(delivery.trim())input.delivery=delivery.trim();}
-    await write(newRun?'create-task-run':'update-task-run',input);runDialog.close();message=newRun?'已创建新的任务执行，历史记录已保留':'执行已更新';
-  }catch(e){error=String(e);}finally{busy=false;}}
-  function startVerification(){if(!selected||!run||!items.length)return;verifyTask=structuredClone(selected);verifyRun=structuredClone(run);stage=items.every(c=>c.scope==='local')?'local':'release';target='';environment='';checks=Object.fromEntries(items.map(c=>[c.id,{result:'not_tested',evidence:''}]));error='';verifyDialog.showModal();}
-  async function saveVerification(){if(!verifyTask||!verifyRun)return;busy=true;error='';try{await write('update-task-run',{taskId:verifyTask.id,runId:verifyRun.id,expectedRevision:verifyTask.revision,verification:{planRevision:verifyRun.validationPlan.revision,stage,target,environment,results:verifyRun.validationPlan.items.filter(c=>c.scope==='both'||c.scope===stage).map(c=>({criterionId:c.id,...checks[c.id]}))},note:`人工${scopes[stage]}验收：${target}`});verifyDialog.close();message='验收结果已记录';}catch(e){error=String(e);}finally{busy=false;}}
-  function startClose(){if(!selected)return;closeTask=structuredClone(selected);closeAccepted=acceptanceReady(currentRun(closeTask));closeReason='';error='';closeDialog.showModal();}
-  async function finish(){if(!closeTask)return;busy=true;error='';try{await api('close-run',{taskId:closeTask.id,runId:currentRun(closeTask).id,expectedRevision:closeTask.revision,accepted:closeAccepted,reason:closeReason.trim()||(closeAccepted?'人工验收通过':'人工结束本次执行')});await load();closeDialog.close();message='本次执行已结束';}catch(e){error=String(e);}finally{busy=false;}}
-  async function showSetup(){moreOpen=false;moreTrigger?.focus();error='';try{setup=await api('setup');copied='';setupDialog.showModal();}catch(e){error=String(e);}}
-  async function copy(){try{await navigator.clipboard.writeText(setup.config);copied='配置已复制';}catch{copied='请选中文本复制';}}
-  async function openChat(conversationId:string){try{await api('openChat',{taskId:selected?.id,conversationId});}catch(e){error=String(e);}}
+  onMount(() => {
+    void load();
+    const focus = () => {
+      if (!busy && ![taskDialog, runDialog, verifyDialog, setupDialog].some(d => d?.isOpen())) void load();
+    };
+    window.addEventListener('focus', focus);
+    return () => window.removeEventListener('focus', focus);
+  });
+  async function select(task: Task, button: HTMLButtonElement) {
+    selectedId = task.id; runId = ''; lastButton = button; mobileDetail = true;
+    await tick(); detail?.focusHeading();
+  }
+  async function back() { mobileDetail = false; await tick(); lastButton?.focus({preventScroll: true}); }
+  async function directory() {
+    const path = await open({directory: true, multiple: false});
+    if (typeof path === 'string') workspace = path;
+  }
+  function editTask(task: Task | null) {
+    taskDraft = task ? structuredClone(task) : null; runTask = null;
+    taskTitle = task?.title ?? ''; taskDescription = task?.description ?? '';
+    workspace = workspaceHint; runTitle = ''; runGoal = ''; runSolution = ''; runKind = 'feature';
+    includePlan = false; criteria = [blank()]; error = '';
+    taskDialog.showModal();
+  }
+  function createRun() {
+    moreOpen = false;
+    if (!selected) return;
+    runTask = structuredClone(selected);
+    const current = currentRun(runTask);
+    runTitle = ''; runGoal = current.goal; runSolution = ''; runKind = 'bugfix';
+    workspace = current.agentWorkspace.path;
+    criteria = structuredClone(current.validationPlan.items).map(c => ({...c, id: ''}));
+    if (!criteria.length) criteria = [blank()];
+    includePlan = current.validationPlan.items.length > 0;
+    error = ''; runDialog.showModal();
+  }
+  async function write(op: string, input: Record<string, unknown>) {
+    const fingerprint = JSON.stringify({op, input});
+    if (pending?.fingerprint !== fingerprint) pending = {fingerprint, operationId: crypto.randomUUID()};
+    const receipt = await api<Receipt>(op, {input: {...input, ...(op === 'edit-task' ? {} : {operationId: pending.operationId})}});
+    pending = null; selectedId = receipt.taskId;
+    await load();
+    return receipt;
+  }
+  async function saveTask() {
+    busy = true; error = '';
+    try {
+      if (taskDraft) {
+        await write('edit-task', {taskId: taskDraft.id, expectedRevision: taskDraft.revision, title: taskTitle, description: taskDescription});
+      } else {
+        await write('create-task', {
+          title: taskTitle, description: taskDescription, agentWorkspace: {path: workspace},
+          initialRun: {title: runTitle || taskTitle, kind: runKind, goal: runGoal || taskTitle, solution: runSolution,
+            ...(includePlan ? {validationPlan: {items: criteria}} : {})}
+        });
+        status = 'all'; runId = '';
+      }
+      taskDialog.close(); message = '任务已保存';
+    } catch (e) { error = String(e); }
+    finally { busy = false; }
+  }
+  async function saveRun() {
+    if (!runTask) return;
+    busy = true; error = '';
+    try {
+      const receipt = await write('create-task-run', {
+        taskId: runTask.id, expectedRevision: runTask.revision,
+        title: runTitle, kind: runKind, goal: runGoal, solution: runSolution,
+        agentWorkspace: {path: workspace}, ...(includePlan ? {validationPlan: {items: criteria}} : {})
+      });
+      runId = receipt.runId; runDialog.close(); message = '已创建新的执行，历史记录已保留';
+    } catch (e) { error = String(e); }
+    finally { busy = false; }
+  }
+  function setVerificationContext() {
+    if (verifyRun) ({target, environment} = verificationContext(verifyRun, stage));
+  }
+  function startVerification(item: Criterion, returnFocus: HTMLElement) {
+    if (!selected || !run) return;
+    verifyTask = structuredClone(selected); verifyRun = structuredClone(run); verifyItem = structuredClone(item);
+    stage = item.scope === 'local' ? 'local' : 'release';
+    setVerificationContext(); checkResult = 'not_tested'; evidence = ''; error = '';
+    verifyReturnFocus = returnFocus;
+    verifyDialog.showModal();
+  }
+  async function saveVerification() {
+    if (!verifyTask || !verifyRun || !verifyItem) return;
+    busy = true; error = '';
+    try {
+      await write('update-task-run', {
+        taskId: verifyTask.id, runId: verifyRun.id, expectedRevision: verifyTask.revision,
+        verification: {planRevision: verifyRun.validationPlan.revision, stage, target, environment,
+          results: [{criterionId: verifyItem.id, result: checkResult, evidence}]},
+        note: `${scopes[stage]}验收「${verifyItem.title}」：${results[checkResult]} · ${target}`
+      });
+      verifyDialog.close(); message = '此项验收结果已记录';
+    } catch (e) { error = String(e); }
+    finally { busy = false; }
+  }
+  async function showSetup() {
+    moreOpen = false; moreTrigger?.focus(); error = '';
+    try { await setupDialog.show(); } catch (e) { error = String(e); }
+  }
+  async function openChat(conversationId: string) {
+    try { await api('openChat', {taskId: selected?.id, conversationId}); }
+    catch (e) { error = String(e); }
+  }
 </script>
-<svelte:window on:click={e=>{if(moreOpen&&!(e.target instanceof Element&&e.target.closest('.ledger-more')))moreOpen=false;}} on:keydown={e=>{if(e.key==='Escape'&&moreOpen){e.preventDefault();moreOpen=false;moreTrigger?.focus();}}}/>
+
+<svelte:window on:click={e => { if (moreOpen && !(e.target instanceof Element && e.target.closest('.ledger-more'))) moreOpen = false; }}
+  on:keydown={e => { if (e.key === 'Escape' && moreOpen) { e.preventDefault(); moreOpen = false; moreTrigger?.focus(); } }}/>
 
 {#snippet checklistEditor()}
-  <label class="checkbox"><input type="checkbox" bind:checked={includePlan}/>登记或修订验证清单</label>
+  <label class="checkbox"><input type="checkbox" bind:checked={includePlan}/>{runTask ? '编辑验收清单（未编辑时沿用上一轮）' : '登记验收清单'}</label>
   {#if includePlan}
-    {#each criteria as criterion,i}<fieldset class="check-editor"><legend>验收点 {i+1}</legend><label>检查点<input required bind:value={criterion.title}/></label><label>前置条件（可选）<input bind:value={criterion.precondition}/></label><label>操作步骤<textarea required rows="2" bind:value={criterion.steps}></textarea></label><label>预期结果<textarea required rows="2" bind:value={criterion.expected}></textarea></label><div class="form-row"><label>适用阶段<select bind:value={criterion.scope}>{#each Object.entries(scopes) as [value,label]}<option {value}>{label}</option>{/each}</select></label><label class="checkbox"><input type="checkbox" bind:checked={criterion.required}/>必验</label><button type="button" disabled={criteria.length===1} on:click={()=>criteria=criteria.filter((_,n)=>n!==i)}>移除</button></div></fieldset>{/each}
-    <button type="button" disabled={criteria.length>=30} on:click={()=>criteria=[...criteria,blank()]}>添加验收点</button>
+    {#each criteria as criterion, i}
+      <fieldset class="check-editor"><legend>验收项 {i + 1}</legend>
+        <label>验证什么<input required bind:value={criterion.title}/></label>
+        <label>前置条件（可选）<input bind:value={criterion.precondition}/></label>
+        <label>操作步骤<textarea required rows="2" bind:value={criterion.steps}></textarea></label>
+        <label>预期结果<textarea required rows="2" bind:value={criterion.expected}></textarea></label>
+        <div class="form-row"><label>适用阶段<select bind:value={criterion.scope}>{#each Object.entries(scopes) as [value, label]}<option {value}>{label}</option>{/each}</select></label>
+          <label class="checkbox"><input type="checkbox" bind:checked={criterion.required}/>必验</label>
+          <button type="button" disabled={criteria.length === 1} on:click={() => criteria = criteria.filter((_, n) => n !== i)}>移除</button>
+        </div>
+      </fieldset>
+    {/each}
+    <button type="button" disabled={criteria.length >= 30} on:click={() => criteria = [...criteria, blank()]}>添加验收项</button>
   {/if}
+{/snippet}
+{#snippet runEditor()}
+  <label>执行标题<input maxlength="160" bind:value={runTitle} placeholder="简短说明这次处理什么"/></label>
+  <label>执行类型<select bind:value={runKind}>{#each Object.entries(kinds) as [value, label]}<option {value}>{label}</option>{/each}</select></label>
+  <label>本次目标<textarea rows="2" maxlength="8000" bind:value={runGoal}></textarea></label>
+  <label>处理方案<textarea rows="3" maxlength="8000" bind:value={runSolution}></textarea></label>
+  {@render checklistEditor()}
 {/snippet}
 
 <section class="task-ledger" aria-label="任务与验收">
-  <div class="toolbar"><div class="filters" role="search" aria-label="筛选任务"><input aria-label="搜索任务" placeholder="搜索任务、背景或处理结论" bind:value={query}/><select aria-label="任务项目" bind:value={project}><option value="">全部项目</option>{#each projects as [id,name]}<option value={id}>{name}</option>{/each}</select><select aria-label="任务状态" bind:value={status}><option value="all">全部状态</option>{#each Object.entries(statuses) as [value,label]}<option {value}>{label}</option>{/each}</select></div>
-    <div class="toolbar-actions"><button class="quiet" disabled={busy||loading} on:click={load}>刷新任务</button><button class="primary" disabled={busy} on:click={()=>editTask(null)}>新建任务</button><details class="ledger-more" open={moreOpen}><summary aria-label="更多任务操作" aria-expanded={moreOpen} title="更多任务操作" bind:this={moreTrigger} on:click|preventDefault={()=>moreOpen=!moreOpen}><Ellipsis size={16}/></summary><div class="more-menu"><button class="quiet" on:click={showSetup}>接入 Agent</button></div></details></div>
+  <div class="toolbar">
+    <div class="filters" role="search" aria-label="筛选任务">
+      <input aria-label="搜索任务" placeholder="搜索任务、背景或处理结论" bind:value={query}/>
+      <select aria-label="任务项目" bind:value={project}><option value="">全部项目</option>{#each projects as [id, name]}<option value={id}>{name}</option>{/each}</select>
+      <select aria-label="任务状态" bind:value={status}><option value="all">全部状态</option>{#each Object.entries(statuses) as [value, label]}<option {value}>{label}</option>{/each}</select>
+    </div>
+    <div class="toolbar-actions">
+      <button class="quiet" disabled={busy || loading} on:click={load}>刷新任务</button>
+      <button class="primary" disabled={busy} on:click={() => editTask(null)}>新建任务</button>
+      <details class="ledger-more" open={moreOpen}>
+        <summary aria-label="更多任务操作" aria-expanded={moreOpen} title="更多任务操作" bind:this={moreTrigger} on:click|preventDefault={() => moreOpen = !moreOpen}><Ellipsis size={16}/></summary>
+        <div class="more-menu"><button class="quiet" on:click={showSetup}>接入 Agent</button>
+          {#if selected && ['published', 'closed'].includes(currentRun(selected).status)}<button class="quiet" on:click={createRun}>新一次执行</button>{/if}
+        </div>
+      </details>
+    </div>
   </div>
-  {#if error}<p role="alert" class="error">{error}</p>{/if}{#if message}<p class="message" role="status">{message}</p>{/if}
+  {#if error}<p role="alert" class="error">{error}</p>{/if}
+  {#if message}<p class="message" role="status">{message}</p>{/if}
   <div class="ledger-layout" class:detail-open={mobileDetail}>
-    <section class="task-list" aria-label="任务列表"><small class="result-count">{filtered.length} 个结果</small><div class="task-rows">
-      {#each filtered as task(task.id)}<button class="task-row" class:selected={selected?.id===task.id} aria-pressed={selected?.id===task.id} on:click={e=>select(task,e.currentTarget)}><span class="row-top"><strong>{task.title}</strong><span class="status-badge" data-status={currentRun(task).status}>{taskStatus(task)}</span></span><span class="row-context"><span><span class="kind-tag">{kinds[task.kind]}</span>{task.projectName} · {task.runs.length} 次执行</span><small>{fmt(task.updatedAt)}</small></span></button>
-      {:else}<div class="empty">{loading?'读取任务…':tasks.length?'没有符合条件的任务':'还没有登记任务'}{#if !loading&&!tasks.length}<p>连接 Agent 在关键节点登记，也可以手动新建。</p>{/if}</div>{/each}
-    </div></section>
+    <section class="task-list" aria-label="任务列表"><small class="result-count">{filtered.length} 个结果</small>
+      <div class="task-rows">
+        {#each filtered as task (task.id)}
+          <button class="task-row" class:selected={selected?.id === task.id} aria-pressed={selected?.id === task.id} on:click={e => select(task, e.currentTarget)}>
+            <span class="row-top"><strong>{task.title}</strong><span class="status-badge" data-status={currentRun(task).status}>{taskStatus(task)}</span></span>
+            <span class="row-context"><span>{task.projectName} · {task.runs.length} 次执行</span><small>{fmt(task.updatedAt)}</small></span>
+          </button>
+        {:else}
+          <div class="empty">{loading ? '读取任务…' : tasks.length ? '没有符合条件的任务' : '还没有登记任务'}{#if !loading && !tasks.length}<p>连接 Agent 在关键节点登记，也可以手动新建。</p>{/if}</div>
+        {/each}
+      </div>
+    </section>
     <aside class="task-detail" aria-label="任务详情">
-      {#if selected&&run}
+      {#if selected && run}
         <button class="back quiet" on:click={back}>← 返回任务列表</button>
-        <header class="task-heading"><h3 tabindex="-1" bind:this={heading}>{selected.title}</h3><button class="quiet metadata-edit" on:click={()=>editTask(selected)}>修改任务信息</button></header>
-        <div class="task-context"><span class="kind-tag">{kinds[selected.kind]}</span><span>{selected.projectName}</span><span>{actorLabel(selected.createdBy)} 创建 · {fmt(selected.createdAt)}</span></div>
-        {#if selected.description}<p class="task-background" id={`task-description-${selected.id}`} class:clamped={selected.description.length>220&&!expandedTask}>{selected.description}</p>{#if selected.description.length>220}<button class="quiet text-toggle" aria-expanded={expandedTask} aria-controls={`task-description-${selected.id}`} on:click={()=>expandedTask=!expandedTask}>{expandedTask?'收起任务背景':'展开任务背景'}</button>{/if}{/if}
-        <section class="run-section" aria-label="任务执行">
-          <header class="run-heading"><h4>任务执行</h4>{#if selected.runs.length>1}<select aria-label="任务执行历史" bind:value={runId}><option value="">第 {selected.runs.length} 次 · 当前</option>{#each selected.runs.slice(0,-1).reverse() as item,index}<option value={item.id}>第 {selected.runs.length-index-1} 次 · {statuses[item.status]}</option>{/each}</select>{/if}<span class="status-badge" data-status={run.status}>{statuses[run.status]}</span></header>
-          <small class="run-context">{actorLabel(run.createdBy)} · {fmt(run.createdAt)}{#if !isCurrent} · 历史执行，只读{/if}</small>
-          <p class="run-description" id={`run-description-${run.id}`} class:clamped={run.description.length>220&&!expandedRun}>{run.description||'尚未记录本次处理的结论与方案'}</p>{#if run.description.length>220}<button class="quiet text-toggle" aria-expanded={expandedRun} aria-controls={`run-description-${run.id}`} on:click={()=>expandedRun=!expandedRun}>{expandedRun?'收起处理摘要':'展开处理摘要'}</button>{/if}
-          {#if run.closure}<p class="closure">{run.closure.accepted?'人工验收通过':'本次执行已结束'} · {run.closure.reason}</p>{/if}
-          {#if isCurrent}<div class="actions">{#if canWrite}<button class:primary={items.length>0} class:quiet={!items.length} disabled={!items.length} on:click={startVerification}>记录人工验收</button><button class="quiet" on:click={()=>editRun()}>更新执行</button><button class="quiet" on:click={startClose}>结束执行</button>{/if}{#if run.status==='published'||run.status==='closed'}<button class="quiet" on:click={()=>editRun(true)}>新一次执行</button>{/if}</div>{/if}
-        </section>
-        <section class="acceptance-section" aria-label="验收清单"><div class="section-heading"><h4>验收清单</h4><small>{items.length?`${items.length} 项`:'尚未登记'}</small></div>
-          {#key `${selected.id}-${run.id}`}<div class="criteria">{#each items as criterion,i}<details class="criterion" open={failures.size?failures.has(criterion.id):i===0}><summary><ChevronRight class="fold-icon" size={12}/><span class="criterion-number">{String(i+1).padStart(2,'0')}</span><span class="criterion-name"><strong>{criterion.title}</strong><small>{criterion.required?'必验':'可选'} · {scopes[criterion.scope]}</small></span><span class="test-status">{#each criterion.scope==='both'?['local','release']:[criterion.scope] as s}{@const check=latestResult(run,criterion,s as Scope)}<span class:failure={check.result==='failed'} title={check.evidence??''}>{s==='local'?'本地':'发布'} <b>{results[check.result]}</b>{#if check.actor}<small>{check.actor==='human'?'人工':`${actorLabel(check.agent??'agent')} 自测`}</small>{/if}</span>{/each}</span></summary><dl class="criterion-body">{#if criterion.precondition}<div><dt>前提</dt><dd>{criterion.precondition}</dd></div>{/if}<div><dt>操作</dt><dd>{criterion.steps}</dd></div><div><dt>预期</dt><dd>{criterion.expected}</dd></div></dl></details>{:else}<p class="muted">方案确定后，在更新执行时登记验证清单。</p>{/each}</div>{/key}
-        </section>
-        <details class="execution-records"><summary><ChevronRight class="fold-icon" size={12}/><span>执行记录</span><small>工作区、对话与时间线</small></summary><div class="records-body">
-          <section class="workspace-record"><h5>Agent 工作区</h5><code>{run.agentWorkspace.branch??'分支未知'}{run.agentWorkspace.head?` · ${run.agentWorkspace.head.slice(0,10)}`:''}</code><p class="path">{run.agentWorkspace.path}</p><p class="muted">{run.agentWorkspace.changeStatus.hasUncommittedChanges===null?'未提交状态未知':run.agentWorkspace.changeStatus.hasUncommittedChanges?'有未提交改动':'工作区干净'} · {run.agentWorkspace.changeStatus.hasUnpushedCommits===null?'推送状态未知':run.agentWorkspace.changeStatus.hasUnpushedCommits?'有待推送提交':'无待推送提交'} · {fmt(run.agentWorkspace.observedAt)}</p><p class="muted">工作区变更由同目录任务共享，关联提交仅包含明确登记的 SHA；推送状态基于本地上游引用。</p>{#if run.agentWorkspace.error}<p class="muted">{run.agentWorkspace.error}</p>{/if}
-          <div class="changed-files">{#each run.agentWorkspace.changedFiles as file}<div class="changed-file"><small>{fileLabels[file.changeType]??file.changeType}{file.staged?' · 已暂存':''}</small><code>{file.originalPath?`${file.originalPath} → `:''}{file.path}</code></div>{/each}</div>{#if run.agentWorkspace.relatedCommits.length}<p class="muted">关联提交</p>{#each run.agentWorkspace.relatedCommits as sha}<code class="commit">{sha}</code>{/each}{/if}</section>
-          <section class="conversation-record"><h5>Agent 对话 · {run.agentConversation.length}</h5>{#each run.agentConversation as conversation}<button class="quiet chat" disabled={!conversation.verified||conversation.agent!=='codex'} on:click={()=>openChat(conversation.conversationId)}>{actorLabel(conversation.agent)} · {conversation.conversationId.slice(0,16)} {conversation.verified?'↗':'· 待核实'}</button>{:else}<p class="muted">尚未关联对话</p>{/each}</section>
-          <section class="verification-record"><h5>验收记录 · {run.validationPlan.records.length}</h5>{#each [...run.validationPlan.records].reverse() as record}<details class="verification"><summary>{record.actor==='human'?'人工验收':`${actorLabel(record.agent)} 自测`} · {scopes[record.stage]} · {record.target}<small>{fmt(record.createdAt)} · 清单第 {record.planRevision} 版</small></summary><p class="muted">{record.environment}</p>{#each record.results as result}<p class:failure={result.result==='failed'}>{run.validationPlan.revisions.find(p=>p.revision===record.planRevision)?.criteria.find(c=>c.id===result.criterionId)?.title??'历史检查项'}：{results[result.result]}</p><p class="muted preserve">{result.evidence}</p>{/each}</details>{:else}<p class="muted">尚未记录实际验收</p>{/each}</section>
-          <section class="timeline-record"><h5>活动时间线</h5><ol class="timeline">{#each [...run.timeline].reverse() as entry}<li><p>{entry.summary}</p>{#if entry.reference}<p class="preserve">{entry.reference}</p>{/if}<small>{fmt(entry.at)} · {actorLabel(entry.actor)}</small></li>{/each}</ol></section>
-        </div></details>
-      {:else}<div class="empty">选择任务查看本次执行</div>{/if}
+        <TaskRunDetail task={selected} bind:runId bind:this={detail} onEditTask={() => editTask(selected)} onVerify={startVerification} onOpenChat={openChat}/>
+      {:else}<div class="empty">选择任务查看执行记录</div>{/if}
     </aside>
   </div>
 </section>
 
-<Dialog.Modal title={taskDraft?'修改任务信息':'新建任务'} class="ledger-dialog" bind:this={taskDialog} onCancel={e=>{if(busy)e.preventDefault();}}><form on:submit|preventDefault={saveTask}><fieldset class="form-controls" disabled={busy}><header><h3>{taskDraft?'修改任务信息':'新建任务'}</h3><button type="button" aria-label="关闭任务编辑" on:click={()=>taskDialog.close()}>×</button></header>{#if error}<p class="error" role="alert">{error}</p>{/if}<label>任务标题<input required maxlength="160" bind:value={taskTitle} placeholder="一句话描述要解决什么"/></label><label>任务标记<select bind:value={taskKind}>{#each Object.entries(kinds) as [value,label]}<option {value}>{label}</option>{/each}</select></label><label>背景与现象<textarea rows="3" maxlength="8000" bind:value={taskDescription}></textarea></label>{#if !taskDraft}<label>工作区<div class="directory"><input required bind:value={workspace}/><button type="button" on:click={directory}>选择</button></div></label><label>首次执行说明<textarea rows="3" maxlength="8000" bind:value={runDescription}></textarea></label>{@render checklistEditor()}{/if}<footer><button class="primary">{busy?'保存中…':'保存任务'}</button></footer></fieldset></form></Dialog.Modal>
+<Dialog.Modal title={taskDraft ? '修改任务信息' : '新建任务'} class="ledger-dialog" bind:this={taskDialog} onCancel={e => { if (busy) e.preventDefault(); }}>
+  <form on:submit|preventDefault={saveTask}><fieldset class="form-controls" disabled={busy}>
+    <header><h3>{taskDraft ? '修改任务信息' : '新建任务'}</h3><button type="button" aria-label="关闭任务编辑" on:click={() => taskDialog.close()}>×</button></header>
+    {#if error}<p class="error" role="alert">{error}</p>{/if}
+    <label>任务标题<input required maxlength="160" bind:value={taskTitle} placeholder="一句话描述要解决什么"/></label>
+    <label>背景与现象<textarea rows="3" maxlength="8000" bind:value={taskDescription}></textarea></label>
+    {#if !taskDraft}
+      <label>工作区<div class="directory"><input required bind:value={workspace}/><button type="button" on:click={directory}>选择</button></div></label>
+      <details><summary>首次执行与验收（可选）</summary>{@render runEditor()}</details>
+    {/if}
+    <footer><button class="primary">{busy ? '保存中…' : '保存任务'}</button></footer>
+  </fieldset></form>
+</Dialog.Modal>
 
-<Dialog.Modal title={newRun?'新一次执行':'更新执行'} class="ledger-dialog" bind:this={runDialog} onCancel={e=>{if(busy)e.preventDefault();}}><form on:submit|preventDefault={saveRun}><fieldset class="form-controls" disabled={busy}><header><h3>{newRun?'新一次执行':'更新执行'}</h3><button type="button" aria-label="关闭执行编辑" on:click={()=>runDialog.close()}>×</button></header>{#if error}<p class="error" role="alert">{error}</p>{/if}<label>{newRun?'本次处理原因':'处理摘要'}<textarea required={newRun} rows="5" maxlength="8000" bind:value={runDescription} placeholder="本次为什么处理、确认了什么、采用什么方案"></textarea></label>{#if !newRun}<label>执行状态<select bind:value={runStatus}>{#each Object.entries(phases) as [value,label]}<option {value}>{label}</option>{/each}</select></label>{/if}<label>工作区<div class="directory"><input required bind:value={workspace}/><button type="button" on:click={directory}>选择</button></div></label>{#if !newRun}<label>关联提交（可选）<input bind:value={commits} placeholder="明确属于本任务的 SHA，以空格或逗号分隔"/></label><label>构建或发布引用<input required={runStatus==='published'&&runTask&&currentRun(runTask).status!=='published'} bind:value={delivery} placeholder="实际版本、构建或发布链接"/></label>{/if}{@render checklistEditor()}<footer><small>已有执行及验收证据会保留。</small><button class="primary">{busy?'保存中…':'保存执行'}</button></footer></fieldset></form></Dialog.Modal>
+<Dialog.Modal title="新一次执行" class="ledger-dialog" returnFocus={moreTrigger} bind:this={runDialog} onCancel={e => { if (busy) e.preventDefault(); }}>
+  <form on:submit|preventDefault={saveRun}><fieldset class="form-controls" disabled={busy}>
+    <header><h3>新一次执行</h3><button type="button" aria-label="关闭执行编辑" on:click={() => runDialog.close()}>×</button></header>
+    {#if error}<p class="error" role="alert">{error}</p>{/if}
+    <label>工作区<div class="directory"><input required bind:value={workspace}/><button type="button" on:click={directory}>选择</button></div></label>
+    {@render runEditor()}
+    <footer><small>新执行不继承旧验收结果。</small><button class="primary" disabled={!runTitle.trim()}>{busy ? '保存中…' : '创建执行'}</button></footer>
+  </fieldset></form>
+</Dialog.Modal>
 
-<Dialog.Modal title="记录人工验收" class="ledger-dialog" bind:this={verifyDialog} onCancel={e=>{if(busy)e.preventDefault();}}><form on:submit|preventDefault={saveVerification}><fieldset class="form-controls" disabled={busy}><header><h3>记录人工验收</h3><button type="button" aria-label="关闭人工验收" on:click={()=>verifyDialog.close()}>×</button></header>{#if error}<p class="error" role="alert">{error}</p>{/if}<label>验收阶段<select bind:value={stage}><option value="local">本地</option><option value="release">发布后</option></select></label><label>实际验收版本<input required bind:value={target}/></label><label>验收环境<input required bind:value={environment}/></label>{#each verifyRun?.validationPlan.items.filter(c=>c.scope==='both'||c.scope===stage)??[] as item}<fieldset class="check-editor"><legend>{item.title}</legend><p>{item.steps} → {item.expected}</p><label>结果<select bind:value={checks[item.id].result}>{#each Object.entries(results) as [value,label]}<option {value}>{label}</option>{/each}</select></label><label>证据或说明<textarea required rows="2" bind:value={checks[item.id].evidence}></textarea></label></fieldset>{/each}<footer><button class="primary" disabled={!verifyRun?.validationPlan.items.some(c=>c.scope==='both'||c.scope===stage)}>保存验收记录</button></footer></fieldset></form></Dialog.Modal>
+<Dialog.Modal title="记录验收结果" class="ledger-dialog" returnFocus={verifyReturnFocus} bind:this={verifyDialog} onCancel={e => { if (busy) e.preventDefault(); }}>
+  <form on:submit|preventDefault={saveVerification}><fieldset class="form-controls" disabled={busy}>
+    <header><h3>记录验收结果</h3><button type="button" aria-label="关闭验收记录" on:click={() => verifyDialog.close()}>×</button></header>
+    <p>{verifyItem?.title}</p>
+    {#if error}<p class="error" role="alert">{error}</p>{/if}
+    <label>验收阶段<select bind:value={stage} on:change={setVerificationContext}>
+      {#if verifyItem?.scope !== 'release'}<option value="local">本地</option>{/if}
+      {#if verifyItem?.scope !== 'local'}<option value="release">发布后</option>{/if}
+    </select></label>
+    <label>实际验收版本<input required bind:value={target}/></label>
+    <label>验收环境<input required bind:value={environment}/></label>
+    <label>结果<select bind:value={checkResult}>{#each Object.entries(results) as [value, label]}<option {value}>{label}</option>{/each}</select></label>
+    <label>证据或说明<textarea required rows="3" maxlength="3000" bind:value={evidence}></textarea></label>
+    <footer><button class="primary">{busy ? '保存中…' : '保存此项结果'}</button></footer>
+  </fieldset></form>
+</Dialog.Modal>
 
-<Dialog.Modal title="结束执行" class="ledger-dialog small-dialog" bind:this={closeDialog} onCancel={e=>{if(busy)e.preventDefault();}}><form on:submit|preventDefault={finish}><fieldset class="form-controls" disabled={busy}><header><h3>结束执行</h3><button type="button" aria-label="关闭结束操作" on:click={()=>closeDialog.close()}>×</button></header>{#if error}<p class="error" role="alert">{error}</p>{/if}<label class="checkbox"><input type="checkbox" bind:checked={closeAccepted} disabled={!closeTask||!acceptanceReady(currentRun(closeTask))}/>人工验收已通过</label><p class="muted">可以注明原因直接结束，已有验收记录保留。</p><label>结束说明<textarea rows="3" maxlength="2000" bind:value={closeReason}></textarea></label><footer><button class="primary">确认结束</button></footer></fieldset></form></Dialog.Modal>
-
-<Dialog.Modal title="连接 Agent 任务登记" class="ledger-dialog" returnFocus={moreTrigger} bind:this={setupDialog}><header><h3>连接 Agent 任务登记</h3><button aria-label="关闭接入说明" on:click={()=>setupDialog.close()}>×</button></header><p>替换 config.toml 中的 codepet_tasks 条目，在新对话中使用。本机 HTTP 由 Code Pet 后台提供，退出应用后停止。</p><label>MCP 配置<textarea readonly rows="6" value={setup.config}></textarea></label><button on:click={copy}>复制配置</button><p>配置中的 X-CodePet-Agent 标记创建来源，默认 codex。使用规则随 MCP 自动提供。</p><details><summary>查看 Agent 使用规则</summary><p class="muted preserve">{setup.instructions}</p></details><p role="status">{copied}</p></Dialog.Modal>
-
-<style>
-  .clamped{display:-webkit-box;-webkit-line-clamp:3;line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}.text-toggle{font-size:10px;min-height:24px;padding:2px 0}
-  .task-ledger{width:100%;min-width:0;color:var(--wb-text);font:13px/1.6 var(--font-family-ui)}*{box-sizing:border-box}button,input,select,textarea{font:inherit;color:inherit;background:var(--wb-panel);border:1px solid var(--wb-border);border-radius:5px;min-width:0}button{cursor:pointer;padding:5px 9px;min-height:30px}button:hover{border-color:var(--wb-border-strong)}button:disabled{opacity:.5;cursor:default}input,select,textarea{padding:6px 8px}textarea{width:100%;resize:vertical}:is(button,input,select,textarea,summary):focus-visible{outline:2px solid var(--color-focus-ring);outline-offset:2px}.primary{background:var(--wb-primary);border-color:var(--wb-primary);color:var(--wb-on-primary);font-weight:500}.quiet{background:transparent;border-color:transparent;color:var(--wb-muted)}.quiet:hover{background:var(--wb-control);border-color:transparent;color:var(--wb-text)}.muted,small{font-size:11px;color:var(--wb-muted)}.preserve{white-space:pre-wrap;overflow-wrap:anywhere}.error{padding:8px 10px;background:var(--wb-danger-bg);color:var(--wb-danger-text);border-radius:5px;overflow-wrap:anywhere}.message{font-size:11px;color:var(--wb-muted)}
-  .toolbar{display:flex;align-items:center;gap:12px;margin-bottom:14px}.filters{flex:1;min-width:0;display:grid;grid-template-columns:minmax(170px,1fr) minmax(104px,132px) minmax(96px,116px);gap:8px}.filters :is(input,select){width:100%;height:32px;font-size:12px;background:transparent}.toolbar-actions{display:flex;align-items:center;gap:5px;flex:none}.toolbar button{font-size:12px;white-space:nowrap}.ledger-more{position:relative}.ledger-more>summary{display:flex;align-items:center;justify-content:center;width:30px;height:30px;list-style:none;border-radius:5px;cursor:pointer;color:var(--wb-muted)}.ledger-more>summary:hover{background:var(--wb-control)}.more-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:5;min-width:136px;padding:5px;background:var(--wb-panel);border:1px solid var(--wb-border);border-radius:7px;box-shadow:0 8px 24px var(--wb-scrim)}.more-menu button{width:100%;text-align:left}
-  .ledger-layout{display:grid;grid-template-columns:minmax(230px,.8fr) minmax(0,1.4fr);min-height:440px;border-top:1px solid var(--wb-border)}.task-list{min-width:0;border-right:1px solid var(--wb-border);padding-right:10px}.result-count{display:block;padding:10px 10px 7px}.task-rows{max-height:calc(100dvh - 240px);overflow:auto}.task-row{display:flex;flex-direction:column;align-items:stretch;gap:7px;width:100%;padding:12px 10px;border:0;border-bottom:1px solid var(--wb-border);border-radius:0;background:transparent;text-align:left}.task-row:hover,.task-row.selected{background:var(--wb-control)}.task-row.selected{box-shadow:inset 2px 0 var(--wb-border-strong)}.row-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}.row-top strong{font-size:13px;font-weight:500;line-height:1.55;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}.row-context{display:flex;align-items:baseline;justify-content:space-between;gap:6px;flex-wrap:wrap;font-size:10px;color:var(--wb-muted)}.row-context small{font-size:10px}.kind-tag{display:inline-block;font-size:10px;color:var(--wb-muted);margin-right:6px;padding:0 4px;border:1px solid var(--wb-border);border-radius:3px;line-height:1.5}
-  .task-detail{min-width:0;padding:16px 0 12px 24px;max-height:calc(100dvh - 190px);overflow:auto;scrollbar-gutter:stable}.task-heading{display:flex;gap:10px;align-items:flex-start;justify-content:space-between}.task-heading h3{font-size:20px;font-weight:600;line-height:1.45;letter-spacing:-.02em;margin:0;overflow-wrap:anywhere}.task-heading h3:focus{outline:none}.metadata-edit{font-size:10px;white-space:nowrap;padding:3px 0;min-height:26px}.task-context{display:flex;align-items:center;gap:4px 10px;flex-wrap:wrap;margin:7px 0 0;color:var(--wb-muted);font-size:10px}.task-background{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.75;margin:10px 0 0}.run-section{border-block:1px solid var(--wb-border);padding:16px 0;margin-top:16px}.run-heading{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.run-heading h4,.section-heading h4{font-size:13px;font-weight:600;margin:0}.run-heading select{font-size:11px;padding:2px 5px;background:transparent;max-width:100%}.run-context{display:block;margin-top:5px;font-size:10px}.run-description{margin:10px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.75}.closure{font-size:11px;color:var(--wb-muted)}.actions{display:flex;gap:4px;flex-wrap:wrap;margin-top:12px}.actions button{font-size:11px;white-space:nowrap}.status-badge{display:inline-flex;align-items:center;justify-content:center;flex:none;white-space:nowrap;padding:2px 7px;border-radius:4px;font-size:11px;font-weight:500;line-height:1.5}.status-badge[data-status="in_progress"]{background:var(--wb-info-bg);color:var(--wb-info-strong-text)}.status-badge[data-status="ready_for_delivery"]{background:var(--wb-warning-bg);color:var(--wb-warning-strong-text)}.status-badge[data-status="published"]{background:var(--wb-success-bg);color:var(--wb-success-text)}.status-badge[data-status="closed"]{background:var(--wb-neutral-bg);color:var(--wb-neutral-text)}
-  .acceptance-section{padding:16px 0}.section-heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px}.criteria{border-top:1px solid var(--wb-border)}.criterion{border-bottom:1px solid var(--wb-border)}.criterion>summary{display:grid;grid-template-columns:12px 18px minmax(0,1fr) auto;gap:7px;align-items:center;list-style:none;padding:11px 0;cursor:pointer}.criterion-number{font-size:10px;color:var(--wb-muted)}.criterion-name{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;min-width:0}.criterion-name strong{font-size:12px;font-weight:500;overflow-wrap:anywhere}.criterion-name small{font-size:10px}.test-status{display:flex;gap:12px;font-size:10px;color:var(--wb-muted)}.test-status>span{display:flex;gap:4px;align-items:baseline;white-space:nowrap}.test-status b{font-weight:500;color:var(--wb-text)}.test-status small{font-size:9px}.failure,.failure b{color:var(--wb-danger-text)}.criterion-body{margin:0 0 12px 44px;padding-left:10px;border-left:1px solid var(--wb-border);font-size:12px}.criterion-body>div{display:grid;grid-template-columns:30px minmax(0,1fr);gap:10px;margin:5px 0}.criterion-body dt{color:var(--wb-muted);font-size:11px}.criterion-body dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
-  .execution-records{border-block:1px solid var(--wb-border)}.execution-records>summary{display:flex;gap:7px;align-items:center;min-height:38px;list-style:none;font-size:11px;cursor:pointer}.execution-records>summary small{margin-left:auto;font-size:10px}.records-body{padding:0 0 10px 19px}.records-body>section{padding:12px 0;border-top:1px solid var(--wb-border);min-width:0}.records-body h5{font-size:11px;font-weight:600;margin:0 0 8px}.records-body p{font-size:11px;margin:5px 0;overflow-wrap:anywhere}.records-body code,.path{font:11px/1.6 var(--font-family-code);overflow-wrap:anywhere}.path{color:var(--wb-muted)}.changed-file{display:grid;grid-template-columns:90px minmax(0,1fr);gap:8px;padding:4px 0}.changed-file small{font-size:10px}.commit{display:block;margin:4px 0}.chat{font-size:11px}.verification{padding:8px 0}.verification summary{font-size:11px;cursor:pointer;overflow-wrap:anywhere}.verification summary small{display:block;font-size:10px;margin-top:3px}.timeline{list-style:none;margin:0 0 0 4px;padding-left:13px;border-left:1px solid var(--wb-border)}.timeline li{padding:0 0 12px 5px}.timeline p{white-space:pre-wrap}.timeline small{font-size:10px}.criterion :global(.fold-icon),.execution-records :global(.fold-icon){color:var(--wb-muted);flex:none;transition:transform .12s ease}.criterion[open]>summary :global(.fold-icon),.execution-records[open]>summary :global(.fold-icon){transform:rotate(90deg)}summary::-webkit-details-marker{display:none}.back{display:none}.empty{padding:36px 16px;text-align:center;font-size:12px;color:var(--wb-muted)}
-  :global(.ledger-dialog){background:var(--wb-panel);color:var(--wb-text);font:13px/1.6 var(--font-family-ui);border:1px solid var(--wb-border);border-radius:10px;width:min(650px,92vw);max-height:88vh;padding:22px;color-scheme:inherit;overflow:auto}:global(.ledger-dialog) header{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px}:global(.ledger-dialog) h3{font-size:16px;margin:0}:global(.ledger-dialog) label{display:flex;flex-direction:column;gap:5px;margin:12px 0;font-size:12px}:global(.ledger-dialog) .checkbox{flex-direction:row;align-items:center;gap:8px}:global(.ledger-dialog) .form-row{display:flex;gap:12px;align-items:center;flex-wrap:wrap}:global(.ledger-dialog) .form-row>label{flex:1;min-width:100px}:global(.ledger-dialog) .form-controls{border:0;padding:0;margin:0;min-width:0}:global(.ledger-dialog) .check-editor{margin:14px 0;padding:12px;border:1px solid var(--wb-border);border-radius:6px}:global(.ledger-dialog) legend{font-size:12px;font-weight:600}:global(.ledger-dialog) footer{display:flex;justify-content:flex-end;align-items:center;gap:12px;margin-top:20px;padding-top:15px;border-top:1px solid var(--wb-border)}.directory{display:flex;gap:8px}.directory input{flex:1}:global(.small-dialog){width:min(470px,92vw)}
-  @container(max-width:1050px){.criterion>summary{grid-template-columns:12px 18px minmax(0,1fr)}.test-status{grid-column:3}.metadata-edit{font-size:9px}}
-  @container(max-width:850px){.toolbar{flex-wrap:wrap;gap:8px}.filters{flex-basis:100%}.toolbar-actions{margin-left:auto}}
-  @container(max-width:700px){.ledger-layout{grid-template-columns:minmax(0,1fr);min-height:360px}.task-list{border:0;padding:0}.task-rows{max-height:none}.task-detail{display:none;max-height:none;padding:14px 0}.ledger-layout.detail-open .task-detail{display:block}.ledger-layout.detail-open .task-list{display:none}.back{display:block;padding-left:0;margin-bottom:10px}.task-heading h3{font-size:18px}.task-heading{flex-wrap:wrap}.task-context{gap:4px 8px}.criterion-body{margin-left:37px}.execution-records>summary small{font-size:9px}.toolbar button{font-size:11px}.changed-file{grid-template-columns:72px minmax(0,1fr)}}
-  @container(max-width:440px){.filters{grid-template-columns:1fr 1fr}.filters>input{grid-column:1/-1}.actions{gap:2px}.actions button{padding:5px 6px}.task-context span:last-child{flex-basis:100%}.criterion-name small{font-size:9px}.test-status{gap:8px;flex-wrap:wrap}}
-  @media(prefers-reduced-motion:reduce){.criterion :global(.fold-icon),.execution-records :global(.fold-icon){transition:none}}
-</style>
+<TaskAgentSetup bind:this={setupDialog} returnFocus={moreTrigger}/>

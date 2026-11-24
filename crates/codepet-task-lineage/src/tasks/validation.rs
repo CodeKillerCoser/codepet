@@ -9,7 +9,7 @@ pub(super) fn legacy_round(run: &TaskRun) -> old::Round {
         opened_at: run.created_at,
         opened_reason: run.description.clone(),
         previous_round_id: None,
-        objective: run.description.clone(),
+        objective: run.goal.clone(),
         description: String::new(),
         phase: match run.status {
             RunStatus::Published => old::Phase::Published,
@@ -41,10 +41,12 @@ pub(super) fn set_plan(run: &mut TaskRun, input: ChecklistInput) -> Result<()> {
     legacy::append_plan(
         &mut old,
         old::PlanInput {
-            summary: if run.description.trim().is_empty() {
-                "验收计划".into()
+            summary: if !run.solution.trim().is_empty() {
+                run.solution.chars().take(4000).collect()
+            } else if !run.goal.trim().is_empty() {
+                run.goal.chars().take(4000).collect()
             } else {
-                run.description.chars().take(4000).collect()
+                "验收计划".into()
             },
             affected_areas: vec![],
             criteria: input.items,

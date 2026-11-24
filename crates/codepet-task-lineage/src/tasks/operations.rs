@@ -26,6 +26,10 @@ fn new_run(description: String, workspace: AgentWorkspace, actor: &Actor) -> Tas
     let at = now();
     TaskRun {
         id: id(),
+        title: String::new(),
+        kind: TaskKind::Feature,
+        goal: String::new(),
+        solution: String::new(),
         description,
         status: RunStatus::InProgress,
         validation_plan: ValidationPlan::default(),
@@ -106,6 +110,23 @@ fn description(value: &str) -> Result<()> {
     }
 }
 
+fn set_run_content(
+    run: &mut TaskRun,
+    title: String,
+    kind: TaskKind,
+    goal: String,
+    solution: String,
+) -> Result<()> {
+    text(&title, "执行标题", 160)?;
+    description(&goal)?;
+    description(&solution)?;
+    run.title = title;
+    run.kind = kind;
+    run.goal = goal;
+    run.solution = solution;
+    Ok(())
+}
+
 impl Ledger {
     pub fn create_task(&self, input: CreateTaskInput, actor: Actor) -> Result<Receipt> {
         let (key, fingerprint, cached) =
@@ -122,6 +143,21 @@ impl Ledger {
             ctx.observation.clone(),
             &actor,
         );
+        set_run_content(
+            &mut run,
+            if input.initial_run.title.trim().is_empty() {
+                input.title.clone()
+            } else {
+                input.initial_run.title
+            },
+            input.initial_run.kind,
+            if input.initial_run.goal.trim().is_empty() {
+                input.title.clone()
+            } else {
+                input.initial_run.goal
+            },
+            input.initial_run.solution,
+        )?;
         if let Some(plan) = input.initial_run.validation_plan {
             validation::set_plan(&mut run, plan)?;
         }
@@ -152,11 +188,10 @@ impl Ledger {
             };
             let at = now();
             Ok(Task {
-                schema_version: 3,
+                schema_version: 4,
                 id: id(),
                 title: input.title,
                 description: input.description,
-                kind: input.kind,
                 project_id: project.id,
                 created_by: actor.source().into(),
                 created_at: at,
@@ -176,7 +211,7 @@ impl Ledger {
         if let Some(r) = cached {
             return Ok(r);
         }
-        text(&input.description, "本次处理原因", 8000)?;
+        description(&input.description)?;
         let previous = self.get(&input.task_id)?;
         let last = previous.runs.last().unwrap();
         let workspace = input.agent_workspace.clone().unwrap_or(WorkspaceInput {
@@ -185,6 +220,17 @@ impl Ledger {
         });
         let ctx = workspace::inspect(&workspace)?;
         let mut run = new_run(input.description.clone(), ctx.observation.clone(), &actor);
+        set_run_content(
+            &mut run,
+            input.title.clone(),
+            input.kind,
+            if input.goal.trim().is_empty() {
+                input.title.clone()
+            } else {
+                input.goal
+            },
+            input.solution,
+        )?;
         let plan = input.validation_plan.or_else(|| {
             if last.validation_plan.items.is_empty() {
                 None
@@ -200,7 +246,12 @@ impl Ledger {
             validation::set_plan(&mut run, plan)?;
         }
         link(&mut run, &input.agent_conversation, &actor, &ctx.repository)?;
-        event(&mut run, &actor, "created", input.description, None);
+        let summary = if input.description.is_empty() {
+            run.title.clone()
+        } else {
+            input.description
+        };
+        event(&mut run, &actor, "created", summary, None);
         self.transact(key, fingerprint, |store, projects| {
             let mut task = Self::load(store, &input.task_id)?;
             check_revision(&task, input.expected_revision)?;
@@ -225,6 +276,15 @@ impl Ledger {
         if let Some(r) = cached {
             return Ok(r);
         }
+        if let Some(value) = &input.title {
+            text(value, "执行标题", 160)?;
+        }
+        if let Some(value) = &input.goal {
+            description(value)?;
+        }
+        if let Some(value) = &input.solution {
+            description(value)?;
+        }
         if let Some(value) = &input.description {
             description(value)?;
         }
@@ -236,6 +296,46 @@ impl Ledger {
         }
         if input.status == Some(RunStatus::Closed) {
             return Err("结束执行只能通过 App 人工操作".into());
+        }
+        let mut changes = vec![];
+        if let Some(value) = &input.title {
+            changes.push(format!("执行标题：{value}"));
+        }
+        if let Some(value) = &input.goal {
+            changes.push(format!(
+                "目标：{}",
+                value.chars().take(600).collect::<String>()
+            ));
+        }
+        if let Some(value) = &input.solution {
+            changes.push(format!(
+                "方案：{}",
+                value.chars().take(600).collect::<String>()
+            ));
+        }
+        if input.kind.is_some() {
+            changes.push("更新执行类型".into());
+        }
+        if input.status.is_some() {
+            changes.push("更新执行状态".into());
+        }
+        if input.validation_plan.is_some() {
+            changes.push("更新验收清单".into());
+        }
+        let verified = input.verification.is_some();
+        if verified {
+            changes.push("记录验收结果".into());
+        }
+        if input.description.is_some() {
+            changes.push(
+                input
+                    .description
+                    .clone()
+                    .unwrap()
+                    .chars()
+                    .take(600)
+                    .collect(),
+            );
         }
         let previous = self.get(&input.task_id)?;
         let last = previous.runs.last().unwrap();
@@ -262,6 +362,18 @@ impl Ledger {
             }
             if run.status == RunStatus::Closed {
                 return Err("执行已结束，请创建新的执行".into());
+            }
+            if let Some(value) = input.title {
+                run.title = value;
+            }
+            if let Some(value) = input.kind {
+                run.kind = value;
+            }
+            if let Some(value) = input.goal {
+                run.goal = value;
+            }
+            if let Some(value) = input.solution {
+                run.solution = value;
             }
             if let Some(value) = input.description {
                 run.description = value;
@@ -300,10 +412,10 @@ impl Ledger {
             }
             link(run, &input.agent_conversation, &actor, &repository)?;
             let summary = input.note.unwrap_or_else(|| {
-                if run.description.is_empty() {
-                    "更新执行进展".into()
+                if changes.is_empty() {
+                    "更新工作区观测".into()
                 } else {
-                    run.description.clone()
+                    changes.join("\n")
                 }
             });
             event(
@@ -311,6 +423,8 @@ impl Ledger {
                 &actor,
                 if input.delivery.is_some() {
                     "delivery"
+                } else if verified {
+                    "verification"
                 } else {
                     "milestone"
                 },
@@ -369,7 +483,6 @@ impl Ledger {
             check_revision(&task, input.expected_revision)?;
             task.title = input.title;
             task.description = input.description;
-            task.kind = input.kind;
             event(
                 task.runs.last_mut().unwrap(),
                 &actor,
@@ -388,5 +501,4 @@ pub struct EditTaskInput {
     pub expected_revision: u64,
     pub title: String,
     pub description: String,
-    pub kind: TaskKind,
 }

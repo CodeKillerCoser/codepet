@@ -32,7 +32,7 @@ function client(){
 let a,b;
 try{
   a=client();await a.start();const tools=await a.request('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['create-task','create-task-run','find-tasks','update-task-run']);const toolBytes=Buffer.byteLength(JSON.stringify(tools));assert.ok(toolBytes<24000);
-  const create={agentWorkspace:{path:workspace},title:'修复菜单点击',description:'切换窗口后的首次点击无响应',kind:'bugfix',initialRun:{description:'排查点击事件绑定',validationPlan:{items:[{title:'切换窗口点击',steps:'切换窗口后点击桌宠',expected:'菜单出现'}]}}};
+  const create={agentWorkspace:{path:workspace},title:'修复菜单点击',description:'切换窗口后的首次点击无响应',initialRun:{title:'首次实现',kind:'bugfix',goal:'修复目标',solution:'修复方案',description:'排查点击事件绑定',validationPlan:{items:[{title:'切换窗口点击',steps:'切换窗口后点击桌宠',expected:'菜单出现'}]}}};
   const first=await a.call('create-task',create);assert.equal(first.revision,1);assert.equal(first.status,'in_progress');assert.equal(first.createdBy,'codex');assert.ok(Buffer.byteLength(JSON.stringify(first))<1000);
   const repeat=await a.call('create-task',create);assert.equal(repeat.taskId,first.taskId);
   const finish={taskId:first.taskId,runId:first.runId,expectedRevision:first.revision,status:'ready_for_delivery',agentConversation:[threadId],description:'确认事件绑定原因并修复',agentWorkspace:{path:workspace,relatedCommits:[git(['rev-parse','HEAD'])]},verification:{planRevision:first.planRevision,stage:'local',target:'dirty worktree at HEAD',environment:process.platform,results:[{criterionId:first.criterionIds[0],result:'passed',evidence:'实际本地测试通过'}]}};
@@ -44,7 +44,7 @@ try{
   assert.equal((await b.call('update-task-run',publish)).revision,3);
   await assert.rejects(b.call('update-task-run',{taskId:first.taskId,runId:first.runId,expectedRevision:1,note:'stale'}),/revision=3/);
   await assert.rejects(b.call('update-task-run',{taskId:first.taskId,runId:first.runId,expectedRevision:3,status:'closed'}),/人工操作/);
-  const next=await b.call('create-task-run',{taskId:first.taskId,expectedRevision:3,description:'发布后复发'});assert.notEqual(next.runId,first.runId);
+  const next=await b.call('create-task-run',{taskId:first.taskId,expectedRevision:3,title:'发布后复发',kind:'bugfix',goal:'修复复发问题',solution:'重新定位'});assert.notEqual(next.runId,first.runId);
   const active=await b.call('find-tasks',{taskId:first.taskId,history:true});assert.equal(active.runCount,2);assert.equal(active.run.validationPlan.latestVerification,null);assert.notEqual(active.run.validationPlan.items[0].id,first.criterionIds[0]);
   const found=await b.call('find-tasks',{workspace,query:'菜单'});assert.equal(found.total,1);await b.stop();b=null;
   const report={success:true,mode:'real-stdio-without-frontend',toolCount:4,toolDefinitionBytes:toolBytes,receiptBytes:Buffer.byteLength(JSON.stringify(first)),retryAcrossRestart:true,taskRunIsolation:true,historyPreserved:true,changedFilesObserved:true,explicitSourceVerifiedLocally:true,agentCannotClose:true,testCalls:count};

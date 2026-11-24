@@ -291,7 +291,7 @@ async fn request_header_is_required_and_each_writer_has_its_own_identity() {
         }
         request.json(&json!({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":name,"arguments":input}}))
     };
-    let input = json!({"title":"来源测试","description":"任务背景","kind":"bugfix","agentWorkspace":{"path":workspace}});
+    let input = json!({"title":"来源测试","description":"任务背景","initialRun":{"kind":"bugfix","title":"首次实现","goal":"目标","solution":"方案"},"agentWorkspace":{"path":workspace}});
     for agent in [None, Some("human"), Some(""), Some("bad source")] {
         assert_eq!(
             rpc(agent, "create-task", input.clone())
@@ -329,8 +329,7 @@ async fn request_header_is_required_and_each_writer_has_its_own_identity() {
     assert_eq!(task.description, "任务背景");
     assert_eq!(task.runs[0].created_by, "codex-a");
     assert_eq!(task.runs[0].timeline.last().unwrap().actor, "codex-b");
-    let next =
-        json!({"taskId":task.id,"expectedRevision":task.revision,"description":"发布后复发"});
+    let next = json!({"taskId":task.id,"expectedRevision":task.revision,"title":"发布后复发","kind":"bugfix"});
     let result = rpc(Some("codex-c"), "create-task-run", next)
         .send()
         .await
@@ -352,4 +351,46 @@ async fn request_header_is_required_and_each_writer_has_its_own_identity() {
         .unwrap();
     assert_eq!(result["result"]["isError"], true);
     endpoint.runtime.shutdown_once().await;
+}
+
+#[tokio::test]
+async fn edited_instructions_reach_new_initializations_and_survive_restart() {
+    let data = tempfile::tempdir().unwrap();
+    let endpoint = Endpoint::start(data.path(), 0).await;
+    let original = endpoint.rpc("initialize", init()).await;
+    assert_eq!(
+        original["instructions"],
+        codepet_task_mcp::instructions::DEFAULT
+    );
+    let edited = "自定义项目规则：在方案确定和实现告一段落时合并登记。";
+    endpoint
+        .runtime
+        .save_instructions(0, Some(edited.into()))
+        .await
+        .unwrap();
+    assert_eq!(
+        endpoint.runtime.configuration().await.unwrap()["instructions"],
+        edited
+    );
+    assert_eq!(
+        endpoint.rpc("initialize", init()).await["instructions"],
+        edited
+    );
+    assert!(endpoint
+        .runtime
+        .save_instructions(0, Some("过期写入".into()))
+        .await
+        .is_err());
+    endpoint.runtime.shutdown_once().await;
+    let restarted = Endpoint::start(data.path(), 0).await;
+    assert_eq!(
+        restarted.rpc("initialize", init()).await["instructions"],
+        edited
+    );
+    restarted.runtime.save_instructions(1, None).await.unwrap();
+    assert_eq!(
+        restarted.rpc("initialize", init()).await["instructions"],
+        original["instructions"]
+    );
+    restarted.runtime.shutdown_once().await;
 }

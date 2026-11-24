@@ -1,11 +1,15 @@
 //! Four milestone tools; Rust owns the ledger and request-scoped Agent identity.
 pub mod http;
+pub mod instructions;
 use codepet_task_lineage::tasks::{
     Actor, CreateTaskInput, CreateTaskRunInput, FindTasksInput, Ledger, UpdateTaskRunInput,
 };
 use rmcp::{
     handler::server::wrapper::Parameters,
-    model::{CallToolResult, ContentBlock, Implementation, ServerCapabilities, ServerConfig},
+    model::{
+        CallToolResult, ContentBlock, Implementation, InitializeRequestParams, InitializeResult,
+        ServerCapabilities, ServerConfig,
+    },
     service::RequestContext,
     tool, tool_handler, tool_router, RoleServer, ServerHandler, ServiceExt,
 };
@@ -129,6 +133,22 @@ impl TaskServer {
 }
 #[tool_handler]
 impl ServerHandler for TaskServer {
+    async fn initialize(
+        &self,
+        request: InitializeRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<InitializeResult, rmcp::ErrorData> {
+        context.peer.set_peer_info(request.clone());
+        let mut result = self.negotiate_initialize(&request)?;
+        let ledger = self.ledger.clone();
+        let settings = tokio::task::spawn_blocking(move || instructions::read(&ledger))
+            .await
+            .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?
+            .map_err(|e| rmcp::ErrorData::internal_error(e, None))?;
+        result.instructions = Some(settings["instructions"].as_str().unwrap().to_owned());
+        Ok(result)
+    }
+
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new(

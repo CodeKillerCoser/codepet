@@ -15,6 +15,11 @@ pub(crate) async fn task_ledger_request(
     if request["op"].as_str() == Some("setup") {
         return runtime.configuration().await;
     }
+    if request["op"].as_str() == Some("save-instructions") {
+        let revision = request["expectedRevision"].as_u64().ok_or("缺少提示词修订号")?;
+        let text = if request["text"].is_null() { None } else { Some(request["text"].as_str().ok_or("提示词格式无效")?.to_owned()) };
+        return runtime.save_instructions(revision, text).await;
+    }
     let ledger = runtime.ledger();
     tauri::async_runtime::spawn_blocking(move || {
         let id = || request["taskId"].as_str().ok_or("缺少任务 ID".to_owned());

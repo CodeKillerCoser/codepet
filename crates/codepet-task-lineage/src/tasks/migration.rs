@@ -1,4 +1,4 @@
-//! One atomic import into v3. v2 remains untouched as the recovery source.
+//! Atomic import into v4. v3/v2 source records remain untouched.
 use super::{legacy, legacy_model as old, model::*, Project};
 use crate::{store::Store, Result};
 use serde_json::json;
@@ -31,7 +31,7 @@ fn observation(old: &old::CodeObservation) -> AgentWorkspace {
             .or_else(|| Some("历史观测没有文件清单；需要在当前执行重新观测".into())),
     }
 }
-fn run(old: &old::Round, workspace: &str) -> TaskRun {
+fn run(old: &old::Round, workspace: &str, title: &str, kind: &TaskKind) -> TaskRun {
     let mut timeline: Vec<_> = old
         .events
         .iter()
@@ -112,6 +112,13 @@ fn run(old: &old::Round, workspace: &str) -> TaskRun {
     }
     TaskRun {
         id: old.id.clone(),
+        title: title.into(),
+        kind: kind.clone(),
+        goal: old.objective.clone(),
+        solution: old
+            .plans
+            .last()
+            .map_or(String::new(), |p| p.input.summary.clone()),
         description: description.join("\n\n"),
         status: if old.closure.is_some() {
             RunStatus::Closed
@@ -169,6 +176,9 @@ fn run(old: &old::Round, workspace: &str) -> TaskRun {
     }
 }
 pub(super) fn import(store: &Store, data: &Path) -> Result<()> {
+    if data.join("tasks/v3/projects.json").exists() {
+        return import_v3(store, data);
+    }
     let tasks = legacy::Ledger::new(data).list()?;
     let mut projects: Vec<Project> = vec![];
     let mut changes = vec![];
@@ -194,24 +204,68 @@ pub(super) fn import(store: &Store, data: &Path) -> Result<()> {
                 .trim()
                 .into()
         };
+        let kind = if old.kind == "feature" {
+            TaskKind::Feature
+        } else {
+            TaskKind::Bugfix
+        };
+        let runs = old
+            .rounds
+            .iter()
+            .map(|r| run(r, &old.workspace, &old.title, &kind))
+            .collect();
         let task = Task {
-            schema_version: 3,
+            schema_version: 4,
             id: old.id.clone(),
             title: old.title,
             description,
-            kind: if old.kind == "feature" {
-                TaskKind::Feature
-            } else {
-                TaskKind::Bugfix
-            },
             project_id: old.project_id.clone(),
             created_by: author(&old.rounds[0].events),
             created_at: old.created_at,
-            runs: old.rounds.iter().map(|r| run(r, &old.workspace)).collect(),
+            runs,
             revision: old.revision,
             updated_at: old.updated_at,
         };
         changes.push((super::Ledger::key(&task.project_id, &task.id), json!(task)));
+    }
+    changes.push(("projects.json".into(), json!(projects)));
+    store.commit(changes)
+}
+
+fn import_v3(store: &Store, data: &Path) -> Result<()> {
+    let source = Store::open(&data.join("tasks/v3"))?;
+    let projects: Vec<Project> = source.read("projects.json")?.ok_or("旧项目索引不存在")?;
+    let mut changes = vec![];
+    for project in &projects {
+        for mut value in
+            source.list::<serde_json::Value>(&format!("projects/{}/tasks", project.id))?
+        {
+            if value["schemaVersion"] != 3 {
+                return Err("旧任务格式版本无效".into());
+            }
+            let kind = value["kind"].clone();
+            let title = value["title"].as_str().ok_or("旧任务缺少标题")?.to_string();
+            let runs = value["runs"].as_array_mut().ok_or("旧任务缺少执行")?;
+            if runs.is_empty() {
+                return Err("旧任务缺少执行历史".into());
+            }
+            for (index, run) in runs.iter_mut().enumerate() {
+                // Old free-form summaries remain intact. Do not guess a solution or
+                // pretend the old task-level kind was recorded separately per run.
+                run["title"] = json!(if index == 0 {
+                    "首次处理".into()
+                } else {
+                    format!("第 {} 次处理", index + 1)
+                });
+                run["kind"] = kind.clone();
+                run["goal"] = json!(title);
+                run["solution"] = json!("");
+            }
+            value.as_object_mut().unwrap().remove("kind");
+            value["schemaVersion"] = json!(4);
+            let task: Task = serde_json::from_value(value).map_err(|e| e.to_string())?;
+            changes.push((super::Ledger::key(&task.project_id, &task.id), json!(task)));
+        }
     }
     changes.push(("projects.json".into(), json!(projects)));
     store.commit(changes)

@@ -1,4 +1,4 @@
-//! Canonical v3 records. Transport inputs cannot supply authors or observed Git facts.
+//! Canonical v4 records. Transport inputs cannot supply authors or observed Git facts.
 pub use super::legacy_model::{CheckResult, Criterion, Plan, Scope, TestResult, VerificationInput};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -142,6 +142,10 @@ pub struct Closure {
 #[serde(rename_all = "camelCase")]
 pub struct TaskRun {
     pub id: String,
+    pub title: String,
+    pub kind: TaskKind,
+    pub goal: String,
+    pub solution: String,
     pub description: String,
     pub status: RunStatus,
     pub validation_plan: ValidationPlan,
@@ -160,7 +164,6 @@ pub struct Task {
     pub id: String,
     pub title: String,
     pub description: String,
-    pub kind: TaskKind,
     pub project_id: String,
     pub created_by: String,
     pub created_at: i64,
@@ -186,6 +189,14 @@ pub struct ChecklistInput {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InitialRunInput {
     #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub kind: TaskKind,
+    #[serde(default)]
+    pub goal: String,
+    #[serde(default)]
+    pub solution: String,
+    #[serde(default)]
     pub description: String,
     pub validation_plan: Option<ChecklistInput>,
     /// Actual current conversation IDs if available; omit rather than guessing.
@@ -198,8 +209,6 @@ pub struct CreateTaskInput {
     pub title: String,
     #[serde(default)]
     pub description: String,
-    #[serde(default)]
-    pub kind: TaskKind,
     pub agent_workspace: WorkspaceInput,
     #[serde(default)]
     pub initial_run: InitialRunInput,
@@ -208,8 +217,16 @@ pub struct CreateTaskInput {
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CreateTaskRunInput {
+    pub title: String,
+    #[serde(default)]
+    pub kind: TaskKind,
+    #[serde(default)]
+    pub goal: String,
+    #[serde(default)]
+    pub solution: String,
     pub task_id: String,
     pub expected_revision: u64,
+    #[serde(default)]
     pub description: String,
     pub agent_workspace: Option<WorkspaceInput>,
     pub validation_plan: Option<ChecklistInput>,
@@ -220,6 +237,10 @@ pub struct CreateTaskRunInput {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdateTaskRunInput {
+    pub title: Option<String>,
+    pub kind: Option<TaskKind>,
+    pub goal: Option<String>,
+    pub solution: Option<String>,
     pub task_id: String,
     pub run_id: String,
     pub expected_revision: u64,

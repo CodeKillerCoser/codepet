@@ -1,0 +1,181 @@
+/* Task surfaces share the main window theme and the app-level modal host. */
+.task-ledger {
+  width: 100%;
+  min-width: 0;
+  color: var(--wb-text);
+  font: 13px/1.6 var(--font-family-ui);
+}
+.task-ledger *, .ledger-dialog * { box-sizing: border-box; }
+.task-ledger :is(button, input, select, textarea), .ledger-dialog :is(button, input, select, textarea) {
+  font: inherit;
+  color: inherit;
+  background: var(--wb-panel);
+  border: 1px solid var(--wb-border);
+  border-radius: 5px;
+  min-width: 0;
+}
+.task-ledger button, .ledger-dialog button { cursor: pointer; padding: 5px 9px; min-height: 30px; }
+.task-ledger button:hover, .ledger-dialog button:hover { border-color: var(--wb-border-strong); }
+.task-ledger button:disabled, .ledger-dialog button:disabled { opacity: .5; cursor: default; }
+.task-ledger :is(input, select, textarea), .ledger-dialog :is(input, select, textarea) { padding: 6px 8px; }
+.task-ledger textarea, .ledger-dialog textarea { width: 100%; resize: vertical; }
+.task-ledger :is(button, input, select, textarea, summary):focus-visible,
+.ledger-dialog :is(button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--color-focus-ring);
+  outline-offset: 2px;
+}
+.task-ledger .primary, .ledger-dialog .primary {
+  background: var(--wb-primary);
+  border-color: var(--wb-primary);
+  color: var(--wb-on-primary);
+  font-weight: 500;
+}
+.task-ledger .quiet, .ledger-dialog .quiet { background: transparent; border-color: transparent; color: var(--wb-muted); }
+.task-ledger .quiet:hover, .ledger-dialog .quiet:hover { background: var(--wb-control); border-color: transparent; color: var(--wb-text); }
+.task-ledger .text-link { color: var(--app-accent); }
+.task-ledger .conversation-link { color: var(--wb-info-text); }
+.task-ledger .muted, .task-ledger small, .ledger-dialog .muted, .ledger-dialog small { font-size: 11px; color: var(--wb-muted); }
+.task-ledger .preserve, .ledger-dialog .preserve { white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-ledger .error, .ledger-dialog .error {
+  padding: 8px 10px;
+  background: var(--wb-danger-bg);
+  color: var(--wb-danger-text);
+  border-radius: 5px;
+  overflow-wrap: anywhere;
+}
+.task-ledger .message, .ledger-dialog .message { font-size: 11px; color: var(--wb-muted); }
+.task-ledger .clamped {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.task-ledger .text-toggle { font-size: 10px; min-height: 24px; padding: 2px 0; }
+.task-ledger .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.task-ledger .filters {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) minmax(104px, 132px) minmax(96px, 116px);
+  gap: 8px;
+}
+.task-ledger .filters :is(input, select) { width: 100%; height: 32px; font-size: 12px; background: transparent; }
+.task-ledger .toolbar-actions { display: flex; align-items: center; gap: 5px; flex: none; }
+.task-ledger .toolbar button { font-size: 12px; white-space: nowrap; }
+.task-ledger .ledger-more { position: relative; }
+.task-ledger .ledger-more > summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  list-style: none;
+  border-radius: 5px;
+  cursor: pointer;
+  color: var(--wb-muted);
+}
+.task-ledger .ledger-more > summary:hover { background: var(--wb-control); }
+.task-ledger .more-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 5;
+  min-width: 136px;
+  padding: 5px;
+  background: var(--wb-panel);
+  border: 1px solid var(--wb-border);
+  border-radius: 7px;
+  box-shadow: 0 8px 24px var(--wb-scrim);
+}
+.task-ledger .more-menu button { width: 100%; text-align: left; }
+.task-ledger summary::-webkit-details-marker { display: none; }
+.task-ledger .ledger-layout {
+  display: grid;
+  grid-template-columns: minmax(230px, .8fr) minmax(0, 1.4fr);
+  min-height: 440px;
+  border-top: 1px solid var(--wb-border);
+}
+.task-ledger .task-list { min-width: 0; border-right: 1px solid var(--wb-border); padding-right: 10px; }
+.task-ledger .result-count { display: block; padding: 10px 10px 7px; }
+.task-ledger .task-rows { max-height: calc(100dvh - 240px); overflow: auto; }
+.task-ledger .task-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 7px;
+  width: 100%;
+  padding: 12px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--wb-border);
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+.task-ledger .task-row:hover, .task-ledger .task-row.selected { background: var(--wb-control); }
+.task-ledger .task-row.selected { box-shadow: inset 2px 0 var(--wb-border-strong); }
+.task-ledger .row-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+.task-ledger .row-top strong {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.task-ledger .row-context { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; flex-wrap: wrap; font-size: 10px; color: var(--wb-muted); }
+.task-ledger .row-context small { font-size: 10px; }
+.task-ledger .task-detail { min-width: 0; padding: 16px 0 12px 24px; max-height: calc(100dvh - 190px); overflow: auto; scrollbar-gutter: stable; }
+.task-ledger .status-badge { display: inline-flex; align-items: center; justify-content: center; flex: none; white-space: nowrap; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 500; line-height: 1.5; }
+.task-ledger .status-badge[data-status="in_progress"] { background: var(--wb-info-bg); color: var(--wb-info-strong-text); }
+.task-ledger .status-badge[data-status="ready_for_delivery"] { background: var(--wb-warning-bg); color: var(--wb-warning-strong-text); }
+.task-ledger .status-badge[data-status="published"] { background: var(--wb-success-bg); color: var(--wb-success-text); }
+.task-ledger .status-badge[data-status="closed"] { background: var(--wb-neutral-bg); color: var(--wb-neutral-text); }
+.task-ledger .back { display: none; }
+.task-ledger .empty { padding: 36px 16px; text-align: center; font-size: 12px; color: var(--wb-muted); }
+.ledger-dialog {
+  background: var(--wb-panel);
+  color: var(--wb-text);
+  font: 13px/1.6 var(--font-family-ui);
+  border: 1px solid var(--wb-border);
+  border-radius: 10px;
+  width: min(650px, 92vw);
+  max-height: 88vh;
+  padding: 22px;
+  color-scheme: inherit;
+  overflow: auto;
+}
+.ledger-dialog header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+.ledger-dialog h3 { font-size: 16px; margin: 0; }
+.ledger-dialog label { display: flex; flex-direction: column; gap: 5px; margin: 12px 0; font-size: 12px; }
+.ledger-dialog .checkbox { flex-direction: row; align-items: center; gap: 8px; }
+.ledger-dialog .form-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.ledger-dialog .form-row > label { flex: 1; min-width: 100px; }
+.ledger-dialog .form-controls { border: 0; padding: 0; margin: 0; min-width: 0; }
+.ledger-dialog .check-editor { margin: 14px 0; padding: 12px; border: 1px solid var(--wb-border); border-radius: 6px; }
+.ledger-dialog legend { font-size: 12px; font-weight: 500; }
+.ledger-dialog footer { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--wb-border); }
+.ledger-dialog .directory { display: flex; gap: 8px; }
+.ledger-dialog .directory input { flex: 1; }
+@container (max-width: 850px) {
+  .task-ledger .toolbar { flex-wrap: wrap; gap: 8px; }
+  .task-ledger .filters { flex-basis: 100%; }
+  .task-ledger .toolbar-actions { margin-left: auto; }
+}
+@container (max-width: 700px) {
+  .task-ledger .ledger-layout { grid-template-columns: minmax(0, 1fr); min-height: 360px; }
+  .task-ledger .task-list { border: 0; padding: 0; }
+  .task-ledger .task-rows { max-height: none; }
+  .task-ledger .task-detail { display: none; max-height: none; padding: 14px 0; }
+  .task-ledger .ledger-layout.detail-open .task-detail { display: block; }
+  .task-ledger .ledger-layout.detail-open .task-list { display: none; }
+  .task-ledger .back { display: block; padding-left: 0; margin-bottom: 10px; }
+  .task-ledger .toolbar button { font-size: 11px; }
+}
+@container (max-width: 440px) {
+  .task-ledger .filters { grid-template-columns: 1fr 1fr; }
+  .task-ledger .filters > input { grid-column: 1 / -1; }
+}
