@@ -45,6 +45,7 @@ export function runningBubbleStyle(runningBubble: AppSettings["appearance"]["run
   const duration = Math.min(4000, Math.max(600, Math.round(runningBubble.animationMs || 1800)));
   const borderWidth = Math.min(8, Math.max(1, Math.round(runningBubble.borderWidth || 1)));
   const backgroundBorderColor = border.start;
+  const surfaceTone = isLightPalette(background.colors) ? "light" : "dark";
 
   return [
     `--pet-running-bubble-bg: ${background.css}`,
@@ -60,7 +61,29 @@ export function runningBubbleStyle(runningBubble: AppSettings["appearance"]["run
     `--pet-running-bubble-border-warm: ${border.palette[4]}`,
     `--pet-running-bubble-border-width: ${borderWidth}px`,
     `--pet-running-bubble-duration: ${duration}ms`,
+    `--pet-title: var(--pet-ink-on-${surfaceTone}-title)`,
+    `--pet-message: var(--pet-ink-on-${surfaceTone}-message)`,
+    `--pet-agent: var(--pet-ink-on-${surfaceTone}-meta)`,
+    `--app-text: var(--pet-ink-on-${surfaceTone}-title)`,
+    `--app-surface: var(--pet-surface-on-${surfaceTone})`,
+    `--app-border: var(--pet-border-on-${surfaceTone})`,
   ].join("; ");
+}
+
+function isLightPalette(colors: string[]): boolean {
+  const average = colors.reduce((sum, color) => sum + relativeLuminance(color), 0) / Math.max(1, colors.length);
+  return average > 0.42;
+}
+
+function relativeLuminance(hex: string): number {
+  const r = linearizeChannel(parseInt(hex.slice(1, 3), 16) / 255);
+  const g = linearizeChannel(parseInt(hex.slice(3, 5), 16) / 255);
+  const b = linearizeChannel(parseInt(hex.slice(5, 7), 16) / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+function linearizeChannel(channel: number): number {
+  return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
 }
 
 export function nextGradientStopColor(colors: string[]): string {

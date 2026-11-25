@@ -2,9 +2,11 @@ import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, test } from "vitest";
 import { readProjectStyles } from "./testSources";
+import { defaultRunningBubbleColors, defaultThemePreset, normalizeThemePreset, themeClassNames, themePresets } from "./lib/theme";
 
 const styles = readProjectStyles(__dirname);
 const themeTokens = readFileSync(resolve(__dirname, "lib/theme/tokens.css"), "utf8");
+const mainWindowTheme = readFileSync(resolve(__dirname, "lib/theme/main-window.css"), "utf8");
 const componentStyles = readdirSync(resolve(__dirname, 'lib'), {recursive:true})
   .filter((name):name is string=>typeof name==='string'&&!name.replaceAll('\\','/').startsWith('theme/')&&/\.(svelte|css)$/.test(name))
   .map(name=>{const source=readFileSync(resolve(__dirname,'lib',name),'utf8');return name.endsWith('.css')?source:[...source.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map(m=>m[1]).join('\n');}).join('\n');
@@ -86,6 +88,36 @@ describe("theme tokens", () => {
     const weights=[...themeTokens.matchAll(/--font-weight-[\w-]+:\s*(\d+);/g)].map(match=>Number(match[1]));
     expect([...new Set(weights)].sort()).toEqual([400,500,600]);
     for(const role of ['heading','content','emphasis','control','active'])expect(themeTokens).toContain(`--font-weight-${role}:`);
+  });
+
+  test("converges primitive font sizes without half-pixel values and exposes four multi-theme presets", () => {
+    expect(themeTokens).not.toMatch(/--font-size-[\w-]+:\s*\d+\.\d+px;/);
+    expect(defaultThemePreset).toBe("warm-stone");
+    expect(themePresets.map((preset) => preset.id)).toEqual([
+      "warm-stone",
+      "cool-slate",
+      "forest-sage",
+      "caramel-earth",
+    ]);
+    expect(normalizeThemePreset(undefined)).toBe("warm-stone");
+    expect(normalizeThemePreset("unknown-preset")).toBe("warm-stone");
+    expect(normalizeThemePreset("forest-sage")).toBe("forest-sage");
+    expect(themeClassNames("light")).toContain("preset-warm-stone");
+    expect(themeClassNames("dark", "cool-slate")).toContain("preset-cool-slate");
+    for (const preset of themePresets) {
+      expect(mainWindowTheme).toContain(`.theme-swatch-${preset.id}`);
+      if (preset.id !== "warm-stone") {
+        expect(mainWindowTheme).toContain(`.main-theme.preset-${preset.id}`);
+        expect(mainWindowTheme).toContain(`.main-theme.dark.preset-${preset.id}`);
+        expect(themeTokens).toContain(`.preset-${preset.id}`);
+        expect(themeTokens).toContain(`.dark.preset-${preset.id}`);
+      }
+    }
+    expect(themeTokens).toContain("--notch-status-idle:");
+    expect(defaultRunningBubbleColors).toEqual({ background: "#fef3dc", border: "#d9822b" });
+    expect(appearanceSource).toContain("setThemePreset");
+    const notchSource = readFileSync(resolve(__dirname, "lib/pet/NotchPet.svelte"), "utf8");
+    expect(notchSource).not.toMatch(/var\(--(?:gray|green|blue|amber|red)-\d+\)/);
   });
 });
 

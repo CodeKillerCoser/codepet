@@ -64,14 +64,15 @@
 <style>
   .pet-item.locked { grid-template-columns: minmax(0, 1fr); }
   .pet-editor { min-width: 0; }
-  .character-preview { display: grid; justify-items: center; gap: 12px; padding: 24px 0 12px; border-radius: 16px; background: var(--app-surface-soft); }
-  p { margin: 0; color: var(--color-text-secondary); font-size: var(--font-size-xs); }
-  .animation-picker, .import-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
-  .animation-picker button, .import-actions button { border: 1px solid var(--pet-border); border-radius: 8px; padding: 7px 10px; background: var(--pet-button-bg); color: var(--color-text-primary); cursor: pointer; font-size: var(--font-size-xs); }
-  .animation-picker button[aria-pressed="true"] { background: var(--pet-active-bg); border-color: var(--pet-status-running); }
-  button:focus-visible, input:focus-visible { outline: 2px solid var(--pet-status-running); outline-offset: 3px; }
+  .character-preview { display: grid; justify-items: center; gap: 12px; padding: 24px 0 12px; border: 1px solid var(--color-main-outline, var(--app-border)); border-radius: 14px; background: var(--app-surface-soft); }
+  p { margin: 0; color: var(--app-muted); font-size: var(--font-size-caption); }
+  .animation-picker, .import-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .animation-picker button, .import-actions button { border: 1px solid var(--app-border); border-radius: 8px; padding: 7px 12px; background: var(--app-surface); color: var(--app-text); cursor: pointer; font-size: var(--font-size-label); font-weight: var(--font-weight-medium); }
+  .animation-picker button:hover, .import-actions button:hover { background: var(--color-main-hover, var(--app-surface-soft)); border-color: var(--app-border-strong); }
+  .animation-picker button[aria-pressed="true"] { background: var(--color-main-selected, var(--pet-active-bg)); border-color: var(--color-main-selected-border, var(--app-accent)); color: var(--color-main-selected-text, var(--app-text)); }
+  button:focus-visible, input:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
   button:disabled { opacity: 0.5; cursor: default; }
-  .size-control { display: grid; gap: 8px; margin: 20px 0; font-size: var(--font-size-sm); }
+  .size-control { display: grid; gap: 8px; margin: 20px 0; font-size: var(--font-size-label); }
   .size-control span { display: flex; justify-content: space-between; }
   .size-control input { width: 100%; }
   .import-hint { margin-top: 10px; }

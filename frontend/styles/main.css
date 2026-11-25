@@ -108,8 +108,9 @@
 .pet-item.active,
 .segmented button.active,
 .power-button.enabled {
-  border-color: var(--app-good);
-  background: color-mix(in srgb, var(--app-good) 18%, var(--app-surface-soft));
+  border-color: var(--color-main-selected-border, var(--app-accent));
+  background: var(--color-main-selected, var(--app-surface-soft));
+  color: var(--color-main-selected-text, var(--app-text));
 }
 
 .tabs button:hover,
@@ -186,11 +187,10 @@
 .eyebrow,
 .agent-kicker {
   margin: 0 0 7px;
-  color: var(--app-accent-strong);
+  color: var(--app-muted);
   font-size: var(--font-size-xs);
-  font-weight: var(--font-weight-bold);
-  letter-spacing: var(--letter-spacing-caps-wide);
-  text-transform: uppercase;
+  font-weight: var(--font-weight-medium);
+  letter-spacing: var(--letter-spacing-normal);
 }
 
 .error {
@@ -800,8 +800,9 @@
 }
 
 .connection-primary-button {
-  border-color: color-mix(in srgb, var(--app-good) 46%, var(--app-border));
-  background: color-mix(in srgb, var(--app-good) 14%, var(--app-surface-strong));
+  border-color: var(--color-main-accent-solid, var(--app-accent));
+  color: var(--color-main-on-accent, var(--app-text));
+  background: var(--color-main-accent-solid, var(--app-accent));
 }
 
 .runtime-actions button:hover:not(:disabled),

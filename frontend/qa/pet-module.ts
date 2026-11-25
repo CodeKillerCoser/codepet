@@ -9,12 +9,17 @@ import { defaultRunningBubbleSettings } from "../lib/theme";
 import type { AppSettings } from "../lib/types";
 import "../styles.css";
 
+const petQaParams = new URLSearchParams(location.search);
 const settings = {
-  appearance: { theme: "light", runningBubble: defaultRunningBubbleSettings },
+  appearance: {
+    theme: petQaParams.get("theme") === "dark" ? "dark" : "light",
+    preset: (petQaParams.get("preset") as AppSettings["appearance"]["preset"]) ?? undefined,
+    runningBubble: defaultRunningBubbleSettings,
+  },
   pet: { selectedPetId: "default", kind: "builtin", scale: 3, opacity: 1 },
   petLibrary: { selectedPetId: "default", pets: builtInPets.map(pet => ({ id: pet.id, name: pet.name, kind: "builtin", imagePath: null })) },
 } as AppSettings;
-const frameMode = new URLSearchParams(location.search).has("frame");
+const frameMode = petQaParams.has("frame");
 const native = {
   position: { x: 400, y: 300 },
   size: { width: 640, height: 1168 },

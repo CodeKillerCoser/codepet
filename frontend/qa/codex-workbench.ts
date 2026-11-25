@@ -29,7 +29,8 @@ mockIPC(async(command,args:any)=>{
   if(r.op==='preview'){await new Promise(resolve=>setTimeout(resolve,r.version==='workspace'?120:10));return {before:'const message = "before";\n',after:`const message = "${r.version}";\n`};}
   return null;
 });
-document.getElementById('app')!.className = `main-theme ${themeClassNames('light')}`;
-(window as any).__setWorkbenchTheme = (mode: 'light' | 'dark') => document.getElementById('app')!.className = `main-theme ${themeClassNames(mode)}`;
+const qaParams = new URLSearchParams(location.search);
+document.getElementById('app')!.className = `main-theme ${themeClassNames(qaParams.get('theme') === 'dark' ? 'dark' : 'light', qaParams.get('preset') as any)}`;
+(window as any).__setWorkbenchTheme = (mode: 'light' | 'dark', preset?: any) => document.getElementById('app')!.className = `main-theme ${themeClassNames(mode, preset)}`;
 const frame = mount(WorkbenchFrameQa,{target:document.getElementById('app')!});
 (window as any).__setWorkbenchMounted = frame.setVisible;

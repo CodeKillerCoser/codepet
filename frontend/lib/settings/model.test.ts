@@ -39,8 +39,22 @@ describe("settings compatibility after page extraction", () => {
       providerPlugins: { directories: ["/fixture/provider"] },
     } as unknown as AppSettings;
     const result = normalizeSettings(old);
-    expect(result.appearance).toMatchObject({ theme: "dark", runningBubble: { animationMs: 600, borderWidth: 8 } });
+    expect(result.appearance).toMatchObject({ theme: "dark", preset: "warm-stone", runningBubble: { animationMs: 600, borderWidth: 8 } });
     expect(result.pet).toMatchObject({ selectedPetId: "custom", imagePath: "/fixture/pet.webp", opacity: 0.25 });
     expect(result.providerPlugins.directories).toEqual(["/fixture/provider"]);
+  });
+
+  it("preserves valid theme presets and falls back to warm-stone for unknown values", () => {
+    const base = {
+      appearance: { theme: "light", preset: "forest-sage", runningBubble: { ...defaultRunningBubbleSettings } },
+      pet: { selectedPetId: "default", opacity: 1 },
+      petLibrary: { selectedPetId: "default", pets: [] },
+      notifications: {},
+      providerPlugins: { directories: [] },
+    } as unknown as AppSettings;
+    expect(normalizeSettings(structuredClone(base)).appearance.preset).toBe("forest-sage");
+    const invalid = structuredClone(base);
+    (invalid.appearance as { preset?: string }).preset = "unknown-theme";
+    expect(normalizeSettings(invalid).appearance.preset).toBe("warm-stone");
   });
 });

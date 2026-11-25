@@ -34,11 +34,11 @@
 <style>
   .settings-page{padding:0;min-width:0;color:var(--app-text);font-family:var(--font-family-ui)}
   h3{font:var(--font-section);margin:24px 0 16px}
-  p{font-size:var(--font-size-sm);color:var(--app-muted);line-height:var(--line-height-body-relaxed);overflow-wrap:anywhere}
+  p{font-size:var(--font-size-caption);color:var(--app-muted);line-height:var(--line-height-body);overflow-wrap:anywhere}
   .source{display:flex;gap:12px;align-items:center}
-  .source label{display:flex;justify-content:space-between;align-items:center;gap:12px;flex:1;min-width:0;font-size:var(--font-size-sm);padding:18px 0}
-  select{min-width:0;width:100%;max-width:55%;min-height:34px;padding:6px;border:1px solid var(--app-border);border-radius:6px;background:var(--app-bg);color:var(--app-text)}
-  button{padding:7px 10px;border:1px solid var(--app-border);border-radius:6px;background:var(--app-surface);color:var(--app-text);font-size:var(--font-size-sm)}
+  .source label{display:flex;justify-content:space-between;align-items:center;gap:12px;flex:1;min-width:0;font-size:var(--font-size-label);font-weight:var(--font-weight-medium);padding:18px 0}
+  select{min-width:0;width:100%;max-width:55%;min-height:32px;padding:6px 10px;border:1px solid var(--app-border);border-radius:6px;background:var(--app-surface);color:var(--app-text);font-size:var(--font-size-label)}
+  button{min-height:32px;padding:6px 10px;border:1px solid var(--app-border);border-radius:6px;background:var(--app-surface-soft);color:var(--app-text);font-size:var(--font-size-label);font-weight:var(--font-weight-medium)}
   [role=alert]{color:var(--color-main-danger-text)}
   :is(button,select):focus-visible{outline:2px solid var(--color-focus-ring);outline-offset:2px}
 </style>

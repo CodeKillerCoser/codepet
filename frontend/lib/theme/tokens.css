@@ -2,6 +2,8 @@
 @import "@radix-ui/colors/amber-dark.css";
 @import "@radix-ui/colors/blue.css";
 @import "@radix-ui/colors/blue-dark.css";
+@import "@radix-ui/colors/bronze.css";
+@import "@radix-ui/colors/bronze-dark.css";
 @import "@radix-ui/colors/brown.css";
 @import "@radix-ui/colors/brown-dark.css";
 @import "@radix-ui/colors/crimson.css";
@@ -10,44 +12,56 @@
 @import "@radix-ui/colors/cyan-dark.css";
 @import "@radix-ui/colors/gray.css";
 @import "@radix-ui/colors/gray-dark.css";
+@import "@radix-ui/colors/grass.css";
+@import "@radix-ui/colors/grass-dark.css";
 @import "@radix-ui/colors/green.css";
 @import "@radix-ui/colors/green-dark.css";
 @import "@radix-ui/colors/orange.css";
 @import "@radix-ui/colors/orange-dark.css";
 @import "@radix-ui/colors/red.css";
 @import "@radix-ui/colors/red-dark.css";
-@import "@radix-ui/colors/violet.css";
-@import "@radix-ui/colors/violet-dark.css";
+@import "@radix-ui/colors/sage.css";
+@import "@radix-ui/colors/sage-dark.css";
 @import "@radix-ui/colors/sand.css";
 @import "@radix-ui/colors/sand-dark.css";
-@import "@radix-ui/colors/grass.css";
-@import "@radix-ui/colors/grass-dark.css";
+@import "@radix-ui/colors/slate.css";
+@import "@radix-ui/colors/slate-dark.css";
+@import "@radix-ui/colors/violet.css";
+@import "@radix-ui/colors/violet-dark.css";
 
 :root {
   --color-transparent: transparent;
   --color-white: white;
   --color-black: black;
 
-  --font-family-ui: "SF Pro Rounded", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  /* Unified font families across desktop surfaces and compact overlays. */
+  --font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-family-code: "SF Mono", "SFMono-Regular", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* Core harmonic desktop size scale (no half-pixel magic values). */
   --font-size-2xs: 10px;
-  --font-size-2xs-plus: 10.5px;
   --font-size-xs: 11px;
-  --font-size-xs-plus: 11.5px;
   --font-size-sm: 12px;
   --font-size-sm-plus: 13px;
   --font-size-md: 14px;
-  --font-size-md-plus: 15px;
-  --font-size-lg: 16px;
-  --font-size-xl: 17px;
-  --font-size-2xl: 18px;
-  --font-size-3xl: 19px;
-  --font-size-4xl: 20px;
-  --font-size-5xl: 22px;
-  --font-size-6xl: 23px;
-  --font-size-7xl: 25px;
-  --font-size-display: 30px;
-  --font-size-pet-title: 13.5px;
+  --font-size-lg: 15px;
+  --font-size-xl: 18px;
+  --font-size-2xl: 22px;
+  --font-size-display: 28px;
 
+  /* Compatibility aliases mapped strictly onto the core scale. */
+  --font-size-2xs-plus: var(--font-size-xs);
+  --font-size-xs-plus: var(--font-size-sm);
+  --font-size-md-plus: var(--font-size-md);
+  --font-size-3xl: var(--font-size-xl);
+  --font-size-4xl: var(--font-size-xl);
+  --font-size-5xl: var(--font-size-2xl);
+  --font-size-6xl: var(--font-size-2xl);
+  --font-size-7xl: var(--font-size-2xl);
+  --font-size-pet-title: var(--font-size-sm-plus);
+  --font-size-relative-note: var(--font-size-sm);
+
+  /* Strict 3-weight scale: regular (400), medium (500), semibold (600). */
   --font-weight-regular: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
@@ -69,101 +83,116 @@
   --space-section: 28px;
   --space-page: 24px;
 
+  /* Core 6-step line-height scale. */
   --line-height-none: 1;
-  --line-height-tight: 1.18;
-  --line-height-compact: 1.1;
-  --line-height-heading: 1.15;
-  --line-height-snug: 1.2;
-  --line-height-title: 1.22;
-  --line-height-message: 1.24;
-  --line-height-card: 1.25;
-  --line-height-copy: 1.35;
-  --line-height-relaxed: 1.45;
-  --line-height-loose: 1.5;
-  --line-height-display: 1.04;
-  --line-height-body: 1.65;
-  --line-height-label: 1.5;
-  --line-height-section: 1.45;
-  --line-height-page: 1.35;
-  --line-height-reading: 1.7;
-  --line-height-copy-compact: 1.4;
-  --line-height-body-compact: 1.55;
-  --line-height-body-relaxed: 1.6;
-  --line-height-reading-loose: 1.75;
-  --line-height-reading-spacious: 1.8;
-  --line-height-caption-fixed: 20px;
+  --line-height-tight: 1.2;
+  --line-height-snug: 1.35;
+  --line-height-normal: 1.45;
+  --line-height-relaxed: 1.55;
+  --line-height-loose: 1.65;
+  --line-height-caption-fixed: 18px;
+
+  /* Compatibility aliases mapped onto the core line-height scale. */
+  --line-height-display: var(--line-height-none);
+  --line-height-compact: var(--line-height-tight);
+  --line-height-heading: var(--line-height-tight);
+  --line-height-title: var(--line-height-snug);
+  --line-height-page: var(--line-height-snug);
+  --line-height-message: var(--line-height-snug);
+  --line-height-card: var(--line-height-snug);
+  --line-height-copy: var(--line-height-snug);
+  --line-height-copy-compact: var(--line-height-normal);
+  --line-height-section: var(--line-height-normal);
+  --line-height-label: var(--line-height-normal);
+  --line-height-body: var(--line-height-relaxed);
+  --line-height-body-compact: var(--line-height-relaxed);
+  --line-height-body-relaxed: var(--line-height-relaxed);
+  --line-height-reading: var(--line-height-loose);
+  --line-height-reading-loose: var(--line-height-loose);
+  --line-height-reading-spacious: var(--line-height-loose);
 
   --letter-spacing-normal: 0;
-  --letter-spacing-caps: 0.1em;
-  --letter-spacing-caps-wide: 0.12em;
-  --letter-spacing-title: -.025em;
-  --letter-spacing-source: .05em;
+  --letter-spacing-caps: 0;
+  --letter-spacing-caps-wide: 0;
+  --letter-spacing-title: -0.02em;
+  --letter-spacing-source: 0.02em;
+
+  /* Mode-invariant ink/control tokens for user-colored running bubbles so light
+   * bubbles keep dark ink in dark mode and dark bubbles keep light ink in light mode. */
+  --pet-ink-on-light-title: #21201c;
+  --pet-ink-on-light-message: #494740;
+  --pet-ink-on-light-meta: #63635e;
+  --pet-surface-on-light: #fffdf9cc;
+  --pet-border-on-light: #21201c28;
+  --pet-ink-on-dark-title: #eeeeec;
+  --pet-ink-on-dark-message: #cfcec9;
+  --pet-ink-on-dark-meta: #b5b3ad;
+  --pet-surface-on-dark: #191918cc;
+  --pet-border-on-dark: #eeeeec2e;
 }
 
-/* Recompute semantic typography in the main theme so its font family and weights apply. */
-:root, .main-theme {
-  /* Product typography: content hierarchy, independent of color mode. */
-  --font-size-title: var(--font-size-4xl);
-  --font-size-title-compact: var(--font-size-title);
-  --font-size-section: var(--font-size-2xl);
-  --font-size-subheading: var(--font-size-lg);
-  --font-size-body: var(--font-size-md-plus);
-  --font-size-label: var(--font-size-md);
-  --font-size-caption: var(--font-size-sm-plus);
-  --font-size-code: var(--font-size-sm-plus);
-  --font-size-relative-note: .85rem;
+/* Semantic desktop typography hierarchy (Balanced 18 / 15 / 14 / 14 / 13 / 12). */
+:root,
+.main-theme {
+  --font-size-title: var(--font-size-xl);
+  --font-size-title-compact: var(--font-size-xl);
+  --font-size-section: var(--font-size-lg);
+  --font-size-subheading: var(--font-size-md);
+  --font-size-body: var(--font-size-md);
+  --font-size-label: var(--font-size-sm-plus);
+  --font-size-caption: var(--font-size-sm);
+  --font-size-code: var(--font-size-sm);
+  --font-size-metric: var(--font-size-2xl);
 
   --font-title: var(--font-weight-heading) var(--font-size-title)/var(--line-height-page) var(--font-family-ui);
   --font-section: var(--font-weight-heading) var(--font-size-section)/var(--line-height-section) var(--font-family-ui);
   --font-subheading: var(--font-weight-heading) var(--font-size-subheading)/var(--line-height-section) var(--font-family-ui);
   --font-body: var(--font-weight-content) var(--font-size-body)/var(--line-height-body) var(--font-family-ui);
   --font-caption: var(--font-weight-content) var(--font-size-caption)/var(--line-height-label) var(--font-family-ui);
-
 }
 
 :root,
 .light,
 .light-theme,
 .theme-light {
-  --color-app-background: var(--gray-2);
-  --color-surface-panel: color-mix(in srgb, var(--gray-1) 82%, var(--color-transparent));
-  --color-surface-strong: var(--gray-1);
-  --color-surface-soft: var(--gray-2);
-  --color-border-default: var(--gray-6);
-  --color-border-strong: var(--gray-8);
-  --color-text-primary: var(--gray-12);
-  --color-text-muted: var(--gray-11);
-  --color-text-subtle: var(--gray-10);
-  --color-accent: var(--gray-11);
-  --color-accent-strong: var(--gray-12);
-  --color-success: var(--green-11);
+  --color-app-background: var(--sand-2);
+  --color-surface-panel: color-mix(in srgb, var(--sand-1) 86%, var(--color-transparent));
+  --color-surface-strong: var(--sand-1);
+  --color-surface-soft: var(--sand-2);
+  --color-border-default: var(--sand-6);
+  --color-border-strong: var(--sand-8);
+  --color-text-primary: var(--sand-12);
+  --color-text-muted: var(--sand-11);
+  --color-text-subtle: var(--sand-10);
+  --color-accent: var(--amber-11);
+  --color-accent-strong: var(--amber-12);
+  --color-success: var(--grass-11);
   --color-danger: var(--crimson-10);
-  --color-focus-ring: var(--cyan-9);
-  --color-grid-line: color-mix(in srgb, var(--gray-9) 14%, var(--color-transparent));
-  --color-shadow-panel: color-mix(in srgb, var(--gray-12) 8%, var(--color-transparent));
-  --color-shadow-card: color-mix(in srgb, var(--gray-12) 10%, var(--color-transparent));
-  --color-shadow-strong: color-mix(in srgb, var(--gray-12) 16%, var(--color-transparent));
+  --color-focus-ring: var(--amber-11);
+  --color-grid-line: color-mix(in srgb, var(--sand-9) 14%, var(--color-transparent));
+  --color-shadow-panel: color-mix(in srgb, var(--sand-12) 8%, var(--color-transparent));
+  --color-shadow-card: color-mix(in srgb, var(--sand-12) 10%, var(--color-transparent));
+  --color-shadow-strong: color-mix(in srgb, var(--sand-12) 16%, var(--color-transparent));
   --color-agent-codex: var(--blue-11);
-  --color-agent-claude: var(--amber-10);
-  --color-agent-qoder: var(--green-10);
+  --color-agent-claude: var(--amber-11);
+  --color-agent-qoder: var(--grass-11);
   --color-agent-cursor: var(--violet-10);
-  --color-state-success-border: color-mix(in srgb, var(--green-9) 52%, var(--color-transparent));
-  --color-state-success-surface: color-mix(in srgb, var(--green-4) 60%, var(--color-transparent));
+  --color-state-success-border: color-mix(in srgb, var(--grass-9) 52%, var(--color-transparent));
+  --color-state-success-surface: color-mix(in srgb, var(--grass-4) 60%, var(--color-transparent));
   --color-state-danger-border: color-mix(in srgb, var(--crimson-9) 42%, var(--color-transparent));
   --color-state-danger-surface: color-mix(in srgb, var(--crimson-3) 70%, var(--color-transparent));
   --color-state-error-border: color-mix(in srgb, var(--red-9) 45%, var(--color-transparent));
   --color-dev-border: color-mix(in srgb, var(--blue-10) 42%, var(--color-transparent));
   --color-dev-surface: color-mix(in srgb, var(--blue-3) 72%, var(--color-transparent));
-  --color-dock-icon: var(--gray-10);
-  --color-pet-outline-soft: color-mix(in srgb, var(--gray-12) 20%, var(--color-transparent));
-  --color-pet-shadow-soft: color-mix(in srgb, var(--gray-12) 14%, var(--color-transparent));
-  --color-pet-shadow: color-mix(in srgb, var(--gray-12) 16%, var(--color-transparent));
+  --color-dock-icon: var(--sand-11);
+  --color-pet-outline-soft: color-mix(in srgb, var(--sand-12) 20%, var(--color-transparent));
+  --color-pet-shadow-soft: color-mix(in srgb, var(--sand-12) 14%, var(--color-transparent));
+  --color-pet-shadow: color-mix(in srgb, var(--sand-12) 16%, var(--color-transparent));
   --color-running-border-cool: var(--cyan-9);
   --color-running-border-hot: var(--crimson-9);
   --color-running-border-warm: var(--amber-9);
 
-
-  --asset-whip-shadow: color-mix(in srgb, var(--gray-12) 18%, var(--color-transparent));
+  --asset-whip-shadow: color-mix(in srgb, var(--sand-12) 18%, var(--color-transparent));
   --asset-whip-cord-highlight: color-mix(in srgb, var(--amber-5) 62%, var(--color-transparent));
   --asset-whip-cord-outline: var(--brown-11);
   --asset-whip-cord-shadow: color-mix(in srgb, var(--brown-12) 35%, var(--color-transparent));
@@ -200,75 +229,74 @@
   --app-shadow: var(--color-shadow-panel);
   --pixel-grid: var(--color-grid-line);
 
-  --pet-pill-bg: color-mix(in srgb, var(--gray-1) 90%, var(--color-transparent));
-  --pet-pill-hover-bg: color-mix(in srgb, var(--blue-2) 82%, var(--color-transparent));
-  --pet-button-bg: color-mix(in srgb, var(--gray-3) 78%, var(--color-transparent));
-  --pet-border: color-mix(in srgb, var(--gray-9) 26%, var(--color-transparent));
+  --pet-pill-bg: color-mix(in srgb, var(--sand-1) 92%, var(--color-transparent));
+  --pet-pill-hover-bg: color-mix(in srgb, var(--amber-2) 86%, var(--color-transparent));
+  --pet-button-bg: color-mix(in srgb, var(--sand-3) 82%, var(--color-transparent));
+  --pet-border: color-mix(in srgb, var(--sand-9) 26%, var(--color-transparent));
   --pet-highlight: color-mix(in srgb, var(--color-white) 82%, var(--color-transparent));
-  --pet-title: var(--gray-12);
-  --pet-message: var(--gray-11);
-  --pet-subtitle: var(--gray-11);
-  --pet-agent: var(--gray-9);
+  --pet-title: var(--sand-12);
+  --pet-message: var(--sand-11);
+  --pet-subtitle: var(--sand-11);
+  --pet-agent: var(--sand-10);
   --pet-status-running: var(--blue-11);
   --pet-status-waiting: var(--crimson-10);
   --pet-status-failed: var(--red-10);
-  --pet-status-done: var(--green-10);
-  --pet-scrollbar: color-mix(in srgb, var(--gray-11) 32%, var(--color-transparent));
+  --pet-status-done: var(--grass-11);
+  --pet-scrollbar: color-mix(in srgb, var(--sand-11) 30%, var(--color-transparent));
   --pet-shadow: var(--color-shadow-card);
   --pet-urgent-bg: color-mix(in srgb, var(--crimson-2) 94%, var(--color-transparent));
   --pet-urgent-hover-bg: color-mix(in srgb, var(--crimson-3) 96%, var(--color-transparent));
   --pet-failed-bg: color-mix(in srgb, var(--red-2) 94%, var(--color-transparent));
   --pet-failed-hover-bg: color-mix(in srgb, var(--red-3) 96%, var(--color-transparent));
-  --pet-done-bg: color-mix(in srgb, var(--green-2) 94%, var(--color-transparent));
-  --pet-done-hover-bg: color-mix(in srgb, var(--green-3) 96%, var(--color-transparent));
-  --pet-active-border: color-mix(in srgb, var(--blue-9) 56%, var(--color-transparent));
-  --pet-active-bg: color-mix(in srgb, var(--blue-3) 96%, var(--color-transparent));
-  --pet-active-bg-peak: color-mix(in srgb, var(--blue-4) 98%, var(--color-transparent));
-  --pet-active-ring: color-mix(in srgb, var(--blue-9) 20%, var(--color-transparent));
-  --pet-active-glow: color-mix(in srgb, var(--blue-9) 34%, var(--color-transparent));
-  --pet-active-shadow: color-mix(in srgb, var(--blue-9) 24%, var(--color-transparent));
+  --pet-done-bg: color-mix(in srgb, var(--grass-2) 94%, var(--color-transparent));
+  --pet-done-hover-bg: color-mix(in srgb, var(--grass-3) 96%, var(--color-transparent));
+  --pet-active-border: color-mix(in srgb, var(--amber-9) 56%, var(--color-transparent));
+  --pet-active-bg: color-mix(in srgb, var(--amber-3) 94%, var(--color-transparent));
+  --pet-active-bg-peak: color-mix(in srgb, var(--amber-4) 96%, var(--color-transparent));
+  --pet-active-ring: color-mix(in srgb, var(--amber-9) 20%, var(--color-transparent));
+  --pet-active-glow: color-mix(in srgb, var(--amber-9) 34%, var(--color-transparent));
+  --pet-active-shadow: color-mix(in srgb, var(--amber-9) 24%, var(--color-transparent));
 }
 
 .dark,
 .dark-theme,
 .theme-dark {
-  --color-app-background: var(--gray-1);
-  --color-surface-panel: color-mix(in srgb, var(--gray-3) 90%, var(--color-transparent));
-  --color-surface-strong: var(--gray-3);
-  --color-surface-soft: var(--gray-2);
-  --color-border-default: var(--gray-6);
-  --color-border-strong: var(--gray-8);
-  --color-text-primary: var(--gray-12);
-  --color-text-muted: var(--gray-11);
-  --color-text-subtle: var(--gray-10);
-  --color-accent: var(--gray-11);
-  --color-accent-strong: var(--gray-12);
-  --color-success: var(--green-11);
+  --color-app-background: var(--sand-1);
+  --color-surface-panel: color-mix(in srgb, var(--sand-3) 90%, var(--color-transparent));
+  --color-surface-strong: var(--sand-3);
+  --color-surface-soft: var(--sand-2);
+  --color-border-default: var(--sand-6);
+  --color-border-strong: var(--sand-8);
+  --color-text-primary: var(--sand-12);
+  --color-text-muted: var(--sand-11);
+  --color-text-subtle: var(--sand-10);
+  --color-accent: var(--amber-11);
+  --color-accent-strong: var(--amber-12);
+  --color-success: var(--grass-11);
   --color-danger: var(--crimson-11);
-  --color-focus-ring: var(--cyan-9);
-  --color-grid-line: color-mix(in srgb, var(--gray-9) 8%, var(--color-transparent));
+  --color-focus-ring: var(--amber-10);
+  --color-grid-line: color-mix(in srgb, var(--sand-9) 8%, var(--color-transparent));
   --color-shadow-panel: color-mix(in srgb, var(--color-black) 28%, var(--color-transparent));
   --color-shadow-card: color-mix(in srgb, var(--color-black) 28%, var(--color-transparent));
   --color-shadow-strong: color-mix(in srgb, var(--color-black) 34%, var(--color-transparent));
   --color-agent-codex: var(--blue-10);
   --color-agent-claude: var(--amber-10);
-  --color-agent-qoder: var(--green-10);
+  --color-agent-qoder: var(--grass-10);
   --color-agent-cursor: var(--violet-10);
-  --color-state-success-border: color-mix(in srgb, var(--green-9) 52%, var(--color-transparent));
-  --color-state-success-surface: color-mix(in srgb, var(--green-4) 36%, var(--color-transparent));
+  --color-state-success-border: color-mix(in srgb, var(--grass-9) 52%, var(--color-transparent));
+  --color-state-success-surface: color-mix(in srgb, var(--grass-4) 36%, var(--color-transparent));
   --color-state-danger-border: color-mix(in srgb, var(--crimson-9) 44%, var(--color-transparent));
   --color-state-danger-surface: color-mix(in srgb, var(--crimson-4) 36%, var(--color-transparent));
   --color-state-error-border: color-mix(in srgb, var(--red-9) 45%, var(--color-transparent));
   --color-dev-border: color-mix(in srgb, var(--blue-10) 42%, var(--color-transparent));
   --color-dev-surface: color-mix(in srgb, var(--blue-3) 72%, var(--color-transparent));
-  --color-dock-icon: var(--gray-10);
-  --color-pet-outline-soft: color-mix(in srgb, var(--gray-12) 20%, var(--color-transparent));
+  --color-dock-icon: var(--sand-10);
+  --color-pet-outline-soft: color-mix(in srgb, var(--sand-12) 20%, var(--color-transparent));
   --color-pet-shadow-soft: color-mix(in srgb, var(--color-black) 24%, var(--color-transparent));
   --color-pet-shadow: color-mix(in srgb, var(--color-black) 30%, var(--color-transparent));
   --color-running-border-cool: var(--cyan-9);
   --color-running-border-hot: var(--crimson-9);
   --color-running-border-warm: var(--amber-9);
-
 
   --asset-whip-shadow: color-mix(in srgb, var(--color-black) 24%, var(--color-transparent));
   --asset-whip-cord-highlight: color-mix(in srgb, var(--amber-5) 62%, var(--color-transparent));
@@ -307,31 +335,288 @@
   --app-shadow: var(--color-shadow-panel);
   --pixel-grid: var(--color-grid-line);
 
-  --pet-pill-bg: color-mix(in srgb, var(--gray-3) 78%, var(--color-transparent));
-  --pet-pill-hover-bg: color-mix(in srgb, var(--gray-4) 86%, var(--color-transparent));
-  --pet-button-bg: color-mix(in srgb, var(--gray-4) 78%, var(--color-transparent));
-  --pet-border: color-mix(in srgb, var(--gray-9) 22%, var(--color-transparent));
-  --pet-highlight: color-mix(in srgb, var(--color-white) 12%, var(--color-transparent));
-  --pet-title: var(--gray-12);
-  --pet-message: var(--gray-11);
-  --pet-subtitle: var(--gray-11);
-  --pet-agent: var(--gray-10);
+  --pet-pill-bg: color-mix(in srgb, var(--sand-3) 82%, var(--color-transparent));
+  --pet-pill-hover-bg: color-mix(in srgb, var(--sand-4) 88%, var(--color-transparent));
+  --pet-button-bg: color-mix(in srgb, var(--sand-4) 80%, var(--color-transparent));
+  --pet-border: color-mix(in srgb, var(--sand-9) 22%, var(--color-transparent));
+  --pet-highlight: color-mix(in srgb, var(--color-white) 10%, var(--color-transparent));
+  --pet-title: var(--sand-12);
+  --pet-message: var(--sand-11);
+  --pet-subtitle: var(--sand-11);
+  --pet-agent: var(--sand-10);
   --pet-status-running: var(--blue-11);
   --pet-status-waiting: var(--crimson-11);
   --pet-status-failed: var(--red-11);
-  --pet-status-done: var(--green-11);
-  --pet-scrollbar: color-mix(in srgb, var(--gray-11) 32%, var(--color-transparent));
+  --pet-status-done: var(--grass-11);
+  --pet-scrollbar: color-mix(in srgb, var(--sand-11) 30%, var(--color-transparent));
   --pet-shadow: var(--color-shadow-card);
   --pet-urgent-bg: color-mix(in srgb, var(--crimson-4) 84%, var(--color-transparent));
   --pet-urgent-hover-bg: color-mix(in srgb, var(--crimson-5) 90%, var(--color-transparent));
   --pet-failed-bg: color-mix(in srgb, var(--red-4) 84%, var(--color-transparent));
   --pet-failed-hover-bg: color-mix(in srgb, var(--red-5) 90%, var(--color-transparent));
-  --pet-done-bg: color-mix(in srgb, var(--green-4) 84%, var(--color-transparent));
-  --pet-done-hover-bg: color-mix(in srgb, var(--green-5) 90%, var(--color-transparent));
-  --pet-active-border: color-mix(in srgb, var(--blue-10) 62%, var(--color-transparent));
-  --pet-active-bg: color-mix(in srgb, var(--blue-4) 60%, var(--gray-2));
-  --pet-active-bg-peak: color-mix(in srgb, var(--blue-5) 68%, var(--gray-3));
-  --pet-active-ring: color-mix(in srgb, var(--blue-10) 26%, var(--color-transparent));
-  --pet-active-glow: color-mix(in srgb, var(--blue-10) 42%, var(--color-transparent));
-  --pet-active-shadow: color-mix(in srgb, var(--blue-10) 28%, var(--color-transparent));
+  --pet-done-bg: color-mix(in srgb, var(--grass-4) 84%, var(--color-transparent));
+  --pet-done-hover-bg: color-mix(in srgb, var(--grass-5) 90%, var(--color-transparent));
+  --pet-active-border: color-mix(in srgb, var(--amber-9) 48%, var(--color-transparent));
+  --pet-active-bg: color-mix(in srgb, var(--amber-9) 16%, var(--sand-2));
+  --pet-active-bg-peak: color-mix(in srgb, var(--amber-9) 24%, var(--sand-3));
+  --pet-active-ring: color-mix(in srgb, var(--amber-9) 24%, var(--color-transparent));
+  --pet-active-glow: color-mix(in srgb, var(--amber-9) 36%, var(--color-transparent));
+  --pet-active-shadow: color-mix(in srgb, var(--amber-9) 24%, var(--color-transparent));
+
+  /* Hardware-fused dark notch panel neutral & status tokens (warm Sand by default). */
+  --notch-surface: var(--sand-3);
+  --notch-surface-hover: var(--sand-4);
+  --notch-surface-active: var(--sand-5);
+  --notch-border: var(--sand-7);
+  --notch-border-strong: var(--sand-8);
+  --notch-outline: var(--sand-9);
+  --notch-text: var(--sand-12);
+  --notch-muted: var(--sand-11);
+  --notch-subtle: var(--sand-10);
+  --notch-scrollbar: var(--sand-7);
+  --notch-stack-base: var(--sand-2);
+  --notch-stack-raised: var(--sand-3);
+  --notch-stack-ring: var(--sand-4);
+  --notch-status-idle: var(--grass-9);
+  --notch-status-busy: var(--blue-9);
+  --notch-status-attention: var(--amber-9);
+  --notch-status-error: var(--red-9);
+  --notch-status-running-text: var(--blue-11);
+  --notch-status-attention-text: var(--amber-11);
+  --notch-status-error-text: var(--red-11);
+}
+
+/* Multi-theme token presets for floating pet surfaces and shared token consumers. */
+.preset-cool-slate {
+  --color-app-background: var(--slate-2);
+  --color-surface-panel: color-mix(in srgb, var(--slate-1) 86%, var(--color-transparent));
+  --color-surface-strong: var(--slate-1);
+  --color-surface-soft: var(--slate-2);
+  --color-border-default: var(--slate-6);
+  --color-border-strong: var(--slate-8);
+  --color-text-primary: var(--slate-12);
+  --color-text-muted: var(--slate-11);
+  --color-text-subtle: var(--slate-10);
+  --color-accent: var(--blue-11);
+  --color-accent-strong: var(--blue-12);
+  --color-focus-ring: var(--blue-10);
+  --color-dock-icon: var(--slate-11);
+  --pet-pill-bg: color-mix(in srgb, var(--slate-1) 92%, var(--color-transparent));
+  --pet-pill-hover-bg: color-mix(in srgb, var(--blue-2) 86%, var(--color-transparent));
+  --pet-button-bg: color-mix(in srgb, var(--slate-3) 82%, var(--color-transparent));
+  --pet-border: color-mix(in srgb, var(--slate-9) 26%, var(--color-transparent));
+  --pet-title: var(--slate-12);
+  --pet-message: var(--slate-11);
+  --pet-subtitle: var(--slate-11);
+  --pet-agent: var(--slate-10);
+  --pet-scrollbar: color-mix(in srgb, var(--slate-11) 30%, var(--color-transparent));
+  --pet-active-border: color-mix(in srgb, var(--blue-9) 56%, var(--color-transparent));
+  --pet-active-bg: color-mix(in srgb, var(--blue-3) 94%, var(--color-transparent));
+  --pet-active-bg-peak: color-mix(in srgb, var(--blue-4) 96%, var(--color-transparent));
+  --pet-active-ring: color-mix(in srgb, var(--blue-9) 20%, var(--color-transparent));
+  --pet-active-glow: color-mix(in srgb, var(--blue-9) 34%, var(--color-transparent));
+  --pet-active-shadow: color-mix(in srgb, var(--blue-9) 24%, var(--color-transparent));
+}
+
+.dark.preset-cool-slate {
+  --color-app-background: var(--slate-1);
+  --color-surface-panel: color-mix(in srgb, var(--slate-3) 90%, var(--color-transparent));
+  --color-surface-strong: var(--slate-3);
+  --color-surface-soft: var(--slate-2);
+  --color-border-default: var(--slate-6);
+  --color-border-strong: var(--slate-8);
+  --color-text-primary: var(--slate-12);
+  --color-text-muted: var(--slate-11);
+  --color-text-subtle: var(--slate-10);
+  --color-accent: var(--blue-11);
+  --color-accent-strong: var(--blue-12);
+  --color-focus-ring: var(--blue-10);
+  --color-dock-icon: var(--slate-10);
+  --pet-pill-bg: color-mix(in srgb, var(--slate-3) 82%, var(--color-transparent));
+  --pet-pill-hover-bg: color-mix(in srgb, var(--slate-4) 88%, var(--color-transparent));
+  --pet-button-bg: color-mix(in srgb, var(--slate-4) 80%, var(--color-transparent));
+  --pet-border: color-mix(in srgb, var(--slate-9) 22%, var(--color-transparent));
+  --pet-title: var(--slate-12);
+  --pet-message: var(--slate-11);
+  --pet-subtitle: var(--slate-11);
+  --pet-agent: var(--slate-10);
+  --pet-scrollbar: color-mix(in srgb, var(--slate-11) 30%, var(--color-transparent));
+  --pet-active-border: color-mix(in srgb, var(--blue-9) 48%, var(--color-transparent));
+  --pet-active-bg: color-mix(in srgb, var(--blue-9) 18%, var(--slate-2));
+  --pet-active-bg-peak: color-mix(in srgb, var(--blue-9) 26%, var(--slate-3));
+  --pet-active-ring: color-mix(in srgb, var(--blue-9) 24%, var(--color-transparent));
+  --pet-active-glow: color-mix(in srgb, var(--blue-9) 36%, var(--color-transparent));
+  --pet-active-shadow: color-mix(in srgb, var(--blue-9) 24%, var(--color-transparent));
+}
+
+.preset-forest-sage {
+  --color-app-background: var(--sage-2);
+  --color-surface-panel: color-mix(in srgb, var(--sage-1) 86%, var(--color-transparent));
+  --color-surface-strong: var(--sage-1);
+  --color-surface-soft: var(--sage-2);
+  --color-border-default: var(--sage-6);
+  --color-border-strong: var(--sage-8);
+  --color-text-primary: var(--sage-12);
+  --color-text-muted: var(--sage-11);
+  --color-text-subtle: var(--sage-10);
+  --color-accent: var(--grass-11);
+  --color-accent-strong: var(--grass-12);
+  --color-focus-ring: var(--grass-10);
+  --color-dock-icon: var(--sage-11);
+  --pet-pill-bg: color-mix(in srgb, var(--sage-1) 92%, var(--color-transparent));
+  --pet-pill-hover-bg: color-mix(in srgb, var(--grass-2) 86%, var(--color-transparent));
+  --pet-button-bg: color-mix(in srgb, var(--sage-3) 82%, var(--color-transparent));
+  --pet-border: color-mix(in srgb, var(--sage-9) 26%, var(--color-transparent));
+  --pet-title: var(--sage-12);
+  --pet-message: var(--sage-11);
+  --pet-subtitle: var(--sage-11);
+  --pet-agent: var(--sage-10);
+  --pet-scrollbar: color-mix(in srgb, var(--sage-11) 30%, var(--color-transparent));
+  --pet-active-border: color-mix(in srgb, var(--grass-9) 56%, var(--color-transparent));
+  --pet-active-bg: color-mix(in srgb, var(--grass-3) 94%, var(--color-transparent));
+  --pet-active-bg-peak: color-mix(in srgb, var(--grass-4) 96%, var(--color-transparent));
+  --pet-active-ring: color-mix(in srgb, var(--grass-9) 20%, var(--color-transparent));
+  --pet-active-glow: color-mix(in srgb, var(--grass-9) 34%, var(--color-transparent));
+  --pet-active-shadow: color-mix(in srgb, var(--grass-9) 24%, var(--color-transparent));
+}
+
+.dark.preset-forest-sage {
+  --color-app-background: var(--sage-1);
+  --color-surface-panel: color-mix(in srgb, var(--sage-3) 90%, var(--color-transparent));
+  --color-surface-strong: var(--sage-3);
+  --color-surface-soft: var(--sage-2);
+  --color-border-default: var(--sage-6);
+  --color-border-strong: var(--sage-8);
+  --color-text-primary: var(--sage-12);
+  --color-text-muted: var(--sage-11);
+  --color-text-subtle: var(--sage-10);
+  --color-accent: var(--grass-11);
+  --color-accent-strong: var(--grass-12);
+  --color-focus-ring: var(--grass-10);
+  --color-dock-icon: var(--sage-10);
+  --pet-pill-bg: color-mix(in srgb, var(--sage-3) 82%, var(--color-transparent));
+  --pet-pill-hover-bg: color-mix(in srgb, var(--sage-4) 88%, var(--color-transparent));
+  --pet-button-bg: color-mix(in srgb, var(--sage-4) 80%, var(--color-transparent));
+  --pet-border: color-mix(in srgb, var(--sage-9) 22%, var(--color-transparent));
+  --pet-title: var(--sage-12);
+  --pet-message: var(--sage-11);
+  --pet-subtitle: var(--sage-11);
+  --pet-agent: var(--sage-10);
+  --pet-scrollbar: color-mix(in srgb, var(--sage-11) 30%, var(--color-transparent));
+  --pet-active-border: color-mix(in srgb, var(--grass-9) 48%, var(--color-transparent));
+  --pet-active-bg: color-mix(in srgb, var(--grass-9) 16%, var(--sage-2));
+  --pet-active-bg-peak: color-mix(in srgb, var(--grass-9) 24%, var(--sage-3));
+  --pet-active-ring: color-mix(in srgb, var(--grass-9) 24%, var(--color-transparent));
+  --pet-active-glow: color-mix(in srgb, var(--grass-9) 36%, var(--color-transparent));
+  --pet-active-shadow: color-mix(in srgb, var(--grass-9) 24%, var(--color-transparent));
+}
+
+.preset-caramel-earth {
+  --color-app-background: var(--brown-2);
+  --color-surface-panel: color-mix(in srgb, var(--brown-1) 88%, var(--color-transparent));
+  --color-surface-strong: var(--brown-1);
+  --color-surface-soft: var(--brown-2);
+  --color-border-default: var(--brown-6);
+  --color-border-strong: var(--brown-8);
+  --color-text-primary: var(--sand-12);
+  --color-text-muted: var(--sand-11);
+  --color-text-subtle: var(--sand-10);
+  --color-accent: var(--brown-11);
+  --color-accent-strong: var(--brown-12);
+  --color-focus-ring: var(--brown-10);
+  --color-dock-icon: var(--brown-11);
+  --pet-pill-bg: color-mix(in srgb, var(--brown-1) 92%, var(--color-transparent));
+  --pet-pill-hover-bg: color-mix(in srgb, var(--brown-3) 86%, var(--color-transparent));
+  --pet-button-bg: color-mix(in srgb, var(--brown-3) 82%, var(--color-transparent));
+  --pet-border: color-mix(in srgb, var(--brown-9) 28%, var(--color-transparent));
+  --pet-title: var(--sand-12);
+  --pet-message: var(--sand-11);
+  --pet-subtitle: var(--sand-11);
+  --pet-agent: var(--brown-10);
+  --pet-scrollbar: color-mix(in srgb, var(--brown-11) 30%, var(--color-transparent));
+  --pet-active-border: color-mix(in srgb, var(--brown-9) 56%, var(--color-transparent));
+  --pet-active-bg: color-mix(in srgb, var(--brown-3) 94%, var(--color-transparent));
+  --pet-active-bg-peak: color-mix(in srgb, var(--brown-4) 96%, var(--color-transparent));
+  --pet-active-ring: color-mix(in srgb, var(--brown-9) 20%, var(--color-transparent));
+  --pet-active-glow: color-mix(in srgb, var(--brown-9) 34%, var(--color-transparent));
+  --pet-active-shadow: color-mix(in srgb, var(--brown-9) 24%, var(--color-transparent));
+}
+
+.dark.preset-caramel-earth {
+  --color-app-background: var(--brown-1);
+  --color-surface-panel: color-mix(in srgb, var(--brown-3) 90%, var(--color-transparent));
+  --color-surface-strong: var(--brown-3);
+  --color-surface-soft: var(--brown-2);
+  --color-border-default: var(--brown-6);
+  --color-border-strong: var(--brown-8);
+  --color-text-primary: var(--sand-12);
+  --color-text-muted: var(--sand-11);
+  --color-text-subtle: var(--sand-10);
+  --color-accent: var(--brown-11);
+  --color-accent-strong: var(--brown-12);
+  --color-focus-ring: var(--brown-10);
+  --color-dock-icon: var(--brown-10);
+  --pet-pill-bg: color-mix(in srgb, var(--brown-3) 84%, var(--color-transparent));
+  --pet-pill-hover-bg: color-mix(in srgb, var(--brown-4) 88%, var(--color-transparent));
+  --pet-button-bg: color-mix(in srgb, var(--brown-4) 80%, var(--color-transparent));
+  --pet-border: color-mix(in srgb, var(--brown-9) 24%, var(--color-transparent));
+  --pet-title: var(--sand-12);
+  --pet-message: var(--sand-11);
+  --pet-subtitle: var(--sand-11);
+  --pet-agent: var(--brown-10);
+  --pet-scrollbar: color-mix(in srgb, var(--brown-11) 30%, var(--color-transparent));
+  --pet-active-border: color-mix(in srgb, var(--brown-9) 48%, var(--color-transparent));
+  --pet-active-bg: color-mix(in srgb, var(--brown-9) 20%, var(--brown-2));
+  --pet-active-bg-peak: color-mix(in srgb, var(--brown-9) 28%, var(--brown-3));
+  --pet-active-ring: color-mix(in srgb, var(--brown-9) 24%, var(--color-transparent));
+  --pet-active-glow: color-mix(in srgb, var(--brown-9) 36%, var(--color-transparent));
+  --pet-active-shadow: color-mix(in srgb, var(--brown-9) 24%, var(--color-transparent));
+}
+
+.preset-cool-slate .notch-panel {
+  --notch-surface: var(--slate-3);
+  --notch-surface-hover: var(--slate-4);
+  --notch-surface-active: var(--slate-5);
+  --notch-border: var(--slate-7);
+  --notch-border-strong: var(--slate-8);
+  --notch-outline: var(--slate-9);
+  --notch-text: var(--slate-12);
+  --notch-muted: var(--slate-11);
+  --notch-subtle: var(--slate-10);
+  --notch-scrollbar: var(--slate-7);
+  --notch-stack-base: var(--slate-2);
+  --notch-stack-raised: var(--slate-3);
+  --notch-stack-ring: var(--slate-4);
+}
+
+.preset-forest-sage .notch-panel {
+  --notch-surface: var(--sage-3);
+  --notch-surface-hover: var(--sage-4);
+  --notch-surface-active: var(--sage-5);
+  --notch-border: var(--sage-7);
+  --notch-border-strong: var(--sage-8);
+  --notch-outline: var(--sage-9);
+  --notch-text: var(--sage-12);
+  --notch-muted: var(--sage-11);
+  --notch-subtle: var(--sage-10);
+  --notch-scrollbar: var(--sage-7);
+  --notch-stack-base: var(--sage-2);
+  --notch-stack-raised: var(--sage-3);
+  --notch-stack-ring: var(--sage-4);
+}
+
+.preset-caramel-earth .notch-panel {
+  --notch-surface: var(--brown-3);
+  --notch-surface-hover: var(--brown-4);
+  --notch-surface-active: var(--brown-5);
+  --notch-border: var(--brown-7);
+  --notch-border-strong: var(--brown-8);
+  --notch-outline: var(--brown-9);
+  --notch-text: var(--sand-12);
+  --notch-muted: var(--sand-11);
+  --notch-subtle: var(--sand-10);
+  --notch-scrollbar: var(--brown-7);
+  --notch-stack-base: var(--brown-2);
+  --notch-stack-raised: var(--brown-3);
+  --notch-stack-ring: var(--brown-4);
 }

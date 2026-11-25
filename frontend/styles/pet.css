@@ -110,7 +110,7 @@
 .pet-window button:focus-visible,
 .markdown-message:focus-visible,
 .markdown-message a:focus-visible {
-  outline: 2px solid var(--pet-status-running);
+  outline: 2px solid var(--color-focus-ring);
   outline-offset: -2px;
 }
 

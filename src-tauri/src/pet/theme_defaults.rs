@@ -1,2 +1,2 @@
-pub const DEFAULT_RUNNING_BUBBLE_BACKGROUND: &str = "#e8f2ff";
-pub const DEFAULT_RUNNING_BUBBLE_BORDER: &str = "#3d73d8";
+pub const DEFAULT_RUNNING_BUBBLE_BACKGROUND: &str = "#fef3dc";
+pub const DEFAULT_RUNNING_BUBBLE_BORDER: &str = "#d9822b";

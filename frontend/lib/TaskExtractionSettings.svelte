@@ -56,7 +56,7 @@
       <p>模型和推理选项来自所选 Provider。每次运行使用独立抽取目录，继承 Provider 的本机配置；配置从下一次运行生效。当前 Provider 不提供单批美元硬预算，运行由分批和超时控制。</p>
       </div>
       {#if !supported}<p role="alert">{instance?.error ?? "请选择可用的 Provider 实例及其支持的模型、推理强度；连接变更后请刷新来源。"}</p>{/if}
-      <button type="submit" disabled={saving || (config.automatic && !supported)}>{saving ? "保存中…" : "保存 Agent 设置"}</button>
+      <button type="submit" class="primary-action" disabled={saving || (config.automatic && !supported)}>{saving ? "保存中…" : "保存 Agent 设置"}</button>
       <button type="button" on:click={load} disabled={saving}>重新加载配置和 Skill</button>
       {#if saved}<span role="status">已保存</span>{/if}
     </form>
@@ -65,15 +65,15 @@
 </section>
 
 <style>
-  .settings{margin:24px 0;font-size:var(--font-size-sm);min-width:0}
+  .settings{margin:24px 0;font-size:var(--font-size-label);min-width:0}
   h3{margin:0 0 16px;font:var(--font-section)}.schedule-heading{margin-top:32px}
   label{display:flex;gap:16px;align-items:center;justify-content:space-between;min-width:0}
-  input,select,textarea{min-width:0;color:var(--app-text);background:var(--app-bg);border:1px solid var(--app-border);border-radius:6px;padding:7px;box-sizing:border-box}
+  input,select,textarea{min-width:0;min-height:32px;color:var(--app-text);background:var(--app-surface);border:1px solid var(--app-border);border-radius:6px;padding:6px 10px;font-size:var(--font-size-label);box-sizing:border-box}
   textarea{resize:vertical}
-  p{color:var(--app-muted);overflow-wrap:anywhere;line-height:var(--line-height-body-relaxed)}
-  pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto}
+  p{font-size:var(--font-size-caption);color:var(--app-muted);overflow-wrap:anywhere;line-height:var(--line-height-body)}
+  pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:240px;overflow:auto;font-family:var(--font-family-code);font-size:var(--font-size-code)}
   details{margin:12px 0}details .fields{margin-top:12px}
-  button{padding:7px 10px;margin:16px 8px 6px 0;border:1px solid var(--app-border);border-radius:6px;color:var(--app-text);background:var(--app-surface)}
+  button{min-height:32px;padding:6px 12px;margin:16px 8px 6px 0;border:1px solid var(--app-border);border-radius:6px;font-size:var(--font-size-label);font-weight:var(--font-weight-medium);color:var(--app-text);background:var(--app-surface-soft)}
   :is(button,input,select,textarea,summary):focus-visible{outline:2px solid var(--color-focus-ring);outline-offset:2px}
   [role=alert]{color:var(--color-main-danger-text)}span{color:var(--app-muted)}
 </style>

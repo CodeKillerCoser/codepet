@@ -1,7 +1,7 @@
 use code_pet_lib::agents::AgentId;
 use code_pet_lib::settings::{
     AppSettings, DingTalkRobotAuthMode, DingTalkRobotTargetType,
-    RobotNotificationChannel, ThemeChoice, WhipReactionSound,
+    RobotNotificationChannel, ThemeChoice, ThemePreset, WhipReactionSound,
 };
 
 #[test]
@@ -9,9 +9,12 @@ fn settings_default_to_system_theme() {
     let settings = AppSettings::default();
 
     assert_eq!(settings.appearance.theme, ThemeChoice::System);
+    assert_eq!(settings.appearance.preset, ThemePreset::WarmStone);
     assert!(settings.data.data_directory.is_none());
     assert!(settings.appearance.running_bubble.background_breathing);
     assert!(!settings.appearance.running_bubble.border_marquee);
+    assert_eq!(settings.appearance.running_bubble.background_color, "#fef3dc");
+    assert_eq!(settings.appearance.running_bubble.border_color, "#d9822b");
     assert_eq!(settings.appearance.running_bubble.animation_ms, 1800);
     assert_eq!(settings.appearance.running_bubble.border_width, 1);
     assert_eq!(settings.pet.opacity, 1.0);
@@ -74,6 +77,7 @@ fn settings_keep_existing_values_when_theme_field_is_missing() {
     .unwrap();
 
     assert_eq!(settings.appearance.theme, ThemeChoice::System);
+    assert_eq!(settings.appearance.preset, ThemePreset::WarmStone);
     assert!(settings.data.data_directory.is_none());
     assert!(settings.appearance.running_bubble.background_breathing);
     assert!(!settings.appearance.running_bubble.border_marquee);
@@ -87,6 +91,35 @@ fn settings_keep_existing_values_when_theme_field_is_missing() {
     assert!(!settings.notifications.robot.enabled);
     assert!(settings.activity_filters.title_keywords.is_empty());
     assert!(settings.updates.ignored_version.is_none());
+}
+
+#[test]
+fn settings_round_trip_theme_preset_and_fallback_unknown_values() {
+    let settings: AppSettings = serde_json::from_str(
+        r#"{
+          "appearance": {
+            "theme": "dark",
+            "preset": "forest-sage"
+          }
+        }"#,
+    )
+    .unwrap();
+
+    assert_eq!(settings.appearance.theme, ThemeChoice::Dark);
+    assert_eq!(settings.appearance.preset, ThemePreset::ForestSage);
+    let serialized = serde_json::to_value(&settings).unwrap();
+    assert_eq!(serialized["appearance"]["preset"], "forest-sage");
+
+    let unknown: AppSettings = serde_json::from_str(
+        r#"{
+          "appearance": {
+            "theme": "light",
+            "preset": "future-theme-v9"
+          }
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(unknown.appearance.preset, ThemePreset::WarmStone);
 }
 
 #[test]

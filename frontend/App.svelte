@@ -26,7 +26,7 @@
   import { LogicalPosition } from "@tauri-apps/api/dpi";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { Activity, Clock, FolderCog, PlugZap, Plus, RefreshCw, ShieldAlert } from "@lucide/svelte";
+  import { Activity, Clock, PlugZap, Plus, RefreshCw, ShieldAlert } from "@lucide/svelte";
   import { onMount, tick } from "svelte";
   import ProviderRuntimeInfo from "./lib/ProviderRuntimeInfo.svelte";
   import { shouldShowRuntime, isBuiltinProvider } from "./lib/agentRuntime";
@@ -1056,7 +1056,10 @@
   $: enabledSources = petSources.filter(source => source.enabled);
   $: receivingSources = petSources.filter(source => source.connected);
   $: pageTitle = routeTitle(tab);
-  $: appTheme = themeClassNames(settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light");
+  $: appTheme = themeClassNames(
+    settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light",
+    settings?.appearance.preset,
+  );
 </script>
 
 <main data-side-panel-layout style:--app-side-panel-width={`${$sidePanelWidth}px`} class:resizing-side-panel={$sidePanelResizing} class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed} class:has-side-panel-column={!!$sidePanelCurrent && $sidePanelMode === "column"} inert={$webcontentReloading}>
@@ -1116,7 +1119,6 @@
         <section class="agent-section pixel-panel">
           <header class="section-head">
             <div>
-              <span class="agent-kicker">NOTICE SOURCES</span>
               <h3>接入状态</h3>
             </div>
             <span>智能体与通知助手</span>
@@ -1130,7 +1132,6 @@
         <section class="device-section pixel-panel">
           <header class="section-head connection-section-head">
             <div>
-              <span class="agent-kicker">PAIRED DEVICES</span>
               <h3>设备</h3>
               <p>管理已配对的 Remote 客户端及其访问权限。</p>
             </div>
@@ -1245,7 +1246,7 @@
         </div></section>
           <section class="appearance-editor pixel-panel">
             <header class="panel-head">
-              <h3><FolderCog size={18} /> 数据与存储</h3>
+              <h3>数据与存储</h3>
             </header><div class="settings-card">
             {#if managedPaths}
               <SettingsRow label="安装目录"><span class="path">{managedPaths.install}</span></SettingsRow>

@@ -46,7 +46,10 @@
   const devMode = import.meta.env.DEV;
   const defaultPetOpacity = 1;
   const minPetOpacity = 0.25;
-  $: themeClass = themeClassNames(settings?.appearance.theme === 'dark' || (settings?.appearance.theme === 'system' && systemDark) ? 'dark' : 'light');
+  $: themeClass = themeClassNames(
+    settings?.appearance.theme === 'dark' || (settings?.appearance.theme === 'system' && systemDark) ? 'dark' : 'light',
+    settings?.appearance.preset,
+  );
   $: activities = $petData.notices;
   $: avatarStatus = noticeStatusForPet(activities);
   $: petWindowOpacity = clampPetOpacity(settings?.pet.opacity);

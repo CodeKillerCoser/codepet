@@ -156,8 +156,10 @@ mockIPC(async(command,args:any)=>{
  }
  throw Error('Layout replay does not simulate domain writes');
 });
-const target=document.getElementById('app')!;target.className=`main-theme ${themeClassNames('light')}`;
-(window as any).__setTaskTheme=(mode:'light'|'dark')=>target.className=`main-theme ${themeClassNames(mode)}`;
+const target=document.getElementById('app')!;
+const taskThemeParams=new URLSearchParams(location.search);
+target.className=`main-theme ${themeClassNames(taskThemeParams.get('theme')==='dark'?'dark':'light',taskThemeParams.get('preset') as any)}`;
+(window as any).__setTaskTheme=(mode:'light'|'dark',preset?:any)=>target.className=`main-theme ${themeClassNames(mode,preset)}`;
 if(new URLSearchParams(location.search).has('detailOnly')){
  target.classList.add('task-ledger');target.style.cssText='padding:12px 25px;container-type:inline-size';
  mount(TaskRunDetail,{target,props:{task:qaView(base),onEditTask:()=>{},onOpenRun:()=>{}}});

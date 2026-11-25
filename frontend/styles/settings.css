@@ -154,8 +154,8 @@
 }
 
 .pet-item.active {
-  border-color: var(--app-good);
-  background: color-mix(in srgb, var(--app-good) 18%, var(--app-surface-soft));
+  border-color: var(--color-main-selected-border, var(--app-accent));
+  background: var(--color-main-selected, var(--app-surface-soft));
 }
 
 .pet-select-button {
@@ -1064,9 +1064,9 @@ textarea {
 }
 
 .primary-action {
-  border-color: var(--app-good) !important;
-  color: var(--app-text) !important;
-  background: color-mix(in srgb, var(--app-good) 22%, var(--app-surface-soft)) !important;
+  border-color: var(--color-main-accent-solid, var(--app-accent));
+  color: var(--color-main-on-accent, var(--app-text));
+  background: var(--color-main-accent-solid, var(--app-accent));
 }
 
 .pet-html,

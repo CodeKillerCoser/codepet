@@ -3,7 +3,7 @@
   import { Switch } from "../ui/switch/index";
   import { Input } from "../ui/input/index";
   import { Textarea } from "../ui/textarea/index";
-  import { Bell, Bot, FolderOpen, PlugZap, Trash2, Volume2 } from "@lucide/svelte";
+  import { Bot, FolderOpen, PlugZap, Trash2, Volume2 } from "@lucide/svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import SettingsRow from "../SettingsRow.svelte";
   import { sendTestRobotNotification } from "../api";
@@ -24,6 +24,13 @@
     { key: "footer", label: "页脚", rows: 1 },
   ] as const;
   const robotTemplateVariables = "{{statusIcon}} {{status}} {{agent}} {{task}} {{contentBlock}} {{cwdLine}} {{toolLine}} {{sessionLine}} {{time}}";
+  const notificationSounds: Array<{ value: AppSettings["notifications"]["sound"]; label: string }> = [
+    { value: "blip", label: "轻滴" },
+    { value: "chime", label: "清脆" },
+    { value: "bell", label: "铃声" },
+    { value: "custom", label: "自定义" },
+    { value: "silent", label: "静音" },
+  ];
   const robotTriggerOptions = [
     { key: "waitingApproval", label: "等待审批或输入" },
     { key: "taskFailed", label: "任务失败" },
@@ -121,20 +128,20 @@
           <section class="sound-editor pixel-panel">
             <header class="panel-head">
               <div>
-                <h3><Bell size={18} /> 通知声音</h3>
+                <h3>通知声音</h3>
               </div>
             </header><div class="settings-card">
             <SettingsRow label="通知音色"><div class="settings-control-stack">
             <div class="segmented">
-              {#each ["blip", "chime", "bell", "custom", "silent"] as sound}
-                <Button class={[(settings.notifications.sound === sound) ? "active" : ''].filter(Boolean).join(' ')}
-
+              {#each notificationSounds as sound}
+                <Button class={[(settings.notifications.sound === sound.value) ? "active" : ''].filter(Boolean).join(' ')}
+                  aria-pressed={settings.notifications.sound === sound.value}
                   onclick={async () => {
-                    settings.notifications.sound = sound as AppSettings["notifications"]["sound"];
+                    settings.notifications.sound = sound.value;
                     await saveSettings();
                   }}
                 >
-                  {sound}
+                  {sound.label}
                 </Button>
               {/each}
             </div>
@@ -178,7 +185,7 @@
           <section class="robot-editor pixel-panel">
             <header class="panel-head">
               <div>
-                <h3><Bot size={18} /> 通知机器人</h3>
+                <h3>通知机器人</h3>
               </div>
             </header><div class="settings-card">
               <label class="switch-check">

@@ -1,14 +1,14 @@
 <script lang="ts">
   import { Button } from "../ui/button/index";
   import { Switch } from "../ui/switch/index";
-  import { FolderOpen, Moon, Sun, Volume2 } from "@lucide/svelte";
+  import { Check, FolderOpen, Monitor, Moon, Sun, Volume2 } from "@lucide/svelte";
   import { onDestroy } from "svelte";
   import { open } from "@tauri-apps/plugin-dialog";
   import SettingsRow from "../SettingsRow.svelte";
   import { updateAppSettings } from "../api";
-  import type { AppSettings } from "../types";
+  import type { AppSettings, ThemePresetId } from "../types";
   import { playWhipReactionSound } from "../sound";
-  import { defaultRunningBubbleSettings } from "../theme";
+  import { defaultRunningBubbleSettings, normalizeThemePreset, themePresets } from "../theme";
   import { colorStopIndexFromBand, updateRunningBubbleColorSetting, type RunningBubbleColorKey } from "../bubbleColorSettings";
   import { gradientEditorFromCss, gradientSegmentCss, nextGradientStopColor, type GradientEditorValue } from "../gradientColor";
   import { normalizeSettings, clampPetOpacity, clampRunningBubbleAnimationMs, clampRunningBubbleBorderWidth, minPetOpacity } from "./model";
@@ -34,9 +34,22 @@
     { key: "backgroundColor", label: "背景色", fallback: runningBubbleDefaults.backgroundColor, directional: true },
     { key: "borderColor", label: "边框色", fallback: runningBubbleDefaults.borderColor, directional: false },
   ] as const;
+  $: activePreset = normalizeThemePreset(settings?.appearance.preset);
   async function setTheme(theme: AppSettings["appearance"]["theme"]) {
     if (!settings) return;
     settings.appearance.theme = theme;
+    await saveSettings();
+  }
+  async function setThemePreset(preset: ThemePresetId) {
+    if (!settings) return;
+    settings = {
+      ...settings,
+      appearance: {
+        ...settings.appearance,
+        preset,
+      },
+    };
+    onChange(settings);
     await saveSettings();
   }
 
@@ -205,16 +218,44 @@
               <h3>主题</h3>
             </header><div class="settings-card">
             <SettingsRow label="主题模式"><section class="theme-switcher" aria-label="主题模式">
-              <Button class={[(settings.appearance.theme === "light") ? "active" : ''].filter(Boolean).join(' ')}  onclick={() => setTheme("light")} aria-label="浅色模式">
-                <Sun size={16} /> Light
+              <Button class={[(settings.appearance.theme === "light") ? "active" : ''].filter(Boolean).join(' ')} aria-pressed={settings.appearance.theme === "light"} onclick={() => setTheme("light")} aria-label="浅色模式">
+                <Sun size={15} /> 浅色
               </Button>
-              <Button class={[(settings.appearance.theme === "dark") ? "active" : ''].filter(Boolean).join(' ')}  onclick={() => setTheme("dark")} aria-label="深色模式">
-                <Moon size={16} /> Dark
+              <Button class={[(settings.appearance.theme === "dark") ? "active" : ''].filter(Boolean).join(' ')} aria-pressed={settings.appearance.theme === "dark"} onclick={() => setTheme("dark")} aria-label="深色模式">
+                <Moon size={15} /> 深色
               </Button>
-              <Button class={[(settings.appearance.theme === "system") ? "active" : ''].filter(Boolean).join(' ')}  onclick={() => setTheme("system")} aria-label="跟随系统">
-                Auto
+              <Button class={[(settings.appearance.theme === "system") ? "active" : ''].filter(Boolean).join(' ')} aria-pressed={settings.appearance.theme === "system"} onclick={() => setTheme("system")} aria-label="跟随系统">
+                <Monitor size={15} /> 跟随系统
               </Button>
             </section></SettingsRow>
+            <div class="theme-preset-row">
+              <div class="settings-row-label">
+                <span>配色主题</span>
+                <p>统一主窗口壳层、内容表面、选中态与强调色，明暗模式自动协同。</p>
+              </div>
+              <div class="theme-preset-grid" role="group" aria-label="配色主题">
+                {#each themePresets as preset (preset.id)}
+                  {@const selected = activePreset === preset.id}
+                  <Button
+                    type="button"
+                    class={`theme-preset-option theme-swatch-${preset.id}${selected ? " active" : ""}`}
+                    aria-pressed={selected}
+                    onclick={() => setThemePreset(preset.id)}
+                  >
+                    <span class="theme-preset-swatch" aria-hidden="true">
+                      <span class="swatch-chrome"></span>
+                      <span class="swatch-canvas"></span>
+                      <span class="swatch-accent"></span>
+                    </span>
+                    <span class="theme-preset-copy">
+                      <strong>{preset.name}</strong>
+                      <small>{preset.description}</small>
+                    </span>
+                    {#if selected}<span class="theme-preset-check" aria-hidden="true"><Check size={14} /></span>{/if}
+                  </Button>
+                {/each}
+              </div>
+            </div>
           </div></section>
 
           <section class="bubble-editor pixel-panel">

@@ -1,66 +1,243 @@
-/* Main-window semantic roles. Pet-window palettes and persisted colors stay separate. */
+/* Main-window semantic roles & multi-theme presets.
+ * Default preset: warm-stone (warm Sand neutrals + restrained Amber accent).
+ * Pet-window user bubble colors remain persisted separately.
+ */
+
 .main-theme {
   color-scheme: light;
-  --font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-  --font-family-code: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
-  --font-section: var(--font-weight-medium) var(--font-size-section)/var(--line-height-section) var(--font-family-ui);
-  --font-subheading: var(--font-weight-medium) var(--font-size-subheading)/var(--line-height-section) var(--font-family-ui);
+  --font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-family-code: "SF Mono", "SFMono-Regular", ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
   --font-label: var(--font-weight-control) var(--font-size-label)/var(--line-height-label) var(--font-family-ui);
   --space-section: 24px;
   --letter-spacing-caps: 0;
   --letter-spacing-caps-wide: 0;
-  --color-main-chrome: #f0f3f6;
+
+  /* Preset palette hooks (default: warm-stone light). */
+  --color-main-chrome: #f3f2ee;
   --color-main-canvas: #ffffff;
-  --color-main-outline: var(--gray-4);
-  --color-main-divider: var(--gray-4);
-  --color-main-control: var(--gray-9);
-  --hover_background_color: var(--gray-3);
-  --press_background_color: var(--gray-4);
-  --color-main-hover: var(--hover_background_color);
-  --color-main-selected: var(--press_background_color);
-  --color-main-selected-text: var(--gray-12);
-  --color-main-accent-solid: var(--gray-4);
-  --color-main-on-accent: var(--gray-12);
+  --color-main-soft: var(--sand-2);
+  --color-main-outline: color-mix(in srgb, var(--sand-12) 8%, transparent);
+  --color-main-divider: color-mix(in srgb, var(--sand-12) 7%, transparent);
+  --color-main-border: var(--sand-6);
+  --color-main-border-strong: var(--sand-8);
+  --color-main-control: var(--sand-8);
+  --color-main-hover: var(--sand-4);
+  --color-main-selected: var(--amber-3);
+  --color-main-selected-border: color-mix(in srgb, var(--amber-9) 34%, transparent);
+  --color-main-selected-text: var(--amber-12);
+  --hover_background_color: var(--color-main-hover);
+  --press_background_color: var(--color-main-selected);
+  --color-main-accent-solid: var(--amber-9);
+  --color-main-accent-hover: var(--amber-10);
+  --color-main-on-accent: #1c1917;
+  --color-main-accent-text: var(--amber-11);
+  --color-main-accent-strong: var(--amber-12);
+  --color-focus-ring: var(--amber-11);
+
+  --color-text-primary: var(--sand-12);
+  --color-text-muted: var(--sand-11);
+  --color-text-subtle: var(--sand-10);
+
   --color-main-scrim: #00000038;
   --color-history-scrim: #0004;
   --color-history-drawer-shadow: #0002;
   --color-main-close-hover: var(--hover_background_color);
-  --color-main-on-close: var(--gray-12);
+  --color-main-on-close: var(--color-text-primary);
   --color-main-success-bg: var(--grass-3);
   --color-main-success-text: var(--grass-12);
   --color-main-danger-bg: var(--red-3);
   --color-main-danger-text: var(--red-12);
-  --color-focus-ring: var(--gray-9);
-  --color-text-primary: var(--sand-12);
-  --color-text-muted: var(--sand-11);
-  --color-text-subtle: var(--sand-11);
+
+  /* Shared app aliases derived from active preset tokens. */
   --app-bg: var(--color-main-chrome);
   --app-surface: var(--color-main-canvas);
   --app-surface-strong: var(--color-main-canvas);
-  --app-surface-soft: var(--sand-2);
-  --app-border: var(--gray-6);
-  --app-border-strong: var(--gray-8);
+  --app-surface-soft: var(--color-main-soft);
+  --app-border: var(--color-main-border);
+  --app-border-strong: var(--color-main-border-strong);
   --app-text: var(--color-text-primary);
   --app-muted: var(--color-text-muted);
   --app-subtle: var(--color-text-subtle);
-  --app-accent: var(--gray-11);
-  --app-accent-strong: var(--gray-12);
+  --app-accent: var(--color-main-accent-text);
+  --app-accent-strong: var(--color-main-accent-strong);
   --app-good: var(--grass-11);
   --app-danger: var(--red-11);
   --color-main-scrollbar-thumb: color-mix(in srgb, var(--app-muted) 24%, transparent);
   --color-main-scrollbar-hover: color-mix(in srgb, var(--app-muted) 40%, transparent);
-  --app-shadow: color-mix(in srgb, var(--sand-12) 8%, transparent);
+  --app-shadow: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
   --pixel-grid: transparent;
 }
 
 .main-theme.dark {
   color-scheme: dark;
-  --color-main-chrome: #1c1e21;
-  --color-main-canvas: #141516;
-  --app-shadow: #00000040;
+  --color-main-chrome: #161513;
+  --color-main-canvas: #10100f;
+  --color-main-soft: var(--sand-2);
+  --color-main-outline: color-mix(in srgb, var(--sand-12) 9%, transparent);
+  --color-main-divider: color-mix(in srgb, var(--sand-12) 8%, transparent);
+  --color-main-border: var(--sand-6);
+  --color-main-border-strong: var(--sand-8);
+  --color-main-control: var(--sand-8);
+  --color-main-hover: var(--sand-4);
+  --color-main-selected: color-mix(in srgb, var(--amber-9) 14%, var(--color-main-chrome));
+  --color-main-selected-border: color-mix(in srgb, var(--amber-9) 28%, transparent);
+  --color-main-selected-text: var(--amber-11);
+  --color-main-accent-solid: var(--amber-9);
+  --color-main-accent-hover: var(--amber-10);
+  --color-main-on-accent: #161513;
+  --color-focus-ring: var(--amber-10);
+  --app-shadow: #00000048;
 }
 
-/* History workbench aliases inherit the app's light/dark/system palette. */
+/* Preset 2: Cool Slate — Crisp neutral-cool Slate + Blue ink accent. */
+.main-theme.preset-cool-slate {
+  --color-main-chrome: #f1f3f6;
+  --color-main-canvas: #ffffff;
+  --color-main-soft: var(--slate-2);
+  --color-main-outline: color-mix(in srgb, var(--slate-12) 8%, transparent);
+  --color-main-divider: color-mix(in srgb, var(--slate-12) 7%, transparent);
+  --color-main-border: var(--slate-6);
+  --color-main-border-strong: var(--slate-8);
+  --color-main-control: var(--slate-8);
+  --color-main-hover: var(--slate-4);
+  --color-main-selected: var(--blue-3);
+  --color-main-selected-border: color-mix(in srgb, var(--blue-9) 28%, transparent);
+  --color-main-selected-text: var(--blue-12);
+  --color-main-accent-solid: var(--blue-11);
+  --color-main-accent-hover: var(--blue-10);
+  --color-main-on-accent: #ffffff;
+  --color-main-accent-text: var(--blue-11);
+  --color-main-accent-strong: var(--blue-12);
+  --color-focus-ring: var(--blue-10);
+  --color-text-primary: var(--slate-12);
+  --color-text-muted: var(--slate-11);
+  --color-text-subtle: var(--slate-10);
+}
+
+.main-theme.dark.preset-cool-slate {
+  --color-main-chrome: #15171a;
+  --color-main-canvas: #0f1114;
+  --color-main-soft: var(--slate-2);
+  --color-main-outline: color-mix(in srgb, var(--slate-12) 9%, transparent);
+  --color-main-divider: color-mix(in srgb, var(--slate-12) 8%, transparent);
+  --color-main-border: var(--slate-6);
+  --color-main-border-strong: var(--slate-8);
+  --color-main-control: var(--slate-8);
+  --color-main-hover: var(--slate-4);
+  --color-main-selected: color-mix(in srgb, var(--blue-9) 17%, var(--color-main-chrome));
+  --color-main-selected-border: color-mix(in srgb, var(--blue-9) 32%, transparent);
+  --color-main-selected-text: var(--blue-11);
+  --color-main-accent-solid: var(--blue-9);
+  --color-main-accent-hover: var(--blue-10);
+  --color-main-on-accent: #ffffff;
+  --color-main-accent-text: var(--blue-11);
+  --color-main-accent-strong: var(--blue-12);
+  --color-focus-ring: var(--blue-10);
+}
+
+/* Preset 3: Forest Sage — Quiet botanical Sage neutrals + Grass green accent. */
+.main-theme.preset-forest-sage {
+  --color-main-chrome: #f0f3f0;
+  --color-main-canvas: #fcfdfc;
+  --color-main-soft: var(--sage-2);
+  --color-main-outline: color-mix(in srgb, var(--sage-12) 8%, transparent);
+  --color-main-divider: color-mix(in srgb, var(--sage-12) 7%, transparent);
+  --color-main-border: var(--sage-6);
+  --color-main-border-strong: var(--sage-8);
+  --color-main-control: var(--sage-8);
+  --color-main-hover: var(--sage-4);
+  --color-main-selected: var(--grass-3);
+  --color-main-selected-border: color-mix(in srgb, var(--grass-9) 32%, transparent);
+  --color-main-selected-text: var(--grass-12);
+  --color-main-accent-solid: var(--grass-11);
+  --color-main-accent-hover: var(--grass-10);
+  --color-main-on-accent: #ffffff;
+  --color-main-accent-text: var(--grass-11);
+  --color-main-accent-strong: var(--grass-12);
+  --color-focus-ring: var(--grass-10);
+  --color-text-primary: var(--sage-12);
+  --color-text-muted: var(--sage-11);
+  --color-text-subtle: var(--sage-10);
+}
+
+.main-theme.dark.preset-forest-sage {
+  --color-main-chrome: #141715;
+  --color-main-canvas: #0f1210;
+  --color-main-soft: var(--sage-2);
+  --color-main-outline: color-mix(in srgb, var(--sage-12) 9%, transparent);
+  --color-main-divider: color-mix(in srgb, var(--sage-12) 8%, transparent);
+  --color-main-border: var(--sage-6);
+  --color-main-border-strong: var(--sage-8);
+  --color-main-control: var(--sage-8);
+  --color-main-hover: var(--sage-4);
+  --color-main-selected: color-mix(in srgb, var(--grass-9) 16%, var(--color-main-chrome));
+  --color-main-selected-border: color-mix(in srgb, var(--grass-9) 30%, transparent);
+  --color-main-selected-text: var(--grass-11);
+  --color-main-accent-solid: var(--grass-9);
+  --color-main-accent-hover: var(--grass-10);
+  --color-main-on-accent: #0f1210;
+  --color-main-accent-text: var(--grass-11);
+  --color-main-accent-strong: var(--grass-12);
+  --color-focus-ring: var(--grass-10);
+}
+
+/* Preset 4: Caramel Earth — Warm parchment Sand + rich Brown/Caramel accent. */
+.main-theme.preset-caramel-earth {
+  --color-main-chrome: #f5efe7;
+  --color-main-canvas: #fffdfa;
+  --color-main-soft: var(--brown-2);
+  --color-main-outline: color-mix(in srgb, var(--brown-12) 9%, transparent);
+  --color-main-divider: color-mix(in srgb, var(--brown-12) 8%, transparent);
+  --color-main-border: var(--brown-6);
+  --color-main-border-strong: var(--brown-8);
+  --color-main-control: var(--brown-8);
+  --color-main-hover: var(--brown-3);
+  --color-main-selected: var(--brown-4);
+  --color-main-selected-border: color-mix(in srgb, var(--brown-9) 34%, transparent);
+  --color-main-selected-text: var(--brown-12);
+  --color-main-accent-solid: var(--brown-11);
+  --color-main-accent-hover: var(--brown-10);
+  --color-main-on-accent: #ffffff;
+  --color-main-accent-text: var(--brown-11);
+  --color-main-accent-strong: var(--brown-12);
+  --color-focus-ring: var(--brown-10);
+  --color-text-primary: var(--sand-12);
+  --color-text-muted: var(--sand-11);
+  --color-text-subtle: var(--sand-10);
+}
+
+.main-theme.dark.preset-caramel-earth {
+  --color-main-chrome: #191512;
+  --color-main-canvas: #120f0d;
+  --color-main-soft: var(--brown-2);
+  --color-main-outline: color-mix(in srgb, var(--brown-12) 10%, transparent);
+  --color-main-divider: color-mix(in srgb, var(--brown-12) 8%, transparent);
+  --color-main-border: var(--brown-6);
+  --color-main-border-strong: var(--brown-8);
+  --color-main-control: var(--brown-8);
+  --color-main-hover: var(--brown-3);
+  --color-main-selected: color-mix(in srgb, var(--brown-9) 20%, var(--color-main-chrome));
+  --color-main-selected-border: color-mix(in srgb, var(--brown-9) 36%, transparent);
+  --color-main-selected-text: var(--brown-11);
+  --color-main-accent-solid: var(--brown-9);
+  --color-main-accent-hover: var(--brown-10);
+  --color-main-on-accent: #120f0d;
+  --color-main-accent-text: var(--brown-11);
+  --color-main-accent-strong: var(--brown-12);
+  --color-focus-ring: var(--brown-10);
+}
+
+/* Preset preview swatches used in Settings without exposing raw hex outside theme/. */
+.theme-swatch-warm-stone { --swatch-chrome: #f3f2ee; --swatch-canvas: #ffffff; --swatch-accent: #ffc53d; }
+.dark .theme-swatch-warm-stone { --swatch-chrome: #161513; --swatch-canvas: #10100f; --swatch-accent: #ffc53d; }
+.theme-swatch-cool-slate { --swatch-chrome: #f1f3f6; --swatch-canvas: #ffffff; --swatch-accent: #0d74ce; }
+.dark .theme-swatch-cool-slate { --swatch-chrome: #15171a; --swatch-canvas: #0f1114; --swatch-accent: #0090ff; }
+.theme-swatch-forest-sage { --swatch-chrome: #f0f3f0; --swatch-canvas: #fcfdfc; --swatch-accent: #2a7e3b; }
+.dark .theme-swatch-forest-sage { --swatch-chrome: #141715; --swatch-canvas: #0f1210; --swatch-accent: #46a758; }
+.theme-swatch-caramel-earth { --swatch-chrome: #f5efe7; --swatch-canvas: #fffdfa; --swatch-accent: #815e46; }
+.dark .theme-swatch-caramel-earth { --swatch-chrome: #191512; --swatch-canvas: #120f0d; --swatch-accent: #ad7f58; }
+
+/* History workbench aliases inherit the active preset's light/dark/system palette. */
 .main-theme {
   --wb-bg: var(--app-surface);
   --wb-panel: var(--app-surface);
@@ -71,7 +248,7 @@
   --wb-muted: var(--app-muted);
   --wb-accent: var(--app-accent);
   --wb-accent-bg: var(--color-main-selected);
-  --wb-accent-border: var(--app-accent);
+  --wb-accent-border: var(--color-main-selected-border);
   --wb-info-bg: var(--blue-3);
   --wb-info-text: var(--blue-11);
   --wb-info-strong-text: var(--blue-12);
@@ -87,8 +264,8 @@
   --wb-danger-text: var(--color-main-danger-text);
   --wb-primary: var(--color-main-accent-solid);
   --wb-on-primary: var(--color-main-on-accent);
-  --wb-neutral-bg: var(--sand-4);
-  --wb-neutral-text: var(--sand-11);
+  --wb-neutral-bg: var(--color-main-hover);
+  --wb-neutral-text: var(--app-muted);
   --wb-shadow: var(--app-shadow);
   --wb-scrim: var(--color-main-scrim);
   --wb-sheen: color-mix(in srgb, var(--app-text) 3%, transparent);

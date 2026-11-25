@@ -152,21 +152,22 @@
   .filters { display: flex; gap: 10px; flex-wrap: wrap; }
   .filters input { flex: 1 1 260px; min-width: 0; }
   .filters select { max-width: 100%; }
-  button { border: 1px solid var(--app-border); border-radius: 8px; padding: 9px 12px; color: var(--app-text); background: var(--app-surface-soft); cursor: pointer; }
+  button { min-height: 32px; border: 1px solid var(--app-border); border-radius: 6px; padding: 6px 10px; font-size: var(--font-size-label); font-weight: var(--font-weight-medium); color: var(--app-text); background: var(--app-surface-soft); cursor: pointer; }
+  button:hover:not(:disabled) { background: var(--color-main-hover, var(--app-surface-soft)); border-color: var(--app-border-strong); }
   button:disabled { opacity: 0.5; cursor: default; }
-  button:focus-visible, summary:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
-  .status { display: flex; gap: 12px; margin: 14px 0; opacity: 0.7; font-size: var(--font-size-sm); }
+  button:focus-visible, summary:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
+  .status { display: flex; gap: 12px; margin: 14px 0; color: var(--app-muted); font-size: var(--font-size-caption); }
   details { border-top: 1px solid var(--app-border); }
   summary { display: flex; align-items: center; gap: 12px; cursor: pointer; padding: 12px 4px; flex-wrap: wrap; }
-  summary::before { content: "▸"; }
+  summary::before { content: "▸"; color: var(--app-muted); }
   details[open] summary::before { content: "▾"; }
   summary strong, .method { overflow-wrap: anywhere; }
-  .source { font-size: var(--font-size-2xs); letter-spacing: var(--letter-spacing-source); opacity: 0.7; }
-  .method { flex: 1; font-size: var(--font-size-sm); }
-  time { font-size: var(--font-size-xs); opacity: 0.7; }
-  pre { max-height: 480px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; font-size: var(--font-size-sm); background: var(--app-surface-soft); }
+  .source { font-size: var(--font-size-2xs); letter-spacing: var(--letter-spacing-source); color: var(--app-muted); }
+  .method { flex: 1; font-size: var(--font-size-caption); }
+  time { font-size: var(--font-size-caption); color: var(--app-muted); font-variant-numeric: tabular-nums; }
+  pre { max-height: 480px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 12px; border-radius: 6px; font-family: var(--font-family-code); font-size: var(--font-size-code); background: var(--app-surface-soft); }
   .older { margin-top: 16px; }
-  .empty { padding: 30px 0; text-align: center; opacity: 0.7; }
+  .empty { padding: 30px 0; text-align: center; color: var(--app-muted); font-size: var(--font-size-caption); }
   @media (max-width: 600px) {
     .journal { padding: 12px; }
     summary { gap: 8px; }

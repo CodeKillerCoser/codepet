@@ -77,7 +77,7 @@
   .provider-details.removable dl > div:last-child dd { padding-right: 34px; }
   .remove-provider { position: absolute; right: 0; bottom: 2px; display: grid; place-items: center; width: 28px; height: 28px; color: var(--app-danger); background: transparent; border: 0; border-radius: 5px; padding: 0; cursor: pointer; }
   .remove-provider:hover { background: color-mix(in srgb, var(--app-danger) 8%, var(--app-surface)); }
-  .remove-provider:focus-visible { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+  .remove-provider:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
   .remove-provider:disabled { opacity: .5; cursor: default; }
   .provider-identity { flex: 1; min-width: 0; display: grid; gap: 5px; }
   .name-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -89,12 +89,12 @@
   dt, dd { margin: 0; min-width: 0; font-size: var(--font-size-caption); }
   dt { color: var(--app-muted); }
   dd { text-align: right; overflow-wrap: anywhere; }
-  .path-value { font-family: var(--font-family-mono, monospace); font-size: var(--font-size-caption); }
+  .path-value { font-family: var(--font-family-code); font-size: var(--font-size-code); }
   .path-select { position: relative; min-width: 0; height: 32px; border-radius: 5px; }
   .path-display { position: absolute; inset: 0 24px 0 0; display: grid; align-items: center; min-width: 0; pointer-events: none; }
   select { appearance: none; position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
   select:disabled { cursor: default; }
-  .path-select:focus-within { outline: 2px solid var(--app-accent); outline-offset: 2px; }
+  .path-select:focus-within { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
   .path-select:hover { background: var(--app-surface-soft); }
   .path-select :global(svg) { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--app-muted); }
   .diagnostic { display: flex; align-items: start; gap: 8px; padding: 10px; border-radius: 6px; color: var(--app-danger); background: color-mix(in srgb, var(--app-danger) 6%, var(--app-surface)); }

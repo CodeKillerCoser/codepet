@@ -49,7 +49,6 @@
   onCloseAutoFocus={(event) => event.preventDefault()}>
   <header class="panel-head">
     <div>
-      <span class="agent-kicker">REMOTE CLIENT</span>
       <Dialog.Title id="pair-device-dialog-title">添加设备</Dialog.Title>
     </div>
     <Button bind:ref={closeButton} class="icon-button" type="button" onclick={onClose} aria-label="关闭添加设备对话框">

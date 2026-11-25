@@ -88,6 +88,9 @@ export interface SubjectCutoutResult {
   mimeType: "image/png";
 }
 
+export type ThemeMode = "system" | "light" | "dark";
+export type ThemePresetId = "warm-stone" | "cool-slate" | "forest-sage" | "caramel-earth";
+
 export interface AppSettings {
   connection?: {
     signalingService?: string | null;
@@ -96,7 +99,8 @@ export interface AppSettings {
     dataDirectory?: string | null;
   };
   appearance: {
-    theme: "system" | "light" | "dark";
+    theme: ThemeMode;
+    preset?: ThemePresetId;
     runningBubble: {
       backgroundBreathing: boolean;
       borderMarquee: boolean;

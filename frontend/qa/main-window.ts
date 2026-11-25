@@ -36,7 +36,12 @@ const history: LineageMessage[] = [
 ].map(([id, threadId, role, text], index) => ({ evidence: { eventId: id, file: `/fixture/${threadId}.jsonl`, byteOffset: index * 200, generation: 0 }, threadId, role, text, timestamp, turnId: id }));
 mockWindows("main");
 let appSettings: any = {
-  data: {}, appearance: {theme: new URLSearchParams(location.search).get("theme") ?? "light", runningBubble: {...defaultRunningBubbleSettings}},
+  data: {},
+  appearance: {
+    theme: new URLSearchParams(location.search).get("theme") ?? "light",
+    preset: new URLSearchParams(location.search).get("preset") ?? "warm-stone",
+    runningBubble: {...defaultRunningBubbleSettings},
+  },
   pet: {selectedPetId: "default", kind: "builtin", scale: 3, opacity: 1, whipReactionSound: "none"},
   petLibrary: {selectedPetId: "default", dataDirectory: "/fixture/pets", pets: [{id:"default", name:"橘猫", kind:"builtin"}]},
   notifications: {sound:"blip", ringOnPermission:true, ringOnFailure:true, ringOnDone:true, repeatSeconds:30, quietHoursEnabled:false, quietHoursStart:"22:00", quietHoursEnd:"08:00"},

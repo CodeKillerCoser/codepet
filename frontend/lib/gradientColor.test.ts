@@ -108,4 +108,26 @@ describe("gradientColor", () => {
     expect(narrow).toContain("--pet-running-bubble-border-width: 1px");
     expect(wide).toContain("--pet-running-bubble-border-width: 8px");
   });
+
+  it("pairs readable ink tokens with light and dark running bubble backgrounds", () => {
+    const lightBubble = runningBubbleStyle({
+      backgroundBreathing: true,
+      borderMarquee: false,
+      backgroundColor: "#fef3dc",
+      borderColor: "#d9822b",
+      borderWidth: 1,
+      animationMs: 1800,
+    });
+    const darkBubble = runningBubbleStyle({
+      backgroundBreathing: true,
+      borderMarquee: false,
+      backgroundColor: "#102a43",
+      borderColor: "#f59e0b",
+      borderWidth: 1,
+      animationMs: 1800,
+    });
+
+    expect(lightBubble).toContain("--pet-title: var(--pet-ink-on-light-title)");
+    expect(darkBubble).toContain("--pet-title: var(--pet-ink-on-dark-title)");
+  });
 });

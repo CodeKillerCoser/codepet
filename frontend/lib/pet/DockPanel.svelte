@@ -175,7 +175,7 @@
   .dock-summary-text { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .dock-trailing { flex: none; margin-left: 8px; }
   .dock-trailing:empty { display: none; }
-  .notch-summary :global(.chevron) { color: var(--gray-10); flex: none; margin-left: 8px; }
+  .notch-summary :global(.chevron) { color: var(--notch-subtle); flex: none; margin-left: 8px; }
   .notch-summary :global(.chevron.open) { transform: rotate(180deg); }
   .dock-actions-reveal { width: calc(var(--dock-actions-width, 0px) * var(--dock-progress)); flex: none; opacity: var(--dock-progress); overflow: hidden; }
   .panel-actions { display: flex; gap: 2px; width: max-content; }

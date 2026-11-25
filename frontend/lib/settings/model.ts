@@ -1,5 +1,5 @@
 import type { ActivityKeywordFilterSettings, AgentId, AppSettings, RobotNotificationChannel } from "../types";
-import { defaultRunningBubbleSettings } from "../theme";
+import { defaultRunningBubbleSettings, normalizeThemePreset } from "../theme";
 
 export const agentOrder: AgentId[] = ["codex", "claude", "qoder", "cursor"];
 export const runningBubbleDefaults = defaultRunningBubbleSettings;
@@ -38,6 +38,7 @@ export function normalizeSettings(nextSettings: AppSettings) {
   nextSettings.data = {
     ...(nextSettings.data ?? {}),
   };
+  nextSettings.appearance.preset = normalizeThemePreset(nextSettings.appearance.preset);
   nextSettings.appearance.runningBubble = {
     ...runningBubbleDefaults,
     ...(nextSettings.appearance.runningBubble ?? {}),

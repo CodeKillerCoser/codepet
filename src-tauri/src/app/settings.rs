@@ -47,6 +47,8 @@ pub struct ConnectionSettings {
 pub struct AppearanceSettings {
     #[serde(default)]
     pub theme: ThemeChoice,
+    #[serde(default, deserialize_with = "deserialize_theme_preset")]
+    pub preset: ThemePreset,
     #[serde(default)]
     pub running_bubble: RunningBubbleSettings,
 }
@@ -74,6 +76,29 @@ pub enum ThemeChoice {
     System,
     Light,
     Dark,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ThemePreset {
+    #[default]
+    WarmStone,
+    CoolSlate,
+    ForestSage,
+    CaramelEarth,
+}
+
+fn deserialize_theme_preset<'de, D>(deserializer: D) -> Result<ThemePreset, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let raw = Option::<String>::deserialize(deserializer)?;
+    Ok(match raw.as_deref() {
+        Some("cool-slate") => ThemePreset::CoolSlate,
+        Some("forest-sage") => ThemePreset::ForestSage,
+        Some("caramel-earth") => ThemePreset::CaramelEarth,
+        _ => ThemePreset::WarmStone,
+    })
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -361,6 +386,7 @@ impl Default for AppearanceSettings {
     fn default() -> Self {
         Self {
             theme: ThemeChoice::System,
+            preset: ThemePreset::default(),
             running_bubble: RunningBubbleSettings::default(),
         }
     }

@@ -6,7 +6,7 @@
 
 - `data`：应用数据目录覆盖项。
 - `connection.signalingService`：可选的公网信令服务地址，只保存地址，不保存设备密钥或授权。
-- `appearance`：主题和运行中气泡设置。
+- `appearance`：主题模式（`theme`：`system` / `light` / `dark`）、主题配色预设（`preset`：`warm-stone` 默认、`cool-slate`、`forest-sage`、`caramel-earth`，缺失或未知值反序列化时静默回退到 `warm-stone`）和运行中气泡设置。
 - `pet`：当前宠物、sprite/图片设置、透明度、置顶和抽打反应音。
 - `petLibrary`：宠物列表和数据目录。
 - `notifications`：声音、自定义声音路径、响铃开关、重复间隔和静音时段。
@@ -30,7 +30,7 @@
 
 ## 前端同步
 
-`frontend/App.svelte` 加载设置后会先归一化，再通过 Tauri command 保存。`frontend/PetApp.svelte` 监听 `settings-updated`，用于更新主题、过滤器、声音和宠物透明度。
+`frontend/App.svelte` 加载设置后会先归一化，再通过 Tauri command 保存。`frontend/PetApp.svelte` 监听 `settings-updated`，用于实时同步主题模式、主题配色预设、过滤器、声音和宠物透明度。
 
 `agentRuntimes` 旧字段仍不能由通用 `update_app_settings` 改写。当前 `set_agent_runtime_executable` 将选择交给 Provider 校验，验证成功后由 Provider 写入其数据库的 runtime_selection 表，不写 App 设置，也不重启 Provider 来恢复选择。`clear_agent_runtime_executable` 重启 Provider 触发全新自动扫描，并清除旧配置项。Host 只消费 Provider 的本次 harnessList、selected 与扫描诊断，App 历史路径不参与启动。Provider 自己根据数据库 lastSelected 匹配扫描结果，缺失或不兼容时选择最高语义版本。
 

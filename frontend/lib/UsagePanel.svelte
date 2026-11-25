@@ -104,14 +104,14 @@
   .usage-controls { flex-wrap: wrap; align-items: end; }
   .usage-controls label { min-width: 0; max-width: 100%; }
   select, input { max-width: 100%; font: inherit; }
-  .usage-note { opacity: 1; color: var(--app-muted); font: var(--font-caption); margin: 0; overflow-wrap: anywhere; }
+  .usage-note { color: var(--app-muted); font: var(--font-caption); margin: 0; overflow-wrap: anywhere; }
   .usage-results { overflow-x: auto; max-width: 100%; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   th, td { padding: 8px 10px; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--app-border); }
   .token-bar { display: block; background: linear-gradient(90deg, var(--app-surface-soft) var(--fill), transparent var(--fill)); padding: 4px; }
   .model-toggle { display: flex; align-items: center; }
-  input:not([type="checkbox"]) { color: var(--app-text); background: var(--app-surface-soft); border: 1px solid var(--app-border); border-radius: 8px; min-height: 38px; padding: 0 10px; }
+  input:not([type="checkbox"]) { color: var(--app-text); background: var(--app-surface-soft); border: 1px solid var(--app-border); border-radius: 6px; min-height: 32px; padding: 0 10px; }
   .usage-workspace, .usage-table { min-width: 0; }
   @media (max-width: 620px) { .usage-controls { justify-content: stretch; } .usage-controls label { width: 100%; } }
-  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+  button:focus-visible, select:focus-visible, input:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
 </style>

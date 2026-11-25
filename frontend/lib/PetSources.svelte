@@ -27,7 +27,7 @@
   {#if error}<p role="alert">{error}</p>{/if}
   {#each sources as source (source.pluginId)}
     <article class="agent-card source-card">
-      <div class="agent-title"><span class="agent-kicker">{source.pluginId}</span><h3>{source.displayName}</h3>
+      <div class="agent-title"><h3>{source.displayName}</h3>
         <p class="agent-description">{source.message || '接收通知并展示在桌宠列表中'}</p>
       </div>
       <div class="agent-controls">

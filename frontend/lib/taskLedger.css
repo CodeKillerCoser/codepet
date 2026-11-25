@@ -32,6 +32,10 @@
   color: var(--wb-on-primary);
   font-weight: var(--font-weight-medium);
 }
+:is(.task-ledger, .task-surface) .primary:hover:not(:disabled), .ledger-dialog .primary:hover:not(:disabled) {
+  background: var(--color-main-accent-hover);
+  border-color: var(--color-main-accent-hover);
+}
 :is(.task-ledger, .task-surface) .quiet, .ledger-dialog .quiet { background: transparent; border-color: transparent; color: var(--task-secondary, var(--wb-muted)); }
 :is(.task-ledger, .task-surface) .quiet:hover, .ledger-dialog .quiet:hover { background: var(--wb-control); border-color: transparent; color: var(--wb-text); }
 :is(.task-ledger, .task-surface) .text-link { color: var(--app-accent); }

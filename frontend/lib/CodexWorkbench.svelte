@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
-  import { Search, RefreshCw, FolderOpen, Terminal, ExternalLink, X, SlidersHorizontal } from '@lucide/svelte';
+  import { Search, RefreshCw, FolderOpen, Terminal, ExternalLink, X, SlidersHorizontal, ChevronDown } from '@lucide/svelte';
   import { MergeView } from '@codemirror/merge';
   import { EditorView } from '@codemirror/view';
   import { EditorState } from '@codemirror/state';
@@ -112,7 +112,7 @@
       <section class="results" aria-label="工作树列表">
         <div class="filters">
           <label class="search"><Search size={14}/><input aria-label="搜索工作树与对话" bind:value={query} placeholder="搜分支、路径、对话标题"/></label>
-          <details class="project-filter"><summary aria-label="筛选项目">{filterProjects.length ? `已选 ${filterProjects.length} 个项目` : '全部项目'}</summary><div>{#each snapshot?.projects ?? [] as p}<label class="check"><input type="checkbox" value={p.id} bind:group={filterProjects}/>{p.name}</label>{:else}<span>扫描后可筛选项目</span>{/each}</div></details>
+          <details class="project-filter"><summary aria-label="筛选项目"><span>{filterProjects.length ? `已选 ${filterProjects.length} 个项目` : '全部项目'}</span><ChevronDown size={14} class="disclosure-chevron" aria-hidden="true"/></summary><div>{#each snapshot?.projects ?? [] as p}<label class="check"><input type="checkbox" value={p.id} bind:group={filterProjects}/>{p.name}</label>{:else}<span>扫描后可筛选项目</span>{/each}</div></details>
           <select aria-label="最近活动" title="按关联主对话的最新更新时间计算，包含归档" bind:value={period}><option value="all">不限时间</option><option value="1">今天</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="date">指定日期起</option></select>
           {#if period === 'date'}<input type="date" aria-label="起始日期" bind:value={date}/>{/if}
           <select aria-label="提交状态" bind:value={status}><option value="all">全部状态</option><option value="dirty">未提交</option><option value="unpushed">未推送</option><option value="pushed">无待推送提交</option><option value="clean">干净 · 无上游</option><option value="error">读取失败</option></select>
@@ -150,7 +150,7 @@
           {#if selected.git.upstream}<p class="comparison-note">上游比较基于本地引用，未访问远端。</p>{/if}
 
           {#if selected.git.error}<p class="error">{selected.git.error}</p>{/if}
-          <details class="changes" open={selected.git.changes.length > 0}><summary>文件改动 · {selected.git.changes.length} 项</summary><div class="change-list">{#each selected.git.changes as change}<div class="change"><button disabled={loading} aria-label={`预览 ${change.path}`} on:click={() => preview(selected,change)}><span class="file-kind" title={change.status}>{changeLabel(change)}</span><span>{change.original ? `${change.original} → ` : ''}{change.path}<small>{change.staged ? '含已暂存改动' : '工作区'}</small></span></button><button disabled={loading} aria-label={`定位 ${change.path}`} on:click={() => action('revealChange',selected,{changeId:change.id})}><FolderOpen size={13}/></button></div>{/each}</div></details>
+          <details class="changes" open={selected.git.changes.length > 0}><summary><ChevronDown size={14} class="disclosure-chevron" aria-hidden="true"/><span>文件改动 · {selected.git.changes.length} 项</span></summary><div class="change-list">{#each selected.git.changes as change}<div class="change"><button disabled={loading} aria-label={`预览 ${change.path}`} on:click={() => preview(selected,change)}><span class="file-kind" title={change.status}>{changeLabel(change)}</span><span>{change.original ? `${change.original} → ` : ''}{change.path}<small>{change.staged ? '含已暂存改动' : '工作区'}</small></span></button><button disabled={loading} aria-label={`定位 ${change.path}`} on:click={() => action('revealChange',selected,{changeId:change.id})}><FolderOpen size={13}/></button></div>{/each}</div></details>
           <div class="chat-heading"><strong>关联对话 <span>{filteredChats.length} 条</span></strong><label class="check"><input type="checkbox" bind:checked={archived}/>含归档</label></div>
           <p class="explanation">按会话工作目录关联，Git 改动属于整棵工作树。{#if archiveCount}{archiveCount} 条历史已归档。{/if}</p>
           {#if selected.conversations.length > 8}<label class="chat-search"><Search size={14}/><input aria-label="搜索关联对话" placeholder="搜索这棵工作树的对话" bind:value={chatQuery} on:input={() => chatLimit = 30}/></label>{/if}
@@ -180,7 +180,7 @@
   .workbench {
     background: var(--wb-bg);
     color: var(--wb-text);
-    font: var(--font-size-caption)/var(--line-height-loose) var(--font-family-ui);
+    font: var(--font-body);
     container-type: inline-size;
     min-width: 0;
     color-scheme: inherit;
@@ -210,49 +210,57 @@
   .project-options button { display: block; width: 100%; text-align: left; background: transparent; border: 0; }
   .project-options button:hover { background: var(--wb-control); }
   .project-options small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wb-muted); font-size: var(--font-size-xs); }
-  .refresh { height: 36px; width: 36px; display: grid; place-items: center; flex: none; padding: 0; }
-  .confirm { min-height: 36px; min-width: 72px; padding: 6px 18px; font-weight: var(--font-weight-medium); background: var(--wb-control); }
-  .scan-status { display: flex; flex-wrap: wrap; gap: 12px; color: var(--wb-muted); font-size: var(--font-size-xs); }
+  .refresh { height: 34px; width: 34px; display: grid; place-items: center; flex: none; padding: 0; background: var(--wb-control); border-color: transparent; }
+  .refresh:hover { border-color: var(--wb-border); }
+  .confirm { min-height: 34px; min-width: 72px; padding: 6px 18px; font-size: var(--font-size-label); font-weight: var(--font-weight-medium); background: var(--wb-primary); border-color: var(--wb-primary); color: var(--wb-on-primary); }
+  .confirm:hover:not(:disabled) { background: var(--color-main-accent-hover, var(--wb-primary)); border-color: var(--color-main-accent-hover, var(--wb-primary)); }
+  .scan-status { display: flex; flex-wrap: wrap; gap: 12px; color: var(--wb-muted); font-size: var(--font-size-caption); }
   .scan-status:not(:empty) { margin-top: 7px; }
-  .read-notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--wb-border); border-radius: 6px; color: var(--wb-muted); margin-top: 12px; font-size: var(--font-size-sm); }
+  .read-notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--wb-border); border-radius: 6px; color: var(--wb-muted); margin-top: 12px; font-size: var(--font-size-caption); }
   .read-notice strong { color: var(--wb-text); font-weight: var(--font-weight-medium); }
   .read-notice>div { display: flex; gap: 8px; }
-  .read-notice button { padding: 3px 7px; font-size: var(--font-size-sm); background: transparent; }
+  .read-notice button { padding: 3px 7px; font-size: var(--font-size-caption); background: transparent; }
   .error { padding: 10px; color: var(--wb-danger-text); background: var(--wb-danger-bg); overflow-wrap: anywhere; border-radius: 5px; }
   .error>button { float: right; }
   .overview { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 14px 0 10px; }
-  .overview button { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 5px 10px; border-color: transparent; background: transparent; font-size: var(--font-size-sm); color: var(--wb-muted); }
+  .overview button { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 5px 10px; border-color: transparent; background: transparent; font-size: var(--font-size-label); color: var(--wb-muted); }
   .overview button.chosen { color: var(--wb-text); background: var(--wb-control); }
-  .overview strong { font-size: var(--font-size-caption); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; color: var(--wb-text); }
-  .overview>span { margin-left: auto; color: var(--wb-muted); font-size: var(--font-size-xs); }
-  .workspace { border: 1px solid var(--wb-border); border-radius: 8px; background: var(--wb-panel); }
+  .overview strong { font-size: var(--font-size-label); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; color: var(--wb-text); }
+  .overview>span { margin-left: auto; color: var(--wb-muted); font-size: var(--font-size-caption); }
+  .workspace { background: var(--wb-panel); }
   .results { min-width: 0; }
-  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px; border-bottom: 1px solid var(--wb-border); }
-  .search { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 160px; border: 1px solid var(--wb-border); border-radius: 6px; background: var(--wb-control); padding-left: 8px; color: var(--wb-muted); }
-  .search:focus-within { border-color: var(--wb-border-strong); }
-  .workbench .search input, .chat-search input { width: 100%; min-height: 32px; height: 32px; background: transparent; color: var(--wb-text); border: 0; padding: 4px 6px; font-size: var(--font-size-sm); line-height: var(--line-height-copy-compact); }
-  .filters select, .filters>input { min-height: 34px; height: 34px; padding: 5px 8px; font-size: var(--font-size-sm); }
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 0 12px; border-bottom: 1px solid var(--wb-border); }
+  .search { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 160px; border: 1px solid transparent; border-radius: 6px; background: var(--wb-control); padding-left: 8px; color: var(--wb-muted); }
+  .search:hover, .search:focus-within { border-color: var(--wb-border); }
+  .workbench .search input, .chat-search input { width: 100%; min-height: 32px; height: 32px; background: transparent; color: var(--wb-text); border: 0; padding: 4px 6px; font-size: var(--font-size-label); line-height: var(--line-height-copy-compact); }
+  .filters select, .filters>input { min-height: 32px; height: 32px; padding: 4px 8px; font-size: var(--font-size-label); border-color: transparent; background: var(--wb-control); }
+  .filters select:hover, .filters>input:hover { border-color: var(--wb-border); }
   .filters select { width: 120px; min-width: 96px; }
-  .check { display: flex; align-items: center; white-space: nowrap; font-size: var(--font-size-xs); color: var(--wb-muted); gap: 5px; }
+  .check { display: flex; align-items: center; white-space: nowrap; font-size: var(--font-size-caption); color: var(--wb-muted); gap: 5px; }
   .check input { width: 13px; height: 13px; margin: 0; accent-color: var(--wb-accent); }
   .project-filter, .more-filters { position: relative; flex: none; }
   summary { cursor: pointer; }
-  .project-filter summary { padding: 7px 8px; border: 1px solid var(--wb-border); border-radius: 6px; white-space: nowrap; font-size: var(--font-size-sm); min-height: 34px; max-width: 150px; overflow: hidden; text-overflow: ellipsis; }
-  .project-filter>div, .more-filters>div { position: absolute; top: calc(100% + 5px); z-index: 5; background: var(--wb-panel); padding: 12px; border: 1px solid var(--wb-border); border-radius: 6px; box-shadow: 0 6px 20px var(--wb-shadow); font-size: var(--font-size-sm); }
+  .project-filter summary { display: inline-flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 8px; border: 1px solid transparent; border-radius: 6px; background: var(--wb-control); white-space: nowrap; font-size: var(--font-size-label); min-height: 32px; height: 32px; max-width: 150px; list-style: none; }
+  .project-filter summary::-webkit-details-marker { display: none; }
+  .project-filter summary:hover { border-color: var(--wb-border); }
+  .project-filter summary > span { overflow: hidden; text-overflow: ellipsis; }
+  .project-filter summary :global(.disclosure-chevron), .changes summary :global(.disclosure-chevron) { flex: none; color: var(--wb-muted); transition: transform 150ms ease; }
+  .project-filter[open] summary :global(.disclosure-chevron), .changes[open] summary :global(.disclosure-chevron) { transform: rotate(180deg); }
+  .project-filter>div, .more-filters>div { position: absolute; top: calc(100% + 5px); z-index: 5; background: var(--wb-panel); padding: 12px; border: 1px solid var(--wb-border); border-radius: 6px; box-shadow: 0 6px 20px var(--wb-shadow); font-size: var(--font-size-label); }
   .project-filter>div { left: 0; min-width: 200px; }
   .project-filter .check { padding: 6px 0; }
-  .more-filters summary { display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid transparent; border-radius: 6px; color: var(--wb-muted); list-style: none; }
+  .more-filters summary { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid transparent; border-radius: 6px; color: var(--wb-muted); list-style: none; }
   .more-filters summary::-webkit-details-marker { display: none; }
   .more-filters summary:hover, .more-filters summary.active { background: var(--wb-control); color: var(--wb-text); }
   .more-filters>div { right: 0; display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 168px; }
   .more-filters .check { padding: 6px 4px; }
-  .more-filters button { text-align: left; border: 0; background: transparent; font-size: var(--font-size-sm); padding: 6px 4px; }
+  .more-filters button { text-align: left; border: 0; background: transparent; font-size: var(--font-size-label); padding: 6px 4px; }
   .more-filters button:hover { background: var(--wb-control); }
-  .column-head { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr) 80px; gap: 16px; padding: 9px 16px; color: var(--wb-muted); font-size: var(--font-size-xs); background: var(--wb-control); border-bottom: 1px solid var(--wb-border); }
-  .worktree-list { padding: 0 6px 6px; }
+  .column-head { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr) 80px; gap: 16px; padding: 10px 10px; color: var(--wb-muted); font-size: var(--font-size-label); font-weight: var(--font-weight-emphasis); background: transparent; border-bottom: 1px solid var(--wb-border); }
+  .worktree-list { padding: 0; }
   .worktree-row { position: relative; border-bottom: 1px solid var(--wb-border); background: transparent; padding-right: 86px; }
   .worktree-row:last-child { border-bottom: 0; }
-  .worktree-row.selected { background: var(--wb-control); box-shadow: inset 2px 0 var(--wb-border-strong); border-radius: 4px; }
+  .worktree-row.selected { background: var(--wb-control); box-shadow: inset 2px 0 var(--wb-accent); border-radius: 4px; }
   .row-select { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr); gap: 16px; align-items: center; width: 100%; padding: 12px 10px; min-height: 88px; text-align: left; border: 0; background: transparent; font-size: var(--font-size-sm); border-radius: 4px; }
   .row-select:hover { background: var(--wb-sheen); }
   .identity { display: flex; align-items: flex-start; flex-direction: column; gap: 4px; min-width: 0; }
@@ -276,8 +284,9 @@
   .git-summary { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); margin: 14px 0 4px; overflow-wrap: anywhere; }
   .git-summary.has-error { color: var(--wb-danger-text); }
   .comparison-note { font-size: var(--font-size-xs); color: var(--wb-muted); margin: 0 0 14px; }
-  .changes { font-size: var(--font-size-sm); padding: 0 0 18px; border-bottom: 1px solid var(--wb-border); margin-top: 14px; }
-  .changes summary { font-weight: var(--font-weight-medium); }
+  .changes { font-size: var(--font-size-label); padding: 0 0 18px; border-bottom: 1px solid var(--wb-border); margin-top: 14px; }
+  .changes summary { display: inline-flex; align-items: center; gap: 6px; font-weight: var(--font-weight-medium); list-style: none; }
+  .changes summary::-webkit-details-marker { display: none; }
   .change-list { max-height: 220px; overflow: auto; margin-top: 8px; }
   .change { display: flex; align-items: center; gap: 4px; padding: 4px 0; }
   .change button { min-width: 0; padding: 6px; font-size: var(--font-size-sm); text-align: left; overflow-wrap: anywhere; min-height: 32px; background: var(--wb-control); border-color: transparent; }
