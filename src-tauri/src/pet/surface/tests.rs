@@ -42,6 +42,35 @@ fn layout(s: &Surface, width: f64, height: f64) -> Layout {
         pet_width: 30.,
         pet_height: 20.,
         drag_region: None,
+        following: None,
+    }
+}
+
+#[test]
+fn native_following_uses_window_origin_and_preserves_top_dock_placement() {
+    let mut s = surface();
+    for unit in [0.5, 1., 2.] {
+        s.displays[0].unit = unit;
+        let mut l = layout(&s, 836., 650.);
+        let home = s.layout_frame(l).unwrap();
+        let anchor = s.anchor;
+        l.following = Some(Following { origin: Point {x:-520.,y:-800.}, inset:Point{x:18.,y:90.} });
+        assert!(l.valid());
+        let frame = s.layout_frame(l).unwrap();
+        assert_eq!(frame.x + 18.*unit, -520.);
+        assert_eq!(frame.y + 90.*unit, -800.);
+        l.width = 716.; l.height = 510.;
+        l.following.as_mut().unwrap().origin = Point{x:-460.,y:-740.};
+        let resized = s.layout_frame(l).unwrap();
+        assert_eq!(resized.x + 18.*unit, -460.);
+        assert_eq!(resized.y + 90.*unit, -740.);
+        assert_eq!(resized.width, 716.*unit);
+        l.following = None;
+        let settled = s.layout_frame(l).unwrap();
+        assert_eq!(settled.y,home.y);
+        assert_eq!(s.anchor,anchor);
+        l.following = Some(Following {origin:Point{x:f64::NAN,y:0.},inset:Point{x:0.,y:0.}});
+        assert!(!l.valid());
     }
 }
 #[test]

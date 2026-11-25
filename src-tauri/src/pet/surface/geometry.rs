@@ -48,6 +48,11 @@ pub struct Display {
     pub unit: f64,
 }
 #[derive(Clone, Copy, Debug, Deserialize)]
+pub struct Following {
+    pub origin: Point,
+    pub inset: Point,
+}
+#[derive(Clone, Copy, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Layout {
     pub width: f64,
@@ -58,6 +63,8 @@ pub struct Layout {
     pub revision: u64,
     #[serde(default)]
     pub drag_region: Option<Rect>,
+    #[serde(default)]
+    pub following: Option<Following>,
 }
 impl Layout {
     pub fn valid(self) -> bool {
@@ -81,6 +88,11 @@ impl Layout {
                 [r.x, r.y, r.width, r.height].iter().all(|n| n.is_finite())
                     && r.x >= 0. && r.y >= 0. && r.width > 0. && r.height > 0.
                     && r.right() <= self.width && r.bottom() <= self.height
+            })
+            && self.following.is_none_or(|f| {
+                [f.origin.x, f.origin.y, f.inset.x, f.inset.y].iter().all(|n| n.is_finite())
+                    && f.inset.x >= 0. && f.inset.x < self.width
+                    && f.inset.y >= 0. && f.inset.y < self.height
             })
     }
 }

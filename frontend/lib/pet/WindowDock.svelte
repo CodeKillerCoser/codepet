@@ -5,6 +5,7 @@
   import petIcon from '../../../src-tauri/icons/32x32.png';
   import { defaultDrawerSize, drawerCommand, serializeDrawer, type DrawerWindow, type DrawerPointer, type DrawerRect, type DrawerSelectionOperation } from './windowDrawer';
   export let syncHitRegions: () => Promise<void>;
+  export let followWindow: (frame: DrawerRect | null, inset?: {x:number;y:number}) => void;
   export let frame: HTMLElement;
   export let panel: HTMLElement;
   export let backdrop: HTMLElement;
@@ -35,6 +36,7 @@
   let awaitingSince: number | undefined;
   let coveredSince: number | undefined;
   let syncError = '';
+  function nativeHeld() { return pointer?.pressed !== false; }
   function cancelCheck() { clearTimeout(check); check = undefined; immediateCheck = false; }
   function schedule(delay = 0) {
     if (disposed || suspended || !selected) return;
@@ -99,7 +101,7 @@
     const down = Boolean(point.pressed);
     // Wake geometry reconciliation on global mouse-up without interpreting
     // the native content gesture or sending a drop/release command.
-    if (pressed && !down) schedule();
+    if (pressed && !down) { followWindow(null); schedule(); }
     const released = point.externalReleases !== undefined && lastExternalRelease !== undefined &&
       lastExternalRelease !== point.externalReleases;
     lastExternalRelease = point.externalReleases;
@@ -183,6 +185,7 @@
       raf = requestAnimationFrame(() => { raf = requestAnimationFrame(finish); });
     });
     await Promise.all([inputReady, paintReady]);
+    followWindow(null);
   }
   async function park() {
     if (!presented) { aperture(); return; }
@@ -231,13 +234,27 @@
         presented = true;
         if (disposed || busy || selected !== target || suspended || generation !== epoch) return;
         resizing = layout.resizing || Boolean(layout.tracking);
-        if (layout.tracking) {
-          // Keep the shell's frame stable while the owner tracks a drag/edge.
-          // Recentring it per pixel shifts the slot underneath the native window.
+        if (layout.tracking && nativeHeld()) {
+          if (!layout.frame) throw new Error('窗口跟随缺少原生位置');
+          // Surface remains the sole host writer. Use the native origin and
+          // slot inset together, so changing width never recentres the shell.
+          followWindow(layout.frame,{x:rect.x,y:rect.y});
+          const width = Math.min(Math.floor(maxWidth),Math.max(30,Math.ceil(layout.width)));
+          const height = Math.min(Math.floor(maxHeight),Math.max(30,Math.ceil(layout.height)));
+          if (width !== target.requiredWidth || height !== target.requiredHeight) {
+            const fitted = {...target,requiredWidth:width,requiredHeight:height};
+            windows = windows.map(item=>item.id===target.id ? fitted : item);
+            selected = fitted;
+          }
           aperture(rect,layout.visible);
+          await tick();
+          const slot = host?.getBoundingClientRect();
+          if (!disposed && !suspended && nativeHeld() && slot && selected?.id === target.id)
+            followWindow(layout.frame,{x:slot.x,y:slot.y});
           retryDelay = 50;
           return;
         }
+        followWindow(null);
         if (resizing) {
           const width = Math.min(Math.floor(maxWidth), Math.max(30,Math.ceil(layout.width)));
           const height = Math.min(Math.floor(maxHeight), Math.max(30,Math.ceil(layout.height)));
@@ -392,7 +409,7 @@
       if (disposed) remove(); else unlisten = remove;
     }).catch(failed);
     return () => {
-      disposed = true; cancelCheck(); phase.disconnect(); resize.disconnect(); unlisten?.(); clearTimeout(timer); clearTimeout(enterTimer); aperture();
+      disposed = true; cancelCheck(); phase.disconnect(); resize.disconnect(); unlisten?.(); clearTimeout(timer); clearTimeout(enterTimer); aperture(); followWindow(null);
       void serializeDrawer(() => drawerCommand('reset')).catch(failed);
     };
   });

@@ -70,8 +70,51 @@ fn open_main_window() {}
 async fn qa_motion_frame(app: tauri::AppHandle) -> Result<qa_surface::geometry::Rect, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
     let handle = app.clone();
-    app.run_on_main_thread(move || { let _ = tx.send(qa_platform::read(&handle).map(|e| e.frame)); }).map_err(|e|e.to_string())?;
+    app.run_on_main_thread(move || {
+        let result=qa_platform::read(&handle).and_then(|e| {
+            let (ax,origin_y)=qa_platform::drawer_geometry(&handle)?;
+            if (ax.x-e.frame.x).abs()>1. || (ax.y+origin_y-e.frame.y).abs()>1. {
+                return Err("AX/Surface coordinate mismatch".into());
+            }
+            Ok(e.frame)
+        });
+        let _ = tx.send(result);
+    }).map_err(|e|e.to_string())?;
     rx.await.map_err(|e|e.to_string())?
+}
+
+#[cfg(target_os = "macos")]
+async fn native_follow_smoke(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    // Remove automatic browser measurements so this fixture exclusively drives
+    // production Surface layout, without touching the installed application's UI.
+    app.get_webview_window("pet").ok_or("missing pet window")?
+        .navigate("about:blank".parse().map_err(|e| format!("{e}"))?)
+        .map_err(|e| e.to_string())?;
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    let home = qa_motion_frame(app.clone()).await?;
+    let view = serde_json::to_value(qa_surface::pet_surface_state(app.clone()).await?).unwrap();
+    let mut layout: qa_surface::geometry::Layout = serde_json::from_value(serde_json::json!({
+        "width":480.,"height":380.,"petWidth":30.,"petHeight":20.,"anchor":{"x":30.,"y":12.},
+        "revision":view["revision"]
+    })).map_err(|e|e.to_string())?;
+    for (x,y,width,height) in [(240.,home.y+180.,480.,380.),(180.,home.y+120.,640.,460.),(300.,home.y+220.,420.,300.)] {
+        layout.width=width; layout.height=height;
+        layout.following=Some(qa_surface::geometry::Following {
+            origin:qa_surface::geometry::Point{x,y},inset:qa_surface::geometry::Point{x:18.,y:90.}
+        });
+        qa_surface::pet_surface_layout(app.clone(),layout).await?;
+        let actual=qa_motion_frame(app.clone()).await?;
+        if (actual.x+18.-x).abs()>1. || (actual.y+90.-y).abs()>1. ||
+            (actual.width-width).abs()>1. || (actual.height-height).abs()>1. {
+            return Err(format!("native following mismatch: {actual:?}"));
+        }
+    }
+    layout.following=None;
+    qa_surface::pet_surface_layout(app.clone(),layout).await?;
+    let actual=qa_motion_frame(app).await?;
+    if (actual.y-home.y).abs()>1. { return Err(format!("native following did not settle: {actual:?}")); }
+    Ok(())
 }
 #[tauri::command]
 fn qa_motion_done(app: tauri::AppHandle, value: serde_json::Value) {
@@ -168,7 +211,11 @@ fn main() {
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                let result = native_smoke(handle.clone()).await;
+                let mut result = native_smoke(handle.clone()).await;
+                if result.is_ok() && std::env::args().any(|arg| arg == "--follow") {
+                    result=native_follow_smoke(handle.clone()).await;
+                    eprintln!("Native following: {result:?}");
+                }
                 eprintln!("Native smoke: {result:?}");
                 if result.is_ok() && std::env::args().any(|arg| arg == "--motion") {
                     use tauri::Manager;
@@ -193,7 +240,7 @@ fn main() {
                       }, 1400);
                     "#);
                 }
-                if std::env::args().any(|arg| arg == "--smoke") {
+                if std::env::args().any(|arg| arg == "--smoke" || arg == "--follow") {
                     handle.exit(if result.is_ok() { 0 } else { 1 });
                 }
             });

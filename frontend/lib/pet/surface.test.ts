@@ -76,3 +76,19 @@ it('disconnects measurement and events and does not schedule layout after dispos
   expect(unlisten).toHaveBeenCalledOnce(); expect(disconnect).toHaveBeenCalledOnce();
   expect(vi.mocked(invoke).mock.calls.map(c => c[0])).toEqual(['pet_surface_state']);
 });
+
+it('follows native geometry through the layout writer and clears it on release', async () => {
+  controller = new PetSurfaceController(content, vi.fn(), error=>{throw error;});
+  await controller.start();
+  controller.followWindow({x:-520,y:-800,width:640,height:400},{x:18,y:92});
+  await vi.advanceTimersByTimeAsync(1);
+  let calls=vi.mocked(invoke).mock.calls.filter(([name])=>name==='pet_surface_layout');
+  expect((calls.at(-1)![1] as any).layout.following).toEqual({origin:{x:-520,y:-800},inset:{x:18,y:92}});
+  controller.followWindow({x:-480,y:-760,width:800,height:500},{x:18,y:84});
+  await vi.advanceTimersByTimeAsync(1);
+  expect(controller.measure()?.following).toEqual({origin:{x:-480,y:-760},inset:{x:18,y:84}});
+  controller.followWindow(null);
+  await vi.advanceTimersByTimeAsync(1);
+  calls=vi.mocked(invoke).mock.calls.filter(([name])=>name==='pet_surface_layout');
+  expect((calls.at(-1)![1] as any).layout.following).toBeUndefined();
+});

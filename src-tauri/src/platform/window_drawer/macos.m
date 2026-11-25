@@ -654,6 +654,8 @@ static NSDictionary *failure(NSString *message) { return @{@"error":message}; }
 static NSDictionary *trackingPresentation(CPDrawerEntry *entry, CGRect measured, CGRect slot, BOOL resizing, BOOL held) {
     NSMutableDictionary *layout = [presentation(entry,measured,slot,resizing) mutableCopy];
     layout[@"tracking"] = @(held);
+    if (held) layout[@"frame"] = @{@"x":@(measured.origin.x), @"y":@(measured.origin.y),
+        @"width":@(measured.size.width), @"height":@(measured.size.height)};
     return layout;
 }
 // During an owner's resize loop its AX server can lag the compositor. Read

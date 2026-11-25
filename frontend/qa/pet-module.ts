@@ -33,6 +33,7 @@ const qa = {
   drawerMinimumWidth: 0,
   drawerResize: null as {width: number; height: number} | null,
   drawerTracking: false,
+  drawerFrame: {x:220,y:-700,width:910,height:610},
   frameCaptures: 0,
   drawerChanged: (cover: boolean, dx=0, dy=0, seal=false) => fire('pet-drawer-changed', {cover,dx,dy,seal}),
   pendingCursorCapture: null as Promise<void> | null,
@@ -106,7 +107,7 @@ mockIPC((command, args: any) => {
       if (qa.drawerSyncFailure) throw new Error('QA temporary AX failure');
       const {width,height} = args.region;
       const size = qa.drawerResize ?? {width:Math.max(width,qa.drawerMinimumWidth),height};
-      const result = {...size,resizing:!!qa.drawerResize,tracking:qa.drawerTracking,awaitingSurface:qa.drawerAwaitingSurface,
+      const result = {...size,resizing:!!qa.drawerResize,tracking:qa.drawerTracking,frame:qa.drawerTracking ? {...qa.drawerFrame,...size} : undefined,awaitingSurface:qa.drawerAwaitingSurface,
         visible:qa.drawerCovered || qa.drawerAwaitingSurface ? [] :
         [{x:qa.drawerInset,y:0,width:Math.min(width,size.width)-qa.drawerInset,height:Math.min(height,size.height)}]};
       return qa.pendingDrawer ? qa.pendingDrawer.then(() => result) : result;
@@ -157,6 +158,7 @@ mockIPC((command, args: any) => {
       x = Math.max(area.position.x, Math.min(x, area.position.x + area.size.width - size.width));
       y = Math.max(area.position.y, Math.min(y, area.position.y + area.size.height - size.height));
     }
+    if (l.following) { x=l.following.origin.x-l.following.inset.x*scale; y=l.following.origin.y-l.following.inset.y*scale; }
     native.position = { x, y }; native.size = size; native.resizeCount++;
     anchor = { x: x + l.anchor.x * scale, y: y + l.anchor.y * scale }; lastLayout = l;
     return Promise.resolve((window as any).__resizeNativeWindow({ width: l.width, height: l.height })).then(() => qa.surface);

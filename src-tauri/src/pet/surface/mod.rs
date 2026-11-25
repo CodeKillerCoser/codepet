@@ -342,6 +342,16 @@ impl Surface {
     fn layout_frame(&self, layout: Layout) -> Option<Rect> {
         let d = self.display()?;
         let anchor = self.anchor?;
+        if self.mode == Mode::Docked && self.drag.is_none() {
+            if let Some(following) = layout.following {
+                return Some(Rect {
+                    x: following.origin.x - following.inset.x * d.unit,
+                    y: following.origin.y - following.inset.y * d.unit,
+                    width: layout.width * d.unit,
+                    height: layout.height * d.unit,
+                });
+            }
+        }
         Some(if self.mode == Mode::Docked && d.notch.is_some() {
             dock_frame(d, layout, self.dock_center())
         } else {
@@ -366,7 +376,7 @@ impl Surface {
         };
         let anchor = anchor_in(frame, layout, d.unit);
         platform::apply(app, frame, self.mode == Mode::Docked || self.drag.is_some())?;
-        self.anchor = Some(anchor);
+        if layout.following.is_none() { self.anchor = Some(anchor); }
         self.last_frame = Some(frame);
         platform::show(app, true)?;
         Ok(())
@@ -557,7 +567,7 @@ pub async fn pet_surface_plan_layout(
             {
                 return Err("pet layout exceeds current display".into());
             }
-            let target = dock_frame(d, layout, s.dock_center());
+            let target = s.layout_frame(layout).ok_or("surface layout unavailable")?;
             let css = |r: Rect| Rect { x: r.x / d.unit, y: r.y / d.unit, width: r.width / d.unit, height: r.height / d.unit };
             Ok(serde_json::json!({"from":css(env.frame), "to":css(target), "topInset":dock_inset(d, s.dock_center(), layout.width * d.unit) / d.unit}))
         })();

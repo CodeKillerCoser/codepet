@@ -547,7 +547,7 @@ try {
   assert.ok(await drawerNav.isVisible(), 'pin keeps the Dock visible');
   await page.getByRole('button',{name:'取消固定',exact:true}).click();
   const captures = await page.evaluate(() => window.__petQa.frameCaptures);
-  const beforeNativeResize = await page.locator('[data-dock-frame]').boundingBox();
+  const homeY = await page.evaluate(()=>window.__petQa.native.position.y);
   const resizeChecks = await page.locator('[data-window-host]').evaluate(el => {
     const q=window.__petQa, r=el.getBoundingClientRect();
     q.cursor={x:r.x+2,y:r.y+2,pressed:true};
@@ -556,10 +556,26 @@ try {
   });
   await page.waitForFunction(n=>window.__petQa.drawerCalls.filter(op=>op==='show').length>n,resizeChecks);
   await page.waitForTimeout(150);
-  assert.deepEqual(await page.locator('[data-dock-frame]').boundingBox(),beforeNativeResize,'native edge tracking must not move or resize the host');
-  assert.equal(await page.locator('[data-window-host]').evaluate(el=>el.clientWidth),800);
-  await page.evaluate(()=>{const q=window.__petQa; q.drawerTracking=false; q.cursor={...q.cursor,pressed:false}; q.drawerChanged(false);});
   await page.waitForFunction(()=>document.querySelector('[data-window-host]')?.clientWidth===910);
+  await page.waitForFunction(()=>{
+    const q=window.__petQa,r=document.querySelector('[data-window-host]')?.getBoundingClientRect(),n=q.native;
+    return r && Math.abs(n.position.x+r.x*n.scale-q.drawerFrame.x)<1 && Math.abs(n.position.y+r.y*n.scale-q.drawerFrame.y)<1;
+  });
+  await page.evaluate(()=>{const q=window.__petQa;q.drawerFrame={...q.drawerFrame,x:360,y:-580};q.drawerResize={width:680,height:420};q.drawerChanged(false);});
+  await page.waitForFunction(()=>{
+    const q=window.__petQa,r=document.querySelector('[data-window-host]')?.getBoundingClientRect(),n=q.native;
+    return r?.width===680 && r.height===420 && Math.abs(n.position.x+r.x*n.scale-360)<1 && Math.abs(n.position.y+r.y*n.scale+580)<1;
+  });
+  const pendingTracking = await page.evaluate(()=>{
+    const q=window.__petQa;q.pendingDrawer=new Promise(done=>window.__finishTracking=done);q.drawerChanged(false);
+    return q.drawerCalls.filter(op=>op==='show').length;
+  });
+  await page.waitForFunction(n=>window.__petQa.drawerCalls.filter(op=>op==='show').length>n,pendingTracking);
+  await page.evaluate(()=>{const q=window.__petQa; q.drawerTracking=false; q.cursor={...q.cursor,pressed:false}; q.drawerChanged(false);});
+  await page.waitForFunction(y=>window.__petQa.native.position.y===y,homeY);
+  await page.evaluate(()=>{const q=window.__petQa;q.pendingDrawer=null;window.__finishTracking();});
+  await page.waitForSelector('[data-window-host][data-presented]');
+  assert.equal(await page.evaluate(()=>window.__petQa.native.position.y),homeY,'a late tracking reply cannot resume following after mouse-up');
   for (const [width,height] of [[910,610],[680,420]]) {
     await page.evaluate(size => {
       const q = window.__petQa;

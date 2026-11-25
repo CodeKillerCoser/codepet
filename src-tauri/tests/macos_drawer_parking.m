@@ -211,6 +211,9 @@ static void checkNativeOwnership(CPDrawerEntry *entry, CGRect slot) {
         [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.06]];
         NSDictionary *heldLayout = runWithButtonState(@"show",current,slot,slot.size,YES);
         assert(heldLayout && getFrame(entry,&after) && nearFrame(after,moved));
+        assert([heldLayout[@"tracking"] boolValue] && [heldLayout[@"frame"] isKindOfClass:NSDictionary.class]);
+        assert(fabs([heldLayout[@"frame"][@"x"] doubleValue]-moved.origin.x)<=2 &&
+               fabs([heldLayout[@"frame"][@"y"] doubleValue]-moved.origin.y)<=2);
         fixtureMouse(kCGEventLeftMouseUp,entry.windowID,CGPointMake(start.x-offset.doubleValue,start.y+32),NO);
         assert(releaseSerial == releases);
         NSDictionary *layout = runWithButtonState(@"show",current,slot,slot.size,NO);

@@ -128,16 +128,18 @@ pub async fn pet_window_drawer(
             return Ok(Value::Null);
         }
         let mut target = region.unwrap_or_default();
+        let mut surface_origin_y = 0.;
         if operation == "show" || operation == "activate" {
             use tauri::Manager;
             let app = window.app_handle().clone();
             let (tx, rx) = tokio::sync::oneshot::channel();
             window
                 .run_on_main_thread(move || {
-                    let _ = tx.send(super::pet_surface::drawer_frame(&app));
+                    let _ = tx.send(super::pet_surface::drawer_geometry(&app));
                 })
                 .map_err(|e| e.to_string())?;
-            let frame = rx.await.map_err(|e| e.to_string())??;
+            let (frame, origin_y) = rx.await.map_err(|e| e.to_string())??;
+            surface_origin_y = origin_y;
             if !(target.x >= 0.
                 && target.y >= 0.
                 && target.width >= 30.
@@ -156,7 +158,13 @@ pub async fn pet_window_drawer(
             target.height = target.height.round();
         }
         tauri::async_runtime::spawn_blocking(move || {
-            call(&operation, id.as_deref().unwrap_or(""), target)
+            let mut reply = call(&operation, id.as_deref().unwrap_or(""), target)?;
+            if let Some(frame) = reply.get_mut("frame").and_then(Value::as_object_mut) {
+                if let Some(y) = frame.get("y").and_then(Value::as_f64) {
+                    frame.insert("y".into(), Value::from(y + surface_origin_y));
+                }
+            }
+            Ok(reply)
         })
         .await
         .map_err(|e| e.to_string())?

@@ -70,13 +70,14 @@ mod implementation {
     }
     // AX uses top-down points relative to the primary screen. Following an
     // already-hosted window needs neither display metadata nor a pointer poll.
-    pub fn drawer_frame(app: &AppHandle) -> Result<Rect, String> {
+    pub fn drawer_geometry(app: &AppHandle) -> Result<(Rect, f64), String> {
         let mtm = MainThreadMarker::new().ok_or("surface must run on main thread")?;
         let panel = app.get_webview_panel("pet").map_err(|e| format!("{e:?}"))?;
         let primary = NSScreen::screens(mtm).firstObject().ok_or("没有显示器")?;
         let mut frame = rect(panel.as_panel().frame());
-        frame.y -= rect(primary.frame()).y;
-        Ok(frame)
+        let surface_origin_y = rect(primary.frame()).y;
+        frame.y -= surface_origin_y;
+        Ok((frame, surface_origin_y))
     }
     pub fn read(app: &AppHandle) -> Result<Environment, String> {
         let mtm = MainThreadMarker::new().ok_or("surface must run on main thread")?;
@@ -345,7 +346,7 @@ mod implementation {
     }
 }
 #[cfg(target_os = "macos")]
-pub use implementation::{drawer_frame, install_drag_monitor, sample_drawer_press};
+pub use implementation::{drawer_geometry, install_drag_monitor, sample_drawer_press};
 #[cfg(not(target_os = "macos"))]
 pub fn sample_drawer_press(_: bool) -> (u32, Option<Point>) { (0, None) }
 pub use implementation::{apply, read, show};

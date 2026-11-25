@@ -161,7 +161,7 @@
     {#if dropReady}<div class="drop-hint" role="status">松手钉住窗口</div>{/if}
   </svelte:fragment>
   <svelte:fragment slot="overlay" let:frame let:panel={shell} let:backdrop let:body>
-    {#if drawerSupported}<WindowDock {syncHitRegions} {frame} panel={shell} {backdrop} {body} host={windowHost} bind:this={dock} bind:dropReady bind:selected={selectedWindow} bind:helpOpen bind:visibleRects bind:resizing {maxWidth} {maxHeight} {failed} {pointer} {pinned} openPanel={() => panel.expandForWindow()}/>{/if}
+    {#if drawerSupported}<WindowDock {syncHitRegions} followWindow={(frame,inset)=>controller?.followWindow(frame,inset)} {frame} panel={shell} {backdrop} {body} host={windowHost} bind:this={dock} bind:dropReady bind:selected={selectedWindow} bind:helpOpen bind:visibleRects bind:resizing {maxWidth} {maxHeight} {failed} {pointer} {pinned} openPanel={() => panel.expandForWindow()}/>{/if}
   </svelte:fragment>
       <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
       <div class="notch-task-list" bind:clientHeight={notificationHeight} class:hosting={selectedWindow} class:help-open={helpOpen} tabindex="0" role="region" aria-label="任务列表">

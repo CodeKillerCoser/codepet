@@ -19,7 +19,16 @@ export const initialSurface: SurfaceView = {
   revision: 0, mode: 'floating', dragging: false, snapCandidate: false,
   canDock: false, availableHeight: 700, nativeDrag: true, physicalNotch: false,
 };
-export interface SurfaceLayout { width: number; height: number; petWidth: number; petHeight: number; anchor: { x: number; y: number }; dragRegion?: { x: number; y: number; width: number; height: number }; revision: number }
+export interface SurfaceLayout {
+  width: number;
+  height: number;
+  petWidth: number;
+  petHeight: number;
+  anchor: { x: number; y: number };
+  dragRegion?: { x: number; y: number; width: number; height: number };
+  following?: { origin: { x: number; y: number }; inset: { x: number; y: number } };
+  revision: number;
+}
 export interface SurfaceRect { x: number; y: number; width: number; height: number }
 export interface SurfacePlan { from: SurfaceRect; to: SurfaceRect; topInset: number }
 
@@ -48,6 +57,7 @@ export class PetSurfaceController {
   private pending = false;
   private dragFinished?: () => void;
   private paused = false;
+  private following: SurfaceLayout['following'];
   constructor(private content: HTMLElement, private changed: (view: SurfaceView) => void, private failed: (error: unknown) => void) {}
 
   async start() {
@@ -77,19 +87,29 @@ export class PetSurfaceController {
     if (this.disposed || this.paused || this.inFlight || !this.pending) return;
     this.pending = false; this.inFlight = true;
     try {
-      const layout = measureSurface(this.content, this.view.revision);
+      const layout = this.measure();
       if (layout) this.accept(await invoke<SurfaceView>('pet_surface_layout', { layout }));
     } catch (error) { this.failed(error); }
     finally { this.inFlight = false; if (this.pending) this.schedule(); }
   }
   pauseLayout() { this.paused = true; clearTimeout(this.timer); this.pending = false; }
   resumeLayout() { this.paused = false; this.schedule(); }
-  measure() { return measureSurface(this.content, this.view.revision); }
+  measure() {
+    const layout = measureSurface(this.content, this.view.revision);
+    return layout && this.following ? {...layout,following:this.following} : layout;
+  }
+  followWindow(frame: SurfaceRect | null, inset?: {x:number;y:number}) {
+    const next = frame && inset ? {origin:{x:frame.x,y:frame.y},inset:{...inset}} : undefined;
+    if (JSON.stringify(next) === JSON.stringify(this.following)) return;
+    this.following = next;
+    this.schedule();
+  }
   plan(layout: SurfaceLayout) { return invoke<SurfacePlan>('pet_surface_plan_layout', { layout }); }
   beginFrame() { return invoke<number>('pet_surface_begin_frame'); }
   endFrame(token: number, abort = false) { return invoke<void>('pet_surface_end_frame', { token, abort }); }
   async commit(layout: SurfaceLayout) { this.accept(await invoke<SurfaceView>('pet_surface_layout', { layout })); }
   async setMode(mode: SurfaceView['mode']) {
+    this.followWindow(null);
     this.accept(await invoke<SurfaceView>('pet_surface_mode', { mode }));
   }
   async drag() {
