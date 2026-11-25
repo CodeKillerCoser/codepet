@@ -85,9 +85,18 @@ fn closing_one_run_keeps_other_pending_runs_visible_and_find_agrees_with_app() {
         ledger.view(&saved).unwrap()["summary"]["status"],
         "ready_for_delivery"
     );
-    let found = ledger.find(FindTasksInput::default()).unwrap();
-    assert_eq!(found["tasks"][0]["status"], "ready_for_delivery");
-    assert_eq!(found["tasks"][0]["revision"], r.revision);
+    let found = ledger.find_runs(FindTaskRunsInput::default()).unwrap();
+    let runs = found["runs"].as_array().unwrap();
+    assert_eq!(runs.len(), 2);
+    for run in runs {
+        assert_eq!(run["taskSummary"]["status"], "ready_for_delivery");
+        assert_eq!(run["revision"], r.revision);
+    }
+    let closed = runs
+        .iter()
+        .find(|run| run["runId"] == task.runs[1].id)
+        .unwrap();
+    assert_eq!(closed["status"], "closed");
 }
 
 #[test]

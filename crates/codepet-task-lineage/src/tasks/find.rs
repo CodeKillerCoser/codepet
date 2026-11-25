@@ -96,6 +96,7 @@ impl Ledger {
                 "title":run.title, "kind":run.kind, "goal":run.goal.chars().take(400).collect::<String>(),
                 "status":run.status, "createdBy":run.created_by,
                 "revision":task.revision, "runCount":task.runs.len(),
+                "taskSummary":task.summary(),
                 "isCurrentRun":task.runs.last().is_some_and(|latest| latest.id == run.id),
                 "workspace":run.agent_workspace.path,
                 "project":projects.iter().find(|p|p.id == task.project_id).map(|p|&p.name),
@@ -154,6 +155,7 @@ fn run_detail(task: &Task, run: &TaskRun, history: bool) -> Value {
         "taskCreatedBy":task.created_by, "runId":run.id,
         "isCurrentRun":task.runs.last().is_some_and(|latest| latest.id == run.id),
         "revision":task.revision, "runCount":task.runs.len(),
+        "taskSummary":task.summary(),
         "run":{
             "id":run.id, "title":run.title, "kind":run.kind, "goal":run.goal,
             "solution":run.solution, "description":run.description, "status":run.status,

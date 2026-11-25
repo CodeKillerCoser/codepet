@@ -40,6 +40,7 @@ pub fn documents(ledger: &Ledger) -> Result<Vec<Value>, String> {
                 "summary":{"taskId":task.id,"taskTitle":task.title,"runId":run.id,"title":run.title,
                     "kind":run.kind,"goal":run.goal.chars().take(400).collect::<String>(),"status":run.status,
                     "revision":task.revision,"runCount":task.runs.len(),"createdBy":run.created_by,
+                    "taskSummary":task.summary(),
                     "isCurrentRun":task.runs.last().is_some_and(|r| r.id == run.id),
                     "workspace":run.agent_workspace.path,"createdAt":run.created_at,"updatedAt":run.updated_at}}));
         }
