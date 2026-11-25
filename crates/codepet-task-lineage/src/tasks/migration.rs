@@ -14,6 +14,7 @@ fn author(events: &[old::Event]) -> String {
 }
 fn observation(old: &old::CodeObservation) -> AgentWorkspace {
     AgentWorkspace {
+        repository: None,
         path: old.workspace.clone(),
         branch: old.branch.clone(),
         head: old.head.clone(),
@@ -92,6 +93,7 @@ fn run(old: &old::Round, workspace: &str, title: &str, kind: &TaskKind) -> TaskR
         .last()
         .map(observation)
         .unwrap_or(AgentWorkspace {
+            repository: None,
             path: workspace.into(),
             branch: None,
             head: None,

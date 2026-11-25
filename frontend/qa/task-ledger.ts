@@ -1,14 +1,13 @@
 import {taskLedgerOverflow} from './taskLedgerOverflow';
-// Browser layout replay of isolated native evidence; no production writes.
+// Deterministic browser layout fixture; no production writes or native evidence claims.
 import '../styles.css';import '../main-window.css';
 import {mockIPC} from '@tauri-apps/api/mocks';import {mount} from 'svelte';
 import WorkbenchFrameQa from './WorkbenchFrameQa.svelte';import {themeClassNames} from '../lib/theme/defaults';
 import TaskRunDetail from '../lib/TaskRunDetail.svelte';
 import '../lib/taskLedger.css';
 import {currentRun,type Task,type RunStatus} from '../lib/taskLedger';
-const report=await fetch('/artifacts/task-ledger-qa/native/report.json').then(r=>r.json());
-if(!report.success||![4,5].includes(report.taskSnapshot?.schemaVersion))throw Error('Run native task/run acceptance first');
-const base:Task=report.taskSnapshot,tasks=[base],scenario=new URLSearchParams(location.search).get('scenario');
+import {taskLedgerFixture} from './taskLedgerFixture';
+const base:Task=taskLedgerFixture(),tasks=[base],scenario=new URLSearchParams(location.search).get('scenario');
 (base as any).completion=null;
 if(scenario==='overflow')tasks.splice(0,1,...taskLedgerOverflow(base));
 if(scenario==='overflow'&&new URLSearchParams(location.search).has('manyRuns')){
@@ -100,7 +99,8 @@ function qaView(task:Task):Task {
 (window as any).__taskCompletionState=()=>structuredClone(tasks);
 (window as any).__conflictTaskCompletion=()=>{base.revision++;};
 const defaults='在方案确定后登记任务，实现告一段落时合并更新。保留 taskId/runId/revision，不逐消息或逐文件维护。';
-let setupState={transport:'stdio',config:'[mcp_servers.codepet_tasks]\ncommand = "/Users/qa/.codepet/bin/codepet-task-mcp"\nargs = ["--managed-stdio"]\nenv = { CODEPET_AGENT = "codex" }',instructions:defaults,defaultInstructions:defaults,instructionsRevision:0,instructionsCustomized:false};
+const agentClients=['codex','claude','cursor','opencode'].map((id,i)=>({id,name:['Codex','Claude Code','Cursor','OpenCode'][i],configPath:['~/.codex/config.toml','.mcp.json','~/.cursor/mcp.json','~/.config/opencode/opencode.jsonc'][i],rulePath:['~/.codex/AGENTS.md','~/.claude/CLAUDE.md','Cursor → Customize → Rules → User Rules','~/.config/opencode/AGENTS.md'][i],config:id==='codex'?'[mcp_servers.codepet_tasks]\ncommand = \"/Users/qa/.codepet/bin/codepet-task-mcp\"\nargs = [\"--managed-stdio\"]\nenv = { CODEPET_AGENT = \"codex\" }':JSON.stringify(id==='opencode'?{mcp:{servers:{codepet_tasks:{type:'local',command:['/Users/qa/.codepet/bin/codepet-task-mcp','--managed-stdio'],environment:{CODEPET_AGENT:id}}}}}:{mcpServers:{codepet_tasks:{...(id==='claude'?{type:'stdio'}:{}),command:'/Users/qa/.codepet/bin/codepet-task-mcp',args:['--managed-stdio'],env:{CODEPET_AGENT:id}}}},null,2)}));
+let setupState={clients:agentClients,transport:'stdio',config:'[mcp_servers.codepet_tasks]\ncommand = "/Users/qa/.codepet/bin/codepet-task-mcp"\nargs = ["--managed-stdio"]\nenv = { CODEPET_AGENT = "codex" }',instructions:defaults,defaultInstructions:defaults,instructionsRevision:0,instructionsCustomized:false};
 (window as any).__promptConflict=()=>{setupState.instructionsRevision++;};
 mockIPC(async(command,args:any)=>{
  if(command.startsWith('plugin:event|'))return 1;

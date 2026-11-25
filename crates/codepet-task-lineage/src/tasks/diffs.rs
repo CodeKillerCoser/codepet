@@ -190,6 +190,7 @@ fn prepare_run(
     repository: &str,
     capture_workspace: bool,
 ) -> Result<Vec<(String, Value)>> {
+    let repository = workspace::evidence_repository(&run.agent_workspace, repository);
     let prefix = prefix(task, run);
     let index_key = format!("{prefix}/index.json");
     let mut index: Vec<Value> = store.read(&index_key)?.unwrap_or_default();
@@ -209,14 +210,14 @@ fn prepare_run(
         }) {
             continue;
         }
-        let changes = workspace::commit_changes(Path::new(repository), sha);
+        let changes = workspace::commit_changes(Path::new(&repository), sha);
         let version = Version {
             id: id.clone(),
             commit: Some(sha.clone()),
             captured_at: now(),
             observed_at: run.agent_workspace.observed_at,
             files: capture(
-                Path::new(repository),
+                Path::new(&repository),
                 &changes.files,
                 Some(sha),
                 &mut budget,

@@ -45,4 +45,5 @@ export function verificationContext(run:TaskRun,stage:Scope){
   return {target:previous?.target??'',environment:previous?.environment??''};
 }
 export const formatTaskTime=(n:number)=>new Date(n).toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false});
-export interface AgentSetup{transport?:'stdio'|'http';config:string;instructions:string;defaultInstructions:string;instructionsRevision:number;instructionsCustomized:boolean}
+export interface AgentClientSetup{id:string;name:string;config:string;configPath:string;rulePath:string}
+export interface AgentSetup{clients?:AgentClientSetup[];transport?:'stdio'|'http';config:string;instructions:string;defaultInstructions:string;instructionsRevision:number;instructionsCustomized:boolean}

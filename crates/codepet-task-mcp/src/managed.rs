@@ -155,7 +155,7 @@ pub fn configuration(launcher: &Path) -> Value {
         "[mcp_servers.codepet_tasks]\ncommand = {}\nargs = [\"--managed-stdio\"]\nenv = {{ CODEPET_AGENT = \"codex\" }}\n",
         json!(launcher.to_string_lossy())
     );
-    json!({"transport":"stdio", "command":launcher, "config":config})
+    json!({"transport":"stdio", "command":launcher, "config":config, "clients":crate::clients::stdio(launcher)})
 }
 
 /// Reads an atomic manifest at each connection. App moves and old App removal do not

@@ -36,6 +36,7 @@ pub(super) fn inspect(input: &WorkspaceInput) -> Result<Context> {
     };
     let mut observation = AgentWorkspace {
         path: path.display().to_string(),
+        repository: Some(repository.display().to_string()),
         branch: None,
         head: None,
         upstream: None,
@@ -231,4 +232,42 @@ pub(super) fn validate_run_files(files: &[String]) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Workspace identity only controls which Git facts can be retained, never access to a task.
+pub(super) fn same_repository(left: &str, right: &AgentWorkspace) -> bool {
+    if left == right.path {
+        return true;
+    }
+    fn root(path: &str) -> String {
+        workbench::text_git(
+            Path::new(path),
+            &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        )
+        .ok()
+        .and_then(|p| Path::new(&p).canonicalize().ok())
+        .unwrap_or_else(|| {
+            Path::new(path)
+                .canonicalize()
+                .unwrap_or_else(|_| path.into())
+        })
+        .display()
+        .to_string()
+    }
+    root(left)
+        == right
+            .repository
+            .clone()
+            .unwrap_or_else(|| root(&right.path))
+}
+
+pub(super) fn evidence_repository(workspace: &AgentWorkspace, fallback: &str) -> String {
+    if let Some(repository) = &workspace.repository {
+        return repository.clone();
+    }
+    workbench::text_git(
+        Path::new(&workspace.path),
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .unwrap_or_else(|_| fallback.to_owned())
 }

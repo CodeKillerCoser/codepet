@@ -15,7 +15,7 @@ await writeFile(join(workspace,'file'),'original');git(['add','file']);git(['com
 await writeFile(join(workspace,'file'),'dirty');
 const home=join(temporary,'home');await mkdir(home);
 const codexHome=join(home,'.codex');await mkdir(codexHome);const threadId=randomUUID();
-execFileSync('python3',['-c',"import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('CREATE TABLE threads(id TEXT,cwd TEXT)'); c.execute('INSERT INTO threads VALUES (?,?)',sys.argv[2:]); c.commit()",join(codexHome,'state_5.sqlite'),threadId,workspace]);
+execFileSync('python3',['-c',"import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); c.execute('CREATE TABLE threads(id TEXT,cwd TEXT)'); c.execute('INSERT INTO threads VALUES (?,?)',sys.argv[2:]); c.commit()",join(codexHome,'state_5.sqlite'),threadId,home]);
 const binary=process.env.CODEPET_MCP_BINARY||join(root,'crates/target/debug/codepet-task-mcp');
 let count=0;
 function client(){

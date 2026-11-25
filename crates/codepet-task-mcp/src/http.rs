@@ -167,7 +167,7 @@ impl HttpServer {
             json!(self.url),
             json!(self.access.authorization)
         );
-        json!({"config":config,"url":self.url,
+        json!({"transport":"http","config":config,"url":self.url,"clients":crate::clients::http(&self.url, &self.access.authorization),
             "instructions":include_str!("../instructions.md")})
     }
     pub async fn serve(self) -> io::Result<()> {

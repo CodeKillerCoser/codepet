@@ -131,8 +131,48 @@ try{
  await page.keyboard.press('Escape');assert.ok(await page.getByRole('button',{name:'关闭任务编辑',exact:true}).isDisabled());
  await page.evaluate(()=>{window.__holdTaskSave=false;window.__rejectTaskSave();});await page.waitForFunction(()=>!document.querySelector('.form-controls')?.disabled);assert.equal(await page.getByLabel('背景与现象').inputValue(),'保留未保存的背景草稿');await page.keyboard.press('Escape');
  await page.getByLabel('更多任务操作').click();await page.getByRole('button',{name:'接入 Agent',exact:true}).click();
- const prompt=page.getByRole('textbox',{name:'Agent 使用提示词',exact:true});await prompt.waitFor();const defaultText=await prompt.inputValue();
- assert.ok((await page.getByLabel('MCP 配置').inputValue()).includes('--managed-stdio'));
+ await page.evaluate(()=>{window.__copiedAgentConfig='';Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__copiedAgentConfig=text;}}});});
+ const setupDialog=page.getByRole('dialog',{name:'连接 Agent',exact:true});
+ assert.equal(await setupDialog.locator('.agent-clients button').count(),4);
+ const setupPrompt=setupDialog.getByRole('textbox',{name:'扩展提示词',exact:true});
+ assert.equal(await setupPrompt.isVisible(),true,'Extension prompt is directly editable');
+ assert.equal(await setupDialog.locator('.prompt-editor summary').count(),0,'No duplicate editing title');
+ assert.equal(await setupDialog.locator('.prompt-editor footer').evaluate(e=>getComputedStyle(e).borderTopWidth),'0px','No divider above prompt actions');
+ assert.equal(await setupDialog.locator('.config-destination,.usage-guidance,.config-code').count(),0,'No standalone configuration or guidance blocks');
+ const edited='当前编辑的约定：实施前登记，完成前提交结论。';
+ const original=await setupPrompt.inputValue();await setupPrompt.fill(edited);
+ for(const name of ['Codex','Claude Code','Cursor','OpenCode']){
+  const button=setupDialog.getByRole('button',{name:`复制 ${name} 安装指令`,exact:true});
+  const tooltip=setupDialog.getByRole('tooltip',{name,exact:true});
+  assert.equal(await tooltip.isVisible(),false);
+  await button.hover();await tooltip.waitFor({state:'visible'});
+  assert.equal(await button.innerText(),'','Only the Agent mark is visible by default');
+  await button.click();
+  const copied=await page.evaluate(()=>window.__copiedAgentConfig);
+  assert.ok(copied.includes('安装这个 MCP')&&copied.includes('系统提示词'));
+  assert.ok(copied.includes(edited),'Copies the current draft, even before saving');
+  if(name==='Codex')assert.ok(copied.includes('[mcp_servers.codepet_tasks]'));
+  else{const config=JSON.parse(copied.match(/```json\n([\s\S]*?)\n```/)[1]),id={'Claude Code':'claude',Cursor:'cursor',OpenCode:'opencode'}[name];
+   assert.equal(name==='OpenCode'?config.mcp.servers.codepet_tasks.environment.CODEPET_AGENT:config.mcpServers.codepet_tasks.env.CODEPET_AGENT,id);
+  }
+  assert.equal(await setupDialog.getByRole('status').innerText(),'已复制');
+  await page.getByRole('heading',{name:'连接 Agent',exact:true}).last().hover();
+ }
+ await setupPrompt.fill(original);
+ await page.evaluate(()=>{navigator.clipboard.writeText=async()=>{throw Error('blocked');};});
+ await setupDialog.getByRole('button',{name:'复制 Codex 安装指令',exact:true}).click();
+ await setupDialog.getByRole('alert').filter({hasText:'复制失败'}).waitFor();
+ await page.evaluate(()=>{navigator.clipboard.writeText=async text=>{window.__copiedAgentConfig=text;};});
+ await setupDialog.getByRole('button',{name:'复制 Codex 安装指令',exact:true}).focus();await page.keyboard.press('Enter');
+ await setupDialog.getByRole('status').filter({hasText:'已复制'}).waitFor();
+ await setupPrompt.fill('');assert.ok(await setupDialog.getByRole('button',{name:'复制 Codex 安装指令',exact:true}).isDisabled());await setupPrompt.fill(original);
+ for(const mode of ['light','dark'])for(const width of [820,390]){
+  await page.evaluate(mode=>window.__setTaskTheme(mode),mode);await page.setViewportSize({width,height:700});
+  assert.ok(await setupDialog.evaluate(e=>e.scrollWidth<=e.clientWidth+1),'Setup must not overflow horizontally');
+  await page.screenshot({path:resolve(output,`agent-setup-${mode}-${width}.png`)});
+ }
+ await page.setViewportSize({width:1440,height:920});
+ const prompt=setupPrompt;const defaultText=await prompt.inputValue();
  await prompt.fill('只在关键节点合并登记。');await page.getByRole('button',{name:'确认',exact:true}).click();await page.getByRole('status').filter({hasText:'提示词已保存'}).waitFor();await page.keyboard.press('Escape');
  await page.getByLabel('更多任务操作').click();await page.getByRole('button',{name:'接入 Agent',exact:true}).click();assert.equal(await prompt.inputValue(),'只在关键节点合并登记。');
  await page.evaluate(()=>window.__promptConflict());await prompt.fill('冲突保留草稿');await page.getByRole('button',{name:'确认',exact:true}).click();await page.getByRole('alert').filter({hasText:'revision='}).waitFor();assert.equal(await prompt.inputValue(),'冲突保留草稿');await page.keyboard.press('Escape');

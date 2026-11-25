@@ -167,7 +167,9 @@ impl Ledger {
                         error: Some("提交引用不是有效 SHA".into()),
                     };
                 }
-                let read = workspace::commit_changes(Path::new(&project.path), sha);
+                let repository =
+                    workspace::evidence_repository(&run.agent_workspace, &project.path);
+                let read = workspace::commit_changes(Path::new(&repository), sha);
                 if read.error.is_some() {
                     if let Some(saved) = run
                         .agent_workspace
@@ -279,3 +281,6 @@ mod contract_tests;
 
 #[cfg(test)]
 mod summary_tests;
+
+#[cfg(test)]
+mod cross_project_tests;

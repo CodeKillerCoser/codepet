@@ -110,9 +110,10 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(task.description.includes('人工补充背景') && currentRun(task).solution === solution, 'Task edit leaves run solution unchanged');
 
   await more('接入 Agent'); dialog = await modal();
-  check(dialog.querySelector('textarea')?.value.includes('--managed-stdio'), 'Stable stdio config shown');
+  check(dialog.querySelectorAll('.agent-clients button').length === 4, 'Four Agent installation entries shown');
+  check(dialog.querySelector('[aria-label="扩展提示词"]'), 'Extension prompt is directly editable');
   const customPrompt = '原生验收：方案确定后登记，完成时合并更新；不要逐消息维护。';
-  input('Agent 使用提示词', customPrompt, dialog); await button('确认', dialog);
+  input('扩展提示词', customPrompt, dialog); await button('确认', dialog);
   await until(() => dialog.querySelector('[role="status"]')?.textContent?.includes('已保存'));
   let initialized = await invoke<{initializeInstructions: string}>('qa_http_task_write');
   check(initialized.initializeInstructions === customPrompt, 'Edited prompt reaches actual HTTP initialize');
@@ -120,9 +121,9 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(stdioInit.initializeInstructions === customPrompt, 'Edited prompt reaches stable stdio initialize');
   const setup = await taskRequest<AgentSetup>('setup');
   await taskRequest('save-instructions', {expectedRevision: setup.instructionsRevision, text: '其他窗口已保存的新提示词'});
-  input('Agent 使用提示词', '提示词草稿必须保留', dialog); await button('确认', dialog);
+  input('扩展提示词', '提示词草稿必须保留', dialog); await button('确认', dialog);
   await until(() => dialog.querySelector('[role="alert"]')?.textContent?.includes('revision='));
-  check(dialog.querySelector<HTMLTextAreaElement>('[aria-label="Agent 使用提示词"]')?.value === '提示词草稿必须保留', 'Prompt conflict retains draft');
+  check(dialog.querySelector<HTMLTextAreaElement>('[aria-label="扩展提示词"]')?.value === '提示词草稿必须保留', 'Prompt conflict retains draft');
   await dismiss(dialog);
   check(document.activeElement === document.querySelector('[aria-label="更多任务操作"]'), 'Setup restores focus');
   await more('接入 Agent'); dialog = await modal(); await button('恢复默认', dialog);

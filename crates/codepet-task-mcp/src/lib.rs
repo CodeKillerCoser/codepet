@@ -1,4 +1,5 @@
 //! Five milestone tools; Rust owns the ledger and request-scoped Agent identity.
+pub mod clients;
 pub mod http;
 pub mod instructions;
 pub mod managed;
@@ -230,5 +231,13 @@ mod tests {
         let bytes = serde_json::to_vec(&tools).unwrap().len();
         assert!(bytes < 24000, "definitions: {bytes}");
         assert!(INSTRUCTIONS.len() < 2000);
+        let leading: String = INSTRUCTIONS.chars().take(512).collect();
+        for milestone in [
+            "create-task BEFORE",
+            "update-task-run",
+            "finish-task-run BEFORE",
+        ] {
+            assert!(leading.contains(milestone));
+        }
     }
 }

@@ -1,8 +1,8 @@
 //! Archived v2 reader and validation engine; writes are retained for migration regression fixtures.
 #![allow(dead_code, unused_imports)]
-use super::source;
-pub use super::legacy_model::*;
 pub use super::delivery::{delivery_facts, task_view};
+pub use super::legacy_model::*;
+use super::source;
 
 use crate::{stable_id, store::Store, workbench, Result};
 use serde::{Deserialize, Serialize};
@@ -357,14 +357,14 @@ impl Ledger {
             Err(e) => return Err(e),
         };
         let source_verified = if let Some(thread) = &input.thread_id {
-            if let Some(repository) = ctx
+            if let Some(_repository) = ctx
                 .as_ref()
                 .map(|c| c.repository.as_str())
                 .or_else(|| previous.as_ref().map(|t| t.repository_path.as_str()))
             {
                 crate::sources::local::directory(crate::sources::local::CODEX_ID)
                     .ok()
-                    .map(|home| source::verify(&home, thread, repository))
+                    .map(|home| source::verify(&home, thread))
                     .transpose()?
                     .unwrap_or(false)
             } else {

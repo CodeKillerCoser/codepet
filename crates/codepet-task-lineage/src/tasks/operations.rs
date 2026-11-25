@@ -1,10 +1,4 @@
-use super::{
-    id,
-    model::*,
-    now, source, text, validation,
-    workspace::{self, Context},
-    Ledger, Project,
-};
+use super::{id, model::*, now, source, text, validation, workspace, Ledger, Project};
 use crate::Result;
 use serde::Deserialize;
 use serde_json::json;
@@ -42,7 +36,7 @@ fn new_run(description: String, workspace: AgentWorkspace, actor: &Actor) -> Tas
         closure: None,
     }
 }
-fn link(run: &mut TaskRun, ids: &[String], actor: &Actor, repository: &str) -> Result<()> {
+fn link(run: &mut TaskRun, ids: &[String], actor: &Actor) -> Result<()> {
     if !actor.is_human() && ids.is_empty() {
         return Err(
             "agentConversation 必填且不能为空；提交实际对话 ID 或 codex://threads/<id> 链接".into(),
@@ -65,7 +59,7 @@ fn link(run: &mut TaskRun, ids: &[String], actor: &Actor, repository: &str) -> R
             })?;
             crate::sources::local::directory(crate::sources::local::CODEX_ID)
                 .ok()
-                .map(|home| source::verify(&home, conversation_id, repository))
+                .map(|home| source::verify(&home, conversation_id))
                 .transpose()?
                 .unwrap_or(false)
         } else {
@@ -111,19 +105,6 @@ fn check_new_run(task: &Task, actor: &Actor) -> Result<()> {
     match task.runs.last().unwrap().status {
         RunStatus::Published | RunStatus::Closed => Ok(()),
         _ => Err("当前执行仍在处理中，请更新当前执行".into()),
-    }
-}
-fn project<'a>(projects: &'a [Project], task: &Task) -> Result<&'a Project> {
-    projects
-        .iter()
-        .find(|p| p.id == task.project_id)
-        .ok_or("项目不存在".into())
-}
-fn same_project(project: &Project, ctx: &Context) -> Result<()> {
-    if project.path != ctx.repository {
-        Err("工作区不属于任务项目，请创建独立任务".into())
-    } else {
-        Ok(())
     }
 }
 fn description(value: &str) -> Result<()> {
@@ -185,12 +166,7 @@ impl Ledger {
         if let Some(plan) = input.initial_run.validation_plan {
             validation::set_plan(&mut run, plan)?;
         }
-        link(
-            &mut run,
-            &input.initial_run.agent_conversation,
-            &actor,
-            &ctx.repository,
-        )?;
+        link(&mut run, &input.initial_run.agent_conversation, &actor)?;
         let summary = if run.description.is_empty() {
             "开始首次执行".into()
         } else {
@@ -272,7 +248,7 @@ impl Ledger {
         if let Some(plan) = plan {
             validation::set_plan(&mut run, plan)?;
         }
-        link(&mut run, &input.agent_conversation, &actor, &ctx.repository)?;
+        link(&mut run, &input.agent_conversation, &actor)?;
         let summary = if input.description.is_empty() {
             run.title.clone()
         } else {
@@ -284,10 +260,9 @@ impl Ledger {
             summary
         };
         event(&mut run, &actor, "created", summary, None);
-        self.transact(key, fingerprint, |store, projects| {
+        self.transact(key, fingerprint, |store, _| {
             let mut task = Self::load(store, &input.task_id)?;
             check_revision(&task, input.expected_revision)?;
-            same_project(project(projects, &task)?, &ctx)?;
             check_new_run(&task, &actor)?;
             task.completion = None;
             task.runs.push(run);
@@ -408,7 +383,13 @@ impl Ledger {
             path: last.agent_workspace.path.clone(),
             related_commits: vec![],
         });
-        for sha in &last.agent_workspace.related_commits {
+        let same_repository = workspace::same_repository(&workspace.path, &last.agent_workspace);
+        for sha in last
+            .agent_workspace
+            .related_commits
+            .iter()
+            .filter(|_| same_repository)
+        {
             if !workspace.related_commits.contains(sha) {
                 workspace.related_commits.push(sha.clone());
             }
@@ -419,15 +400,11 @@ impl Ledger {
             Err(_) if input.agent_workspace.is_none() => None,
             Err(e) => return Err(e),
         };
-        self.transact(key, fingerprint, |store, projects| {
+        self.transact(key, fingerprint, |store, _| {
             let mut task = Self::load(store, &input.task_id)?;
             check_revision(&task, input.expected_revision)?;
             if task.completion.is_some() {
                 return Err("任务已完成并锁定，请用户先手动恢复开发".into());
-            }
-            let repository = project(projects, &task)?.path.clone();
-            if let Some(ctx) = &ctx {
-                same_project(project(projects, &task)?, ctx)?;
             }
             let run = task.runs.last_mut().unwrap();
             if run.id != input.run_id {
@@ -458,10 +435,14 @@ impl Ledger {
             }
             if let Some(ctx) = ctx {
                 let retained = run.agent_workspace.related_commits.clone();
-                let run_files = run.agent_workspace.run_files.clone();
+                let run_files = if same_repository {
+                    run.agent_workspace.run_files.clone()
+                } else {
+                    None
+                };
                 run.agent_workspace = ctx.observation;
                 run.agent_workspace.run_files = run_files;
-                for sha in retained {
+                for sha in retained.into_iter().filter(|_| same_repository) {
                     if !run.agent_workspace.related_commits.contains(&sha) {
                         run.agent_workspace.related_commits.push(sha);
                     }
@@ -498,7 +479,7 @@ impl Ledger {
             {
                 run.status = RunStatus::InProgress;
             }
-            link(run, &input.agent_conversation, &actor, &repository)?;
+            link(run, &input.agent_conversation, &actor)?;
             let summary = input.note.unwrap_or_else(|| {
                 if changes.is_empty() {
                     "更新工作区观测".into()

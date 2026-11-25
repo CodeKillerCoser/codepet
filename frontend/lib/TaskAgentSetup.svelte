@@ -1,12 +1,19 @@
 <script lang="ts">
   import * as Dialog from './ui/dialog/index';
-  import {X,Copy} from '@lucide/svelte';
-  import {taskRequest, type AgentSetup} from './taskLedger';
+  import {X} from '@lucide/svelte';
+  import {taskRequest, type AgentSetup, type AgentClientSetup} from './taskLedger';
+  import {agentInstallPrompt} from './taskAgentInstall';
+  import codexLogo from '../assets/agents/codex.png';
+  import claudeLogo from '../assets/agents/claude.png';
+  import cursorLogo from '../assets/agents/cursor.png';
+  import opencodeLogo from '../assets/agents/opencode.png';
 
   export let returnFocus: HTMLElement;
   let dialog: Dialog.ModalHandle;
   let setup: AgentSetup;
   let draft = '', busy = false, error = '', message = '';
+  const logos: Record<string, string> = {codex:codexLogo, claude:claudeLogo, cursor:cursorLogo, opencode:opencodeLogo};
+  $: clients = setup?.clients ?? (setup ? [{id:'codex',name:'Codex',config:setup.config,configPath:'~/.codex/config.toml',rulePath:'~/.codex/AGENTS.md'}] : []);
 
   export function isOpen() { return dialog?.isOpen(); }
   export async function show() {
@@ -28,40 +35,56 @@
     } catch (e) { error = String(e); }
     finally { busy = false; }
   }
-  async function copy() {
-    try { await navigator.clipboard.writeText(setup.config); message = '配置已复制'; }
-    catch { message = '请选中配置文本复制'; }
+  async function copyClient(item: AgentClientSetup) {
+    error = ''; message = '';
+    try {
+      await navigator.clipboard.writeText(agentInstallPrompt(item, draft));
+      message = '已复制';
+    } catch { error = '复制失败，请重试。'; }
   }
 </script>
 
-<Dialog.Modal title="连接 Agent 任务登记" class="ledger-dialog" {returnFocus}
+<Dialog.Modal title="连接 Agent" class="ledger-dialog agent-setup-dialog" {returnFocus}
   bind:this={dialog} onCancel={e => { if (busy) e.preventDefault(); }}>
   <form on:submit|preventDefault={() => save()}>
     <fieldset class="form-controls" disabled={busy}>
       <header>
-        <h3>连接 Agent 任务登记</h3>
+        <h3>连接 Agent</h3>
         <button type="button" aria-label="关闭接入说明" title="关闭" on:click={() => dialog.close()}><X size={18}/></button>
       </header>
-      <p>将配置加入 config.toml，重新连接 MCP 后生效。</p>
-      <details><summary>接入说明</summary>
-      {#if setup?.transport === 'stdio'}
-        <p class="muted">固定入口位于用户目录，移动或重命名 Code Pet 不影响连接。Agent 会自动启动独立程序，无需保持 App 运行；启动新版 App 后会更新程序和使用的数据目录。</p>
-      {:else}
-        <p class="muted">本机 HTTP 服务随 Code Pet 后台运行。</p>
-      {/if}
-      <p class="muted">{setup?.transport === 'stdio' ? 'CODEPET_AGENT' : 'X-CodePet-Agent'} 标记调用来源，默认 codex。</p>
-      </details>
-      <label>MCP 配置<textarea readonly rows="5" value={setup?.config ?? ''}></textarea></label>
-      <button type="button" class="quiet" aria-label="复制配置" title="复制" on:click={copy}><Copy size={16}/></button>
-      <label>Agent 使用提示词
-        <textarea aria-label="Agent 使用提示词" rows="10" maxlength="16000" required bind:value={draft}></textarea>
-      </label>
+      <div class="agent-clients" role="group" aria-label="支持的 Agent">
+        {#each clients as item}
+          <div class="agent-entry">
+            <button type="button" aria-label={`复制 ${item.name} 安装指令`} aria-describedby={`agent-name-${item.id}`}
+              disabled={!draft.trim()} on:click={() => copyClient(item)}>
+              <img src={logos[item.id]} alt="" width="28" height="28"/>
+            </button>
+            <span class="agent-tooltip" id={`agent-name-${item.id}`} role="tooltip">{item.name}</span>
+          </div>
+        {/each}
+      </div>
+      <div class="prompt-editor">
+        <label>扩展提示词<textarea aria-label="扩展提示词" rows="8" maxlength="16000" required bind:value={draft}></textarea></label>
+        <footer>
+          <button type="button" class="quiet" disabled={!setup?.instructionsCustomized} on:click={() => save(true)}>恢复默认</button>
+          <button class="primary" disabled={!draft.trim() || draft === setup?.instructions}>{busy ? '保存中…' : '确认'}</button>
+        </footer>
+      </div>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       {#if message}<p class="message" role="status">{message}</p>{/if}
-      <footer>
-        <button type="button" class="quiet" disabled={!setup?.instructionsCustomized} on:click={() => save(true)}>恢复默认</button>
-        <button class="primary" disabled={!draft.trim() || draft === setup?.instructions}>{busy ? '保存中…' : '确认'}</button>
-      </footer>
     </fieldset>
   </form>
 </Dialog.Modal>
+
+<style>
+  .agent-clients {display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin:0 0 20px;}
+  .agent-entry {position:relative;}
+  .agent-clients button {display:grid;place-items:center;width:40px;height:40px;min-height:40px;padding:6px;border:0;border-radius:6px;background:transparent;}
+  .agent-clients button:hover:not(:disabled) {background:var(--wb-control);}
+  .agent-clients img {display:block;object-fit:contain;border-radius:5px;}
+  .agent-tooltip {position:absolute;top:calc(100% + 4px);left:50%;transform:translateX(-50%);z-index:3;visibility:hidden;opacity:0;pointer-events:none;white-space:nowrap;padding:4px 8px;border:1px solid var(--wb-border);border-radius:5px;background:var(--wb-panel);color:var(--wb-text);font:var(--font-caption);}
+  .agent-entry:hover .agent-tooltip,.agent-entry:focus-within .agent-tooltip {visibility:visible;opacity:1;}
+  .prompt-editor label {margin-top:0;}
+  .prompt-editor footer {position:static;border-top:0;margin-top:12px;padding-top:0;padding-bottom:0;}
+  .message,.error {margin:12px 0 0;font:var(--font-caption);overflow-wrap:anywhere;}
+</style>

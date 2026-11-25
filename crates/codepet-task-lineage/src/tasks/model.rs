@@ -89,6 +89,9 @@ pub struct CommitChange {
 #[serde(rename_all = "camelCase")]
 pub struct AgentWorkspace {
     pub path: String,
+    /// Canonical Git common directory, retained per run for cross-project evidence recovery.
+    #[serde(default)]
+    pub repository: Option<String>,
     pub branch: Option<String>,
     pub head: Option<String>,
     pub upstream: Option<String>,
@@ -191,7 +194,7 @@ pub struct Task {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspaceInput {
-    /// Absolute existing worktree/project path. Git facts are read by Rust.
+    /// This run's absolute existing workspace; it may belong to another project. Rust reads Git facts.
     pub path: String,
     /// Only commits explicitly associated with this task; never all branch commits.
     #[serde(default)]

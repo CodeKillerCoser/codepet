@@ -14,7 +14,7 @@ stdio 固定入口必须是独立程序，不得绑定 `.app/Contents/MacOS`、�
 
 stdio 从 CODEPET_AGENT 读取连接来源；HTTP 固定监听回环，验证 Host/Origin、本机凭据和单一有效 X-CodePet-Agent，来源经请求上下文传给该次写入，不能串用其他请求或从工具参数取值。来源标记不能授予 human 权限；Task/Run 创建者不随更新变化，更新者写 timeline。旧记录未保存的具体来源使用 unknown，不按当前连接倒填。
 
-默认配置只在独立资源安装成功后生成 command/args/env，不依赖 HTTP 就绪；HTTP 配置仍只由真实就绪服务提供。初始化和接入面板使用同一 Rust 提示词配置，未自定义时读取 instructions.md。用户可编辑、保存并恢复默认；保存按 revision 防冲突。新连接读取已保存内容，旧会话需重连，不要求手动复制说明才会用。自定义提示词不改变任何工具权限，也不得由 Agent 工具修改。
+默认配置只在独立资源安装成功后生成 command/args/env，不依赖 HTTP 就绪；HTTP 配置仍只由真实就绪服务提供。初始化和接入面板使用同一 Rust 提示词配置，未自定义时读取 instructions.md。用户可编辑、保存并恢复默认；保存按 revision 防冲突。新连接读取已保存内容，旧会话需重连，不要求手动复制说明才会用。Codex/Claude Code/Cursor/OpenCode 的配置统一由 Rust 从已安装入口或实际 HTTP 信息生成，前端只选择和复制；不得把“已复制”展示成“已连接”。自定义提示词不改变任何工具权限，也不得由 Agent 工具修改。
 
 创建 Task 同时建立首次执行，后续保留 taskId/runId/revision，只在关键节点合并写入，不逐文件更新、不轮询。Agent 自测不是人工验收。任务开发本身也在关键节点登记；当前会话未加载工具时，通过已有协议入口登记，不能将“提供了工具”当成“已经登记”。
 
@@ -38,3 +38,8 @@ stdio 从 CODEPET_AGENT 读取连接来源；HTTP 固定监听回环，验证 Ho
 用户标记已完成后，Agent 的 update-task-run、finish-task-run 和 create-task-run 都不能恢复该任务。检查必须放在共享 Rust 账本中，并在事务提交前复核；不能只依赖默认提示词或界面隐藏入口。人工在 App 手动改为开发中时，通过 Actor::human() 追加新执行，旧完成状态、验收和历史不改写；Agent 随后只能更新新的当前执行。已发布尚未人工完成的任务仍可按原规则新增执行。
 
 回归覆盖直接领域调用、真实 HTTP、managed stdio 与自定义提示词场景，以及人工恢复后旧执行的完整等值比较。原生和独立 MCP 必须一起升级；常驻旧 stdio 连接须重连，不能将新前端当成后端权限升级。
+
+
+## 跨项目续办
+
+Task 的原项目归属是分组，不是 Agent 写入权限。已知 taskId 可跨对话、项目和工作区继续；不得按 Codex cwd 或工作区 common directory 拒绝关联。对话存在核实与项目匹配分开，仍不允许猜造对话ID。Run 的 Git证据必须绑定其自己的 common directory，不能用 Task 原项目读取其他仓库的提交；切换不相关仓库不携带旧SHA。跨项目不会解除人工完成锁或历史只读，也不覆盖旧清单/验收。回归见 tasks/cross_project_tests.rs、source.rs 及真实stdio黑盒。

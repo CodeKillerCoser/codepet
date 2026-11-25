@@ -6,13 +6,13 @@
 
 ## 当前定义
 
-Task 保存 `id/title/description/projectId/createdBy/createdAt/runs`，后台另存 schemaVersion、revision、updatedAt。title 是一句话目标，description 是背景或现象；不再保存另一份 objective。Task 不再保存类型，类型属于每一次执行。项目名称属于读取时补充的投影，项目 ID 由规范化 Git common directory 映射；同仓库 worktree 共用项目。
+Task 保存 `id/title/description/projectId/createdBy/createdAt/runs`，后台另存 schemaVersion、revision、updatedAt。title 是一句话目标，description 是背景或现象；不再保存另一份 objective。Task 不再保存类型，类型属于每一次执行。项目名称属于读取时补充的投影，项目 ID 由规范化 Git common directory 映射；同仓库 worktree 共用项目。projectId 保留任务最初的项目归属作分组，不是写入权限；同一任务可以在不同项目、工作区和对话中继续处理。
 
 TaskRun 保存 `id/title/kind/goal/solution/description/status/validationPlan/agentWorkspace/agentConversation/timeline/createdBy/createdAt`，后台维护 updatedAt 与结束记录。title 是运行卡片的短标题；kind 为 bugfix/feature；goal 与 solution 分别记录本次目标和确定的方案。description 作为可选补充说明及旧自由文本保留，旧内容不自动猜分为结构化方案。这些执行字段不会改写 Task 的背景。runs 按创建顺序保存，最后一项是当前执行；Task 状态由 Rust 汇总全部执行，不再取最后一项。
 
 - validationPlan：items 为当前清单，records 为实际验收，revision/revisions 保存清单修订与历史快照。检查项有稳定 ID、前提、步骤、预期、适用本地/发布范围及是否必验。验收记录绑定清单版本、阶段、实际被测目标、环境、执行者、逐项结果和证据，并记录当时工作区快照。界面勾表示对应阶段已验证通过，展开内容标明本地/发布、自测/人工；人工接受仍单独计算，不将自测当人工确认；不同目标或环境不能拼凑验收结果。
-- agentWorkspace：path、branch、head、upstream、changeStatus、changedFiles、relatedCommits、commitChanges、runFiles、observedAt、error。changeStatus 分别记录是否有未提交改动及待推送提交，允许未知。changedFiles 保存路径、变更类型、是否暂存、改名前路径；冲突不标为已暂存。Git 使用工作台的有界只读命令与 porcelain v2 NUL 解析器，不 fetch。推送状态基于本地上游；修改文件属于共享工作区，relatedCommits 仅接受明确关联的 SHA，不自动认领 HEAD 或全部分支提交。runFiles 是 Agent 在 finish-task-run 的必填 changedFiles 中明确申报的本次执行文件（仓库相对路径）；空数组明确表示没有代码变更，null 表示旧记录未申报，后续观测保留它，不冒充 Git 观测。commitChanges 按明确关联提交保存不可变文件清单（SHA、files、error），与当前未提交文件分开；提交后工作区干净不会清空提交文件。旧快照没有清单时通过 commit-files IPC 按需只读补查，不写回历史。
-- agentConversation：每项记录 agent、conversationId、verified。只有明确的 codex 来源读取本地 Codex 索引核实项目，其他来源保持待核实；所有 MCP 写入要求 agentConversation 必填且非空，create-task 放在 initialRun 内；支持 ID 或 codex://threads/<id> 并规范化存 ID，未知时不得猜造。历史记录及 App 人工创建可以为空，展示为历史未关联；新协议不伪补旧来源。Header 不会自动提供对话 ID，不扫描完整历史、不猜造 ID。当前只有已核实 Codex 引用提供跳转。
+- agentWorkspace：path、repository、branch、head、upstream、changeStatus、changedFiles、relatedCommits、commitChanges、runFiles、observedAt、error。changeStatus 分别记录是否有未提交改动及待推送提交，允许未知。changedFiles 保存路径、变更类型、是否暂存、改名前路径；冲突不标为已暂存。Git 使用工作台的有界只读命令与 porcelain v2 NUL 解析器，不 fetch。推送状态基于本地上游；修改文件属于共享工作区，relatedCommits 仅接受明确关联的 SHA，不自动认领 HEAD 或全部分支提交。runFiles 是 Agent 在 finish-task-run 的必填 changedFiles 中明确申报的本次执行文件（仓库相对路径）；空数组明确表示没有代码变更，null 表示旧记录未申报，后续观测保留它，不冒充 Git 观测。commitChanges 按明确关联提交保存不可变文件清单（SHA、files、error），与当前未提交文件分开；提交后工作区干净不会清空提交文件。旧快照没有清单时通过 commit-files IPC 按需只读补查，不写回历史。
+- agentConversation：每项记录 agent、conversationId、verified。只有明确的 codex 来源只读查询本地 Codex 索引核实对话是否存在；不要求 cwd 或项目相同，也不要求旧工作区仍存在。其他来源保持待核实；所有 MCP 写入要求 agentConversation 必填且非空，create-task 放在 initialRun 内；支持 ID 或 codex://threads/<id> 并规范化存 ID，未知时不得猜造。历史记录及 App 人工创建可以为空，展示为历史未关联；新协议不伪补旧来源。Header 不会自动提供对话 ID，不扫描完整历史、不猜造 ID。当前只有已核实 Codex 引用提供跳转。
 - timeline：服务记录时间、来源、类型、摘要，可附发布引用与工作区快照。执行摘要演变后，早先的处理原因仍可从时间线检索。Agent 不需要提交整条时间线。
 
 ## 执行与状态
@@ -211,3 +211,24 @@ Task 后台保存 completion 和 statusAggregationVersion，汇总与计数不�
 
 
 验证结果：Rust任务与MCP共87项（含64种状态组合、HTTP/stdio协议、旧数据只读、完成锁、人工恢复）通过；前端245项、Chromium/WebKit任务UI、WebKit字体/布局回归、原生隔离账本IPC通过。Mac本地API33预览包已构建并替换，真实账本的看板/表格/任务头已复核；原Task MCP文件散列、revision22和7次执行未改变。旧版已人工完成仍保持锁定，同时如实显示6次历史待确认。布局回放排除src-tauri/target产物监听，避免打包复制HTML时重载验收页面。
+
+
+## 多 Agent 接入与跨项目续办（2026-11-25）
+
+用户要求以 Agent 标识选择并复制配置，减少配置与长提示词默认铺开，并移除跨项目拦截。TaskAgentSetup 使用四个客户端入口：Codex、Claude Code、Cursor、OpenCode；点击即复制，由 Rust clients 模块基于同一 stdio 入口/HTTP 凭据生成对应格式和来源。后续按用户标注收敛为40px图标列表，hover及键盘焦点显示Agent名称；移除配置详情、文件路径和使用约定说明块，只保留“扩展提示词”一个label和直接可编辑输入框，不再叠加“编辑提示词”折叠标题；按钮上方无分割线。确认后保存、恢复默认及修订冲突语义不变。OpenCode 配置使用当前官方 v2 的 mcp.servers 结构；其余客户端使用各自 TOML/mcpServers。离线打包的品牌标识来源见 frontend/assets/agents/README.md。
+
+默认 instructions 前512字符明确实施前创建、重要进展合并更新、开发完成前 finish；继续同一目标时复用 taskId/runId。点击Agent会一次复制安装请求、该客户端配置和当前编辑的提示词（包含尚未保存的草稿）。请求携带客户端配置文件与持久化全局规则位置，并要求保留已有设置、去重和验证连接。使用约定为空时禁用复制。MCP 初始化说明不等于改写客户端原始 system prompt；不自动覆盖用户的全局规则或自定义提示词，不保证模型每次遵循。资料依据：[Codex server instructions](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)、[全局 AGENTS.md](https://learn.chatgpt.com/docs/agent-configuration/agents-md)、[Context7 客户端入口](https://context7.com/docs/installation)、[Linear 客户端接入](https://linear.app/docs/mcp)。本次实际截图在 artifacts/task-ledger-qa/agent-setup-redesign/。
+
+领域层移除对话与任务仓库匹配、执行工作区与任务项目匹配两处拒绝；find-task-runs 指定 taskId/runId 时不以 workspace 限制读取；列表的 workspace 仅影响排序，不隔离其他项目的执行。并发 revision、Agent 来源、人工完成锁和历史只读继续由 Rust 执行。
+
+每次 Git 观测新增可选 repository，保存该 Run 的 canonical common directory；旧记录通过原工作区按需恢复，再以原项目作兼容回退。提交清单和 diff 使用执行的仓库，不使用 Task 最初仓库。当前执行切到另一仓库时不携带无关 SHA 或 runFiles；旧提交 diff 版本、时间线工作区快照、验收记录不删除。跨仓库新增执行保留之前整个 Run，并复用验收点、清空新执行结果。它仍是每个执行一个当前工作区模型，不是同时编辑多个仓库的工作区集合。
+
+验证：领域/MCP全部测试、真实HTTP/stdio、客户端格式和来源隔离、跨项目对话存在检查、仓库删除后的第二仓库 diff、旧执行等值比较；前端检查0错误/5条已有警告、44项Vitest、Chromium/WebKit任务UI与配置复制/折叠/窄屏回归通过。默认提示词和schema大小仍有边界测试。单个Agent实际连接状态不能从“已复制”推定；除Codex核实外，没有新增其他Agent的历史索引读取。
+
+
+交付状态：本轮Rust最终库测试78项（领域73、MCP5）通过，之前完整集包含HTTP7项、managed stdio2项和lineage5项；最新stdio黑盒再次通过。Mac本地.app已构建并作ad-hoc签名，专用本地打包关闭updater产物以避免依赖发布私钥；没有修改发布签名配置。前端v40（builtAt=1795594027673/API33）已安装到数据目录。前轮因锁屏暂存于 /Applications/Code Pet.agent-setup-staging.app；2026-11-25 21:35左右已解锁，完成本机替换和启动。旧App保留为 /Applications/Code Pet.before-agent-setup-20261125.app。原生GUI自动回归两次未取得通过报告（空白启动/界面等待超时），当前不计作通过；浏览器回归和协议黑盒不能替代这项实机检查。生产任务账本未为本次登记：既有Task MCP任务已由用户人工完成，继续尊重完成锁，不以新任务绕过。
+
+
+紧凑入口验收：前端v41（builtAt=1795613650426/API33）已安装并由新原生App加载。实机显示四个无卡片图标、默认展开提示词，点击Codex后实际粘贴确认安装请求含配置与约定；未保存验证草稿，重新打开时仍为原提示词。图片/AX见 artifacts/task-ledger-qa/agent-setup-redesign/05至07。39项Vitest及前端检查通过；WebKit任务UI回归通过，覆盖每个Agent的完整复制内容、草稿、复制失败/重试、空值、hover、键盘、提示词保存/冲突/恢复及浅暗窄屏。浏览器布局样例改用显式确定性fixture，避免依赖上次原生GUI失败报告；它不能冒充原生业务验收。任务MCP查询确认原任务仍closed/revision22，未解除人工锁。
+
+2026-11-25 21:40 接入文案收敛：扩展提示词改为单一可访问label，输入框直接编辑，确认保存/恢复默认不变；删除按钮上方分割线。WebKit任务UI回归覆盖保存重开、冲突草稿保留、恢复默认及footer计算边框为0；前端检查0错误/5条既有警告，源码尺寸及生产构建通过。本机安装前端v42，builtAt=1795614053062。
