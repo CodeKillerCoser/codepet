@@ -1,20 +1,28 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { SIDE_PANEL_DEFAULT_WIDTH, useSidePanel } from './sidePanel';
+  import { DRAWER_DEFAULT_RATIO, useSidePanel, type SidePanelMode } from './sidePanel';
 
-  let { controls }: { controls: string } = $props();
+  let { controls, variant = 'column' }: { controls: string; variant?: SidePanelMode } = $props();
   const panel = useSidePanel();
   const width = panel.width, bounds = panel.bounds, current = panel.current, mode = panel.mode;
+  const drawerWidth = panel.drawerWidth, drawerBounds = panel.drawerBounds;
+  const currentWidth = $derived(variant === 'drawer' ? $drawerWidth : $width);
+  const currentBounds = $derived(variant === 'drawer' ? $drawerBounds : $bounds);
+  const setWidth = (next: number) => variant === 'drawer' ? panel.setDrawerWidth(next) : panel.setWidth(next);
+  const resetWidth = () => variant === 'drawer' ? panel.setDrawerRatio(DRAWER_DEFAULT_RATIO) : panel.resetWidth();
   const hintId = $props.id();
   let handle: HTMLDivElement;
-  let drag: { pointerId: number; x: number; width: number } | undefined;
+  let drag: { pointerId: number; x: number; width: number; mode: SidePanelMode; ratio: number } | undefined;
 
   function finish(cancel = false) {
     if (!drag) return;
     const previous = drag;
     drag = undefined;
-    if (cancel) panel.setWidth(previous.width);
+    if (cancel) {
+      if (previous.mode === 'drawer') panel.setDrawerRatio(previous.ratio);
+      else panel.setWidth(previous.width);
+    }
     if (handle.hasPointerCapture(previous.pointerId)) handle.releasePointerCapture(previous.pointerId);
     panel.setResizing(false);
   }
@@ -23,7 +31,7 @@
     if (event.button !== 0 || !event.isPrimary) return;
     event.preventDefault();
     handle.focus({ preventScroll: true });
-    drag = { pointerId: event.pointerId, x: event.clientX, width: get(width) };
+    drag = { pointerId: event.pointerId, x: event.clientX, width: currentWidth, mode: variant, ratio: get(panel.drawerRatio) };
     handle.setPointerCapture(event.pointerId);
     panel.setResizing(true);
   }
@@ -31,54 +39,35 @@
   function keydown(event: KeyboardEvent) {
     const step = event.shiftKey ? 50 : 16;
     let next: number;
-    if (event.key === 'ArrowLeft') next = $width + step;
-    else if (event.key === 'ArrowRight') next = $width - step;
-    else if (event.key === 'Home') next = $bounds.min;
-    else if (event.key === 'End') next = $bounds.max;
+    if (event.key === 'ArrowLeft') next = currentWidth + step;
+    else if (event.key === 'ArrowRight') next = currentWidth - step;
+    else if (event.key === 'Home') next = currentBounds.min;
+    else if (event.key === 'End') next = currentBounds.max;
     else return;
     event.preventDefault();
-    panel.setWidth(next);
+    setWidth(next);
   }
 
-  $effect(() => { if (!$current || $mode !== 'column') finish(true); });
+  $effect(() => { if (!$current || $mode !== variant) finish(true); });
   onDestroy(() => finish(true));
-  onMount(() => {
-    const layout = handle.closest<HTMLElement>('[data-side-panel-layout]');
-    if (!layout) return;
-    const navigation = layout.querySelector<HTMLElement>(':scope > .sidebar');
-    const measure = () => {
-      const style = getComputedStyle(layout);
-      panel.setAvailableWidth(layout.clientWidth - parseFloat(style.paddingLeft || '0')
-        - parseFloat(style.paddingRight || '0') - (navigation?.getBoundingClientRect().width ?? 0));
-    };
-    const resize = new ResizeObserver(measure);
-    const classes = new MutationObserver(measure);
-    const transitionEnd = (event: TransitionEvent) => { if (event.target === layout) measure(); };
-    resize.observe(layout);
-    // A collapsed navigation changes available width even when the window stays
-    // the same size. Measure its final layout, without chasing animated frames.
-    classes.observe(layout, { attributes: true, attributeFilter: ['class'] });
-    layout.addEventListener('transitionend', transitionEnd);
-    measure();
-    return () => { resize.disconnect(); classes.disconnect(); layout.removeEventListener('transitionend', transitionEnd); };
-  });
+
 </script>
 
-<svelte:window onblur={() => finish(true)} onkeydown={(event) => {
+<svelte:window onblur={() => finish(true)} onresize={() => finish(true)} onkeydown={(event) => {
   if (event.key === 'Escape' && drag) { event.preventDefault(); finish(true); }
 }} />
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (A focusable separator implements the ARIA window splitter keyboard pattern.) -->
 <div class="side-panel-resize-handle" bind:this={handle} role="separator" tabindex="0"
   aria-label="调整侧栏宽度" aria-orientation="vertical" aria-controls={controls} aria-describedby={hintId}
-  aria-valuemin={$bounds.min} aria-valuemax={$bounds.max} aria-valuenow={$width} aria-valuetext={`${$width} 像素`}
+  aria-valuemin={currentBounds.min} aria-valuemax={currentBounds.max} aria-valuenow={currentWidth} aria-valuetext={`${Math.round(currentWidth)} 像素`}
   title="拖动调整侧栏宽度，双击恢复默认宽度"
   onpointerdown={start} onpointermove={(event) => {
-    if (drag?.pointerId === event.pointerId) panel.setWidth(drag.width + drag.x - event.clientX);
+    if (drag?.pointerId === event.pointerId) setWidth(drag.width + drag.x - event.clientX);
   }}
   onpointerup={(event) => { if (drag?.pointerId === event.pointerId) finish(); }}
   onpointercancel={(event) => { if (drag?.pointerId === event.pointerId) finish(true); }}
-  onlostpointercapture={() => finish(true)} ondblclick={() => panel.setWidth(SIDE_PANEL_DEFAULT_WIDTH)}
+  onlostpointercapture={() => finish(true)} ondblclick={resetWidth}
   onkeydown={keydown}>
   <span id={hintId} class="sr-only">左右拖动或使用左右方向键调整宽度，按住 Shift 加快调整；Home 最窄，End 最宽，拖动时按 Escape 取消。</span>
 </div>

@@ -65,26 +65,26 @@ try {
     }
     const before = await mainWidth();
     await dragBy(-120);
-    assert.equal(await width(), 520);
+    assert.equal(await width(), 600);
     assert.ok(Math.abs(before - await mainWidth() - 120) < 1, 'Dragging grows the panel and shrinks main content together');
     await settle(); await page.screenshot({ path: resolve(output, 'app-shell-resized-column.png') });
-    await dragBy(64); assert.equal(await width(), 456);
+    await dragBy(64); assert.equal(await width(), 536);
     await dragBy(-800); assert.equal(await width(), Number(await handle.getAttribute('aria-valuemax')));
-    assert.ok(await mainWidth() >= 480);
-    await dragBy(700); assert.equal(await width(), 320);
+    assert.ok(await mainWidth() > 0);
+    await dragBy(700); assert.equal(await width(), 480);
     await handle.press('End'); await settle();
-    assert.equal(await width(), 760);
-    await handle.press('Shift+ArrowRight'); await settle(); assert.equal(await width(), 710);
-    await handle.press('ArrowLeft'); await settle(); assert.equal(await width(), 726);
-    await handle.press('Home'); await settle(); assert.equal(await width(), 320);
-    await handle.dblclick(); await settle(); assert.equal(await width(), 400);
+    assert.equal(await width(), 1080);
+    await handle.press('Shift+ArrowRight'); await settle(); assert.equal(await width(), 1030);
+    await handle.press('ArrowLeft'); await settle(); assert.equal(await width(), 1046);
+    await handle.press('Home'); await settle(); assert.equal(await width(), 480);
+    await handle.dblclick(); await settle(); assert.equal(await width(), 480);
 
     let box = await handle.boundingBox();
     await page.mouse.move(box.x + 4, box.y + 80); await page.mouse.down();
     await page.mouse.move(box.x - 96, box.y + 80, { steps: 4 });
-    assert.equal(await width(), 500);
+    assert.equal(await width(), 580);
     await page.keyboard.press('Escape'); await page.mouse.up(); await settle();
-    assert.equal(await width(), 400, 'Escape cancels a drag without dismissing the column');
+    assert.equal(await width(), 480, 'Escape cancels a drag without dismissing the column');
     assert.equal(await page.locator('.app-side-panel').count(), 1);
     assert.equal(await page.locator('.resizing-side-panel').count(), 0);
 
@@ -94,31 +94,115 @@ try {
     await page.mouse.move(box.x - 66, box.y + 80, { steps: 4 });
     await handle.evaluate(e => e.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: window.__resizePointer })));
     await page.mouse.up(); await settle();
-    assert.equal(await width(), 400, 'Pointer cancellation releases the resize state and restores the start width');
+    assert.equal(await width(), 480, 'Pointer cancellation releases the resize state and restores the start width');
 
     await handle.press('End'); await settle();
     await page.setViewportSize({ width: 1180, height: 900 }); await settle();
-    await page.waitForFunction(() => Number(document.querySelector('[role="separator"]').getAttribute('aria-valuenow')) === 500);
+    await page.waitForFunction(() => Number(document.querySelector('[role="separator"]').getAttribute('aria-valuenow')) === 885);
     await settle();
-    assert.ok(await mainWidth() >= 480); assert.ok(await noOverflow());
+    assert.ok(await mainWidth() > 0); assert.ok(await noOverflow());
     await page.setViewportSize({ width: 1440, height: 900 }); await settle();
-    await page.waitForFunction(() => Number(document.querySelector('[role="separator"]').getAttribute('aria-valuenow')) === 760);
+    await page.waitForFunction(() => Number(document.querySelector('[role="separator"]').getAttribute('aria-valuenow')) === 1080);
     await settle();
     await handle.press('Home'); await handle.press('ArrowLeft'); await settle();
-    assert.equal(await width(), 336);
+    assert.equal(await width(), 496);
     await closeDetail();
-    await page.locator('.row-select').click(); await settle(); assert.equal(await width(), 336, 'The chosen column width survives reopening');
+    await page.locator('.row-select').click(); await settle(); assert.equal(await width(), 496, 'The chosen column width survives reopening');
     await page.setViewportSize({ width: 390, height: 900 });
     await page.locator('.app-side-panel[data-mode="drawer"]').waitFor(); await settle();
-    assert.equal(await handle.count(), 0, 'A modal drawer has no column resize handle');
+    assert.equal(await handle.count(), 1, 'The modal drawer also exposes a resize handle');
+    assert.ok(Math.abs(await width() - 390 * 0.5) < 1);
     assert.equal(await page.locator('.panel-card > .panel-header').count(), 1);
     assert.equal(await page.locator('.panel-card > .panel-body').count(), 1);
     assert.ok(await noOverflow());
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.locator('.app-side-panel[data-mode="column"]').waitFor(); await settle();
-    assert.equal(await width(), 336, 'Returning from the drawer restores the preferred column width');
+    assert.equal(await width(), 496, 'Returning from the drawer restores the preferred column width');
     await handle.dblclick(); await settle();
     await page.setViewportSize({ width: 1200, height: 900 }); await settle();
+  }
+  async function checkResizableDrawer(row) {
+    await page.setViewportSize({ width: 900, height: 955 });
+    const drawer = page.locator('.app-side-panel[data-mode="drawer"]');
+    const handle = page.getByRole('separator', { name: '调整侧栏宽度', exact: true });
+    await drawer.waitFor(); await settle();
+    await page.waitForFunction(() => Number(document.querySelector('[role="separator"]').getAttribute('aria-valuemax')) === 675);
+    const actualWidth = async () => (await drawer.boundingBox()).width;
+    const value = async () => Number(await handle.getAttribute('aria-valuenow'));
+    async function assertWidth(expected) {
+      assert.ok(Math.abs(await actualWidth() - expected) < 1, `Drawer width should be ${expected}`);
+      assert.ok(Math.abs(await value() - expected) < 1);
+      const box = await drawer.boundingBox();
+      assert.ok(Math.abs(box.x + box.width - page.viewportSize().width) < 1, 'The right edge remains anchored');
+    }
+    async function dragBy(delta) {
+      const box = await handle.boundingBox();
+      await page.mouse.move(box.x + 4, box.y + 100); await page.mouse.down();
+      await page.mouse.move(box.x + 4 + delta, box.y + 100, { steps: 6 });
+      assert.ok(Math.abs(await actualWidth() - await value()) < 1, 'Drawer resizing tracks the pointer immediately');
+      await page.mouse.up(); await settle();
+    }
+    await assertWidth(450);
+    const background = await page.locator('.content-pane').boundingBox();
+    await dragBy(120); await assertWidth(330);
+    const after = await page.locator('.content-pane').boundingBox();
+    assert.equal(after.width, background.width, 'Resizing a modal drawer does not squeeze the page');
+    await dragBy(400); await assertWidth(300);
+    await dragBy(-500); await assertWidth(675);
+    await handle.press('Home'); await assertWidth(300);
+    await handle.press('Shift+ArrowLeft'); await assertWidth(350);
+    await handle.press('End'); await assertWidth(675);
+    await dragBy(225); await assertWidth(450);
+    await settle(); await page.screenshot({ path: resolve(output, 'drawer-resized-half.png') });
+
+    let box = await handle.boundingBox();
+    await page.mouse.move(box.x + 4, box.y + 100); await page.mouse.down();
+    await page.mouse.move(box.x - 76, box.y + 100, { steps: 4 });
+    await page.keyboard.press('Escape'); await page.mouse.up(); await settle();
+    await assertWidth(450);
+    assert.ok(await drawer.isVisible(), 'Escape cancels an active drawer drag before dismissal');
+    assert.equal(await page.locator('.resizing-side-panel').count(), 0);
+
+    await handle.evaluate(e => e.addEventListener('pointerdown', event => { window.__resizePointer = event.pointerId; }, { once: true }));
+    box = await handle.boundingBox();
+    await page.mouse.move(box.x + 4, box.y + 100); await page.mouse.down();
+    await page.mouse.move(box.x - 66, box.y + 100, { steps: 4 });
+    await handle.evaluate(e => e.dispatchEvent(new PointerEvent('pointercancel', { bubbles: true, pointerId: window.__resizePointer })));
+    await page.mouse.up(); await settle(); await assertWidth(450);
+
+    box = await handle.boundingBox();
+    await page.mouse.move(box.x + 4, box.y + 100); await page.mouse.down();
+    await page.mouse.move(box.x - 46, box.y + 100, { steps: 4 });
+    await page.setViewportSize({ width: 600, height: 955 });
+    await page.waitForFunction(() => Number(document.querySelector('[role="separator"]').getAttribute('aria-valuenow')) === 300);
+    await page.mouse.up(); await assertWidth(300);
+    assert.equal(await page.locator('.resizing-side-panel').count(), 0, 'Resizing the window cancels a drag and restores its original ratio');
+    await page.setViewportSize({ width: 900, height: 955 });
+    await page.waitForFunction(() => Number(document.querySelector('[role="separator"]').getAttribute('aria-valuenow')) === 450);
+
+    await closeDetail(); await row.click(); await settle(); await assertWidth(450);
+    await page.setViewportSize({ width: 600, height: 955 });
+    await page.waitForFunction(() => Number(document.querySelector('[role="separator"]').getAttribute('aria-valuenow')) === 300);
+    await assertWidth(300);
+    await page.setViewportSize({ width: 390, height: 955 });
+    await page.waitForFunction(() => Number(document.querySelector('[role="separator"]').getAttribute('aria-valuenow')) === 195);
+    await assertWidth(195);
+    await handle.press('Home'); await assertWidth(130);
+    assert.ok(await noOverflow());
+    await settle(); await page.screenshot({ path: resolve(output, 'drawer-min-third.png') });
+    await handle.press('End'); await assertWidth(292.5);
+    await settle(); await page.screenshot({ path: resolve(output, 'drawer-max-three-quarters.png') });
+    await page.setViewportSize({ width: 1440, height: 955 });
+    await page.locator('.app-side-panel[data-mode="column"]').waitFor(); await settle();
+    assert.equal(await value(), 480, 'The desktop default is clamped to the shared viewport minimum');
+    await page.setViewportSize({ width: 900, height: 955 });
+    await drawer.waitFor(); await settle(); await assertWidth(675);
+    await dragBy(225); await assertWidth(450);
+    await page.getByRole('button', { name: '预览 src/history.ts', exact: true }).click();
+    await page.locator('.cm-mergeView').waitFor(); await previewIsTopWindow();
+    await page.keyboard.press('Escape'); await page.locator('.workbench-preview').waitFor({ state: 'hidden' });
+    assert.ok(await drawer.isVisible());
+    await handle.dblclick(); await assertWidth(450);
   }
   async function sharedContentSurface() {
     const canvas = await surface('.content-pane');
@@ -340,6 +424,9 @@ try {
   assert.equal(await page.locator('.app-side-panel').evaluate(e => getComputedStyle(e).animationName), 'none');
   await closeDetail();
   await page.emulateMedia({ reducedMotion: 'no-preference' });
+  await mainRow.click(); await settle();
+  await checkResizableDrawer(mainRow);
+  await closeDetail();
   await page.setViewportSize({ width: 1200, height: 900 });
   await page.goto('http://127.0.0.1:1437/frontend/qa/main-window.html');
   await page.getByRole('button', { name: '确认', exact: true }).click();
@@ -411,7 +498,7 @@ try {
   await page.emulateMedia({ colorScheme: 'light' });
   await page.waitForFunction(() => getComputedStyle(document.querySelector('.workbench')).colorScheme === 'light');
   assert.deepEqual(errors, []);
-  console.log(`Workbench UI passed (${engine}): global modal hit-testing/layers/focus, one rounded card around title and body, pointer/keyboard column resizing, column/drawer entry/exit/reopening, reduced motion, scan persistence, responsive layout and themes.`);
+  console.log(`Workbench UI passed (${engine}): global modal layers/focus, rounded card, pointer/keyboard column and 1/3–3/4 drawer resizing, cancellation/viewport ratios, entry/exit/reopening, reduced motion, scan persistence and themes.`);
 } finally {
   await browser.close();
   await server.close();

@@ -11,6 +11,7 @@
   const current = controller.current;
   const mode = controller.mode;
   const resizing = controller.resizing;
+  const drawerWidth = controller.drawerWidth;
   const headingId = $props.id();
   const panelCardId = `${headingId}-card`;
   let heading: HTMLElement | null = $state(null);
@@ -30,6 +31,9 @@
     const updateMotion = () => { reducedMotion = motion.matches; };
     updateMotion();
     motion.addEventListener('change', updateMotion);
+    controller.setViewportWidth(window.innerWidth);
+    const resizeViewport = () => controller.setViewportWidth(window.innerWidth);
+    window.addEventListener('resize', resizeViewport);
     const media = window.matchMedia('(min-width: 1180px)');
     const observer = new MutationObserver(() => updateMode());
     const updateMode = () => {
@@ -44,7 +48,7 @@
     };
     updateMode();
     media.addEventListener('change', updateMode);
-    return () => { observer.disconnect(); media.removeEventListener('change', updateMode); motion.removeEventListener('change', updateMotion); };
+    return () => { observer.disconnect(); media.removeEventListener('change', updateMode); motion.removeEventListener('change', updateMotion); window.removeEventListener('resize', resizeViewport); };
   });
   $effect(() => {
     const entry = $current;
@@ -91,11 +95,16 @@
   <Dialog.Root open={!!$current} onOpenChange={(open) => {if (!open) controller.dismiss();}}>
     <Dialog.Content class="app-side-panel" overlayClass="history-overlay" showCloseButton={false}
       data-mode="drawer" aria-labelledby={headingId} inert={!$current}
+      style={`--app-drawer-width: ${$drawerWidth ? `${$drawerWidth}px` : '50vw'}`}
+      escapeKeydownBehavior={$resizing ? 'ignore' : 'close'}
       onanimationend={(event) => { if (event.target === event.currentTarget && !$current) presented = null; }}
       onOpenAutoFocus={(event) => {event.preventDefault(); heading?.focus({preventScroll:true});}}
       onCloseAutoFocus={(event) => event.preventDefault()}>
       <Dialog.Description class="sr-only">{presented?.description ?? ''}</Dialog.Description>
-      {#if presented}{@render panelContent(presented)}{/if}
+      {#if presented}
+        <SidePanelResizeHandle controls={panelCardId} variant="drawer" />
+        {@render panelContent(presented)}
+      {/if}
     </Dialog.Content>
   </Dialog.Root>
 {/if}
@@ -122,7 +131,9 @@
     inset: 0 0 0 auto;
     transform: none;
     margin: 0;
-    width: min(440px,100vw);
+    width: var(--app-drawer-width,50vw);
+    min-width: calc(100vw / 3);
+    max-width: 75vw;
     height: 100dvh;
     max-height: 100dvh;
     display: flex;

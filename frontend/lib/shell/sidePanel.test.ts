@@ -65,12 +65,12 @@ test('framework state is isolated between app instances', () => {
 
 test('column width stays within usable bounds and survives content changes', () => {
   const panel = createSidePanel();
-  panel.setAvailableWidth(1000);
-  expect(get(panel.bounds)).toEqual({ min: 320, max: 520 });
-  panel.setWidth(600);
-  expect(get(panel.width)).toBe(520);
+  panel.setViewportWidth(1200);
+  expect(get(panel.bounds)).toEqual({ min: 400, max: 900 });
+  panel.setWidth(1000);
+  expect(get(panel.width)).toBe(900);
   panel.setWidth(100);
-  expect(get(panel.width)).toBe(320);
+  expect(get(panel.width)).toBe(400);
   panel.setWidth(480);
   panel.show(Symbol(), entry());
   panel.dismiss(false);
@@ -81,14 +81,57 @@ test('column width stays within usable bounds and survives content changes', () 
   expect(get(createSidePanel().width)).toBe(400);
 });
 
-test('window shrinking clamps the column temporarily and restores the chosen width', () => {
+test('window resizing re-evaluates both proportional boundaries and restores the chosen column width', () => {
   const panel = createSidePanel();
-  panel.setAvailableWidth(1500);
-  panel.setWidth(700);
-  panel.setAvailableWidth(1000);
-  expect(get(panel.width)).toBe(520);
-  panel.setAvailableWidth(1500);
-  expect(get(panel.width)).toBe(700);
-  panel.setAvailableWidth(Infinity);
-  expect(get(panel.bounds).max).toBe(760);
+  panel.setViewportWidth(1440);
+  panel.setWidth(1000);
+  panel.setViewportWidth(1180);
+  expect(get(panel.bounds)).toEqual({ min: 1180 / 3, max: 885 });
+  expect(get(panel.width)).toBe(885);
+  panel.setViewportWidth(1440);
+  expect(get(panel.width)).toBe(1000);
+  panel.setWidth(500);
+  panel.setViewportWidth(1800);
+  expect(get(panel.width)).toBe(600);
+  panel.setViewportWidth(1440);
+  expect(get(panel.width)).toBe(500);
+  panel.resetWidth();
+  expect(get(panel.width)).toBe(480);
+  panel.setViewportWidth(1200);
+  expect(get(panel.width)).toBe(400);
+  panel.setViewportWidth(Infinity);
+  expect(get(panel.bounds).max).toBe(900);
+});
+
+test('drawer width clamps to one third through three quarters of the viewport', () => {
+  const panel = createSidePanel();
+  panel.setViewportWidth(900);
+  expect(get(panel.drawerWidth)).toBe(450);
+  expect(get(panel.drawerBounds)).toEqual({ min: 300, max: 675 });
+  panel.setDrawerWidth(100);
+  expect(get(panel.drawerWidth)).toBe(300);
+  panel.setDrawerWidth(1000);
+  expect(get(panel.drawerWidth)).toBe(675);
+  panel.setDrawerWidth(NaN);
+  panel.setViewportWidth(0);
+  expect(get(panel.drawerWidth)).toBe(675);
+});
+
+test('drawer ratio survives viewport and mode changes independently of the column', () => {
+  const panel = createSidePanel();
+  panel.setViewportWidth(1440);
+  panel.setWidth(480);
+  panel.setViewportWidth(900);
+  panel.setDrawerWidth(450);
+  panel.setViewportWidth(390);
+  expect(get(panel.drawerWidth)).toBe(195);
+  panel.setViewportWidth(1440);
+  panel.setMode('column');
+  expect(get(panel.width)).toBe(480);
+  panel.setWidth(600);
+  panel.setMode('drawer');
+  expect(get(panel.drawerRatio)).toBe(0.5);
+  panel.setViewportWidth(900);
+  expect(get(panel.drawerWidth)).toBe(450);
+  expect(get(createSidePanel().drawerRatio)).toBe(0.5);
 });

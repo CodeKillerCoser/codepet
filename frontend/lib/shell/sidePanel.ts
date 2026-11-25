@@ -1,11 +1,11 @@
 import { getContext, setContext, tick, type Snippet } from 'svelte';
-import { get, writable } from 'svelte/store';
+import { derived, get, writable } from 'svelte/store';
 
 const contextKey = Symbol('app-side-panel');
 export const SIDE_PANEL_DEFAULT_WIDTH = 400;
-export const SIDE_PANEL_MIN_WIDTH = 320;
-export const SIDE_PANEL_MAX_WIDTH = 760;
-const MAIN_CONTENT_MIN_WIDTH = 480;
+export const SIDE_PANEL_MIN_RATIO = 1 / 3;
+export const SIDE_PANEL_MAX_RATIO = 3 / 4;
+export const DRAWER_DEFAULT_RATIO = 1 / 2;
 export type SidePanelMode = 'column' | 'drawer';
 export interface SidePanelContent {
   title: string;
@@ -21,10 +21,17 @@ export interface SidePanelEntry extends SidePanelContent { owner: symbol }
 export function createSidePanel() {
   const current = writable<SidePanelEntry | null>(null);
   const mode = writable<SidePanelMode>('drawer');
-  const width = writable(SIDE_PANEL_DEFAULT_WIDTH);
   const resizing = writable(false);
-  const bounds = writable({ min: SIDE_PANEL_MIN_WIDTH, max: SIDE_PANEL_MAX_WIDTH });
-  let preferredWidth = SIDE_PANEL_DEFAULT_WIDTH;
+  const viewportWidth = writable(0);
+  const preferredWidth = writable(SIDE_PANEL_DEFAULT_WIDTH);
+  const bounds = derived(viewportWidth, viewport => ({ min: viewport * SIDE_PANEL_MIN_RATIO, max: viewport * SIDE_PANEL_MAX_RATIO }));
+  const width = derived([preferredWidth, bounds], ([preferred, range]) => range.max > 0 ? Math.max(range.min, Math.min(range.max, preferred)) : preferred);
+  const drawerRatio = writable(DRAWER_DEFAULT_RATIO);
+  const drawerWidth = derived([viewportWidth, drawerRatio], ([viewport, ratio]) => viewport * ratio);
+  const drawerBounds = bounds;
+  function setDrawerRatio(next: number) {
+    if (Number.isFinite(next)) drawerRatio.set(Math.max(SIDE_PANEL_MIN_RATIO, Math.min(SIDE_PANEL_MAX_RATIO, next)));
+  }
   let revision = 0;
   return {
     current: { subscribe: current.subscribe },
@@ -32,21 +39,24 @@ export function createSidePanel() {
     width: { subscribe: width.subscribe },
     resizing: { subscribe: resizing.subscribe },
     bounds: { subscribe: bounds.subscribe },
+    drawerWidth,
+    drawerBounds,
+    drawerRatio: { subscribe: drawerRatio.subscribe },
+    setDrawerRatio,
+    setDrawerWidth(next: number) {
+      const viewport = get(viewportWidth);
+      if (viewport > 0) setDrawerRatio(next / viewport);
+    },
+    setViewportWidth(next: number) {
+      if (Number.isFinite(next) && next > 0) viewportWidth.set(next);
+    },
     setResizing: resizing.set,
     setWidth(next: number) {
       if (!Number.isFinite(next)) return;
       const { min, max } = get(bounds);
-      preferredWidth = Math.max(min, Math.min(max, Math.round(next)));
-      width.set(preferredWidth);
+      preferredWidth.set(max > 0 ? Math.max(min, Math.min(max, Math.round(next))) : Math.max(0, Math.round(next)));
     },
-    setAvailableWidth(available: number) {
-      if (!Number.isFinite(available)) return;
-      const max = Math.max(SIDE_PANEL_MIN_WIDTH, Math.min(SIDE_PANEL_MAX_WIDTH, Math.floor(available - MAIN_CONTENT_MIN_WIDTH)));
-      if (get(bounds).max !== max) bounds.set({ min: SIDE_PANEL_MIN_WIDTH, max });
-      // A smaller window temporarily clamps the panel; widening restores the
-      // user's chosen size instead of permanently replacing that preference.
-      width.set(Math.min(preferredWidth, max));
-    },
+    resetWidth() { preferredWidth.set(SIDE_PANEL_DEFAULT_WIDTH); },
     setMode: mode.set,
     show(owner: symbol, content: SidePanelContent) {
       const previous = get(current);
