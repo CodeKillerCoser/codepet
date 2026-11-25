@@ -66,7 +66,7 @@ test('Notice-only authors receive the full contract without retired raw notifica
   assert.equal(descriptor.properties.instanceKinds.minItems,0);
   assert.equal(index.guide,'SKILL.md');
   const guide=await readFile(path.join(root,index.guide),'utf8');
-  assert.match(guide,/^---\nname: codepet-provider-sdk\ndescription: [^\n]+\n---\n/);
+  assert.match(guide,/^---\r?\nname: codepet-provider-sdk\r?\ndescription: [^\r\n]+\r?\n---\r?\n/);
   assert.doesNotMatch(guide,/\{\{[\w.]+\}\}/);
   for (const [,href] of guide.matchAll(/\[[^\]]+\]\(([^)]+)\)/g)) {
     if (/^[a-z]+:/i.test(href)) continue;

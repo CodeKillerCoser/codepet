@@ -23,6 +23,7 @@ Tauri 原生窗口、系统身份、图像能力、IPC，以及原生平台 SDK 
 - 这不是完全独立的锁文件或注册表依赖图。Cargo 仍解析各平台的注册表依赖；Windows 编译树不应包含 macOS 专用库或 feature。
 - Windows 构建工具也应定位原生可执行文件：npm 全局 Bun 的 PATH 入口可能仅有 `.cmd` / `.ps1`。`scripts/stage_provider_plugins.mjs` 通过标准路径 API 定位包内 `bun.exe`，避免 `spawnSync` 直接执行 shim；`BUN` 可以显式覆盖。staging 测试按实际 target 验证后缀，POSIX 权限断言仅在 Unix 主机执行。
 - 生成代码必须跨平台稳定。源文件说明先用 `path.relative` 计算，再统一为正斜杠的展示格式；freshness 检查忽略 Git checkout 的 CRLF/LF 差异，但必须拒绝其他内容变化。2026-09-06 Windows release 的协议检查曾因这两项差异误报 stale，Rust/TypeScript 文件仅头部路径变化，Dart 文件仅换行变化。修复位于 `tools/protocol-codegen/generate.mjs`，不改变协议或 DTO。
+- 导出的文本资源格式测试同样应接受 LF/CRLF；为 macOS target 做 staging 的测试仍可能运行在 Windows 主机上，不能仅凭 target 名称检查 POSIX 权限。2026-11-25 Windows conformance 实际暴露这两项断言误报，回归由 `npm run providers:test` 在 macOS 和 Windows CI 分别执行。
 - 升级 vendored 库时对比上游固定提交、更新来源和锁文件，不直接修改第三方实现来绕过平台错误。
 
 ## 来源

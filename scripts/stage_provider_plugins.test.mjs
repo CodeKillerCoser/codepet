@@ -43,7 +43,9 @@ test("standalone task MCP is staged for macOS and Windows without becoming a Pro
     const directory = path.join(root, target);
     await stageTaskMcpResources({repositoryRoot: root, stagingDirectory: directory, target, binaries});
     assert.equal(await readFile(path.join(directory, name), "utf8"), "standalone task MCP");
-    if (target.includes("darwin")) assert.ok((await stat(path.join(directory, name))).mode & 0o111);
+    if (target.includes("darwin") && process.platform !== "win32") {
+      assert.ok((await stat(path.join(directory, name))).mode & 0o111);
+    }
   }
   assert.equal(PROVIDERS.some(p => p.name === TASK_MCP.name), false);
 });
