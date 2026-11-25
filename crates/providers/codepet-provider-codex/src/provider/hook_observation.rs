@@ -74,9 +74,11 @@ impl ActivityProjection {
         let status = match signal {
             HookSignal::Start => Some(ConversationStatus::Running),
             HookSignal::Stop => Some(ConversationStatus::Idle),
-            // Tool/approval hooks can refine an active session, never start it
-            // or resurrect it after stop. They still invalidate its content.
-            HookSignal::Update(status) => facts.status.clone().filter(|status| latest_update && conversation_atoms::active(status.clone())).map(|_| status),
+            // A Provider can join after the start hook. Subsequent tool/approval
+            // evidence establishes unknown activity, but cannot undo a known stop.
+            HookSignal::Update(status) if latest_update
+                && facts.status.as_ref().is_none_or(|known| conversation_atoms::active(known.clone())) => Some(status),
+            HookSignal::Update(_) => None,
         };
         if let Some(status) = status.clone() { facts.status = Some(status); }
         let resource = RoutedResourceId { provider_id: route.provider_instance_id.clone(), native_resource_id: id.into() };
@@ -209,15 +211,40 @@ mod tests {
     }
 
     #[test]
-    fn updates_are_published_before_resume_and_do_not_change_active_membership() {
+    fn updates_establish_unknown_activity_before_resume_and_with_an_execution_slot() {
         let (runtime, sink) = runtime();
         runtime.observe_hook(&notification("tool", "PostToolUse", 1)).unwrap();
-        assert!(lock(&runtime.hook_activity).active_rows(&runtime.route).is_empty());
+        assert_eq!(lock(&runtime.hook_activity).active_rows(&runtime.route).len(), 1);
+        assert!(lock(&sink.0).iter().any(|event| matches!(event, ProtocolEvent::EventConversationActiveChanged { params, .. } if params.active && params.status == ConversationStatus::Running)));
         assert!(lock(&sink.0).iter().any(|event| matches!(event, ProtocolEvent::EventConversationItemUpserted { params, .. } if params.item.is_none())));
         // Merely holding an execution slot must not suppress Hook updates.
         lock(&runtime.mutable).executions.insert("thread".into(), Arc::new(ExecutionSlot::new()));
         runtime.observe_hook(&notification("owned-tool", "PostToolUse", 2)).unwrap();
         assert_eq!(lock(&sink.0).iter().filter(|event| matches!(event, ProtocolEvent::EventConversationItemUpserted { .. })).count(), 2);
+        assert_eq!(lock(&sink.0).iter().filter(|event| matches!(event, ProtocolEvent::EventConversationActiveChanged { .. })).count(), 1);
+    }
+
+    #[test]
+    fn a_new_provider_recovers_running_and_waiting_from_subsequent_hooks() {
+        for (name, tool, expected) in [
+            ("PreToolUse", None, ConversationStatus::Running),
+            ("PostToolUse", None, ConversationStatus::Running),
+            ("PermissionRequest", None, ConversationStatus::WaitingApproval),
+            ("PreToolUse", Some("request_user_input"), ConversationStatus::WaitingUserInput),
+        ] {
+            let (before, _) = runtime();
+            before.observe_hook(&notification("start", "UserPromptSubmit", 1)).unwrap();
+            drop(before);
+            let (after, sink) = runtime();
+            let mut event = notification("subsequent", name, 2);
+            if let Some(tool) = tool { event.payload.insert("tool_name".into(), json!(tool)); }
+            after.observe_hook(&event).unwrap();
+            assert_eq!(lock(&after.hook_activity).active_rows(&after.route)[0].status, expected);
+            assert!(lock(&sink.0).iter().any(|event| matches!(event, ProtocolEvent::EventConversationActiveChanged { params, .. } if params.active && params.status == expected)));
+            after.observe_hook(&notification("stop", "Stop", 3)).unwrap();
+            after.observe_hook(&notification("late-tool", "PostToolUse", 4)).unwrap();
+            assert!(lock(&after.hook_activity).active_rows(&after.route).is_empty());
+        }
     }
 
     #[test]

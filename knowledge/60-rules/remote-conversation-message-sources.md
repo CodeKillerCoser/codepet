@@ -4,7 +4,7 @@
 
 会话消息是持续扩充的数据源：首次加载最近一页，上翻由用户手动请求旧页并前插；实时事件追加或原位更新。任务完成、失败、停止通知只更新状态，不能触发完整历史查询或替换消息列表。
 
-Codex Hook 通过无 item 的现有更新事件提示内容变化，不由 Provider 按控制权筛选。Remote 必须仅在 `item == null && !interactionAcquired` 时请求最新一页并合并到数据源；不能替换列表或重设分页、实时 fence。详见 [Hook 活动与内容更新](codex-hook-activity-and-content-updates.md)。
+Codex Hook 通过无 item 的现有更新事件提示内容变化，不由 Provider 按控制权筛选。2026-11-25 用户要求被动观察不主动补拉：无 item 提示不发请求，只由摘要更新状态；手动“刷新会话”才请求最新一页并合并到数据源。不能替换列表或重设分页、实时 fence。最近列表失效同样不自动查询，已加载行接收摘要事件更新，手动“刷新最近会话”恢复 Host 成员、顺序及分页。详见 [Hook 活动与内容更新](codex-hook-activity-and-content-updates.md)。
 
 ## 适用场景
 

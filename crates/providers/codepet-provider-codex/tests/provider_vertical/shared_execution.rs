@@ -529,9 +529,9 @@ async fn shared_server_keeps_writer_through_delayed_output_and_terminal_forwardi
             .unwrap();
         match event {
             ProtocolEvent::EventConversationItemUpserted { params, .. }
-                if item_resource_id(params.item.as_ref().unwrap()) == "user-one"
-                    && item_status(params.item.as_ref().unwrap())
-                        == codepet_provider_sdk::ConversationItemStatus::Completed =>
+                if params.item.as_ref().is_some_and(|item|
+                    item_resource_id(item) == "user-one"
+                        && item_status(item) == codepet_provider_sdk::ConversationItemStatus::Completed) =>
             {
                 saw_completed_user_item = true;
             }
