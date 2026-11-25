@@ -110,7 +110,7 @@ export async function runTaskLedgerNativeQa(expected: {workspace: string; taskId
   check(task.description.includes('人工补充背景') && currentRun(task).solution === solution, 'Task edit leaves run solution unchanged');
 
   await more('接入 Agent'); dialog = await modal();
-  check(dialog.querySelectorAll('.agent-clients button').length === 4, 'Four Agent installation entries shown');
+  check(dialog.querySelectorAll('.agent-clients button').length === 5, 'Five Agent installation entries shown');
   check(dialog.querySelector('[aria-label="扩展提示词"]'), 'Extension prompt is directly editable');
   const customPrompt = '原生验收：方案确定后登记，完成时合并更新；不要逐消息维护。';
   input('扩展提示词', customPrompt, dialog); await button('确认', dialog);

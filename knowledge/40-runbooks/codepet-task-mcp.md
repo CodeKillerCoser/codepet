@@ -2,7 +2,7 @@
 
 ## 入口与升级
 
-2026-11-25 默认接入改为独立 stdio 程序。当前任务模型要求 backend API 30；默认接入的生成与安装还需包含本次改造的新版 App，仅更新前端不能安装程序。Codex工作台 → 任务与验收 → 更多 → 接入 Agent。悬停图标查看Codex、Claude Code、Cursor或OpenCode名称，点击复制完整安装请求（配置＋当前编辑的提示词）。交给对应Agent执行安装并补充其持久化全局规则，保留其他MCP及已有规则；“扩展提示词”直接展示可编辑输入框，确认后保存，恢复默认保留；不显示重复标题、折叠层和按钮上方分割线。草稿无需先保存即可复制。安装请求要求校验连接，必要时提醒重连或新开对话。OpenCode 使用 v2 配置格式。
+2026-11-25 默认接入改为独立 stdio 程序。当前任务模型要求 backend API 30；默认接入的生成与安装还需包含本次改造的新版 App，仅更新前端不能安装程序。Codex工作台 → 任务与验收 → 更多 → 接入 Agent。悬停图标查看Codex、Claude Code、Cursor、OpenCode或Antigravity名称，点击复制完整安装请求（配置＋当前编辑的提示词）。交给对应Agent执行安装并补充其持久化全局规则，保留其他MCP及已有规则；“扩展提示词”直接展示可编辑输入框，确认后保存，恢复默认保留；不显示重复标题、折叠层和按钮上方分割线。草稿无需先保存即可复制。安装请求要求校验连接，必要时提醒重连或新开对话。OpenCode 使用 v2 配置格式。Antigravity 使用 `~/.gemini/config/mcp_config.json` 的 `mcpServers` 配置，全局使用约定追加至 `~/.gemini/GEMINI.md`；stdio 以 `CODEPET_AGENT=antigravity` 标记来源，HTTP 使用 `serverUrl` 并保留鉴权与 `X-CodePet-Agent`。配置路径与格式依据 [官方 MCP 文档](https://antigravity.google/docs/mcp)，规则文件依据 [官方 Rules 文档](https://antigravity.google/docs/rules)（2026-11-25 核对）。
 
 ```toml
 [mcp_servers.codepet_tasks]

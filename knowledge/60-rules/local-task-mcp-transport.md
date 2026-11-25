@@ -14,7 +14,7 @@ stdio 固定入口必须是独立程序，不得绑定 `.app/Contents/MacOS`、�
 
 stdio 从 CODEPET_AGENT 读取连接来源；HTTP 固定监听回环，验证 Host/Origin、本机凭据和单一有效 X-CodePet-Agent，来源经请求上下文传给该次写入，不能串用其他请求或从工具参数取值。来源标记不能授予 human 权限；Task/Run 创建者不随更新变化，更新者写 timeline。旧记录未保存的具体来源使用 unknown，不按当前连接倒填。
 
-默认配置只在独立资源安装成功后生成 command/args/env，不依赖 HTTP 就绪；HTTP 配置仍只由真实就绪服务提供。初始化和接入面板使用同一 Rust 提示词配置，未自定义时读取 instructions.md。用户可编辑、保存并恢复默认；保存按 revision 防冲突。新连接读取已保存内容，旧会话需重连，不要求手动复制说明才会用。Codex/Claude Code/Cursor/OpenCode 的配置统一由 Rust 从已安装入口或实际 HTTP 信息生成，前端只选择和复制；不得把“已复制”展示成“已连接”。自定义提示词不改变任何工具权限，也不得由 Agent 工具修改。
+默认配置只在独立资源安装成功后生成 command/args/env，不依赖 HTTP 就绪；HTTP 配置仍只由真实就绪服务提供。初始化和接入面板使用同一 Rust 提示词配置，未自定义时读取 instructions.md。用户可编辑、保存并恢复默认；保存按 revision 防冲突。新连接读取已保存内容，旧会话需重连，不要求手动复制说明才会用。Codex/Claude Code/Cursor/OpenCode/Antigravity 的配置统一由 Rust 从已安装入口或实际 HTTP 信息生成，前端只选择和复制；不得把“已复制”展示成“已连接”。自定义提示词不改变任何工具权限，也不得由 Agent 工具修改。
 
 创建 Task 同时建立首次执行，后续保留 taskId/runId/revision，只在关键节点合并写入，不逐文件更新、不轮询。Agent 自测不是人工验收。任务开发本身也在关键节点登记；当前会话未加载工具时，通过已有协议入口登记，不能将“提供了工具”当成“已经登记”。
 

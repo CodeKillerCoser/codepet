@@ -133,7 +133,7 @@ try{
  await page.getByLabel('更多任务操作').click();await page.getByRole('button',{name:'接入 Agent',exact:true}).click();
  await page.evaluate(()=>{window.__copiedAgentConfig='';Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__copiedAgentConfig=text;}}});});
  const setupDialog=page.getByRole('dialog',{name:'连接 Agent',exact:true});
- assert.equal(await setupDialog.locator('.agent-clients button').count(),4);
+ assert.equal(await setupDialog.locator('.agent-clients button').count(),5);
  const setupPrompt=setupDialog.getByRole('textbox',{name:'扩展提示词',exact:true});
  assert.equal(await setupPrompt.isVisible(),true,'Extension prompt is directly editable');
  assert.equal(await setupDialog.locator('.prompt-editor summary').count(),0,'No duplicate editing title');
@@ -141,7 +141,7 @@ try{
  assert.equal(await setupDialog.locator('.config-destination,.usage-guidance,.config-code').count(),0,'No standalone configuration or guidance blocks');
  const edited='当前编辑的约定：实施前登记，完成前提交结论。';
  const original=await setupPrompt.inputValue();await setupPrompt.fill(edited);
- for(const name of ['Codex','Claude Code','Cursor','OpenCode']){
+ for(const name of ['Codex','Claude Code','Cursor','OpenCode','Antigravity']){
   const button=setupDialog.getByRole('button',{name:`复制 ${name} 安装指令`,exact:true});
   const tooltip=setupDialog.getByRole('tooltip',{name,exact:true});
   assert.equal(await tooltip.isVisible(),false);
@@ -152,8 +152,9 @@ try{
   assert.ok(copied.includes('安装这个 MCP')&&copied.includes('系统提示词'));
   assert.ok(copied.includes(edited),'Copies the current draft, even before saving');
   if(name==='Codex')assert.ok(copied.includes('[mcp_servers.codepet_tasks]'));
-  else{const config=JSON.parse(copied.match(/```json\n([\s\S]*?)\n```/)[1]),id={'Claude Code':'claude',Cursor:'cursor',OpenCode:'opencode'}[name];
+  else{const config=JSON.parse(copied.match(/```json\n([\s\S]*?)\n```/)[1]),id={'Claude Code':'claude',Cursor:'cursor',OpenCode:'opencode',Antigravity:'antigravity'}[name];
    assert.equal(name==='OpenCode'?config.mcp.servers.codepet_tasks.environment.CODEPET_AGENT:config.mcpServers.codepet_tasks.env.CODEPET_AGENT,id);
+   if(name==='Antigravity'){assert.ok(copied.includes('~/.gemini/config/mcp_config.json'));assert.ok(copied.includes('~/.gemini/GEMINI.md'));}
   }
   assert.equal(await setupDialog.getByRole('status').innerText(),'已复制');
   await page.getByRole('heading',{name:'连接 Agent',exact:true}).last().hover();

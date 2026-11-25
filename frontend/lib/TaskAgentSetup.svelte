@@ -7,12 +7,13 @@
   import claudeLogo from '../assets/agents/claude.png';
   import cursorLogo from '../assets/agents/cursor.png';
   import opencodeLogo from '../assets/agents/opencode.png';
+  import antigravityLogo from '../assets/agents/antigravity.png';
 
   export let returnFocus: HTMLElement;
   let dialog: Dialog.ModalHandle;
   let setup: AgentSetup;
   let draft = '', busy = false, error = '', message = '';
-  const logos: Record<string, string> = {codex:codexLogo, claude:claudeLogo, cursor:cursorLogo, opencode:opencodeLogo};
+  const logos: Record<string, string> = {codex:codexLogo, claude:claudeLogo, cursor:cursorLogo, opencode:opencodeLogo, antigravity:antigravityLogo};
   $: clients = setup?.clients ?? (setup ? [{id:'codex',name:'Codex',config:setup.config,configPath:'~/.codex/config.toml',rulePath:'~/.codex/AGENTS.md'}] : []);
 
   export function isOpen() { return dialog?.isOpen(); }

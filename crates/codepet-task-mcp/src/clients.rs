@@ -22,9 +22,16 @@ fn configurations(base: Value, http: bool) -> Value {
         ("claude", "Claude Code", ".mcp.json", "~/.claude/CLAUDE.md"),
         ("cursor", "Cursor", "~/.cursor/mcp.json", "Cursor → Customize → Rules → User Rules"),
         ("opencode", "OpenCode", "~/.config/opencode/opencode.jsonc", "~/.config/opencode/AGENTS.md"),
+        ("antigravity", "Antigravity", "~/.gemini/config/mcp_config.json", "~/.gemini/GEMINI.md"),
     ].into_iter().map(|(id, name, config_path, rule_path)| {
         let mut server = base.clone();
-        if http { server["headers"]["X-CodePet-Agent"] = json!(id); }
+        if http {
+            server["headers"]["X-CodePet-Agent"] = json!(id);
+            if id == "antigravity" {
+                let url = server.as_object_mut().unwrap().remove("url").unwrap();
+                server["serverUrl"] = url;
+            }
+        }
         else { server["env"] = json!({"CODEPET_AGENT":id}); }
         let config = if id == "codex" {
             if http {
@@ -51,7 +58,7 @@ mod tests {
     #[test]
     fn clients_keep_distinct_sources_and_exact_paths() {
         let clients = stdio(Path::new("/Users/test/中文 App's/codepet-task-mcp"));
-        assert_eq!(clients.as_array().unwrap().len(), 4);
+        assert_eq!(clients.as_array().unwrap().len(), 5);
         for client in clients.as_array().unwrap().iter().skip(1) {
             let parsed: Value = serde_json::from_str(client["config"].as_str().unwrap()).unwrap();
             let (command, source) = if client["id"] == "opencode" {
@@ -68,6 +75,17 @@ mod tests {
             assert_eq!(command, "/Users/test/中文 App's/codepet-task-mcp");
             assert_eq!(source, &client["id"]);
         }
+        let antigravity = clients
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "antigravity")
+            .unwrap();
+        assert_eq!(
+            antigravity["configPath"],
+            "~/.gemini/config/mcp_config.json"
+        );
+        assert_eq!(antigravity["rulePath"], "~/.gemini/GEMINI.md");
         assert!(clients[0]["config"]
             .as_str()
             .unwrap()
@@ -91,6 +109,11 @@ mod tests {
             assert_eq!(server["headers"]["Authorization"], "Bearer test-only");
             assert_eq!(server["headers"]["X-CodePet-Agent"], client["id"]);
             assert!(server.get("env").is_none());
+            if client["id"] == "antigravity" {
+                assert_eq!(server["serverUrl"], "http://127.0.0.1:47623/mcp");
+                assert!(server.get("url").is_none());
+                assert!(server.get("command").is_none());
+            }
         }
     }
 }
