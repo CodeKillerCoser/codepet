@@ -31,7 +31,7 @@ function client(){
 }
 let a,b;
 try{
-  a=client();await a.start();const tools=await a.request('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['create-task','create-task-run','find-tasks','finish-task-run','update-task-run']);const toolBytes=Buffer.byteLength(JSON.stringify(tools));assert.ok(toolBytes<24000);
+  a=client();await a.start();const tools=await a.request('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['create-task','create-task-run','find-task-runs','finish-task-run','update-task-run']);const toolBytes=Buffer.byteLength(JSON.stringify(tools));assert.ok(toolBytes<24000);
   const create={agentWorkspace:{path:workspace},title:'修复菜单点击',description:'切换窗口后的首次点击无响应',initialRun:{agentConversation:[threadId],title:'首次实现',kind:'bugfix',goal:'修复目标',solution:'修复方案',description:'排查点击事件绑定',validationPlan:{items:[{title:'切换窗口点击',steps:'切换窗口后点击桌宠',expected:'菜单出现'}]}}};
   const first=await a.call('create-task',create);assert.equal(first.revision,1);assert.equal(first.status,'in_progress');assert.equal(first.createdBy,'codex');assert.ok(Buffer.byteLength(JSON.stringify(first))<1000);
   const repeat=await a.call('create-task',create);assert.equal(repeat.taskId,first.taskId);
@@ -40,13 +40,13 @@ try{
   await assert.rejects(a.call('update-task-run',{taskId:first.taskId,runId:first.runId,expectedRevision:2,status:'published'}),/发布版本/);
   const publish={taskId:first.taskId,runId:first.runId,expectedRevision:2,status:'published',delivery:'MCP 验收样例 1.3.0'};
   await a.call('update-task-run',publish);await a.stop();a=null;
-  b=client();await b.start();const detail=await b.call('find-tasks',{taskId:first.taskId});assert.equal(detail.revision,3);assert.equal(detail.run.status,'published');assert.equal(detail.description,create.description);assert.equal(detail.run.agentWorkspace.changeStatus.hasUncommittedChanges,true);assert.equal(detail.run.agentWorkspace.relatedCommits.length,1);assert.equal(detail.run.validationPlan.latestVerification.actor,'agent');assert.equal(detail.run.agentConversation[0].verified,true);
+  b=client();await b.start();const detail=await b.call('find-task-runs',{taskId:first.taskId});assert.equal(detail.revision,3);assert.equal(detail.run.status,'published');assert.equal(detail.taskDescription,create.description);assert.equal(detail.run.agentWorkspace.changeStatus.hasUncommittedChanges,true);assert.equal(detail.run.agentWorkspace.relatedCommits.length,1);assert.equal(detail.run.validationPlan.latestVerification.actor,'agent');assert.equal(detail.run.agentConversation[0].verified,true);
   assert.equal((await b.call('update-task-run',publish)).revision,3);
   await assert.rejects(b.call('update-task-run',{taskId:first.taskId,runId:first.runId,expectedRevision:1,note:'stale'}),/revision=3/);
   await assert.rejects(b.call('update-task-run',{taskId:first.taskId,runId:first.runId,expectedRevision:3,status:'closed'}),/人工操作/);
   const next=await b.call('create-task-run',{taskId:first.taskId,expectedRevision:3,title:'发布后复发',kind:'bugfix',goal:'修复复发问题',solution:'重新定位'});assert.notEqual(next.runId,first.runId);
-  const active=await b.call('find-tasks',{taskId:first.taskId,history:true});assert.equal(active.runCount,2);assert.equal(active.run.validationPlan.latestVerification,null);assert.notEqual(active.run.validationPlan.items[0].id,first.criterionIds[0]);
-  const found=await b.call('find-tasks',{workspace,query:'菜单'});assert.equal(found.total,1);await b.stop();b=null;
+  const active=await b.call('find-task-runs',{taskId:first.taskId,history:true});assert.equal(active.runCount,2);assert.equal(active.run.validationPlan.latestVerification,null);assert.notEqual(active.run.validationPlan.items[0].id,first.criterionIds[0]);
+  const found=await b.call('find-task-runs',{workspace,query:'菜单'});assert.equal(found.total,2);assert.ok(Array.isArray(found.runs));assert.ok(found.runs.some(r=>r.runId===first.runId&&!r.isCurrentRun));assert.ok(found.runs.some(r=>r.runId===next.runId&&r.isCurrentRun));await b.stop();b=null;
   const report={success:true,mode:'real-stdio-without-frontend',toolCount:5,toolDefinitionBytes:toolBytes,receiptBytes:Buffer.byteLength(JSON.stringify(first)),retryAcrossRestart:true,taskRunIsolation:true,historyPreserved:true,changedFilesObserved:true,explicitSourceVerifiedLocally:true,agentCannotClose:true,testCalls:count};
   await mkdir(join(root,'artifacts/task-ledger-qa'),{recursive:true});await writeFile(join(root,'artifacts/task-ledger-qa/mcp-report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
 }finally{a?.child.kill();b?.child.kill();await rm(temporary,{recursive:true,force:true});}

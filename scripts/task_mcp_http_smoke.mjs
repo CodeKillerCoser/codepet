@@ -47,7 +47,7 @@ async function start(){
 let first,second;
 try{
  first=await start();
- const tools=await first.rpc('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['create-task','create-task-run','find-tasks','finish-task-run','update-task-run']);
+ const tools=await first.rpc('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['create-task','create-task-run','find-task-runs','finish-task-run','update-task-run']);
  const toolBytes=Buffer.byteLength(JSON.stringify(tools));assert.ok(toolBytes<24000);
  const input={agentWorkspace:{path:workspace},title:'HTTP 验收样例',description:'任务背景',initialRun:{agentConversation:['00000000-0000-4000-8000-000000000003'],title:'首次实现',kind:'bugfix',goal:'修复目标',solution:'修复方案',description:'通过 HTTP 登记并验证',validationPlan:{items:[{title:'可登记并读取',steps:'保存并查询',expected:'任务和执行一致'}]}}};
  const created=await first.call('create-task',input);assert.equal(created.revision,1);assert.equal(created.createdBy,'codex');
@@ -58,7 +58,7 @@ try{
  const missingAgent=await post(first.metadata.url,{authorization:`Bearer ${first.token}`},{jsonrpc:'2.0',id:1,method:'tools/list',params:{}});assert.equal(missingAgent.status,400);
  const token=first.token;await first.stop();first=null;
  second=await start();assert.equal(second.token,token);
- const task=await second.call('find-tasks',{taskId:created.taskId});assert.equal(task.revision,2);assert.equal(task.description,'任务背景');assert.equal(task.run.status,'ready_for_delivery');assert.equal(task.run.agentWorkspace.changeStatus.hasUncommittedChanges,true);assert.ok(task.run.agentWorkspace.changedFiles.length);assert.equal(task.run.createdBy,'codex');
+ const task=await second.call('find-task-runs',{taskId:created.taskId});assert.equal(task.revision,2);assert.equal(task.taskDescription,'任务背景');assert.equal(task.run.status,'ready_for_delivery');assert.equal(task.run.agentWorkspace.changeStatus.hasUncommittedChanges,true);assert.ok(task.run.agentWorkspace.changedFiles.length);assert.equal(task.run.createdBy,'codex');
  await assert.rejects(second.call('update-task-run',{taskId:created.taskId,runId:created.runId,expectedRevision:1,note:'stale'}),/revision=2/);
  await assert.rejects(second.call('update-task-run',{taskId:created.taskId,runId:created.runId,expectedRevision:2,actor:'human'}));
  await second.stop();second=null;

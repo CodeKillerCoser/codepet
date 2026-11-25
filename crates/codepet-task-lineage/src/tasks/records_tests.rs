@@ -37,7 +37,7 @@ fn task_and_run_are_independent_and_retries_are_atomic() {
     let task = l.get(&next.task_id).unwrap();
     assert_eq!(task.runs.len(), 2);
     assert_eq!(
-        l.find(FindTasksInput {
+        l.find_runs(FindTaskRunsInput {
             query: Some("本次排查".into()),
             ..Default::default()
         })
@@ -338,7 +338,7 @@ fn mcp_detail_does_not_repeat_full_git_snapshots_in_progress_and_tests() {
         .write(&Ledger::key(&task.project_id, &task.id), &task)
         .unwrap();
     let detail = ledger
-        .find(FindTasksInput {
+        .find_runs(FindTaskRunsInput {
             task_id: Some(task.id),
             ..Default::default()
         })

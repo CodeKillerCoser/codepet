@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>独立 Cognee 图组件</title>
+<style>
+  *{box-sizing:border-box}body{margin:0;height:100vh;display:flex;flex-direction:column;background:#f6f8f9;color:#22313a;font:14px/1.5 system-ui,sans-serif}
+  header{min-height:90px;padding:14px 20px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;border-bottom:1px solid #d9e0e5}
+  h1{font-size:18px;margin:0}p{margin:4px 0;color:#61717d}button{padding:6px 12px;background:white;border:1px solid #b9c8ce;border-radius:6px;cursor:pointer}
+  button:focus-visible{outline:3px solid #4489b5;outline-offset:2px}#status{margin-left:auto;font-size:12px;color:#586e7b}
+  header{flex:none}#graph{flex:1;min-height:0;overflow:hidden}#error{color:#a43c30;padding:16px;display:none}
+</style>
+<header><div><h1>独立 Cognee 图组件</h1><p>只读取静态图快照，在浏览器中挂载原生渲染。</p></div>
+<button id="reload">更新快照</button><button id="destroy">卸载</button><button id="mount">重新挂载</button><span id="status">加载中</span></header>
+<div id="error" role="alert"></div><div id="graph"></div>
+<script type="module">
+import { mountCogneeGraph } from '../src/index.mjs';
+const host=document.querySelector('#graph'),status=document.querySelector('#status');
+const snapshot=await fetch('./graph.json').then(r=>r.json());
+let viewer=null;
+async function mount(){if(viewer)return;viewer=await mountCogneeGraph(host,snapshot);window.demoViewer=viewer;status.textContent=`已挂载 · ${viewer.detail.nodes} 节点 / ${viewer.detail.links} 边`;}
+document.querySelector('#destroy').onclick=()=>{viewer?.destroy();viewer=null;window.demoViewer=null;status.textContent='已卸载';};
+document.querySelector('#mount').onclick=()=>mount().catch(fail);
+document.querySelector('#reload').onclick=async()=>{try{if(!viewer)await mount();else{await viewer.update(snapshot);status.textContent='快照已更新 · '+snapshot.nodes.length+' 节点';}}catch(e){fail(e);}};
+function fail(error){document.querySelector('#error').style.display='block';document.querySelector('#error').textContent=String(error);status.textContent='加载失败';}
+await mount().catch(fail);
+</script>
+</html>

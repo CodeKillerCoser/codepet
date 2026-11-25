@@ -293,10 +293,14 @@ pub struct FinishTaskRunInput {
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FindTasksInput {
+pub struct FindTaskRunsInput {
+    /// Read the current run of this topic when runId is omitted.
     pub task_id: Option<String>,
+    /// Read one exact run, including historical runs; taskId is optional.
     pub run_id: Option<String>,
+    /// Prefer this workspace in ranked results, without excluding other workspaces.
     pub workspace: Option<String>,
+    /// Keywords or a short description of the work to resume.
     pub query: Option<String>,
     #[serde(default)]
     pub history: bool,

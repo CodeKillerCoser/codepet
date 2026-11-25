@@ -24,6 +24,8 @@ struct Current {
     digest: String,
     bootstrap_digest: String,
     data_directory: PathBuf,
+    #[serde(default)]
+    recall_bundle: Option<PathBuf>,
 }
 
 fn digest(bytes: &[u8]) -> String {
@@ -35,6 +37,10 @@ fn read_current(root: &Path) -> io::Result<Current> {
         serde_json::from_slice(&fs::read(root.join("current.json"))?).map_err(io::Error::other)?;
     if current.schema != 1
         || !current.data_directory.is_absolute()
+        || current
+            .recall_bundle
+            .as_ref()
+            .is_some_and(|p| !p.is_absolute())
         || ![&current.digest, &current.bootstrap_digest]
             .iter()
             .all(|s| s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit()))
@@ -123,6 +129,14 @@ pub fn install(source: &Path, workspace: &Path, data: &Path) -> io::Result<Value
         digest: runner_digest,
         bootstrap_digest,
         data_directory: data.to_owned(),
+        recall_bundle: crate::recall::bundle::install(
+            &source
+                .parent()
+                .and_then(Path::parent)
+                .unwrap_or(source)
+                .join("task-recall"),
+            workspace,
+        )?,
     };
     write_file(
         &root.join("current.json"),
@@ -164,6 +178,9 @@ pub fn launch() -> io::Result<i32> {
         ));
     }
     let mut command = Command::new(runner);
+    if let Some(bundle) = current.recall_bundle {
+        command.env("CODEPET_TASK_RECALL_BUNDLE", bundle);
+    }
     command
         .arg("--data-dir")
         .arg(current.data_directory)

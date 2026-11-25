@@ -5,6 +5,7 @@ edition = "2021"
 publish = false
 
 [dependencies]
+codepet-model-gateway = { path = "../codepet-model-gateway" }
 codepet-transport = { path = "../../sdk/rust/codepet-transport" }
 rusqlite = { version = "0.32", features = ["bundled"] }
 codepet-channel-control-sdk = { path = "../../sdk/rust/codepet-channel-control-sdk" }

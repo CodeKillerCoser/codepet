@@ -2,7 +2,7 @@
 
 ## 规则
 
-任务 MCP 默认是用户目录内的独立 stdio 程序，App 后台 HTTP 保留兼容。前端只展示配置、任务与执行。人工 IPC 与 Agent 工具必须使用同一活动数据目录；不得由前端代理请求或维护服务存活。当前暴露 create-task、create-task-run、update-task-run、finish-task-run、find-tasks。
+任务 MCP 默认是用户目录内的独立 stdio 程序，App 后台 HTTP 保留兼容。前端只展示配置、任务与执行。人工 IPC 与 Agent 工具必须使用同一活动数据目录；不得由前端代理请求或维护服务存活。当前暴露 create-task、create-task-run、update-task-run、finish-task-run、find-task-runs。
 
 ## 适用场景
 
@@ -17,6 +17,10 @@ stdio 从 CODEPET_AGENT 读取连接来源；HTTP 固定监听回环，验证 Ho
 默认配置只在独立资源安装成功后生成 command/args/env，不依赖 HTTP 就绪；HTTP 配置仍只由真实就绪服务提供。初始化和接入面板使用同一 Rust 提示词配置，未自定义时读取 instructions.md。用户可编辑、保存并恢复默认；保存按 revision 防冲突。新连接读取已保存内容，旧会话需重连，不要求手动复制说明才会用。自定义提示词不改变任何工具权限，也不得由 Agent 工具修改。
 
 创建 Task 同时建立首次执行，后续保留 taskId/runId/revision，只在关键节点合并写入，不逐文件更新、不轮询。Agent 自测不是人工验收。任务开发本身也在关键节点登记；当前会话未加载工具时，通过已有协议入口登记，不能将“提供了工具”当成“已经登记”。
+
+查询以 Run 为单位：`find-task-runs` 命中旧执行时返回它自己的 runId 与摘要，并标记 isCurrentRun，不能替换为主题最新执行。workspace 是软排序偏好，不是可见性边界；runId 可单独读取详情，同时提交 taskId 时必须校验归属。列表 total/truncated 按 Run 计数，详情的 Task 标题和背景使用 taskTitle/taskDescription，避免与执行混淆。
+
+召回索引属于派生数据，不能覆盖权威 Run。模型加工异步运行，finish 不等待抽取；只有实际完成的执行进入加工。来源必须从 chunk/document 元数据映射并验证当前内容哈希，不能从正文 UUID 或任意图关系推断归属。模型配置与鉴权由 Host 管理，不增加 Agent 的实体/embedding 工具参数。详见 [sidecar 架构](../10-architecture/task-run-recall-sidecar.md) 与 [验证 runbook](../40-runbooks/task-run-recall-sidecar.md)。
 
 前端用运行卡片切换执行，类型/目标/方案属于 Run；目标与方案、工作区、验收、活动四区分别呈现，对话链接在目标/方案下方。单项验收追加历史并按被测目标/环境归并，不另维护勾选布尔值；Git 文件是工作区共享事实，只有显式 SHA 属于任务关联。旧执行只读，新执行不继承通过结果。变更两个对象时，分别验证对方内容保持不变。
 

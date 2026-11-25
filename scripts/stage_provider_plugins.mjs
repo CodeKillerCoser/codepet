@@ -316,6 +316,10 @@ async function main() {
   const taskMcpDirectory = await stageTaskMcpResources({
     repositoryRoot: DEFAULT_REPOSITORY_ROOT, target, binaries,
   });
+  const recallArgs = ["run", "--no-project", "--python", "3.12", "sidecars/task-recall/build.py",
+    "--output", "artifacts/task-recall-bundle/native", "--stage", "src-tauri/resources/task-recall"];
+  if (target) recallArgs.push("--target", target);
+  run("uv", recallArgs, DEFAULT_REPOSITORY_ROOT);
   process.stdout.write(
     `staged ${PROVIDERS.length} Provider plugins in ${stagingDirectory}\n`
       + `staged Provider JSON Schema and author documentation in ${sdkStagingDirectory}\n`,

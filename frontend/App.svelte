@@ -6,6 +6,8 @@
   import SettingsRow from "./lib/SettingsRow.svelte";
   import AboutSettings from "./lib/AboutSettings.svelte";
   import PermissionSettings from "./lib/PermissionSettings.svelte";
+  import ModelSettings from "./lib/ModelSettings.svelte";
+  import TaskKnowledgePage from "./lib/TaskKnowledgePage.svelte";
   import { consumeReloadNotice, webcontentReloading } from "./lib/webcontent";
   import EventJournal from "./lib/EventJournal.svelte";
   import AppSidePanelHost from "./lib/shell/AppSidePanelHost.svelte";
@@ -1083,6 +1085,8 @@
     {/if}
     {#if tab === "tasks" || tab === "extraction"}
       <CodexWorkbench bind:view={workbenchView} />
+    {:else if tab === "knowledge"}
+      <TaskKnowledgePage onModels={() => navigation.navigate('models')} />
     {:else if tab === "connections"}
       <div class="agent-workspace">
         <section class="overview-grid" aria-label="运行概览">
@@ -1259,6 +1263,8 @@
       <NotificationSettings {settings} bind:busyRobotChannel onSave={persistSettings} />
     {:else if tab === "permissions"}
       <PermissionSettings />
+    {:else if tab === "models"}
+      <ModelSettings />
     {:else if tab === "about"}
       <AboutSettings checking={!!updateCheckMode || updateInstallBusy} message={updateMessage} error={updateError} ignoredVersion={settings?.updates.ignoredVersion ?? null} onCheck={() => checkForUpdates("manual")}
         reloaded={resourceReloaded} onExtraction={() => navigation.navigate("extraction")}

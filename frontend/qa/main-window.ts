@@ -74,6 +74,18 @@ const runtimeConnections = () => runtimeInventory.map((item) => ({providerId:ite
 mockIPC((command, raw) => {
   if (command === "task_ledger_request") {
     const request = (raw as any).request;
+    if (request.op === "recall-graph") {
+      const options = new URLSearchParams(location.search);
+      if (options.has("graphBusy")) throw new Error("任务召回请求失败 (409)");
+      if (options.has("graphError")) throw new Error("无法连接后台图服务");
+      if (options.has("graphEmpty")) return {nodes:[],links:[]};
+      return fetch('/artifacts/task-recall-sidecar-qa/preview-graph.json').then(response => {if (!response.ok) throw new Error('请先运行真实 sidecar 图验证'); return response.json();});
+    }
+    if (["model-settings", "save-model-settings"].includes(request.op)) {
+      if (new URLSearchParams(location.search).has("modelError") && request.op === "save-model-settings") throw new Error("模型 API 地址无效（界面验证）");
+      const profile = { endpoint: "http://127.0.0.1:11234/v1", model: "Qwen3.8-27B", apiKey: "", hasApiKey: true, dimensions: 1024 };
+      return { settings: request.settings ?? { enabled: true, llm: profile, embedding: {...profile, model: "Qwen3-Embedding-0.6B-8bit"}, plainJson: false, llmExtraBody: {} }, usage: {models: [{purpose:"llm",model:"Qwen3.8-27B",requests:12,succeeded:11,inputTokens:20480,outputTokens:1320,reportedRequests:10}]} };
+    }
     if (request.op === "list") return fetch('/artifacts/task-ledger-qa/native/report.json').then(r => r.json()).then(report => new URLSearchParams(location.search).has('taskOverflow') ? taskLedgerOverflow(report.taskSnapshot) : [report.taskSnapshot]);
     if (request.op === "setup") return {config: '[mcp_servers.codepet_tasks]\nurl = "http://127.0.0.1:47623/mcp"\nhttp_headers = { "X-CodePet-Agent" = "codex" }', instructions: '界面验收样例，不修改本机配置。'};
     throw new Error(`Unhandled task ledger fixture operation: ${request.op}`);

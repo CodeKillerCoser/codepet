@@ -185,7 +185,7 @@ fn moved_app_and_concurrent_clients_share_the_pinned_ledger_without_http() {
     let mut b = Client::start(command);
     b.initialize();
     assert_eq!(
-        b.call("find-tasks", json!({"taskId":receipt["taskId"]}))["taskId"],
+        b.call("find-task-runs", json!({"taskId":receipt["taskId"]}))["taskId"],
         receipt["taskId"]
     );
     // A user-completed task remains locked even for existing connections and custom prompts.
@@ -222,8 +222,15 @@ fn moved_app_and_concurrent_clients_share_the_pinned_ledger_without_http() {
     install(&updated_source, &workspace, &dir.path().join("new data"));
     let mut c = Client::start(command);
     c.initialize();
-    assert_eq!(c.call("find-tasks", json!({}))["total"], 0);
-    assert_eq!(a.call("find-tasks", json!({}))["total"], 1);
+    assert_eq!(c.call("find-task-runs", json!({}))["total"], 0);
+    let found = a.call("find-task-runs", json!({}));
+    assert_eq!(found["total"], 2);
+    assert!(found["runs"].as_array().unwrap().iter().any(|run| {
+        run["runId"] == receipt["runId"] && run["isCurrentRun"] == false
+    }));
+    assert!(found["runs"].as_array().unwrap().iter().any(|run| {
+        run["runId"] == restored.run_id && run["isCurrentRun"] == true
+    }));
     a.stop();
     b.stop();
     c.stop();

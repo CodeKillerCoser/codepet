@@ -2,8 +2,9 @@
 pub mod http;
 pub mod instructions;
 pub mod managed;
+pub mod recall;
 use codepet_task_lineage::tasks::{
-    Actor, CreateTaskInput, CreateTaskRunInput, FindTasksInput, FinishTaskRunInput, Ledger,
+    Actor, CreateTaskInput, CreateTaskRunInput, FindTaskRunsInput, FinishTaskRunInput, Ledger,
     UpdateTaskRunInput,
 };
 use rmcp::{
@@ -19,11 +20,13 @@ const INSTRUCTIONS: &str = include_str!("../instructions.md");
 #[derive(Clone)]
 pub struct TaskServer {
     ledger: Ledger,
+    recall: std::sync::Arc<recall::Recall>,
     stdio_actor: Actor,
 }
 impl TaskServer {
     pub fn new(ledger: Ledger) -> Self {
         Self {
+            recall: recall::Recall::shared(&ledger),
             ledger,
             stdio_actor: Actor::agent("codex").expect("built-in source"),
         }
@@ -134,27 +137,27 @@ impl TaskServer {
             Err(e) => return response(Err(e)),
         };
         let ledger = self.ledger.clone();
-        response(
-            tokio::task::spawn_blocking(move || {
-                ledger
-                    .finish_task_run(input, actor)
-                    .and_then(|r| serde_json::to_value(r).map_err(|e| e.to_string()))
-            })
-            .await
-            .unwrap_or_else(|e| Err(e.to_string())),
-        )
+        let result = tokio::task::spawn_blocking(move || {
+            ledger
+                .finish_task_run(input, actor)
+                .and_then(|r| serde_json::to_value(r).map_err(|e| e.to_string()))
+        })
+        .await
+        .unwrap_or_else(|e| Err(e.to_string()));
+        if result.is_ok() {
+            self.recall.changed();
+        }
+        response(result)
     }
     #[tool(
-        name = "find-tasks",
-        description = "Find compact task summaries only to identify or resume work. taskId retrieves its current run/checklist; runId selects a historical run. History is opt-in. Retain receipts rather than querying before every write."
+        name = "find-task-runs",
+        description = "Find specific task runs to identify or resume work. Returns runs with their task topic, runId and isCurrentRun; a match in an old run returns that run. workspace is a soft preference, not a filter. runId reads one exact run without requiring taskId; taskId alone reads its current run/checklist. History is opt-in. Retain receipts rather than querying before every write."
     )]
-    async fn find_tasks(&self, Parameters(input): Parameters<FindTasksInput>) -> CallToolResult {
-        let ledger = self.ledger.clone();
-        response(
-            tokio::task::spawn_blocking(move || ledger.find(input))
-                .await
-                .unwrap_or_else(|e| Err(e.to_string())),
-        )
+    async fn find_task_runs(
+        &self,
+        Parameters(input): Parameters<FindTaskRunsInput>,
+    ) -> CallToolResult {
+        response(self.recall.find(input).await)
     }
 }
 #[tool_handler]
@@ -197,8 +200,12 @@ pub fn run_with_ledger(ledger: Ledger) -> Result<(), Box<dyn std::error::Error>>
         .enable_all()
         .build()?
         .block_on(async {
+            let recall = server.recall.clone();
+            let watch = recall.watch(&tokio::runtime::Handle::current());
             let service = server.serve(rmcp::transport::stdio()).await?;
             service.waiting().await?;
+            watch.abort();
+            recall.stop().await;
             Ok(())
         })
 }
@@ -215,7 +222,7 @@ mod tests {
             [
                 "create-task",
                 "create-task-run",
-                "find-tasks",
+                "find-task-runs",
                 "finish-task-run",
                 "update-task-run"
             ]

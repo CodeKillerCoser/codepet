@@ -555,6 +555,7 @@ dependencies = [
  "codepet-channel-control-sdk",
  "codepet-gateway-sdk",
  "codepet-lan-channel-sdk",
+ "codepet-model-gateway",
  "codepet-provider-data",
  "codepet-provider-sdk",
  "codepet-transport",
@@ -591,6 +592,22 @@ dependencies = [
  "codepet-core-sdk",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "codepet-model-gateway"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "subtle",
+ "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -730,11 +747,13 @@ dependencies = [
 
 [[package]]
 name = "codepet-task-mcp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
+ "codepet-model-gateway",
  "codepet-paths",
  "codepet-task-lineage",
+ "flate2",
  "fs2",
  "reqwest 0.12.28",
  "reqwest 0.13.5",
@@ -742,6 +761,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "tokio",
  "tokio-util",
@@ -1219,6 +1239,16 @@ name = "fiat-crypto"
 version = "0.2.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
+
+[[package]]
+name = "filetime"
+version = "0.2.30"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e1255e7a9f1902190d4c10a75f2f7f495d3d3ce13e9ba26e6c48683a0f4dbed7"
+dependencies = [
+ "cfg-if",
+ "libc",
+]
 
 [[package]]
 name = "find-msvc-tools"
@@ -3613,6 +3643,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tar"
+version = "0.4.46"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f6221d9a6003c78398e3b239969f352578258df48c8eb051caadae0015bc840"
+dependencies = [
+ "filetime",
+ "libc",
+ "xattr",
+]
+
+[[package]]
 name = "tempfile"
 version = "3.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4766,6 +4807,16 @@ dependencies = [
  "rusticata-macros",
  "thiserror 2.0.20",
  "time",
+]
+
+[[package]]
+name = "xattr"
+version = "1.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e45ad4206f6d2479085147f02bc2ef834ac85886624a23575ae137c8aa8156"
+dependencies = [
+ "libc",
+ "rustix",
 ]
 
 [[package]]

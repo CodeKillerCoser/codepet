@@ -23,13 +23,13 @@ finish-task-run 原子保存非空 conclusion、必填对话、必填 changedFil
 
 ## MCP 与来源
 
-暴露 create-task、create-task-run、update-task-run、finish-task-run、find-tasks 五个工具。四个写入工具返回 taskId、runId、任务 revision、清单版本和检查项 ID 等紧凑回执；更新只提交变化字段。通常开始实施创建一次、实现告一段落更新一次；发布及重新处理再按事实补记。不轮询，不在每条消息后维护。
+暴露 create-task、create-task-run、update-task-run、finish-task-run、find-task-runs 五个工具。四个写入工具返回 taskId、runId、任务 revision、清单版本和检查项 ID 等紧凑回执；更新只提交变化字段。通常开始实施创建一次、实现告一段落更新一次；发布及重新处理再按事实补记。不轮询，不在每条消息后维护。
 
 HTTP 请求携带 X-CodePet-Agent，默认配置为 codex。Rust 从每条请求的上下文取得来源，创建时固化 createdBy，后续更新者写进 timeline，不能改掉创建者。来源是客户端声明的标记；Bearer 认证与 agent/human 权限判断独立，Header 不能授予人工验收权限。保留的 stdio 入口使用 CODEPET_AGENT，缺省 codex，仍暴露相同五工具。
 
 ## 存储与迁移
 
-活动账本在 data/tasks/v4/projects/<projectId>/tasks/<taskId>.json。聚合事务沿用 Store 的文件锁、原子 JSON 写入、事务恢复和幂等回执。expectedRevision 是整个 Task 聚合的版本；冲突保留人工草稿。重试先读取已提交回执，再访问工作区，所以路径被清理后仍可重试成功。查询默认返回紧凑摘要；详情只返回当前执行和当前清单，历史须显式请求，执行标题、类型和目标随摘要返回；本次执行文件与未提交文件在 MCP 回复中各最多显示 20 项；提交清单最多 5 个提交、每个 10 个文件，并标记数量和截断，避免挤占对话上下文。完整证据仍保存在账本。
+活动账本在 data/tasks/v4/projects/<projectId>/tasks/<taskId>.json。聚合事务沿用 Store 的文件锁、原子 JSON 写入、事务恢复和幂等回执。expectedRevision 是整个 Task 聚合的版本；冲突保留人工草稿。重试先读取已提交回执，再访问工作区，所以路径被清理后仍可重试成功。查询默认返回按 Run 展开的紧凑摘要，历史执行命中时保留其 runId；workspace 只参与软排序。runId 可独立读取详情，taskId 单独使用读当前执行；history 显式获取主题内执行摘要，执行标题、类型和目标随结果返回；本次执行文件与未提交文件在 MCP 回复中各最多显示 20 项；提交清单最多 5 个提交、每个 10 个文件，并标记数量和截断，避免挤占对话上下文。完整证据仍保存在账本。
 
 首次读取优先在一个事务中导入 v3；没有 v3 时导入 v2，旧文件不修改。v3 的 Task.kind 复制到各 Run，表示继承旧类型，不能声称当时分别记录过；卡片使用“首次处理 / 第 N 次处理”，goal 继承旧任务标题，solution 留空，description 原样保留。保留 Task/执行/检查项 ID、修订、计划与验证记录、旧 Git 快照、对话、时间线和发布引用；旧 objective 合并到说明。bug/investigation 映射 bugfix，feature 保持。旧 Agent 没有具体来源时记 unknown，不猜为 codex；旧观测缺文件清单时明确提示，之后的当前执行写入会重新观测。旧发布引用没有独立时间戳，迁移事件记录迁移时刻并注明原始发生时间未知。旧 v1 对话抽取不在迁移范围内。
 

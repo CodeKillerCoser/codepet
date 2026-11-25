@@ -1,16 +1,17 @@
 <script lang="ts">
   import { Button } from "./ui/button/index";
-  import { Activity, Cable, BarChart3, Palette, Settings, Bell, ListTree, Wrench, Info, ShieldCheck } from "@lucide/svelte";
+  import { Activity, Cable, BarChart3, Palette, Settings, Bell, ListTree, Wrench, Info, ShieldCheck, Network } from "@lucide/svelte";
   import { isConnectionRoute, isSettingsRoute, settingsRoutes, type AppRoute } from "./navigation";
   export let current: AppRoute;
   export let onNavigate: (route: AppRoute) => void;
   const entries = [
     { route: "tasks", label: "Codex工作台", icon: Activity },
+    { route: "knowledge", label: "知识图谱", icon: Network },
     { route: "connections", label: "连接接入", icon: Cable },
     { route: "usage", label: "用量", icon: BarChart3 },
     { route: "personalize", label: "宠物制作", icon: Palette },
   ] as const;
-  const settingIcons = { settings: Settings, appearance: Palette, notifications: Bell, permissions: ShieldCheck, extraction: ListTree, events: Wrench, about: Info };
+  const settingIcons = { settings: Settings, models: Cable, appearance: Palette, notifications: Bell, permissions: ShieldCheck, extraction: ListTree, events: Wrench, about: Info };
   $: inSettings = isSettingsRoute(current);
 </script>
 

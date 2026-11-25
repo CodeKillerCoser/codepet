@@ -1,6 +1,6 @@
 import { derived, writable } from "svelte/store";
 
-export type AppRoute = "tasks" | "connections" | "devices" | "runtimes" | "usage" | "personalize" | "events" | "settings" | "appearance" | "notifications" | "permissions" | "extraction" | "about";
+export type AppRoute = "tasks" | "knowledge" | "connections" | "devices" | "runtimes" | "usage" | "personalize" | "events" | "settings" | "appearance" | "notifications" | "permissions" | "models" | "extraction" | "about";
 export const connectionRoutes = [
   { route: "connections", label: "活动接入" },
   { route: "runtimes", label: "本机运行时" },
@@ -10,6 +10,7 @@ export const settingsRoutes = [
   { route: "settings", label: "通用" },
   { route: "appearance", label: "外观与桌宠" },
   { route: "notifications", label: "通知" },
+  { route: "models", label: "模型配置" },
   { route: "permissions", label: "权限" },
   { route: "events", label: "诊断" },
   { route: "about", label: "关于" },
@@ -17,7 +18,7 @@ export const settingsRoutes = [
 export const isSettingsRoute = (route: AppRoute) => settingsRoutes.some(entry => entry.route === route);
 export const isConnectionRoute = (route: AppRoute) => connectionRoutes.some(entry => entry.route === route);
 export const routeTitle = (route: AppRoute) => settingsRoutes.find(entry => entry.route === route)?.label
-  ?? (isConnectionRoute(route) ? "连接接入" : (route === "tasks" || route === "extraction") ? "Codex工作台" : route === "usage" ? "用量" : "宠物制作");
+  ?? (isConnectionRoute(route) ? "连接接入" : (route === "tasks" || route === "extraction") ? "Codex工作台" : route === "knowledge" ? "知识图谱" : route === "usage" ? "用量" : "宠物制作");
 
 export function createNavigation(initial: AppRoute = "tasks") {
   const state = writable<{ entries: AppRoute[]; index: number }>({ entries: [initial], index: 0 });

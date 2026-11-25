@@ -23,6 +23,8 @@ enum EndpointStatus {
 }
 struct Inner {
     ledger: Ledger,
+    recall: Arc<crate::recall::Recall>,
+    recall_watch: JoinHandle<()>,
     status: watch::Receiver<EndpointStatus>,
     shutdown: HttpShutdown,
     completed: Arc<AtomicBool>,
@@ -31,6 +33,7 @@ struct Inner {
 impl Drop for Inner {
     fn drop(&mut self) {
         self.shutdown.cancel();
+        self.recall_watch.abort();
     }
 }
 
@@ -46,6 +49,8 @@ impl HttpRuntime {
     }
     pub fn start_on(executor: &tokio::runtime::Handle, data: PathBuf, port: u16) -> Self {
         let ledger = Ledger::new(&data);
+        let recall = crate::recall::Recall::shared(&ledger);
+        let recall_watch = recall.watch(executor);
         let shutdown = HttpShutdown::default();
         let completed = Arc::new(AtomicBool::new(false));
         let (tx, status) = watch::channel(EndpointStatus::Starting);
@@ -73,6 +78,8 @@ impl HttpRuntime {
         Self {
             inner: Arc::new(Inner {
                 ledger,
+                recall,
+                recall_watch,
                 status,
                 shutdown,
                 completed,
@@ -83,6 +90,9 @@ impl HttpRuntime {
     /// Human IPC and MCP share this exact active data directory until application restart.
     pub fn ledger(&self) -> Ledger {
         self.inner.ledger.clone()
+    }
+    pub fn recall(&self) -> Arc<crate::recall::Recall> {
+        self.inner.recall.clone()
     }
     pub fn shutdown_completed(&self) -> bool {
         self.inner.completed.load(Ordering::Acquire)
@@ -136,6 +146,8 @@ impl HttpRuntime {
         .map_err(|e| e.to_string())?
     }
     pub async fn shutdown_once(&self) {
+        self.inner.recall_watch.abort();
+        self.inner.recall.stop().await;
         self.inner.shutdown.cancel();
         let mut guard = self.inner.task.lock().await;
         if let Some(mut task) = guard.take() {

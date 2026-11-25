@@ -2,6 +2,7 @@
 #[allow(dead_code)]
 mod delivery;
 mod diffs;
+mod find;
 mod legacy;
 mod legacy_model;
 mod migration;
@@ -182,120 +183,6 @@ impl Ledger {
             .collect())
     }
 
-    pub fn find(&self, input: FindTasksInput) -> Result<Value> {
-        let scope = input
-            .workspace
-            .as_ref()
-            .map(|path| {
-                workspace::inspect(&WorkspaceInput {
-                    path: path.clone(),
-                    related_commits: vec![],
-                })
-            })
-            .transpose()?;
-        let projects = Self::projects(&self.store()?)?;
-        let allowed = |task: &Task| {
-            scope.as_ref().is_none_or(|scope| {
-                projects
-                    .iter()
-                    .any(|p| p.id == task.project_id && p.path == scope.repository)
-            })
-        };
-        if let Some(id) = input.task_id {
-            let task = self.get(&id)?;
-            if !allowed(&task) {
-                return Err("任务不属于此项目".into());
-            }
-            let run = if let Some(run_id) = input.run_id {
-                task.runs
-                    .iter()
-                    .find(|r| r.id == run_id)
-                    .ok_or("执行不存在")?
-            } else {
-                task.runs.last().unwrap()
-            };
-            let mut observed = json!(run.agent_workspace);
-            observed["changedFileCount"] = json!(run.agent_workspace.changed_files.len());
-            if run.agent_workspace.changed_files.len() > 20 {
-                observed["changedFiles"] = json!(&run.agent_workspace.changed_files[..20]);
-                observed["filesTruncated"] = json!(true);
-            }
-            if let Some(files) = &run.agent_workspace.run_files {
-                observed["runFileCount"] = json!(files.len());
-                if files.len() > 20 {
-                    observed["runFiles"] = json!(&files[..20]);
-                    observed["runFilesTruncated"] = json!(true);
-                }
-            }
-            observed["commitChangeCount"] = json!(run.agent_workspace.commit_changes.len());
-            if let Some(changes) = observed["commitChanges"].as_array_mut() {
-                if changes.len() > 5 {
-                    changes.truncate(5);
-                }
-                for change in changes {
-                    let files = change["files"].as_array().cloned().unwrap_or_default();
-                    change["fileCount"] = json!(files.len());
-                    if files.len() > 10 {
-                        change["files"] = json!(&files[..10]);
-                        change["filesTruncated"] = json!(true);
-                    }
-                }
-            }
-            if run.agent_workspace.commit_changes.len() > 5 {
-                observed["commitsTruncated"] = json!(true);
-            }
-            // Saved evidence retains complete snapshots. Normal MCP reads expose
-            // the latest facts once, rather than repeating file lists in events/tests.
-            let verification = run.validation_plan.records.last().map(|record| {
-                let mut result = json!(record.input);
-                result["id"] = json!(record.id);
-                result["actor"] = json!(record.actor);
-                result["agent"] = json!(record.agent);
-                result["createdAt"] = json!(record.created_at);
-                result
-            });
-            let progress = run.timeline.last().map(|entry| json!({"at":entry.at,"actor":entry.actor,"kind":entry.kind,"summary":entry.summary.chars().take(2000).collect::<String>(),"reference":entry.reference}));
-            let mut result = json!({"taskId":task.id,"title":task.title,"description":task.description,"createdBy":task.created_by,"revision":task.revision,"status":task.summary().status,"runCount":task.runs.len(),"run":{"id":run.id,"title":run.title,"kind":run.kind,"goal":run.goal,"solution":run.solution,"description":run.description,"status":run.status,"createdBy":run.created_by,"validationPlan":{"revision":run.validation_plan.revision,"items":run.validation_plan.items,"latestVerification":verification},"agentWorkspace":observed,"agentConversation":run.agent_conversation,"latestProgress":progress}});
-            if input.history {
-                result["history"]=json!(task.runs.iter().rev().take(10).map(|r|json!({"id":r.id,"title":r.title,"kind":r.kind,"goal":r.goal,"description":r.description,"status":r.status,"createdBy":r.created_by,"createdAt":r.created_at})).collect::<Vec<_>>());
-            }
-            return Ok(result);
-        }
-        if input.run_id.is_some() {
-            return Err("查询指定执行需要 taskId".into());
-        }
-        let q = input.query.unwrap_or_default().to_lowercase();
-        let tasks = self.list()?;
-        let matches = tasks
-            .iter()
-            .filter(|t| {
-                allowed(t)
-                    && (q.is_empty()
-                        || format!(
-                            "{} {} {}",
-                            t.title,
-                            t.description,
-                            t.runs
-                                .iter()
-                                .flat_map(|r| [
-                                    r.title.as_str(),
-                                    r.goal.as_str(),
-                                    r.solution.as_str(),
-                                    r.description.as_str()
-                                ]
-                                .into_iter()
-                                .chain(r.timeline.iter().map(|e| e.summary.as_str())))
-                                .collect::<Vec<_>>()
-                                .join(" ")
-                        )
-                        .to_lowercase()
-                        .contains(&q))
-            })
-            .collect::<Vec<_>>();
-        Ok(
-            json!({"total":matches.len(),"truncated":matches.len()>20,"tasks":matches.iter().take(20).map(|t|json!({"taskId":t.id,"title":t.title,"runKind":t.runs.last().unwrap().kind,"status":t.summary().status,"runId":t.runs.last().unwrap().id,"runCount":t.runs.len(),"revision":t.revision,"createdBy":t.created_by,"project":projects.iter().find(|p|p.id==t.project_id).map(|p|&p.name),"updatedAt":t.updated_at})).collect::<Vec<_>>()}),
-        )
-    }
     fn request_key(
         &self,
         op: &str,

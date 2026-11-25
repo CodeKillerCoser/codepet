@@ -116,6 +116,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
+      - uses: astral-sh/setup-uv@v6
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.2"
@@ -163,6 +164,7 @@ jobs:
           node-version: 22
           cache: npm
       - uses: dtolnay/rust-toolchain@stable
+      - uses: astral-sh/setup-uv@v6
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.4.2"

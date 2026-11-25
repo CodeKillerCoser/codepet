@@ -138,7 +138,9 @@ async fn http_writes_share_the_app_ledger_and_survive_restart_without_sessions()
     let reopened = Endpoint::start(&data, port).await;
     assert_eq!(reopened.authorization, endpoint.authorization);
     assert_eq!(reopened.url, endpoint.url);
-    let task = reopened.call("find-tasks", json!({"taskId":task_id})).await;
+    let task = reopened
+        .call("find-task-runs", json!({"taskId":task_id}))
+        .await;
     assert_eq!(task["revision"], 1);
     reopened.runtime.shutdown_once().await;
 }
@@ -264,7 +266,7 @@ async fn official_sdk_client_negotiates_and_calls_the_http_tools() {
     assert_eq!(client.list_all_tools().await.unwrap().len(), 5);
     let result = client
         .call_tool(
-            CallToolRequestParams::new("find-tasks")
+            CallToolRequestParams::new("find-task-runs")
                 .with_arguments(serde_json::from_value(json!({"query":"SDK client"})).unwrap()),
         )
         .await

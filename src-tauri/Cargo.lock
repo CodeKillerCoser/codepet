@@ -992,6 +992,7 @@ dependencies = [
  "codepet-channel-control-sdk",
  "codepet-gateway-sdk",
  "codepet-lan-channel-sdk",
+ "codepet-model-gateway",
  "codepet-provider-data",
  "codepet-provider-sdk",
  "codepet-transport",
@@ -1026,6 +1027,22 @@ dependencies = [
  "codepet-core-sdk",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "codepet-model-gateway"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "reqwest 0.12.28",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "subtle",
+ "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]
@@ -1095,16 +1112,20 @@ dependencies = [
 
 [[package]]
 name = "codepet-task-mcp"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "axum",
+ "codepet-model-gateway",
  "codepet-paths",
  "codepet-task-lineage",
+ "flate2",
  "fs2",
+ "reqwest 0.12.28",
  "rmcp",
  "serde",
  "serde_json",
  "sha2 0.10.9",
+ "tar",
  "tempfile",
  "tokio",
  "tokio-util",

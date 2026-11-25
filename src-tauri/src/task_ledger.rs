@@ -13,16 +13,54 @@ pub(crate) async fn task_ledger_request(
     if window.label() != "main" {
         return Err("任务操作仅允许主窗口调用".into());
     }
+    if matches!(
+        request["op"].as_str(),
+        Some("model-settings" | "save-model-settings")
+    ) {
+        let data = runtime.ledger().data_directory().to_owned();
+        let save = request["op"] == "save-model-settings";
+        let value = request["settings"].clone();
+        let result = tauri::async_runtime::spawn_blocking(move || {
+            use codepet_host::model_gateway::{settings, usage};
+            let settings = if save {
+                settings::save(&data, value)?
+            } else {
+                settings::public(&settings::read(&data)?)
+            };
+            Ok::<_, String>(serde_json::json!({"settings":settings,"usage":usage::summary(&data)?}))
+        })
+        .await
+        .map_err(|e| e.to_string())??;
+        if save {
+            runtime.recall().stop().await;
+            runtime.recall().changed();
+        }
+        return Ok(result);
+    }
+    if request["op"].as_str() == Some("recall-graph") {
+        return runtime.recall().graph().await;
+    }
     if request["op"].as_str() == Some("setup") {
         let mut config = crate::task_mcp_setup::configuration(
-            &app, runtime.ledger().data_directory().to_owned(),
-        ).await?;
-        config.as_object_mut().unwrap().extend(runtime.instructions().await?.as_object().unwrap().clone());
+            &app,
+            runtime.ledger().data_directory().to_owned(),
+        )
+        .await?;
+        config
+            .as_object_mut()
+            .unwrap()
+            .extend(runtime.instructions().await?.as_object().unwrap().clone());
         return Ok(config);
     }
     if request["op"].as_str() == Some("save-instructions") {
-        let revision = request["expectedRevision"].as_u64().ok_or("缺少提示词修订号")?;
-        let text = if request["text"].is_null() { None } else { Some(request["text"].as_str().ok_or("提示词格式无效")?.to_owned()) };
+        let revision = request["expectedRevision"]
+            .as_u64()
+            .ok_or("缺少提示词修订号")?;
+        let text = if request["text"].is_null() {
+            None
+        } else {
+            Some(request["text"].as_str().ok_or("提示词格式无效")?.to_owned())
+        };
         return runtime.save_instructions(revision, text).await;
     }
     let ledger = runtime.ledger();
@@ -38,16 +76,18 @@ pub(crate) async fn task_ledger_request(
                     .collect::<Result<Vec<_>, _>>()?,
             )),
             "get" => ledger.view(&ledger.get(id()?)?),
-            "commit-files" => serde_json::to_value(ledger.commit_changes(
-                id()?, request["runId"].as_str().ok_or("缺少执行 ID")?
-            )?).map_err(|e| e.to_string()),
-            "change-diffs" => ledger.change_diffs(
-                id()?, request["runId"].as_str().ok_or("缺少执行 ID")?
-            ),
+            "commit-files" => serde_json::to_value(
+                ledger.commit_changes(id()?, request["runId"].as_str().ok_or("缺少执行 ID")?)?,
+            )
+            .map_err(|e| e.to_string()),
+            "change-diffs" => {
+                ledger.change_diffs(id()?, request["runId"].as_str().ok_or("缺少执行 ID")?)
+            }
             "file-diff" => ledger.file_diff(
-                id()?, request["runId"].as_str().ok_or("缺少执行 ID")?,
+                id()?,
+                request["runId"].as_str().ok_or("缺少执行 ID")?,
                 request["version"].as_str().ok_or("缺少差异版本")?,
-                request["path"].as_str().ok_or("缺少文件路径")?
+                request["path"].as_str().ok_or("缺少文件路径")?,
             ),
             "create-task" => {
                 let input: CreateTaskInput =

@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CodePet · 原生检索方案对照</title>
+<style>
+  :root{color-scheme:light;font-family:system-ui,-apple-system,sans-serif;color:#263136;background:#f5f7f8;font-size:14px;line-height:1.6}
+  *{box-sizing:border-box}body{margin:0}main{max-width:1480px;margin:auto;padding:28px}
+  h1{font-size:26px;margin:0 0 8px}h2{font-size:18px;margin:0 0 12px}p{margin:8px 0}small,.muted{color:#64737d}
+  section{background:white;border:1px solid #dfe5e8;border-radius:14px;padding:20px;margin:18px 0}
+  .note{background:#fff6e2;border:1px solid #ead5a5;border-radius:8px;padding:10px 14px}
+  .table{overflow-x:auto}table{border-collapse:collapse;width:100%;text-align:left;white-space:nowrap}th,td{padding:10px 12px;border-bottom:1px solid #e4e9ec}th{font-weight:600;color:#526571}
+  .pass{color:#217447}.fail{color:#ad4d24}.toolbar{display:flex;flex-wrap:wrap;gap:14px;align-items:end;margin-bottom:12px}
+  label{display:grid;gap:4px;color:#57666e;font-size:12px;max-width:100%;min-width:0}select,input,button{font:inherit;border:1px solid #b9c8cf;border-radius:7px;background:white;color:#263136;padding:7px 10px;max-width:100%;min-width:0}
+  select{max-width:420px}button{cursor:pointer}button:hover{background:#edf4f8}:focus-visible{outline:3px solid #267eb1;outline-offset:3px}
+  .workspace{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:16px}.canvas{background:#f8fafb;border:1px solid #e0e7eb;border-radius:10px;overflow:hidden}
+  svg{width:100%;height:610px;display:block;touch-action:none}aside{min-width:0;max-height:660px;overflow:auto;padding:4px 8px}
+  pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.6 ui-monospace,monospace}code{overflow-wrap:anywhere}
+  .entity{cursor:pointer}.entity circle{stroke:white;stroke-width:2}.entity:hover circle,.entity:focus-visible circle{stroke:#18252c;stroke-width:3}
+  .edge{stroke:#adc0c9;stroke-width:1.3;opacity:.6;cursor:pointer}.edge:hover,.edge:focus{outline:none;stroke:#267eb1;stroke-width:5;opacity:1}
+  .dim{opacity:.12}.detail{border-bottom:1px solid #e4e9ec;padding:10px 0}.detail button{text-align:left;width:100%;white-space:normal}
+  .counts{display:flex;gap:18px;flex-wrap:wrap;margin:8px 0;color:#546972}.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px}.dot{width:9px;height:9px;border-radius:50%;display:inline-block;margin-right:5px}
+  .query{margin-top:16px;display:grid;grid-template-columns:240px minmax(0,1fr);gap:18px}.query ol{padding-left:20px}.query pre{margin:0}
+  @media(max-width:850px){main{padding:14px}.workspace{grid-template-columns:1fr}aside{max-height:400px}svg{height:470px}.query{grid-template-columns:1fr}select{max-width:100%}section{padding:14px}}
+</style>
+<main>
+  <h1>向量 · 图 · 全文索引</h1>
+  <p class="muted">CodePet 原生方案对照 · 同一批 9 个 TaskRun、11 个文本块、112 个实体、74 条语义关系</p>
+  <p class="note">本页使用各数据库实际读回的图。抽取结果复用 Cognee 原始回执，未重新调用 LLM；比较的是存储、检索与更新。新路线统一加入中文双字分词，不能把命中率差异全归因于数据库。</p>
+  <section><h2>实测对照</h2><div class="table"><table><thead><tr><th>方案</th><th>原生文件 / gzip</th><th>实验库</th><th>向量 Top1</th><th>全文 Top1</th><th>融合 Top1 / Top3</th><th>更新与恢复</th></tr></thead><tbody id="summary"></tbody></table></div>
+    <p><small>7 个正例，仅为冒烟验证。体积为 macOS arm64 所测原生文件，模型权重均外置；SQLite 复用系统 SQLite，Helix 数字未含测试绑定使用的 Node。gzip 是逐文件压缩之和，均非签名安装包体积。</small></p>
+    <p id="cognee" class="muted"></p><p class="fail">负例仍有误召回：所有原生路线的财务查询融合均返回 9 个候选，尚无无关结果拒绝阈值。</p>
+  </section>
+  <section>
+    <h2>实际加工图</h2>
+    <div class="toolbar">
+      <label>数据库<select id="backend"></select></label>
+      <label>来源 Run<select id="run"><option value="">全部 Run</option></select></label>
+      <label>查找实体<input id="search" placeholder="名称或描述" type="search"></label>
+      <button id="reset">重置视图</button><button id="download">下载图 JSON</button>
+    </div>
+    <div id="counts" class="counts" aria-live="polite"></div><div id="legend" class="legend"></div>
+    <div class="workspace"><div class="canvas"><svg id="graph" viewBox="0 0 900 610" aria-label="抽取实体及语义关系图"></svg></div><aside id="details" aria-live="polite"></aside></div>
+    <small>点击节点查看关联关系与来源；点击关系查看证据。按 Run 筛选时只显示可定位到该 Run 的证据边。实体类型沿用实验提示词，关系仍需人工核验。</small>
+  </section>
+  <section><h2>召回与更新回执</h2><label>固定查询<select id="query"></select></label><div id="queryResult" class="query"></div><details><summary>查看更新检查</summary><pre id="checks"></pre></details><p><a href="comparison.json">完整对照 JSON</a> · <a href="documents.json">原始输入文档</a></p></section>
+</main>
+<script type="module">
+const $=id=>document.getElementById(id),ns='http://www.w3.org/2000/svg';
+const report=await fetch('view.json').then(r=>r.json());
+const documents=await fetch('documents.json').then(r=>r.json());
+const names={sqlite:'SQLite + sqlite-vec',ladybug:'LadybugDB',cozo:'CozoDB',helix:'HelixDB'};
+const colors={component:'#4b91ae',technology:'#7b79bc',problem:'#d17b72',solution:'#5e9e83',decision:'#d6a34c',project:'#a57eae',unknown:'#89979f'};
+const docs=new Map(report.documents.map(d=>[d.runId,d]));let current,activeNodes=[],activeEdges=[];
+function el(tag,text,parent,attrs={}){const e=document.createElement(tag);if(text)e.textContent=text;for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);if(parent)parent.append(e);return e;}
+function svgEl(tag,attrs,parent){const e=document.createElementNS(ns,tag);for(const[k,v]of Object.entries(attrs))e.setAttribute(k,v);parent.append(e);return e;}
+function title(run){const d=docs.get(run);return d?`${d.taskTitle} · ${d.title}`:run;}
+const mb=n=>(n/1e6).toFixed(2)+' MB';
+for(const e of report.engines){const tr=el('tr','',$('summary'));for(const value of [names[e.name],`${mb(e.distribution.rawBytes)} / ${mb(e.distribution.gzipBytes)}`,mb(e.storageBytes),`${e.metrics.semantic.hitAt1}/7`,`${e.metrics.lexical.hitAt1}/7`,`${e.metrics.fused.hitAt1}/7 · ${e.metrics.fused.hitAt3}/7`,e.status==='passed'?'通过':'旧词残留；重建后消失'])el('td',value,tr);el('option',names[e.name],$('backend'),{value:e.name});}
+$('backend').value='ladybug';
+for(const d of report.documents)el('option',d.taskTitle+' · '+d.title,$('run'),{value:d.runId});
+for(const [t,c]of Object.entries(colors)){const item=el('span',t,$('legend'));item.prepend(el('i','',null,{class:'dot',style:`background:${c}`}));}
+$('cognee').textContent='Cognee 基线：融合 Top1 6/7，Top3 7/7；Python 核心依赖清单约 1.07 GB，发行包尚未构建。图数据库也使用 Ladybug。';
+function showNode(node){$('details').replaceChildren();el('h2',node.name,$('details'));el('p',node.type,$('details'));el('p',node.description,$('details'));el('small',node.id,$('details'));const related=activeEdges.filter(e=>e.source===node.id||e.target===node.id);el('h3',`关系 · ${related.length}`,$('details'));for(const edge of related){const div=el('div','',$('details'),{class:'detail'});const a=activeNodes.find(n=>n.id===edge.source),b=activeNodes.find(n=>n.id===edge.target);const button=el('button',`${a?.name} → ${edge.relation} → ${b?.name}`,div);button.onclick=()=>showEdge(edge);}const runs=[...new Set(current.graph.mentions.filter(m=>m[1]===node.id).map(m=>m[0]))];el('h3','来源 Run',$('details'));for(const id of runs){const button=el('button',title(id),$('details'));button.onclick=()=>{$('run').value=id;draw();};}}
+function showEdge(edge){$('details').replaceChildren();el('h2',edge.relation,$('details'));el('p',edge.evidence,$('details'));el('small','引用命中不等于事实关系已验证。',$('details'));for(const run of edge.runIds){el('h3',title(run),$('details'));const d=documents.find(d=>d.runId===run);if(d){const details=el('details','',$('details'));el('summary','查看 Run 原始文档',details);el('pre',d.text,details);}}if(!edge.runIds.length)el('p','未匹配逐字引用来源，保留待审阅。',$('details'));}
+function draw(){
+  current=report.engines.find(e=>e.name===$('backend').value);const run=$('run').value;
+  const visible=new Set(current.graph.mentions.filter(m=>!run||m[0]===run).map(m=>m[1]));
+  activeNodes=current.graph.nodes.filter(n=>!run||visible.has(n[0])).map(([id,name,type,description],i)=>({id,name,type,description,x:450+210*Math.cos(i*2.39996),y:305+210*Math.sin(i*2.39996)}));
+  const map=new Map(activeNodes.map(n=>[n.id,n]));
+  activeEdges=current.graph.edges.map(([id,source,target,relation,evidence,run_ids])=>({id,source,target,relation,evidence,runIds:JSON.parse(run_ids)})).filter(e=>map.has(e.source)&&map.has(e.target)&&(!run||e.runIds.includes(run)));
+  for(let step=0;step<140;++step){for(const n of activeNodes){let fx=(450-n.x)*.002,fy=(305-n.y)*.002;for(const other of activeNodes){if(n===other)continue;const dx=n.x-other.x,dy=n.y-other.y,d=dx*dx+dy*dy+20;fx+=dx*60/d;fy+=dy*60/d;}n.fx=fx;n.fy=fy;}for(const e of activeEdges){const a=map.get(e.source),b=map.get(e.target),dx=b.x-a.x,dy=b.y-a.y,d=Math.hypot(dx,dy)||1,f=(d-85)*.006;a.fx+=dx*f/d;a.fy+=dy*f/d;b.fx-=dx*f/d;b.fy-=dy*f/d;}for(const n of activeNodes){n.x=Math.max(35,Math.min(865,n.x+n.fx));n.y=Math.max(35,Math.min(575,n.y+n.fy));}}
+  $('graph').replaceChildren();const search=$('search').value.toLowerCase();
+  for(const e of activeEdges){const a=map.get(e.source),b=map.get(e.target);const line=svgEl('line',{x1:a.x,y1:a.y,x2:b.x,y2:b.y,class:'edge',role:'button',tabindex:0,'aria-label':a.name+' '+e.relation+' '+b.name},$('graph'));line.onclick=()=>showEdge(e);line.onkeydown=event=>{if(event.key==='Enter')showEdge(e);};svgEl('title',{},line).textContent=e.relation;}
+  for(const n of activeNodes){const dim=search&&!`${n.name} ${n.description}`.toLowerCase().includes(search);const g=svgEl('g',{transform:`translate(${n.x},${n.y})`,class:'entity'+(dim?' dim':''),tabindex:0,role:'button','aria-label':n.name},$('graph'));svgEl('circle',{r:8,fill:colors[n.type]||colors.unknown},g);if(activeNodes.length<35||activeEdges.filter(e=>e.source===n.id||e.target===n.id).length>1||search&&!dim){const text=svgEl('text',{x:11,y:4,'font-size':11,fill:'#3d515c'},g);text.textContent=n.name.length>16?n.name.slice(0,16)+'…':n.name;}svgEl('title',{},g).textContent=n.name;g.onclick=()=>showNode(n);g.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();showNode(n);}};}
+  $('counts').textContent=`${names[current.name]} · ${activeNodes.length} 个实体 · ${activeEdges.length} 条证据关系 · 图完整性检查 ${Object.values(current.roundTrip).every(Boolean)?'通过':'未通过'}`;
+  $('details').replaceChildren();el('p','选择节点或关系，查看原始描述与来源证据。',$('details'));const list=el('div','',$('details'));for(const n of activeNodes.filter(n=>!search||`${n.name} ${n.description}`.toLowerCase().includes(search))){const button=el('button',n.name,list,{style:'margin:3px;font-size:12px'});button.onclick=()=>showNode(n);}
+  $('checks').textContent=JSON.stringify({checks:current.update.checks,workaround:current.update.workaround,reopen:current.reopen,roundTrip:current.roundTrip},null,2);renderQuery();
+}
+function renderQuery(){const q=current.queries.find(q=>q.id===$('query').value)||current.queries[0];$('queryResult').replaceChildren();el('p',q.query,$('queryResult'));const div=el('div','',$('queryResult'));for(const lane of ['semantic','lexical','graph','fused']){el('strong',lane,div);const list=el('ol','',div);for(const id of q[lane].slice(0,3))el('li',(q.expectedRunIds.includes(id)?'✓ ':'')+title(id),list);}}
+for(const q of report.engines[0].queries)el('option',q.id+' · '+q.query,$('query'),{value:q.id});
+for(const id of ['backend','run'])$(id).onchange=draw;$('search').oninput=draw;$('query').onchange=renderQuery;
+$('reset').onclick=()=>{$('run').value='';$('search').value='';draw();};
+$('download').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(current.graph,null,2)],{type:'application/json'}));const a=el('a','',null,{href:url,download:current.name+'-graph.json'});a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+draw();
+</script>
+</html>

@@ -12,7 +12,7 @@ Git 工作台回答工作区是否残留改动；任务账本追踪“要解决�
 
 Task 保存目标标题、背景、项目、创建来源/时间和 runs。TaskRun 保存执行标题、bugfix/feature 类型、goal/solution、本次补充说明、四态、验收计划及结果、agentWorkspace、agentConversation 和 timeline。首次创建包含首个执行；更新执行不改变任务背景。已完成任务对 Agent 锁定；只有用户在 App 手动改为开发中时追加新执行，旧执行与验收历史保留，新执行清空通过结果。完整字段与边界见 [领域定义](../30-domains/task-management/task-record-model.md)。
 
-MCP 默认通过 `~/.codepet/bin/` 中的独立 stdio 程序提供，App 安装资源到不可变版本目录并原子更新当前版本/活动数据目录，移动或重命名 App 不影响配置。五工具为 create-task、create-task-run、update-task-run、finish-task-run、find-tasks；stdio 使用 CODEPET_AGENT，兼容的 App 后台 HTTP 在 127.0.0.1:47623/mcp 使用 X-CodePet-Agent。创建者固定，更新者写时间线；权限仍区分 Agent 与人工。初始化和接入面板使用同一份 Rust 提示词配置，默认来源为 instructions.md；用户可编辑保存并恢复默认，安装接入后无需另行复制 AGENTS 约定。
+MCP 默认通过 `~/.codepet/bin/` 中的独立 stdio 程序提供，App 安装资源到不可变版本目录并原子更新当前版本/活动数据目录，移动或重命名 App 不影响配置。五工具为 create-task、create-task-run、update-task-run、finish-task-run、find-task-runs；stdio 使用 CODEPET_AGENT，兼容的 App 后台 HTTP 在 127.0.0.1:47623/mcp 使用 X-CodePet-Agent。创建者固定，更新者写时间线；权限仍区分 Agent 与人工。初始化和接入面板使用同一份 Rust 提示词配置，默认来源为 instructions.md；用户可编辑保存并恢复默认，安装接入后无需另行复制 AGENTS 约定。
 
 原子事务、版本冲突和幂等回执沿用现有 Store。活动数据为 tasks/v4，首次优先从 v3、否则从 v2 原子导入且不修改旧文件。历史未记录具体 Agent 时保留 unknown。初版使用 backend API 29，增加 finish-task-run 后为 API 30；旧内嵌 stdio 入口保留兼容，默认配置使用独立稳定入口。
 

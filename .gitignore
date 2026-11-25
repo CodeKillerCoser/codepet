@@ -31,3 +31,10 @@ artifacts/app-updates-qa/
 artifacts/pet-motion-qa/
 artifacts/pet-plane-stack-qa/
 artifacts/task-ledger-qa/
+artifacts/cognee-task-recall-qa/
+artifacts/task-recall-bundle/
+artifacts/task-recall-sidecar-qa/
+src-tauri/resources/task-recall/*
+!src-tauri/resources/task-recall/.gitkeep
+sidecars/task-recall/.venv/
+sidecars/task-recall/**/__pycache__/

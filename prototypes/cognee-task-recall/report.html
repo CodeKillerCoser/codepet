@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CodePet · Cognee 验证</title>
+<style>
+  :root { color-scheme: light; --bg:#f6f5f1; --paper:#fffefa; --ink:#222f2a; --muted:#69756c; --line:#dfe3da; --green:#22684c; --amber:#966519; --red:#aa4037; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.65 system-ui,-apple-system,"PingFang SC",sans-serif; }
+  main { max-width:1280px; margin:auto; padding:40px 28px 64px; }
+  .eyebrow { color:var(--green); font-size:12px; font-weight:700; letter-spacing:2px; }
+  h1 { font-size:34px; letter-spacing:-1px; margin:8px 0; line-height:1.35; }
+  h2 { font-size:20px; margin:0 0 8px; }
+  h3 { font-size:14px; margin:0 0 10px; }
+  p { margin:7px 0; }
+  a { color:var(--green); text-underline-offset:3px; }
+  .muted,small { color:var(--muted); }
+  .intro { max-width:850px; color:var(--muted); }
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:26px 0; }
+  .stat,.panel { background:var(--paper); border:1px solid var(--line); border-radius:12px; }
+  .stat { padding:18px 20px; }
+  .stat strong { display:block; font-size:30px; font-weight:600; line-height:1.2; margin-bottom:6px; }
+  section.panel { padding:24px; margin:18px 0; }
+  .section-head { display:flex; justify-content:space-between; align-items:start; gap:18px; margin-bottom:16px; }
+  .pill { display:inline-block; border:1px solid var(--line); background:#f0f3ed; border-radius:99px; padding:3px 10px; color:var(--muted); font-size:12px; }
+  .pass { color:var(--green); background:#eaf4eb; }
+  .warn { color:var(--amber); background:#fbf1db; }
+  .fail { color:var(--red); background:#fcebe6; }
+  .notice { border-left:3px solid #c79a4c; background:#fcf7e9; padding:12px 16px; margin:16px 0; }
+  table { width:100%; border-collapse:collapse; text-align:left; }
+  th { font-size:12px; color:var(--muted); font-weight:500; }
+  th,td { border-bottom:1px solid var(--line); padding:10px 12px 10px 0; vertical-align:top; }
+  tr:last-child td { border-bottom:0; }
+  .scroll { overflow-x:auto; }
+  button,select { font:inherit; border:1px solid var(--line); border-radius:7px; background:var(--paper); color:var(--ink); padding:7px 10px; }
+  button { cursor:pointer; text-align:left; }
+  button:hover { background:#eef3eb; }
+  button:focus-visible,select:focus-visible,a:focus-visible { outline:2px solid var(--green); outline-offset:3px; }
+  select { max-width:100%; }
+  #graph-node { width:240px; }
+  .queries { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:16px; }
+  .queries button[aria-pressed="true"] { background:var(--green); color:white; border-color:var(--green); }
+  .query-text { font-size:17px; max-width:900px; margin-bottom:10px; }
+  .lanes { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-top:18px; }
+  .lane { background:#f7f8f3; border:1px solid var(--line); border-radius:8px; padding:14px; min-width:0; }
+  .match { margin:9px 0; padding-top:9px; border-top:1px solid var(--line); }
+  .match small { display:block; font-size:11px; overflow-wrap:anywhere; }
+  .expected { border-left:3px solid var(--green); padding-left:8px; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+  .checks { list-style:none; padding:0; margin:10px 0; }
+  .checks li { padding:7px 0; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; gap:14px; }
+  .checks li:last-child { border:0; }
+  pre { white-space:pre-wrap; overflow-wrap:anywhere; padding:15px; background:#f1f3ed; border-radius:8px; font:12px/1.7 ui-monospace,SFMono-Regular,monospace; max-height:500px; overflow:auto; }
+  details { margin-top:12px; }
+  summary { cursor:pointer; color:var(--green); }
+  .graph-shell { display:grid; grid-template-columns:minmax(0,1fr) 280px; gap:16px; }
+  #graph { width:100%; height:480px; border:1px solid var(--line); border-radius:9px; background:#f8faf6; touch-action:none; }
+  .node-detail { background:#f1f4ed; border-radius:9px; padding:15px; min-width:0; overflow-wrap:anywhere; }
+  .node-detail pre { padding:0; font-size:11px; max-height:350px; }
+  .legend { display:flex; gap:15px; flex-wrap:wrap; font-size:12px; color:var(--muted); margin-top:12px; }
+  .legend i { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:5px; }
+  .doc-list { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .doc-list button { width:100%; padding:12px; }
+  .doc-list small { display:block; font-size:11px; }
+  footer { font-size:12px; color:var(--muted); margin-top:25px; overflow-wrap:anywhere; }
+  @media(max-width:850px) { .lanes,.stats { grid-template-columns:1fr 1fr; } .graph-shell { grid-template-columns:1fr; } .two { grid-template-columns:1fr; } }
+  @media(max-width:520px) { main { padding:22px 14px; } h1 { font-size:27px; } section.panel { padding:16px; } .lanes,.doc-list { grid-template-columns:1fr; } .section-head { flex-direction:column; } }
+</style>
+<main>
+  <header>
+    <div class="eyebrow">CODEPET / LOCAL MEMORY LAB</div>
+    <h1>让一次工作留下可召回的上下文</h1>
+    <p class="intro">Cognee 最小验证：以真实 TaskRun 快照检查实体抽取、文档替换、多路召回和图浏览。原始账本只读，控制性改动只发生在实验副本。</p>
+    <p id="runtime" class="muted"></p>
+  </header>
+  <div class="stats" id="stats"></div>
+  <div id="status"></div>
+  <section class="panel" id="comparison-panel" hidden><h2>实验配置对照</h2><p class="muted">使用同一批业务快照。旧方案到 LLM 方案同时更换抽取器、embedding、提示词和分块；同一套 LLM 配置的两个输入版本用于观察进度历史的影响。</p><div class="scroll"><table id="comparison"></table></div></section>
+  <section class="panel" id="extraction-panel" hidden><h2>LLM 实际抽取与原文证据</h2><p class="muted">证据逐字匹配只能发现引用错误，不能证明关系推断正确。模型自述的实施或验证不等于人工验收。知识文档由首次抽取的实体和关系直接排版，没有再次调用模型；原始回执另含受控更新。</p><div id="extraction-audit"></div><div class="doc-list" id="processed-docs"></div><pre id="processed-preview" hidden></pre><details><summary>查看 LLM 原始抽取和输入</summary><pre id="llm-extractions"></pre></details></section>
+  <section class="panel">
+    <div class="section-head"><div><h2>01 / 召回对比</h2><p class="muted">预先按源任务标注的中文问题；绿色标记为期望 Run。元数据仅作加分，workspace 不作过滤。</p></div><a href="report.json">原始结果 JSON ↗</a></div>
+    <div class="scroll"><table id="metrics"></table></div>
+    <div class="notice">这是小样本 smoke，不代表生产准确率。无关问题同样展示候选；本验证没有训练“应当拒绝匹配”的阈值。</div>
+    <div class="queries" id="queries"></div>
+    <div id="query-result"></div>
+  </section>
+  <section class="panel">
+    <div class="section-head"><div><h2>02 / 文档更新</h2><p class="muted">在真实侧栏 Run 的副本中加入明确标记的控制段，替换、重复更新，再恢复原文。</p></div><span class="pill warn">控制实验 · 非生产事实</span></div>
+    <div id="update"></div><div id="quality-note"></div>
+  </section>
+  <section class="panel">
+    <div class="section-head"><div><h2>03 / 实际加工出的图</h2><p class="muted">可查看实体间语义关系、Run 来源投影或完整原始图。语义图可按原始抽取回执的 Run 来源筛选；拖动节点，或查看节点及相邻关系。</p><select id="graph-view" aria-label="图展示层级"><option value="semantic">实体间语义关系</option><option value="runs">Run 与实体 · 来源投影</option><option value="raw">Cognee 原始节点与关系</option></select> <select id="graph-run" aria-label="按 Run 筛选语义关系"></select> <select id="graph-node" aria-label="选择图节点"></select><small id="graph-count"></small></div><a id="native-graph" href="cognee-graph.html">打开 Cognee 原生图 ↗</a></div>
+    <div class="graph-shell"><canvas id="graph" aria-label="Cognee 实体和文档关系图"></canvas><aside class="node-detail"><h3 id="node-title">点击一个节点</h3><pre id="node-data">查看名称、类型与来源属性。</pre></aside></div>
+    <div class="legend"><span><i style="background:#267657"></i>抽取实体 / 概念</span><span><i style="background:#ba8942"></i>Run / 文档 / 文本块</span><span><i style="background:#7c8caa"></i>类型 / 其他</span><a href="graph-baseline.json">完整图数据 ↗</a></div>
+    <div class="notice">Run 节点由 CodePet 的真实 ID 提供；来源连线表示“这轮工作提到了实体”，不代表模型抽出了修复或依赖关系。原始图中的类型、文本块等底层结构可单独查看。</div>
+  </section>
+  <section class="panel"><h2>04 / 源文档与证据</h2><p class="muted" id="input-description">每个 Run 一份文档，保留目标、方案和最近进展；历史活动次数留在元数据中，不重复灌入检索文本。</p><div class="doc-list" id="docs"></div><pre id="doc-preview" hidden></pre></section>
+  <footer id="footer"></footer>
+</main>
+<script type="application/json" id="probe-data">__PROBE_DATA__</script>
+<script>
+const {report:r,graph:g,assessment}=JSON.parse(document.getElementById('probe-data').textContent);
+const $=id=>document.getElementById(id), esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const docs=new Map(r.documents.map(d=>[d.runId,d]));
+const laneNames={semantic:'向量文本召回',lexical:'BM25 关键词召回',graph:'图上下文召回',fused:'CodePet 融合'};
+const pct=v=>v==null?'—':`${Math.round(v*100)}%`;
+$('runtime').textContent=`Cognee ${r.runtime.cognee} · ${r.runtime.extractor} · ${r.runtime.embeddingModel||'本地多语言 embedding'} · Ladybug + LanceDB`;
+const semanticEdges=r.graph?.edges!=null?r.graph.edges-(r.graph.edgeClasses?.structural||0):null;
+const stats=[['真实 Run',r.documents.length],['抽取实体',r.graph?.types?.Entity??'—'],['非结构关系',semanticEdges??'—'],['正例 Hit@3',pct(r.metrics?.fused?.hitAt3)]];
+$('stats').innerHTML=stats.map(([label,value])=>`<div class="stat"><strong>${esc(value)}</strong><span class="muted">${label}</span></div>`).join('');
+$('status').innerHTML=`<span class="pill ${r.status==='completed'?'pass':'warn'}">${esc(r.status)}</span> <span class="pill ${r.checks.productionReadOnlyGuard&&r.checks.noProductionWriteAttempts?'pass':'warn'}">生产账本只读保护</span>${r.sourceComparison&&!r.sourceComparison.unchanged?'<span class="pill warn">源文件存在并发更新，实验使用固定快照</span>':''}${r.error?`<pre>${esc(r.error)}</pre>`:''}`;
+if(r.comparison){
+ const rows=[];let parent=r.comparison;while(parent){rows.unshift(parent);parent=parent.previous}
+ rows.push(r);$('comparison-panel').hidden=false;
+ $('comparison').innerHTML='<tr><th>抽取模型</th><th>输入</th><th>实体</th><th>语义关系</th><th>融合 Hit@1 / Hit@3</th></tr>'+rows.map(item=>`<tr><td>${esc(item.runtime?.extractor||'上一轮 GLiNER demo')}</td><td>${esc(item.runtime?.inputMode||item.inputMode||'latest')}</td><td>${item.graph?.types?.Entity??'—'}</td><td>${item.graph?.edgeClasses?.semantic||0}</td><td>${pct(item.metrics?.fused?.hitAt1)} / ${pct(item.metrics?.fused?.hitAt3)}</td></tr>`).join('');
+}
+if(r.runtime.inputMode==='history')$('input-description').textContent='每个 Run 一份固定快照，保留去除工作区观测后的有序进度历史，明确标注当前状态、计划和预期验收条件。';
+if(assessment?.llm){
+ $('extraction-panel').hidden=false;const audit=assessment.llm;
+ const edgeCount=audit.extractions.reduce((sum,item)=>sum+item.edges.length,0);
+ $('extraction-audit').innerHTML=`<p>图抽取回执 ${audit.extractions.length} 份 · 输出关系 ${edgeCount} 条 · 缺少或非逐字证据 ${audit.missingOrNonliteralEvidence.length} 条 · 未遵守数量/关系约束 ${(audit.promptPolicyViolations||[]).length} 份 · 模型接口错误 ${audit.errors.length} 次</p><p class="muted">本次新调用 LLM ${audit.freshLLMCalls??'—'} 次，复用完全相同请求的历史回执 ${audit.reusedLLMCalls??'—'} 次；复用回执的 token 用量来自原调用，不能计作本次推理用量。</p><a href="llm-assessment.json">完整抽取审计 JSON ↗</a>`;
+ $('llm-extractions').textContent=JSON.stringify(audit.extractions,null,2);
+ const processed=assessment.knowledgeDocuments||[];
+ $('processed-docs').innerHTML=processed.map((item,i)=>`<button data-index="${i}">${esc(docs.get(item.runId)?.taskTitle||item.runId)}<small>查看 LLM 加工文档与引用</small></button>`).join('');
+ $('processed-docs').onclick=e=>{const button=e.target.closest('button');if(!button)return;$('processed-preview').hidden=false;$('processed-preview').textContent=processed[Number(button.dataset.index)].text};
+}
+$('metrics').innerHTML='<tr><th>检索路径</th><th>Hit@1</th><th>Hit@3</th><th>MRR</th><th>标注正例</th></tr>'+Object.entries(r.metrics||{}).map(([lane,m])=>`<tr><td>${laneNames[lane]}</td><td>${pct(m.hitAt1)}</td><td>${pct(m.hitAt3)}</td><td>${m.mrr.toFixed(3)}</td><td>${m.cases}</td></tr>`).join('');
+const cases=r.queries||[];
+$('queries').innerHTML=cases.map((q,i)=>`<button data-index="${i}" aria-pressed="false">${esc(q.id)}</button>`).join('');
+function showQuery(index){
+  const q=cases[index]; if(!q)return;
+  [...$('queries').children].forEach((b,i)=>b.setAttribute('aria-pressed',String(i===index)));
+  const cards=Object.keys(laneNames).map(lane=>{
+    const route=q.routes[lane], ids=lane==='fused'?q.fused.map(x=>x.runId):route.runIds;
+    const content=ids.slice(0,3).map((id,i)=>{const d=docs.get(id);return `<div class="match ${q.expectedRunIds.includes(id)?'expected':''}">${i+1}. ${esc(d?.taskTitle||id)}<small>${esc(d?.title)} · ${esc(d?.workspace?.split('/').slice(-2).join('/'))}</small></div>`}).join('');
+    return `<div class="lane"><h3>${laneNames[lane]}</h3>${route?.error?`<small>${esc(route.error)}</small>`:content||'<small>无可映射 Run 候选</small>'}${route?`<small>${route.seconds.toFixed(2)}s</small>`:''}</div>`;
+  }).join('');
+  $('query-result').innerHTML=`<div class="query-text">${esc(q.query)}</div><small>期望：${q.expectedRunIds.length?q.expectedRunIds.map(id=>esc(docs.get(id)?.taskTitle||id)).join(' / '):'无相关 Run；用于观察误召回'}</small><div class="lanes">${cards}</div><details><summary>查看本问题的完整检索证据</summary><pre>${esc(JSON.stringify(q,null,2))}</pre></details>`;
+}
+$('queries').onclick=e=>{const b=e.target.closest('button');if(b)showQuery(Number(b.dataset.index))};
+showQuery(0);
+const labels={sameDataId:'更新后 dataId 稳定',latestTextStored:'当前存储内容等于新版文档',oldMarkerRemovedFromStoredText:'旧控制标记已从存储文本移除',newMarkerStored:'新控制标记已写入',noopNodeIdsUnchanged:'重复相同更新不新增节点',oldMarkerRemovedFromGraphContent:'旧控制标记已从图内容移除',noopReportedUnchanged:'重复更新返回 unchanged',originalCopyRestored:'实验结束后已恢复原始副本',removedChunkVectorsDeleted:'替换掉的文本块向量已删除',retainedChunkVectorsPresent:'保留的文本块向量仍存在'};
+const u=r.update;
+$('update').innerHTML=!u?'<p class="muted">本次未运行更新实验。</p>':u.error?`<pre>${esc(u.error)}</pre>`:`<div class="two"><div><ul class="checks">${Object.entries(u.checks||{}).map(([key,ok])=>`<li><span>${labels[key]||esc(key)}</span><span class="pill ${ok?'pass':'fail'}">${ok?'通过':'未通过'}</span></li>`).join('')}</ul></div><div><h3>图变化</h3><pre>${esc(JSON.stringify(u.graphDelta,null,2))}</pre><small>新增/删除节点数只说明结构变化，不能单独证明实体语义正确。</small></div></div><details><summary>查看更新 API 原始回执</summary><pre>${esc(JSON.stringify(u,null,2))}</pre></details>`;
+if(assessment?.unsupportedControlRelations?.length)$('quality-note').innerHTML=`<div class="notice"><strong>抽取质量观察：</strong>控制片段只声明 CodePet 使用两个库，抽取结果包含其他关系，需要回看证据。更新链路通过，并不代表抽取事实准确。<details><summary>查看不受控制文本支持的关系</summary><pre>${esc(JSON.stringify(assessment.unsupportedControlRelations,null,2))}</pre></details></div>`;
+if(assessment?.updateRecheck){const check=assessment.updateRecheck;$('quality-note').innerHTML+=`<div class="notice"><strong>更新样本更正：</strong>原测试的全局数值替换误改了副本文档中的日期，原报告保留。现已限定替换范围并独立复核，状态：${esc(check.status)}。生产账本未写入。<p><a href="update-fixture-recheck/report.json">更正测试回执 ↗</a> · <a href="update-fixture-recheck/update-input-before.md">修正前完整输入</a> · <a href="update-fixture-recheck/update-input-after.md">修正后完整输入</a></p></div>`}
+$('docs').innerHTML=r.documents.map((d,i)=>`<button data-index="${i}">${esc(d.taskTitle)}<small>${esc(d.title)} · 历史活动 ${d.activityCount} 条 · ${esc(d.status)}</small></button>`).join('');
+$('docs').onclick=e=>{const b=e.target.closest('button');if(!b)return;const d=r.documents[Number(b.dataset.index)];$('doc-preview').hidden=false;$('doc-preview').textContent=d.text};
+if(!r.frameworkGraphHtml)$('native-graph').hidden=true;
+$('footer').textContent=`本地证据目录：${r.output} · 创建于 ${r.createdAt} · 总耗时 ${r.seconds.toFixed(1)}s。模型输出是抽取结果，不代表人工验收。`;
+// The preview draws real exported graph data; layout positions are presentation only.
+const canvas=$('graph'),ctx=canvas.getContext('2d');
+let nodes=[],links=[];
+let w=800,h=480,selected=null,drag=null;
+const edgeRuns=new Map();
+for(const extraction of assessment?.llm?.extractions||[]){
+ let runIds=[...extraction.source.matchAll(/Run ID:\s*([0-9a-f-]{36})/ig)].map(match=>match[1]).filter(id=>docs.has(id));
+ if(!runIds.length){const normalized=extraction.source.replace(/\s+/g,' ').trim();runIds=r.documents.filter(doc=>normalized&&doc.text.replace(/\s+/g,' ').includes(normalized)).map(doc=>doc.runId)}
+ for(const edge of extraction.edges){const key=edge.description;if(!edgeRuns.has(key))edgeRuns.set(key,new Set());for(const id of runIds)edgeRuns.get(key).add(id)}
+}
+$('graph-run').innerHTML='<option value="">全部 Run</option>'+r.documents.map(doc=>`<option value="${esc(doc.runId)}">${esc(doc.taskTitle)}</option>`).join('');
+if(edgeRuns.size)$('graph-run').value=r.documents[0].runId;
+function projectedGraph(){
+ const all=new Map((g.nodes||[]).map(n=>[String(n.id),n])), edges=[],seen=new Set();
+ for(const e of g.links||[]){
+  const chunk=all.get(String(e.source)),entity=all.get(String(e.target));
+  if(e.relation!=='contains'||chunk?.type!=='DocumentChunk'||entity?.type!=='Entity')continue;
+  let meta=chunk.external_metadata;try{if(typeof meta==='string')meta=JSON.parse(meta)}catch{continue}
+  if(!docs.has(meta?.runId))continue;
+  const key=meta.runId+':'+entity.id;if(seen.has(key))continue;seen.add(key);
+  edges.push({source:'run:'+meta.runId,target:entity.id,relation:'source_mentions',derivedFromChunk:chunk.id});
+ }
+ return {nodes:[...r.documents.map(d=>({id:'run:'+d.runId,name:d.taskTitle,type:'TaskRun',runId:d.runId,goal:d.goal,workspace:d.workspace,origin:'CodePet business record, not model extraction'})),...(g.nodes||[]).filter(n=>n.type==='Entity')],links:edges};
+}
+function buildGraph(mode){
+ let data;
+ if(mode==='raw')data=g;
+ else if(mode==='runs')data=projectedGraph();
+ else {const runId=$('graph-run').value,semantic=(g.links||[]).filter(e=>e.edge_class==='semantic'&&(!runId||edgeRuns.get(e.edge_info?.edge_text)?.has(runId))),ids=new Set(semantic.flatMap(e=>[String(e.source),String(e.target)]));data={nodes:(g.nodes||[]).filter(n=>ids.has(String(n.id))),links:semantic}}
+ nodes=(data.nodes||[]).map((n,i)=>({...n,id:String(n.id),x:.5+.33*Math.cos(i*2.399),y:.5+.33*Math.sin(i*2.399),vx:0,vy:0}));
+ const index=new Map(nodes.map(n=>[n.id,n]));
+ links=(data.links||[]).map(e=>({...e,a:index.get(String(e.source)),b:index.get(String(e.target))})).filter(e=>e.a&&e.b);
+ $('graph-run').disabled=mode!=='semantic';$('graph-count').textContent=` ${nodes.length} 节点 / ${links.length} 关系`;
+ $('node-title').textContent='点击一个节点';$('node-data').textContent='查看名称、类型与来源属性。';
+ $('graph-node').innerHTML='<option value="">选择一个节点…</option>'+nodes.map(n=>`<option value="${esc(n.id)}">${esc(n.type)} · ${esc(n.name||n.id).slice(0,45)}</option>`).join('');
+ selected=null;for(let i=0;i<180&&nodes.length<600;i++)tick();
+ if(nodes.length){const xs=nodes.map(n=>n.x),ys=nodes.map(n=>n.y),minX=Math.min(...xs),minY=Math.min(...ys),dx=Math.max(...xs)-minX||1,dy=Math.max(...ys)-minY||1;for(const n of nodes){n.x=.04+.74*(n.x-minX)/dx;n.y=.06+.86*(n.y-minY)/dy}}
+ draw();
+}
+function color(n){const t=String(n.type||'').toLowerCase();return /taskrun|document|chunk|summary/.test(t)?'#ba8942':/entitytype|nodeset|timestamp/.test(t)?'#7c8caa':'#267657'}
+function draw(){
+ ctx.clearRect(0,0,w,h);ctx.strokeStyle='#d3ddcf';ctx.lineWidth=.7;
+ for(const e of links){const active=e.a===selected||e.b===selected;ctx.strokeStyle=active?'#6b9a7f':'#d3ddcf';ctx.beginPath();ctx.moveTo(e.a.x*w,e.a.y*h);ctx.lineTo(e.b.x*w,e.b.y*h);ctx.stroke();if(active){ctx.fillStyle='#22684c';ctx.font='10px system-ui';ctx.fillText(e.relation||'',(e.a.x+e.b.x)*w/2,(e.a.y+e.b.y)*h/2)}}
+ for(const n of nodes){const x=n.x*w,y=n.y*h;ctx.fillStyle=color(n);ctx.beginPath();ctx.arc(x,y,n===selected?7:4,0,Math.PI*2);ctx.fill();
+  if(nodes.length<90||n.type==='Entity'||n===selected){ctx.fillStyle='#425447';ctx.font='10px system-ui';ctx.fillText(String(n.name||n.label||n.type||n.id).slice(0,18),x+7,y+3)}}
+ if(!nodes.length){ctx.fillStyle='#69756c';ctx.font='14px system-ui';ctx.fillText('尚无可显示的图节点；请查看原始运行错误。',24,45)}
+}
+function resize(){w=canvas.clientWidth;h=canvas.clientHeight;const dpr=devicePixelRatio||1;canvas.width=w*dpr;canvas.height=h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);draw()}
+function tick(){
+ for(const n of nodes){n.vx+=(.5-n.x)*.0009;n.vy+=(.5-n.y)*.0009}
+ for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){const a=nodes[i],b=nodes[j],dx=a.x-b.x,dy=a.y-b.y,d=Math.max(dx*dx+dy*dy,.0002),f=.000001/d;a.vx+=dx*f;a.vy+=dy*f;b.vx-=dx*f;b.vy-=dy*f}
+ for(const e of links){const dx=e.b.x-e.a.x,dy=e.b.y-e.a.y,d=Math.sqrt(dx*dx+dy*dy)||.001,f=(d-.10)*.006;e.a.vx+=dx*f;e.a.vy+=dy*f;e.b.vx-=dx*f;e.b.vy-=dy*f}
+ for(const n of nodes){if(n===drag)continue;n.vx*=.72;n.vy*=.72;n.x+=n.vx;n.y+=n.vy}
+ draw();
+}
+const initialGraph=semanticEdges>0?'semantic':'runs';$('graph-view').value=initialGraph;buildGraph(initialGraph);$('graph-view').onchange=e=>buildGraph(e.target.value);
+$('graph-run').onchange=()=>buildGraph($('graph-view').value);
+function near(e){const r=canvas.getBoundingClientRect(),x=(e.clientX-r.left)/w,y=(e.clientY-r.top)/h;return nodes.find(n=>Math.hypot((n.x-x)*w,(n.y-y)*h)<12)}
+function inspectNode(node){if(!node)return;selected=node;$('graph-node').value=node.id;$('node-title').textContent=node.name||node.label||node.type||node.id;const {x,y,vx,vy,a,b,...data}=node;data.adjacentRelations=links.filter(e=>e.a.id===node.id||e.b.id===node.id).map(({a,b,...edge})=>({...edge,sourceName:a.name||a.id,targetName:b.name||b.id}));$('node-data').textContent=JSON.stringify(data,null,2);draw()}
+$('graph-node').onchange=e=>inspectNode(nodes.find(n=>n.id===e.target.value));
+canvas.onpointerdown=e=>{drag=near(e);if(drag){canvas.setPointerCapture(e.pointerId);inspectNode(drag)}};
+canvas.onpointermove=e=>{if(!drag)return;const r=canvas.getBoundingClientRect();drag.x=(e.clientX-r.left)/w;drag.y=(e.clientY-r.top)/h;draw()};
+canvas.onpointerup=()=>{drag=null};canvas.onpointercancel=()=>{drag=null};new ResizeObserver(resize).observe(canvas);
+</script>
+</html>

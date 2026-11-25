@@ -1,15 +1,17 @@
 [package]
 name = "codepet-task-mcp"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 publish = false
 
 [dependencies]
+codepet-model-gateway = { path = "../codepet-model-gateway" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 codepet-paths = { path = "../codepet-paths" }
 codepet-task-lineage = { path = "../codepet-task-lineage" }
 rmcp = { version = "3", default-features = false, features = ["server", "macros", "schemars", "transport-io", "transport-streamable-http-server"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "signal", "process", "sync", "time", "io-util"] }
 tokio-util = "0.7"
 axum = "0.7"
 fs2 = "0.4"
@@ -17,8 +19,9 @@ uuid = { version = "1", features = ["v4"] }
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
 tempfile = "3"
+tar = "0.4"
+flate2 = "1"
 
 [dev-dependencies]
 rmcp = { version = "3", default-features = false, features = ["client", "transport-streamable-http-client-reqwest"] }
 reqwest-mcp = { package = "reqwest", version = "0.13", default-features = false }
-reqwest = { version = "0.12", default-features = false, features = ["json"] }

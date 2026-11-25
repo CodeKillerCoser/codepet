@@ -1,0 +1,9 @@
+{
+  "name": "@codepet/cognee-graph-view",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./src/index.mjs", "./assemble": "./src/assemble.mjs" },
+  "files": ["src", "frame.html", "assets", "licenses", "provenance.json"],
+  "scripts": { "test": "node --test test/*.test.mjs" }
+}

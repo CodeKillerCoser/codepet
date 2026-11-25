@@ -23,6 +23,20 @@ HTTP 保留在 `http://127.0.0.1:47623/mcp`，现有客户端仍可使用 App �
 
 HTTP 服务由 App Rust 后台托管，固定回环端口；关闭窗口而 App 仍运行时保持，退出时取消并释放。端口占用会报告失败，不跳到其他端口，也不生成假 HTTP 配置；不阻止独立 stdio 接入。Bearer 凭据位于当前 data/tasks/mcp-http.token，Unix 权限 0600，重启稳定、不写日志。前端不代理 MCP。
 
+## Run 查询协议（MCP 0.5）
+
+查询工具由 `find-tasks` 改为 `find-task-runs`，不同时暴露旧名。需更新后重连客户端刷新工具清单。列表字段为 `runs`；每项有 `taskId/taskTitle/runId/title/kind/goal/status/isCurrentRun/revision`，total 与 truncated 按执行计数。历史执行自己的方案或活动命中时，返回该历史 Run，不返回主题的最新执行。workspace 是软优先级，不能隔离其他工作区。
+
+`runId` 可单独读取详情；同时提供 taskId 时校验归属。taskId 单独使用仍读取当前 Run。详情返回 `taskTitle/taskDescription/taskCreatedBy` 作为主题上下文，`runId` 与 `run` 为选中执行；不再用顶层 title/description 混淆 Task 与 Run。`history` 只在详情中附加最多 10 个执行摘要。列表最多 20 个 Run，文件/验证证据的既有限制继续保留。
+
+当前这一层仍是 Rust 关键词查询；Cognee sidecar 与语义多路召回单独接入，不能因工具更名宣称已经具备 embedding 或图检索。
+
+2026-11-25 本轮从旧工作树更新到 `origin/main` 的 `48614edd` 后实施，工作分支为 `codex/cognee-task-run-recall`，保留此前 Cognee 实验与未提交的 ignore 规则。MCP crate 升为 0.5.0，查询实现拆到 `tasks/find.rs`。验证覆盖历史命中不替换成最新执行、主题展开多个 Run、独立 runId、归属不匹配拒绝、workspace 软排序及按 Run 截断；详情继续保留文件、提交与验证摘要上限，列表 goal 限 400 字。
+
+本轮通过：`cargo test --manifest-path crates/Cargo.toml -p codepet-task-lineage -p codepet-task-mcp -- --test-threads=1`（88 项）、独立 stdio/HTTP 黑盒、`npm run check:source-size` 和 `git diff --check`。并行运行测试时曾遇到既有 HTTP 测试临时端口争用，串行完整复跑通过。Tauri 使用既有检查配置 `TAURI_CONFIG='{"app":{"macOSPrivateApi":false},"bundle":{"resources":[]}}' cargo check --manifest-path src-tauri/Cargo.toml --lib` 通过；直接 cargo check 缺 Tauri CLI 配置会触发现有 macOS private API 检查。未重新安装用户目录的独立入口，已连接客户端仍使用旧二进制，需构建安装新版并重连后生效。
+
+开发登记的 HTTP 服务当时未运行，现有“Task MCP 与任务管理”主题也已关闭。本轮没有写入或绕过关闭锁创建替代任务，未把测试样例当作开发登记。
+
 ## 五个工具
 
 | 工具 | 输入与职责 |
@@ -31,7 +45,7 @@ HTTP 服务由 App Rust 后台托管，固定回环端口；关闭窗口而 App 
 | create-task-run | taskId、expectedRevision、title、kind、goal、solution，按需携带补充说明/工作区/清单/对话；只为已发布或已结束目标开启新处理 |
 | update-task-run | taskId、runId、expectedRevision，以及变化的摘要、status、validationPlan、verification、明确关联提交或 delivery |
 | finish-task-run | taskId、runId、expectedRevision、conclusion、非空 agentConversation、changedFiles（无变更显式 []）、verification；原子结束开发并按必验本地结果进入待验收或保持进行中，不确认人工通过、不关闭 |
-| find-tasks | 按项目/关键词搜索简短列表；taskId 读当前执行，runId 选择历史，history 显式获取历史摘要 |
+| find-task-runs | 搜索具体执行并返回 runs；workspace 仅提升排序；runId 可独立读取历史执行，taskId 单独使用时读当前执行，history 显式获取所属主题的执行历史 |
 
 所有 MCP 写入都必须携带非空 agentConversation，对话 ID 或 codex://threads/<id> 均可；人工入口可空。每项验收必须同时提供 result 与非空 evidence，缺任一项整次不落库。没有 update-task MCP 工具；任务基本信息可在 App 单独修改。kind 在 TaskRun 上，只有 bugfix/feature。状态为 in_progress、ready_for_delivery、published、closed，Agent 不能关闭或记录人工验收。首次 published 要同时提供实际 delivery；提交不证明发布。
 
@@ -67,7 +81,7 @@ agentConversation 输入是实际对话 ID 的数组，来源从传输上下文�
 
 首次读取优先原子导入 v3，没有 v3 时导入 v2，源文件保持原样。v3 的任务类型继承到执行；原自由文本保存在补充说明，不能猜测拆成目标和方案。旧任务/执行/检查项 ID 和证据保留，旧 objective 合入说明，bug/investigation 标记变为 bugfix。旧 Agent 没有具体名称时显示历史 Agent；缺失文件清单的旧观测不伪装成当前扫描，之后更新当前执行重新读取。不要让旧 App/MCP 进程在迁移后继续写旧账本，升级后重启并替换配置。
 
-expectedRevision 是整个 Task 的聚合版本。冲突保留草稿，用 find-tasks 读取后合并，不自动覆盖人工修改。请求失败用相同参数/operationId 重试；不同参数不能复用显式键。重试先查回执，因此工作区被删除后仍能返回已提交结果。
+expectedRevision 是整个 Task 的聚合版本。冲突保留草稿，用 find-task-runs 读取后合并，不自动覆盖人工修改。请求失败用相同参数/operationId 重试；不同参数不能复用显式键。重试先查回执，因此工作区被删除后仍能返回已提交结果。
 
 Git 状态属于共享工作区，上游只比较本地引用；不 fetch。relatedCommits 只接受可核实的 SHA。记录实际被测目标、环境、计划版本、执行者及证据，Agent 自测不能解锁人工通过；不同版本的结果不混用。结束执行仍可注明原因而不声称验收通过。
 
@@ -150,3 +164,7 @@ finish-task-run 的 changedFiles 必须显式传入；省略拒绝，空数组�
 
 
 原生只读复查还需打开真实的短方案与活动：字符数未到阈值，400px侧栏也可能已经超过三行。ExpandableText 统一按 scrollHeight/实际行高和引用宽度计算入口，ResizeObserver 随尺寸变化重测；wrapped 样例使用少于180字的多行内容覆盖目标、方案、背景及活动。验收折叠行使用4px上下间距，字段仍为两列。新增组件后检查字段实际间距，避免外层 white-space:pre-wrap 将组件模板换行渲染成空白行。实际安装版截图与复查报告位于忽略目录 artifacts/task-ledger-qa/actual-audit/。
+
+## 语义、图与全文召回
+
+`find-task-runs` 的 query 可使用关键词或一段工作描述。Rust 自动构建 Run 文档并管理 Cognee sidecar；`finish-task-run` 不等待模型加工。模型配置由主窗口“设置 → 模型配置”管理，不增加 Agent 工具参数。实现、真实模型回执及分发包使用方式见 [TaskRun recall sidecar](task-run-recall-sidecar.md)。
