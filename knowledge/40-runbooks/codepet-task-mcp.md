@@ -2,7 +2,7 @@
 
 ## 入口与升级
 
-2026-11-25 默认接入改为独立 stdio 程序。当前任务模型要求 backend API 30；默认接入的生成与安装还需包含本次改造的新版 App，仅更新前端不能安装程序。Codex工作台 → 任务与验收 → 更多 → 接入 Agent。悬停图标查看Codex、Claude Code、Cursor、OpenCode或Antigravity名称，点击复制完整安装请求（配置＋当前编辑的提示词）。交给对应Agent执行安装并补充其持久化全局规则，保留其他MCP及已有规则；“扩展提示词”直接展示可编辑输入框，确认后保存，恢复默认保留；不显示重复标题、折叠层和按钮上方分割线。草稿无需先保存即可复制。安装请求要求校验连接，必要时提醒重连或新开对话。OpenCode 使用 v2 配置格式。Antigravity 使用 `~/.gemini/config/mcp_config.json` 的 `mcpServers` 配置，全局使用约定追加至 `~/.gemini/GEMINI.md`；stdio 以 `CODEPET_AGENT=antigravity` 标记来源，HTTP 使用 `serverUrl` 并保留鉴权与 `X-CodePet-Agent`。配置路径与格式依据 [官方 MCP 文档](https://antigravity.google/docs/mcp)，规则文件依据 [官方 Rules 文档](https://antigravity.google/docs/rules)（2026-11-25 核对）。
+2026-11-25 默认接入改为独立 stdio 程序。当前任务模型最早要求 backend API 30；默认接入的生成与安装还需包含本次改造的新版 App，仅更新前端不能安装程序。Codex工作台 → 任务与验收 → 更多 → 接入 Agent。悬停图标查看Codex、Claude Code、Cursor、OpenCode或Antigravity名称，点击复制完整安装请求。默认附带简短持久化约定，取消勾选则只配置 MCP 连接并保留已有规则。详细“MCP 使用说明”直接编辑，确认保存或恢复默认后重连；它通过 initialize 提供，不整段复制到全局规则。未保存草稿仍可复制，但回执和文本均标明尚未生效。安装验证依次读取初始化、工具列表和 find-task-runs，只读查询无结果也算调用成功，不为测试创建任务。OpenCode 使用 v2 配置格式。Antigravity 使用 `~/.gemini/config/mcp_config.json` 的 `mcpServers` 配置，可选简短约定追加至 `~/.gemini/GEMINI.md`；stdio 以 `CODEPET_AGENT=antigravity` 标记来源，HTTP 使用 `serverUrl` 并保留鉴权与 `X-CodePet-Agent`。配置路径与格式依据 [官方 MCP 文档](https://antigravity.google/docs/mcp)，规则文件依据 [官方 Rules 文档](https://antigravity.google/docs/rules)（2026-11-25 核对）。
 
 ```toml
 [mcp_servers.codepet_tasks]
@@ -71,7 +71,7 @@ HTTP 服务由 App Rust 后台托管，固定回环端口；关闭窗口而 App 
 
 保留回执 taskId/runId/revision/planRevision/criterionIds。更新省略不变字段，agentWorkspace 只允许提交路径和 relatedCommits，Git 状态与文件由 Rust 观测，不能从参数伪造。新执行省略计划时复用旧清单，但生成新检查项 ID 并清空结果；不要把恢复同次处理当作新执行。
 
-开始实施前一次 create-task，关键进展合并一次 update-task-run，开发完成交付前一次 finish-task-run；发布和复发再按事实补记。初始化 instructions 自动携带这套规则，前512字符包含三个关键节点。复制的安装请求包含相应Agent全局规则位置与当前编辑的约定；不自动修改客户端 system prompt 或全局文件。接入面板可编辑“扩展提示词”，保存后重新连接 MCP 或开新对话使用；恢复默认可撤销覆盖。自定义内容保存在 Rust 配置，不依赖前端页面存活，不修改全局 Codex 配置。纯咨询不登记，不轮询，不逐文件维护。普通回执保持紧凑，五工具定义受 24 KB 上限测试约束，实际数值见黑盒报告；不把这些字节数当作模型 token 计费或自动登记可靠性保证。
+实施或续办前读取给定 taskId/runId，或查询相关执行并复用匹配目标。新目标实施前一次 create-task，关键进展合并一次 update-task-run，开发完成交付前一次 finish-task-run；发布和复发再按事实补记。初始化 instructions 自动携带这套规则，前512字符包含召回及三个关键节点；模型是否看到仍取决于客户端。复制的安装请求将可选简短持久化约定与当前说明核对原文分开，不自动修改客户端 system prompt 或全局文件。接入面板保存说明后重新连接 MCP 或开新对话使用；恢复默认可撤销覆盖。自定义内容保存在 Rust 配置，升级保留原文；已有全局规则也不会随说明保存自动更新。纯咨询不登记，不轮询，不逐文件维护。普通回执保持紧凑，五工具定义受 24 KB 上限测试约束，实际数值见黑盒报告；不把这些字节数当作模型 token 计费或自动登记可靠性保证。产品边界及验证路径见 [Task Memory 接入](../20-product/task-memory-agent-onboarding.md)。
 
 agentConversation 输入是实际对话 ID 的数组，来源从传输上下文取得。ID 不确定时不要猜造，先确认实际来源，新的 MCP 写入不允许省略；只有来源 codex 的引用尝试只读查询本地 state_5.sqlite 核实是否存在，缺失保持待核实，跨项目/已删除工作区的对话仍可关联。不读取其他 Agent 的历史。来源标记不等于对话 ID。
 

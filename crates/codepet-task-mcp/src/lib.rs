@@ -54,7 +54,7 @@ fn response(result: Result<serde_json::Value, String>) -> CallToolResult {
 impl TaskServer {
     #[tool(
         name = "create-task",
-        description = "Register one independently verifiable goal with its first run. Combine task context, initial run and checklist in one call. initialRun.agentConversation must contain the actual current conversation ID/link. Author comes from the connection, not arguments. Keep returned taskId/runId/revision. Do not call per message or file."
+        description = "Register a new independently verifiable goal with its first run. Recall related task memory first and resume matching work rather than duplicating it. Combine task context, initial run and checklist. initialRun.agentConversation requires the actual current conversation ID/link. Author comes from the connection. Keep taskId/runId/revision; never call per message/file."
     )]
     async fn create_task(
         &self,
@@ -152,7 +152,7 @@ impl TaskServer {
     }
     #[tool(
         name = "find-task-runs",
-        description = "Find specific task runs to identify or resume work. Returns runs with their task topic, runId and isCurrentRun; a match in an old run returns that run. workspace is a soft preference, not a filter. runId reads one exact run without requiring taskId; taskId alone reads its current run/checklist. History is opt-in. Retain receipts rather than querying before every write."
+        description = "Recall task memory before starting related work or resuming: find specific runs, then read relevant goals, solutions, conclusions and verification by runId. Results retain the matched historical run and isCurrentRun. workspace only ranks, never filters. runId reads an exact run without taskId; taskId alone reads its current run/checklist. History is opt-in. Keep receipts; do not query before every write."
     )]
     async fn find_task_runs(
         &self,

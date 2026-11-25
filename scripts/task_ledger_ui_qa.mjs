@@ -134,7 +134,9 @@ try{
  await page.evaluate(()=>{window.__copiedAgentConfig='';Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{window.__copiedAgentConfig=text;}}});});
  const setupDialog=page.getByRole('dialog',{name:'连接 Agent',exact:true});
  assert.equal(await setupDialog.locator('.agent-clients button').count(),5);
- const setupPrompt=setupDialog.getByRole('textbox',{name:'扩展提示词',exact:true});
+ const setupPrompt=setupDialog.getByRole('textbox',{name:'MCP 使用说明',exact:true});
+ const persistGuidance=setupDialog.getByRole('checkbox',{name:'同时配置简短持久化约定',exact:true});
+ assert.ok(await persistGuidance.isChecked());
  assert.equal(await setupPrompt.isVisible(),true,'Extension prompt is directly editable');
  assert.equal(await setupDialog.locator('.prompt-editor summary').count(),0,'No duplicate editing title');
  assert.equal(await setupDialog.locator('.prompt-editor footer').evaluate(e=>getComputedStyle(e).borderTopWidth),'0px','No divider above prompt actions');
@@ -149,17 +151,27 @@ try{
   assert.equal(await button.innerText(),'','Only the Agent mark is visible by default');
   await button.click();
   const copied=await page.evaluate(()=>window.__copiedAgentConfig);
-  assert.ok(copied.includes('安装这个 MCP')&&copied.includes('系统提示词'));
+  assert.ok(copied.includes('Task Memory MCP')&&copied.includes('简短持久化约定'));
+  assert.ok(copied.includes('不要把整段 MCP 使用说明复制进去'));
+  assert.ok(copied.includes('只读查询')&&copied.includes('不要创建测试任务'));
+  assert.ok(copied.includes('含未保存草稿'));
   assert.ok(copied.includes(edited),'Copies the current draft, even before saving');
   if(name==='Codex')assert.ok(copied.includes('[mcp_servers.codepet_tasks]'));
   else{const config=JSON.parse(copied.match(/```json\n([\s\S]*?)\n```/)[1]),id={'Claude Code':'claude',Cursor:'cursor',OpenCode:'opencode',Antigravity:'antigravity'}[name];
    assert.equal(name==='OpenCode'?config.mcp.servers.codepet_tasks.environment.CODEPET_AGENT:config.mcpServers.codepet_tasks.env.CODEPET_AGENT,id);
    if(name==='Antigravity'){assert.ok(copied.includes('~/.gemini/config/mcp_config.json'));assert.ok(copied.includes('~/.gemini/GEMINI.md'));}
   }
-  assert.equal(await setupDialog.getByRole('status').innerText(),'已复制');
+  assert.equal(await setupDialog.getByRole('status').innerText(),'已复制安装指令；使用说明草稿尚未保存');
   await page.getByRole('heading',{name:'连接 Agent',exact:true}).last().hover();
  }
  await setupPrompt.fill(original);
+ await persistGuidance.uncheck();
+ await setupDialog.getByRole('button',{name:'复制 Codex 安装指令',exact:true}).click();
+ const connectionOnly=await page.evaluate(()=>window.__copiedAgentConfig);
+ assert.ok(connectionOnly.includes('本次只配置 MCP 连接'));
+ assert.ok(!connectionOnly.includes('<!-- codepet-task-memory:start -->'));
+ assert.ok(!connectionOnly.includes('~/.codex/AGENTS.md'));
+ await persistGuidance.focus();await page.keyboard.press('Space');assert.ok(await persistGuidance.isChecked());
  await page.evaluate(()=>{navigator.clipboard.writeText=async()=>{throw Error('blocked');};});
  await setupDialog.getByRole('button',{name:'复制 Codex 安装指令',exact:true}).click();
  await setupDialog.getByRole('alert').filter({hasText:'复制失败'}).waitFor();
@@ -167,14 +179,15 @@ try{
  await setupDialog.getByRole('button',{name:'复制 Codex 安装指令',exact:true}).focus();await page.keyboard.press('Enter');
  await setupDialog.getByRole('status').filter({hasText:'已复制'}).waitFor();
  await setupPrompt.fill('');assert.ok(await setupDialog.getByRole('button',{name:'复制 Codex 安装指令',exact:true}).isDisabled());await setupPrompt.fill(original);
- for(const mode of ['light','dark'])for(const width of [820,390]){
+ for(const mode of ['light','dark'])for(const width of [820,390,320]){
   await page.evaluate(mode=>window.__setTaskTheme(mode),mode);await page.setViewportSize({width,height:700});
   assert.ok(await setupDialog.evaluate(e=>e.scrollWidth<=e.clientWidth+1),'Setup must not overflow horizontally');
+  for(const name of ['复制 Codex 安装指令','确认'])await setupDialog.getByRole('button',{name,exact:true}).scrollIntoViewIfNeeded();
   await page.screenshot({path:resolve(output,`agent-setup-${mode}-${width}.png`)});
  }
  await page.setViewportSize({width:1440,height:920});
  const prompt=setupPrompt;const defaultText=await prompt.inputValue();
- await prompt.fill('只在关键节点合并登记。');await page.getByRole('button',{name:'确认',exact:true}).click();await page.getByRole('status').filter({hasText:'提示词已保存'}).waitFor();await page.keyboard.press('Escape');
+ await prompt.fill('只在关键节点合并登记。');await page.getByRole('button',{name:'确认',exact:true}).click();await page.getByRole('status').filter({hasText:'使用说明已保存'}).waitFor();await page.keyboard.press('Escape');
  await page.getByLabel('更多任务操作').click();await page.getByRole('button',{name:'接入 Agent',exact:true}).click();assert.equal(await prompt.inputValue(),'只在关键节点合并登记。');
  await page.evaluate(()=>window.__promptConflict());await prompt.fill('冲突保留草稿');await page.getByRole('button',{name:'确认',exact:true}).click();await page.getByRole('alert').filter({hasText:'revision='}).waitFor();assert.equal(await prompt.inputValue(),'冲突保留草稿');await page.keyboard.press('Escape');
  await page.getByLabel('更多任务操作').click();await page.getByRole('button',{name:'接入 Agent',exact:true}).click();await page.getByRole('button',{name:'恢复默认',exact:true}).click();await page.getByRole('status').filter({hasText:'已恢复默认'}).waitFor();assert.equal(await prompt.inputValue(),defaultText);await page.keyboard.press('Escape');

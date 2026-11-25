@@ -7,6 +7,7 @@ import TaskRunDetail from '../lib/TaskRunDetail.svelte';
 import '../lib/taskLedger.css';
 import {currentRun,type Task,type RunStatus} from '../lib/taskLedger';
 import {taskLedgerFixture} from './taskLedgerFixture';
+import defaults from '../../crates/codepet-task-mcp/instructions.md?raw';
 const base:Task=taskLedgerFixture(),tasks=[base],scenario=new URLSearchParams(location.search).get('scenario');
 (base as any).completion=null;
 if(scenario==='overflow')tasks.splice(0,1,...taskLedgerOverflow(base));
@@ -98,7 +99,6 @@ function qaView(task:Task):Task {
 }
 (window as any).__taskCompletionState=()=>structuredClone(tasks);
 (window as any).__conflictTaskCompletion=()=>{base.revision++;};
-const defaults='在方案确定后登记任务，实现告一段落时合并更新。保留 taskId/runId/revision，不逐消息或逐文件维护。';
 const agentClients=['codex','claude','cursor','opencode','antigravity'].map((id,i)=>({id,name:['Codex','Claude Code','Cursor','OpenCode','Antigravity'][i],configPath:['~/.codex/config.toml','.mcp.json','~/.cursor/mcp.json','~/.config/opencode/opencode.jsonc','~/.gemini/config/mcp_config.json'][i],rulePath:['~/.codex/AGENTS.md','~/.claude/CLAUDE.md','Cursor → Customize → Rules → User Rules','~/.config/opencode/AGENTS.md','~/.gemini/GEMINI.md'][i],config:id==='codex'?'[mcp_servers.codepet_tasks]\ncommand = \"/Users/qa/.codepet/bin/codepet-task-mcp\"\nargs = [\"--managed-stdio\"]\nenv = { CODEPET_AGENT = \"codex\" }':JSON.stringify(id==='opencode'?{mcp:{servers:{codepet_tasks:{type:'local',command:['/Users/qa/.codepet/bin/codepet-task-mcp','--managed-stdio'],environment:{CODEPET_AGENT:id}}}}}:{mcpServers:{codepet_tasks:{...(id==='claude'?{type:'stdio'}:{}),command:'/Users/qa/.codepet/bin/codepet-task-mcp',args:['--managed-stdio'],env:{CODEPET_AGENT:id}}}},null,2)}));
 let setupState={clients:agentClients,transport:'stdio',config:'[mcp_servers.codepet_tasks]\ncommand = "/Users/qa/.codepet/bin/codepet-task-mcp"\nargs = ["--managed-stdio"]\nenv = { CODEPET_AGENT = "codex" }',instructions:defaults,defaultInstructions:defaults,instructionsRevision:0,instructionsCustomized:false};
 (window as any).__promptConflict=()=>{setupState.instructionsRevision++;};

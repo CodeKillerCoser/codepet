@@ -14,7 +14,9 @@ stdio 固定入口必须是独立程序，不得绑定 `.app/Contents/MacOS`、�
 
 stdio 从 CODEPET_AGENT 读取连接来源；HTTP 固定监听回环，验证 Host/Origin、本机凭据和单一有效 X-CodePet-Agent，来源经请求上下文传给该次写入，不能串用其他请求或从工具参数取值。来源标记不能授予 human 权限；Task/Run 创建者不随更新变化，更新者写 timeline。旧记录未保存的具体来源使用 unknown，不按当前连接倒填。
 
-默认配置只在独立资源安装成功后生成 command/args/env，不依赖 HTTP 就绪；HTTP 配置仍只由真实就绪服务提供。初始化和接入面板使用同一 Rust 提示词配置，未自定义时读取 instructions.md。用户可编辑、保存并恢复默认；保存按 revision 防冲突。新连接读取已保存内容，旧会话需重连，不要求手动复制说明才会用。Codex/Claude Code/Cursor/OpenCode/Antigravity 的配置统一由 Rust 从已安装入口或实际 HTTP 信息生成，前端只选择和复制；不得把“已复制”展示成“已连接”。自定义提示词不改变任何工具权限，也不得由 Agent 工具修改。
+默认配置只在独立资源安装成功后生成 command/args/env，不依赖 HTTP 就绪；HTTP 配置仍只由真实就绪服务提供。初始化和接入面板使用同一 Rust 提示词配置，未自定义时读取 instructions.md。用户可编辑、保存并恢复默认；保存按 revision 防冲突。新连接读取已保存内容，旧会话需重连；服务器提供说明不以手动复制为协议前提，但模型能否看到说明取决于客户端处理。Codex/Claude Code/Cursor/OpenCode/Antigravity 的配置统一由 Rust 从已安装入口或实际 HTTP 信息生成，前端只选择和复制；不得把“已复制”展示成“已连接”。自定义提示词不改变任何工具权限，也不得由 Agent 工具修改。
+
+Task Memory 接入应区分“何时用”的简短持久化约定与“怎么用”的 MCP instructions/工具定义；不要求把完整说明重复写入全局规则，不宣称改写内置 system prompt。允许仅配置 MCP；取消写入约定时保留现有规则。复制草稿必须标明尚未保存，保存说明不等于更新已有客户端规则。接入验证使用初始化、工具列表与只读查询，不能为证明连接创建生产任务。历史召回只提供证据，不覆盖当前用户要求和权限。行为与风险验证见 [Task Memory 接入](../20-product/task-memory-agent-onboarding.md)。
 
 创建 Task 同时建立首次执行，后续保留 taskId/runId/revision，只在关键节点合并写入，不逐文件更新、不轮询。Agent 自测不是人工验收。任务开发本身也在关键节点登记；当前会话未加载工具时，通过已有协议入口登记，不能将“提供了工具”当成“已经登记”。
 
