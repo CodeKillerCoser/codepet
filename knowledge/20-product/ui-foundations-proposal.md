@@ -56,6 +56,12 @@ UI 字体：`-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Micr
 
 ## 3. 色值：语义 token 与主题切换
 
+### 2026-11-25 样式优化补充
+
+当前主窗口沿用主题已有的20/18/16/15/14/13字号：页面标题20/600，区块标题18/500，子标题16/500，正文15/400，控件14/500，元信息13/400。该表替代前节早期稿的主窗口字号；不要将桌宠窗口一并放大。区块和子标题复用`--font-section`、`--font-subheading`，控件复用`--font-label`；字重仍只由400/500/600角色管理。
+
+组间距采用`--space-section:24px`，设置行内边距12、分组标题下间距10，执行列表行12；减少包裹感不能删除字段或动作。运行时和设备以分隔行组织，用量保留现有全部指标与明细。必要控件边界映射Gray9，辅助结构边界继续Gray6/4，不能把两者一起淡化。浅暗主题、焦点、验收、时间线和长表单实机验证及剩余缺口见[本轮交付](chatgpt-reference-app-ui-audit.md#样式优化交付2026-11-25)。
+
 使用项目已安装的 `@radix-ui/colors` 3.0.0：Sand 中性色、Amber 品牌强调，Grass／Tomato／Blue 状态色，Black Alpha 遮罩与阴影。不自制 primitive 色板；现有 Radix 依赖中补用 Sand 和 Grass 即可。
 
 原始亮／暗映射保存在 `design/ui-foundations/color-tokens.json`，每主题包含 39 个语义色值及对应 Radix 色阶来源。`node design/ui-foundations/create_tokens.mjs` 从本地依赖重新解析映射并检查对比度。该文件保留早期配色快照，尚未纳入最终稿的共享壳层与轻描边。最终稿新增壳层浅色 #f0f3f6／深色 #1c1e21、内容浅色 #ffffff／深色 #141516；以本节及正式稿为准，接入生产主题时同步映射并重新验证，不直接沿用旧对比度结论。

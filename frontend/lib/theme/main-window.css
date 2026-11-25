@@ -3,13 +3,17 @@
   color-scheme: light;
   --font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-family-code: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  --font-section: var(--font-weight-medium) var(--font-size-section)/var(--line-height-section) var(--font-family-ui);
+  --font-subheading: var(--font-weight-medium) var(--font-size-subheading)/var(--line-height-section) var(--font-family-ui);
+  --font-label: var(--font-weight-control) var(--font-size-label)/var(--line-height-label) var(--font-family-ui);
+  --space-section: 24px;
   --letter-spacing-caps: 0;
   --letter-spacing-caps-wide: 0;
   --color-main-chrome: #f0f3f6;
   --color-main-canvas: #ffffff;
   --color-main-outline: var(--gray-4);
   --color-main-divider: var(--gray-4);
-  --color-main-control: var(--sand-9);
+  --color-main-control: var(--gray-9);
   --color-main-hover: var(--sand-4);
   --color-main-selected: var(--amber-3);
   --color-main-selected-text: var(--amber-12);

@@ -114,7 +114,7 @@
     box-sizing: border-box;
     min-width: 0;
     color: var(--app-text);
-    font: var(--font-size-sm-plus)/var(--line-height-body) var(--font-family-ui);
+    font: var(--font-size-body)/var(--line-height-body) var(--font-family-ui);
     outline: none;
   }
   aside.app-side-panel {
@@ -153,7 +153,7 @@
   .panel-header button { display: grid; place-items: center; flex: none; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--app-muted); cursor: pointer; }
   .panel-header button:hover { background: var(--app-surface-soft); }
   .panel-header button:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
-  .panel-body { flex: 1; padding: 24px var(--app-content-inset,24px); min-height: 0; overflow: auto; overscroll-behavior: contain; }
+  .panel-body { flex: 1; padding: 16px var(--app-content-inset,24px); min-height: 0; overflow: auto; overscroll-behavior: contain; }
   @media (prefers-reduced-motion: reduce) {
     :global(.app-side-panel[data-mode="drawer"][data-state]) { animation: none; }
   }

@@ -60,5 +60,5 @@
 </div>
 
 <style>
-  .about-identity{display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px 0}.about-identity img{object-fit:contain}.about-identity h2{margin:0;font:var(--font-title)}
+  .about-identity{display:flex;flex-direction:row;align-items:center;gap:14px;padding:4px 0 8px}.about-identity img{object-fit:contain;width:48px;height:48px;border-radius:8px;}.about-identity h2{margin:0;font:var(--font-title)}
 </style>

@@ -67,13 +67,13 @@
   {/if}
 </section>
 <style>
- .run-changes{--task-secondary:color-mix(in srgb,var(--app-text) 76%,var(--wb-panel));color:var(--app-text);font:var(--font-size-label)/var(--line-height-body) var(--font-family-ui);min-width:0}
+ .run-changes{--task-secondary:var(--app-muted);color:var(--app-text);font:var(--font-size-body)/var(--line-height-body) var(--font-family-ui);min-width:0}
  .change-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.change-summary strong{font-weight:var(--font-weight-medium)}
  .change-context{display:flex;align-items:center;gap:8px 14px;flex-wrap:wrap;}
- .context{color:var(--task-secondary);font-size:var(--font-size-sm);margin:6px 0;overflow-wrap:anywhere}.path,code{font-family:var(--font-family-code);font-size:var(--font-size-sm);overflow-wrap:anywhere}
- .version-choice{display:flex;align-items:center;gap:10px;font-size:var(--font-size-sm);color:var(--task-secondary);margin-top:18px}.version-choice select{min-width:0;flex:1;background:var(--wb-panel);color:var(--wb-text);font:inherit;border:1px solid var(--wb-border);border-radius:4px;padding:5px}
+ .context{color:var(--task-secondary);font-size:var(--font-size-caption);margin:6px 0;overflow-wrap:anywhere}.path,code{font-family:var(--font-family-code);font-size:var(--font-size-caption);overflow-wrap:anywhere}
+ .version-choice{display:flex;align-items:center;gap:10px;font-size:var(--font-size-caption);color:var(--task-secondary);margin-top:18px}.version-choice select{min-width:0;flex:1;background:var(--wb-panel);color:var(--wb-text);font:inherit;border:1px solid var(--wb-border);border-radius:4px;padding:5px}
  .change-file-list{margin-top:14px}.change-file{min-width:0}.change-file summary{display:grid;grid-template-columns:12px 14px minmax(0,1fr) auto 14px;gap:6px;align-items:center;padding:8px 2px;cursor:pointer;list-style:none;border-radius:4px}.change-file summary:hover{background:var(--wb-control)}.change-file summary::-webkit-details-marker{display:none}.change-file[open] :global(.file-chevron){transform:rotate(90deg)}
- .file-path{min-width:0}.file-path strong{display:block;font-size:var(--font-size-caption);font-weight:var(--font-weight-medium);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.file-path small{display:block;color:var(--task-secondary);font:var(--font-size-xs)/var(--line-height-loose) var(--font-family-code);overflow-wrap:anywhere}
+ .file-path{min-width:0}.file-path strong{display:block;font-size:var(--font-size-caption);font-weight:var(--font-weight-medium);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.file-path small{display:block;color:var(--task-secondary);font:var(--font-size-code)/var(--line-height-loose) var(--font-family-code);overflow-wrap:anywhere}
  .file-status,.line-counts{font:var(--font-weight-medium) var(--font-size-sm)/var(--line-height-loose) var(--font-family-code);font-variant-numeric:tabular-nums}.line-counts{display:flex;gap:6px}.file-status{color:var(--task-secondary)}.added{color:var(--color-success)}.modified,.renamed{color:var(--wb-info-text)}.deleted,.conflicted,.read-error{color:var(--app-danger)}
  .read-error{font-size:var(--font-size-caption);overflow-wrap:anywhere}h4{font:var(--font-subheading);margin:22px 0 8px}.commit-reference{display:flex;gap:12px;margin:6px 0}.commit-reference small{font-size:var(--font-size-caption);color:var(--task-secondary)}
 </style>

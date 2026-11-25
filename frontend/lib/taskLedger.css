@@ -1,6 +1,6 @@
 /* Task surfaces share the main window theme and the app-level modal host. */
 :is(.task-ledger, .task-surface) {
-  --task-secondary: color-mix(in srgb, var(--wb-text) 84%, var(--wb-panel));
+  --task-secondary: var(--app-muted);
   width: 100%;
   height:100%;min-height:0;display:flex;flex-direction:column;
   min-width: 0;
@@ -65,7 +65,7 @@
 .task-ledger .view-switch button{display:flex;align-items:center;gap:5px;padding:3px 8px;min-height:28px;border:0;font-size:var(--font-size-caption);background:transparent;color:var(--task-secondary);}
 .task-ledger .view-switch button.active{background:var(--wb-control);color:var(--wb-text);}
 .task-ledger .filters{flex:1 1 350px;max-width:510px;min-width:0;display:grid;grid-template-columns:minmax(100px,1fr) minmax(90px,112px) minmax(90px,108px);gap:5px;}
-.task-ledger .filters :is(input,select){width:100%;height:32px;font-size:var(--font-size-caption);border-color:transparent;background:var(--wb-control);padding:4px 8px;}
+.task-ledger .filters :is(input,select){width:100%;height:32px;font-size:var(--font-size-caption);border-color:var(--wb-border);background:var(--wb-control);padding:4px 8px;}
 .task-ledger .filters :is(input,select):hover{border-color:var(--wb-border);}
 .task-ledger .toolbar-actions{display:flex;align-items:center;gap:5px;margin-left:auto;flex:none;}
 .task-ledger .toolbar button{white-space:nowrap;}
@@ -79,25 +79,25 @@
 .task-ledger summary::-webkit-details-marker{display:none;}
 .task-ledger .collection-back{display:inline-flex;align-items:center;gap:7px;font-size:var(--font-size-caption);padding-left:0;}
 .breadcrumb-title{flex:1;min-width:0;color:var(--task-secondary);font-size:var(--font-size-caption);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.task-ledger .task-detail{flex:1;min-width:0;min-height:0;overflow:hidden;padding:26px 0 10px;}
+.task-ledger .task-detail{flex:1;min-width:0;min-height:0;overflow:hidden;padding:18px 0 10px;}
 .task-detail>.task-record{max-width:1040px;margin:0 auto;}
 .task-surface .panel-back{display:inline-flex;align-items:center;gap:8px;font-size:var(--font-size-label);margin:0 0 20px;padding:0;}
 @container(max-width:1100px){.task-ledger .filters{order:3;flex-basis:100%;max-width:none;grid-template-columns:minmax(120px,1fr) 130px 120px;}}
 @container(max-width:520px){.task-ledger .toolbar{gap:8px;}.task-ledger .filters{grid-template-columns:minmax(0,1fr) 1fr;}.task-ledger .filters>input{grid-column:1/-1;}.task-ledger .toolbar .primary{font-size:var(--font-size-caption);padding:4px 8px;}.task-ledger .view-switch button{padding:3px 6px;}.breadcrumb-title{display:none;}.task-ledger .task-detail{padding-top:20px;}}
 .ledger-dialog {
-  --task-secondary: color-mix(in srgb, var(--wb-text) 84%, var(--wb-panel));
+  --task-secondary: var(--app-muted);
   background: var(--wb-panel);
   color: var(--wb-text);
   font: var(--font-size-label)/var(--line-height-body) var(--font-family-ui);
   border: 1px solid var(--wb-border);
   border-radius: 10px;
   width: min(650px, 92vw);
-  max-height: 88vh;
+  max-height: calc(100dvh - 48px);
   padding: 22px;
   color-scheme: inherit;
   overflow: auto;
 }
-.ledger-dialog header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+.ledger-dialog header { position: sticky; top: -22px; z-index: 2; background: var(--wb-panel); padding: 8px 0; display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
 .ledger-dialog h3 { font: var(--font-section); margin: 0; }
 .ledger-dialog label { display: flex; flex-direction: column; gap: 5px; margin: 12px 0; font-size: var(--font-size-caption); }
 .ledger-dialog .checkbox { flex-direction: row; align-items: center; gap: 8px; }
@@ -106,7 +106,7 @@
 .ledger-dialog .form-controls { border: 0; padding: 0; margin: 0; min-width: 0; }
 .ledger-dialog .check-editor { margin: 14px 0; padding: 12px; border: 1px solid var(--wb-border); border-radius: 6px; }
 .ledger-dialog legend { font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); }
-.ledger-dialog footer { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--wb-border); }
+.ledger-dialog footer { position: sticky; bottom: -22px; z-index: 2; background: var(--wb-panel); padding-bottom: 8px; display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--wb-border); }
 .ledger-dialog .directory { display: flex; gap: 8px; }
 .ledger-dialog .directory input { flex: 1; }
 
