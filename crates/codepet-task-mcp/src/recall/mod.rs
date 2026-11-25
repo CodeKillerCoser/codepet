@@ -195,7 +195,13 @@ impl Recall {
     }
     pub async fn find(&self, input: FindTaskRunsInput) -> Result<Value, String> {
         let query = input.query.as_deref().unwrap_or("").trim().to_owned();
-        if input.task_id.is_some() || input.run_id.is_some() || query.is_empty() {
+        if input.task_id.is_some()
+            || input.run_id.is_some()
+            || query.is_empty()
+            || input.activity_after.is_some()
+            || input.activity_before.is_some()
+            || input.activity_limit.is_some()
+        {
             let ledger = self.ledger.clone();
             return tokio::task::spawn_blocking(move || ledger.find_runs(input))
                 .await

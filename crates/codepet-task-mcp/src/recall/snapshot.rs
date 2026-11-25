@@ -1,4 +1,4 @@
-use codepet_task_lineage::tasks::{Ledger, RunStatus};
+use codepet_task_lineage::tasks::{Ledger, RunStatus, TimelineEvent};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
@@ -18,9 +18,20 @@ pub fn documents(ledger: &Ledger) -> Result<Vec<Value>, String> {
                 })
                 .collect::<Vec<_>>();
             let mut seen = std::collections::HashSet::new();
-            let timeline = run.timeline.iter().filter(|e| !e.kind.contains("workspace") && e.summary != "历史工作区观测")
-                .filter(|e| seen.insert((e.at,e.kind.as_str(),e.summary.as_str())))
-                .map(|e| json!({"at":e.at,"kind":e.kind,"summary":e.summary,"reference":e.reference})).collect::<Vec<_>>();
+            let timeline = run
+                .timeline
+                .iter()
+                .filter(|e| {
+                    !e.kind.contains("workspace")
+                        && e.summary != "历史工作区观测"
+                        && e.summary != "更新执行（无业务字段变更）"
+                })
+                .filter(|e| {
+                    has_activity_metadata(e)
+                        || seen.insert((e.at, e.kind.as_str(), e.summary.as_str()))
+                })
+                .map(activity_document)
+                .collect::<Vec<_>>();
             let text = serde_json::to_string_pretty(&json!({
                 "task":{"id":task.id,"title":task.title,"background":task.description},
                 "run":{"id":run.id,"title":run.title,"kind":run.kind,"goal":run.goal,
@@ -46,4 +57,53 @@ pub fn documents(ledger: &Ledger) -> Result<Vec<Value>, String> {
         }
     }
     Ok(result)
+}
+
+fn has_activity_metadata(event: &TimelineEvent) -> bool {
+    event.actor_role.is_some()
+        || !event.changes.is_empty()
+        || !event.agent_conversation.is_empty()
+        || event.reply_to.is_some()
+}
+fn activity_document(event: &TimelineEvent) -> Value {
+    // Preserve the old projection byte-for-byte for unchanged legacy history.
+    // Adding empty metadata would invalidate every finished Run's semantic hash.
+    let mut value = json!({"at":event.at,"kind":event.kind,"summary":event.summary,"reference":event.reference});
+    if has_activity_metadata(event) {
+        value["id"] = json!(event.id);
+        value["actor"] = json!(event.actor);
+        value["replyTo"] = json!(event.reply_to);
+        value["agentConversation"] = json!(event.agent_conversation);
+        value["changes"] = json!(event
+            .changes
+            .iter()
+            .filter(|change| !matches!(change.field.as_str(), "agentWorkspace" | "verification"))
+            .collect::<Vec<_>>());
+    }
+    value
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn legacy_projection_stays_stable_but_new_comments_keep_identity() {
+        let mut event = TimelineEvent {
+            id: "stable-id".into(),
+            at: 10,
+            actor: "claude".into(),
+            kind: "comment".into(),
+            summary: "旧评论".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            activity_document(&event),
+            json!({"at":10,"kind":"comment","summary":"旧评论","reference":null})
+        );
+        assert!(!has_activity_metadata(&event));
+        event.actor_role = Some("agent".into());
+        assert!(has_activity_metadata(&event));
+        assert_eq!(activity_document(&event)["id"], "stable-id");
+        assert_eq!(activity_document(&event)["actor"], "claude");
+    }
 }

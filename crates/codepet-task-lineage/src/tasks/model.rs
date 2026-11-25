@@ -1,4 +1,4 @@
-//! Canonical v5 records in the stable task/run ledger. Transport inputs cannot supply authors or observed Git facts.
+//! Canonical v6 records in the stable task/run ledger. Transport inputs cannot supply authors or observed Git facts.
 pub use super::legacy_model::{CheckResult, Criterion, Plan, Scope, TestResult, VerificationInput};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -133,7 +133,7 @@ pub struct ValidationPlan {
     // Immutable checklist snapshots support historical verification; hidden in the default UI.
     pub revisions: Vec<Plan>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TimelineEvent {
     pub id: String,
@@ -145,6 +145,21 @@ pub struct TimelineEvent {
     pub reference: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_workspace: Option<AgentWorkspace>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub actor_role: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agent_conversation: Vec<AgentConversation>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changes: Vec<ActivityChange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivityChange {
+    pub field: String,
+    pub before: serde_json::Value,
+    pub after: serde_json::Value,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -307,6 +322,25 @@ pub struct FindTaskRunsInput {
     pub query: Option<String>,
     #[serde(default)]
     pub history: bool,
+    /// Read newer activity after an event ID. Requires taskId or runId.
+    pub activity_after: Option<String>,
+    /// Read older activity before an event ID. Cannot combine with activityAfter.
+    pub activity_before: Option<String>,
+    #[schemars(range(min = 1, max = 50))]
+    pub activity_limit: Option<usize>,
+}
+/// Append a comment or reply, including on a historical/closed run. Never changes development state.
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CommentTaskRunInput {
+    pub task_id: String,
+    pub run_id: String,
+    #[schemars(length(min = 1, max = 4000))]
+    pub comment: String,
+    pub reply_to: Option<String>,
+    #[schemars(length(min = 1, max = 20), inner(length(min = 1, max = 220)))]
+    pub agent_conversation: Vec<String>,
+    pub operation_id: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -318,4 +352,6 @@ pub struct Receipt {
     pub criterion_ids: Vec<String>,
     pub status: RunStatus,
     pub created_by: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_id: Option<String>,
 }

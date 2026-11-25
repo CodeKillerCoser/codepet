@@ -113,8 +113,8 @@ fn manual_task_completion_overrides_without_changing_run_statuses_and_blocks_age
         .unwrap()
         .unwrap();
     assert_eq!(
-        persisted["schemaVersion"], 5,
-        "Old v4 MCP writers must reject the record instead of dropping its new lock"
+        persisted["schemaVersion"], 6,
+        "Old MCP writers must reject the record instead of dropping its lock or activity metadata"
     );
     assert_eq!(closed.runs[0].status, RunStatus::InProgress);
     assert_eq!(closed.summary().status, RunStatus::Closed);

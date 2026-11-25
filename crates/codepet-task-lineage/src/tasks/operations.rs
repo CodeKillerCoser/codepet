@@ -1,21 +1,11 @@
-use super::{id, model::*, now, source, text, validation, workspace, Ledger, Project};
+use super::{
+    activity, activity::event, id, model::*, now, source, text, validation, workspace, Ledger,
+    Project,
+};
 use crate::Result;
 use serde::Deserialize;
 use serde_json::json;
 
-fn event(run: &mut TaskRun, actor: &Actor, kind: &str, summary: String, reference: Option<String>) {
-    let at = now();
-    run.updated_at = at;
-    run.timeline.push(TimelineEvent {
-        id: id(),
-        at,
-        actor: actor.source().into(),
-        kind: kind.into(),
-        summary,
-        reference,
-        agent_workspace: Some(run.agent_workspace.clone()),
-    });
-}
 fn new_run(description: String, workspace: AgentWorkspace, actor: &Actor) -> TaskRun {
     let at = now();
     TaskRun {
@@ -172,7 +162,9 @@ impl Ledger {
         } else {
             run.description.clone()
         };
-        event(&mut run, &actor, "created", summary, None);
+        let changes = activity::initial(&run);
+        event(&mut run, &actor, "created", summary, None).changes = changes;
+        activity::context(&mut run, 0, &actor, &input.initial_run.agent_conversation);
         self.transact(key, fingerprint, |_, projects| {
             let project = if let Some(p) = projects.iter().find(|p| p.key == ctx.key) {
                 p.clone()
@@ -188,7 +180,7 @@ impl Ledger {
             };
             let at = now();
             Ok(Task {
-                schema_version: 5,
+                schema_version: 6,
                 id: id(),
                 title: input.title,
                 description: input.description,
@@ -259,7 +251,9 @@ impl Ledger {
         } else {
             summary
         };
-        event(&mut run, &actor, "created", summary, None);
+        let changes = activity::initial(&run);
+        event(&mut run, &actor, "created", summary, None).changes = changes;
+        activity::context(&mut run, 0, &actor, &input.agent_conversation);
         self.transact(key, fingerprint, |store, _| {
             let mut task = Self::load(store, &input.task_id)?;
             check_revision(&task, input.expected_revision)?;
@@ -334,46 +328,6 @@ impl Ledger {
         if input.status == Some(RunStatus::Closed) {
             return Err("结束执行只能通过 App 人工操作".into());
         }
-        let mut changes = vec![];
-        if let Some(value) = &input.title {
-            changes.push(format!("执行标题：{value}"));
-        }
-        if let Some(value) = &input.goal {
-            changes.push(format!(
-                "目标：{}",
-                value.chars().take(600).collect::<String>()
-            ));
-        }
-        if let Some(value) = &input.solution {
-            changes.push(format!(
-                "方案：{}",
-                value.chars().take(600).collect::<String>()
-            ));
-        }
-        if input.kind.is_some() {
-            changes.push("更新执行类型".into());
-        }
-        if input.status.is_some() {
-            changes.push("更新执行状态".into());
-        }
-        if input.validation_plan.is_some() {
-            changes.push("更新验收清单".into());
-        }
-        let verified = input.verification.is_some();
-        if verified {
-            changes.push("记录验收结果".into());
-        }
-        if input.description.is_some() {
-            changes.push(
-                input
-                    .description
-                    .clone()
-                    .unwrap()
-                    .chars()
-                    .take(600)
-                    .collect(),
-            );
-        }
         let previous = self.get(&input.task_id)?;
         if previous.completion.is_some() {
             return Err("任务已完成并锁定，请用户先手动恢复开发".into());
@@ -413,6 +367,7 @@ impl Ledger {
             if run.status == RunStatus::Closed {
                 return Err("执行已结束，请创建新的执行".into());
             }
+            let before = run.clone();
             if operation == "finish-task-run" && run.status == RunStatus::Published {
                 return Err(
                     "执行已发布；补记发布验证请使用 update-task-run，重新开发请新建执行".into(),
@@ -480,26 +435,50 @@ impl Ledger {
                 run.status = RunStatus::InProgress;
             }
             link(run, &input.agent_conversation, &actor)?;
-            let summary = input.note.unwrap_or_else(|| {
-                if changes.is_empty() {
-                    "更新工作区观测".into()
-                } else {
-                    changes.join("\n")
-                }
-            });
-            event(
+            activity::update(
                 run,
+                &before,
                 &actor,
-                if input.delivery.is_some() {
-                    "delivery"
-                } else if verified {
-                    "verification"
-                } else {
-                    "milestone"
-                },
-                summary,
+                input.note,
                 input.delivery,
+                operation == "finish-task-run",
+                &input.agent_conversation,
             );
+            Ok(task)
+        })
+    }
+    /// Comments commute under the ledger lock; no content revision is overwritten.
+    pub fn comment_task_run(&self, input: CommentTaskRunInput, actor: Actor) -> Result<Receipt> {
+        let (key, fingerprint, cached) = self.request_key(
+            "comment-task-run",
+            &input,
+            input.operation_id.as_deref(),
+            &actor,
+        )?;
+        if let Some(receipt) = cached {
+            return Ok(receipt);
+        }
+        text(&input.comment, "评论", 4000)?;
+        let run_id = input.run_id.clone();
+        self.transact_run(key, fingerprint, Some(&run_id), |store, _| {
+            let mut task = Self::load(store, &input.task_id)?;
+            let run = task
+                .runs
+                .iter_mut()
+                .find(|run| run.id == input.run_id)
+                .ok_or("执行不存在")?;
+            if let Some(reply) = &input.reply_to {
+                if !run.timeline.iter().any(|entry| entry.id == *reply) {
+                    return Err("回复的活动不存在于此执行".into());
+                }
+            }
+            link(run, &input.agent_conversation, &actor)?;
+            let start = run.timeline.len();
+            let entry = event(run, &actor, "comment", input.comment, None);
+            entry.reply_to = input.reply_to;
+            // A comment is not a Git observation by its author.
+            entry.agent_workspace = None;
+            activity::context(run, start, &actor, &input.agent_conversation);
             Ok(task)
         })
     }
@@ -531,13 +510,26 @@ impl Ledger {
             if accepted && !validation::human_acceptance_ready(run) {
                 return Err("当前清单尚未完成人工验收；可以注明原因直接结束".into());
             }
+            let old_status = json!(run.status);
             run.status = RunStatus::Closed;
             run.closure = Some(Closure {
                 accepted,
                 reason: reason.into(),
                 closed_at: now(),
             });
-            event(run, &actor, "closed", reason.into(), None);
+            let changes = vec![
+                ActivityChange {
+                    field: "status".into(),
+                    before: old_status,
+                    after: json!(run.status),
+                },
+                ActivityChange {
+                    field: "closure".into(),
+                    before: serde_json::Value::Null,
+                    after: json!(run.closure),
+                },
+            ];
+            event(run, &actor, "closed", reason.into(), None).changes = changes;
             Ok(task)
         })
     }
@@ -561,18 +553,25 @@ impl Ledger {
             if task.completion.is_some() {
                 return Err("任务已经完成".into());
             }
+            let before = json!(task.summary());
             task.completion = Some(Closure {
                 accepted: false,
                 reason: reason.into(),
                 closed_at: now(),
             });
+            let change = ActivityChange {
+                field: "taskStatus".into(),
+                before,
+                after: json!(task.summary()),
+            };
             event(
                 task.runs.last_mut().unwrap(),
                 &actor,
                 "task_completed",
                 reason.into(),
                 None,
-            );
+            )
+            .changes = vec![change];
             Ok(task)
         })
     }
@@ -588,6 +587,18 @@ impl Ledger {
         self.transact(key, fingerprint, |store, _| {
             let mut task = Self::load(store, &input.task_id)?;
             check_revision(&task, input.expected_revision)?;
+            let changes = vec![
+                ActivityChange {
+                    field: "taskTitle".into(),
+                    before: json!(task.title),
+                    after: json!(input.title),
+                },
+                ActivityChange {
+                    field: "taskDescription".into(),
+                    before: json!(task.description),
+                    after: json!(input.description),
+                },
+            ];
             task.title = input.title;
             task.description = input.description;
             event(
@@ -596,7 +607,8 @@ impl Ledger {
                 "task_edited",
                 "修订任务基本信息".into(),
                 None,
-            );
+            )
+            .changes = changes;
             Ok(task)
         })
     }

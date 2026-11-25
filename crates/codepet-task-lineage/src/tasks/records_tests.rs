@@ -491,7 +491,7 @@ fn v3_migration_preserves_unstructured_text_evidence_and_original_bytes() {
         .join(Ledger::key(&task.project_id, &task.id));
     let original = std::fs::read(&source_path).unwrap();
     let imported = Ledger::new(target.path()).get(&task.id).unwrap();
-    assert_eq!(imported.schema_version, 5);
+    assert_eq!(imported.schema_version, 6);
     assert_eq!(imported.revision, task.revision);
     assert_eq!(imported.runs[0].id, task.runs[0].id);
     assert_eq!(imported.runs[0].description, task.runs[0].description);

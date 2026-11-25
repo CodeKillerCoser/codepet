@@ -46,6 +46,7 @@ fn run(old: &old::Round, workspace: &str, title: &str, kind: &TaskKind) -> TaskR
             summary: e.summary.clone(),
             reference: None,
             agent_workspace: None,
+            ..Default::default()
         })
         .collect();
     for (index, code) in old.code_refs.iter().enumerate() {
@@ -57,6 +58,7 @@ fn run(old: &old::Round, workspace: &str, title: &str, kind: &TaskKind) -> TaskR
             summary: "历史工作区观测".into(),
             reference: None,
             agent_workspace: Some(observation(code)),
+            ..Default::default()
         });
     }
     for (index, reference) in old.deliveries.iter().enumerate() {
@@ -68,6 +70,7 @@ fn run(old: &old::Round, workspace: &str, title: &str, kind: &TaskKind) -> TaskR
             summary: "迁移历史构建／发布引用（原始发生时间未知）".into(),
             reference: Some(reference.clone()),
             agent_workspace: None,
+            ..Default::default()
         });
     }
     timeline.sort_by_key(|e| e.at);

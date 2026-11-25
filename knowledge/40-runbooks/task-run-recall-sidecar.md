@@ -42,7 +42,7 @@ App 的 managed 安装会校验压缩包与文件哈希，解压并原子切换�
 
 ## 模型配置
 
-重建 App 后进入“设置 → 模型配置”，填写两套 API base URL、模型名、API Key 与 embedding dimensions，然后启用并保存。默认不开启模型加工。相同 endpoint 下空密码保留已保存 key；更换 endpoint 时须重新填写，避免旧密钥发给新服务。本机服务可无 key。默认支持非流式 OpenAI-compatible chat completions / embeddings，云端 URL 要求 HTTPS；HTTP 只接受 loopback。
+重建 App 后进入“设置 → 模型配置”，页面分为本地运行环境与模型配置两块。可检测并使用现有 MLX，缺失时确认安装并查看/取消进度；语言模型和向量模型分别选择供应商、填写 API 地址及密钥、自动检测模型列表，未知 embedding 维度需在高级设置填写，然后启用并保存。环境/目录检测接口要求 backend API 40；详细行为与验证见 [本地模型环境与模型配置](../30-domains/settings-and-personalization/model-environment-and-profiles.md)。默认不开启模型加工。相同 endpoint 下空密码保留已保存 key；更换 endpoint 时须重新填写，避免旧密钥发给新服务。本机服务可无 key。默认支持非流式 OpenAI-compatible chat completions / embeddings，云端 URL 要求 HTTPS；HTTP 只接受 loopback。
 
 本机已验证：
 

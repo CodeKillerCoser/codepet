@@ -31,6 +31,16 @@ if(scenario==='dense'){
   const run=currentRun(tasks[0]),item=run.validationPlan.items[0];run.validationPlan.items=[item,{...item,id:'layout-first-click',title:'首次启动后的菜单响应',steps:'直接点击桌宠打开菜单',expected:'菜单立即出现，点击事件无遗漏'},{...item,id:'layout-long',title:'长时间运行后再次点击',steps:'持续运行后再次点击',expected:'菜单保持响应'}];run.validationPlan.revisions.at(-1)!.criteria=run.validationPlan.items;
   run.validationPlan.records=[{id:'local',actor:'agent',agent:'codex',createdAt:tasks[0].updatedAt,agentWorkspace:null,planRevision:run.validationPlan.revision,stage:'local',target:'布局样例工作区',environment:'macOS',results:run.validationPlan.items.map(c=>({criterionId:c.id,result:'passed',evidence:'布局样例：本地通过'}))},{id:'release',actor:'human',agent:'human',createdAt:tasks[0].updatedAt,agentWorkspace:null,planRevision:run.validationPlan.revision,stage:'release',target:'布局样例 1.3.0',environment:'macOS',results:run.validationPlan.items.slice(0,2).map((c,i)=>({criterionId:c.id,result:i?'failed':'passed',evidence:'布局样例：发布后验证'}))}];
 }
+if(scenario==='activity'){
+ base.title='跨 Agent 协作与活动记录';
+ const run=currentRun(base),at=run.updatedAt;
+ run.timeline=[{id:'legacy-created',at:at-120000,actor:'unknown',kind:'created',summary:'历史创建记录原样保留'},
+ {id:'claude-comment',at:at-90000,actor:'claude',kind:'comment',summary:'已经在另一个工作区确认协议行为，建议补充并发评论的回归验证。',agentConversation:[{agent:'claude',conversationId:'claude-chat-alpha',verified:false}]},
+ {id:'cursor-plan',at:at-60000,actor:'cursor',kind:'plan_updated',summary:'修订验收计划：第 1 版 → 第 2 版',changes:[{field:'validationPlan',before:{revision:1,items:run.validationPlan.items},after:{revision:2,items:[{...run.validationPlan.items[0],title:'多个 Agent 的评论不能互相覆盖'}]}}]},
+ {id:'state-event',at:at-30000,actor:'codex',kind:'status_changed',summary:'状态：开发中 → 待确认',changes:[{field:'status',before:'in_progress',after:'ready_for_delivery'}]},
+ {id:'codex-reply',at,actor:'codex',kind:'comment',summary:'并发追加和重试已验证，之前的活动没有修改。',replyTo:'claude-comment',agentConversation:[{agent:'codex',conversationId:'00000000-0000-4000-8000-000000000001',verified:false}]}];
+ (window as any).__appendAgentComment=()=>{run.timeline.push({id:'incoming-comment',at:Date.now(),actor:'cursor',kind:'comment',summary:'来自其他 Agent 的新评论已同步显示',replyTo:'codex-reply'});base.revision++;};
+}
 // The design scenario is an explicit visual fixture matching the approved mock, not production evidence.
 if(scenario==='design'||scenario==='reading'){
  base.title='保留工作台扫描结果';base.description='切换页面或重启 App 后，希望继续查看上一次扫描结果。';

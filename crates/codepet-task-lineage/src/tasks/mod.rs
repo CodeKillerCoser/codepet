@@ -1,4 +1,5 @@
 //! Canonical task/run ledger shared by the App and MCP. Legacy v3/v2 are read only for migration.
+mod activity;
 #[allow(dead_code)]
 mod delivery;
 mod diffs;
@@ -103,7 +104,7 @@ impl Ledger {
         valid_id(task_id)?;
         for project in Self::projects(store)? {
             if let Some(mut task) = store.read::<Task>(&Self::key(&project.id, task_id))? {
-                if !matches!(task.schema_version, 4 | 5) || task.runs.is_empty() {
+                if !matches!(task.schema_version, 4 | 5 | 6) || task.runs.is_empty() {
                     return Err("任务格式版本或执行历史无效".into());
                 }
                 task.normalize_completion();
@@ -123,7 +124,7 @@ impl Ledger {
         }
         if tasks
             .iter()
-            .any(|t| !matches!(t.schema_version, 4 | 5) || t.runs.is_empty())
+            .any(|t| !matches!(t.schema_version, 4 | 5 | 6) || t.runs.is_empty())
         {
             return Err("任务格式版本或执行历史无效".into());
         }
@@ -228,15 +229,33 @@ impl Ledger {
         fingerprint: String,
         apply: impl FnOnce(&Store, &mut Vec<Project>) -> Result<Task>,
     ) -> Result<Receipt> {
+        self.transact_run(key, fingerprint, None, apply)
+    }
+    fn transact_run(
+        &self,
+        key: String,
+        fingerprint: String,
+        run_id: Option<&str>,
+        apply: impl FnOnce(&Store, &mut Vec<Project>) -> Result<Task>,
+    ) -> Result<Receipt> {
         let store = self.store()?;
         if let Some(receipt) = self.cached(&store, &key, &fingerprint)? {
             return Ok(receipt);
         }
         let mut projects = Self::projects(&store)?;
         let mut task = apply(&store, &mut projects)?;
+        let previous = store.read::<Task>(&Self::key(&task.project_id, &task.id))?;
+        activity::validate(previous.as_ref(), &task)?;
         task.revision += 1;
         task.updated_at = now();
-        let run = task.runs.last().unwrap();
+        let run = match run_id {
+            Some(id) => task
+                .runs
+                .iter()
+                .find(|run| run.id == id)
+                .ok_or("执行不存在")?,
+            None => task.runs.last().unwrap(),
+        };
         let receipt = Receipt {
             task_id: task.id.clone(),
             run_id: run.id.clone(),
@@ -250,6 +269,7 @@ impl Ledger {
                 .collect(),
             status: run.status.clone(),
             created_by: run.created_by.clone(),
+            activity_id: run.timeline.last().map(|entry| entry.id.clone()),
         };
         let repository = projects
             .iter()
@@ -282,5 +302,7 @@ mod contract_tests;
 #[cfg(test)]
 mod summary_tests;
 
+#[cfg(test)]
+mod activity_tests;
 #[cfg(test)]
 mod cross_project_tests;

@@ -13,7 +13,7 @@ TaskRun 保存 `id/title/kind/goal/solution/description/status/validationPlan/ag
 - validationPlan：items 为当前清单，records 为实际验收，revision/revisions 保存清单修订与历史快照。检查项有稳定 ID、前提、步骤、预期、适用本地/发布范围及是否必验。验收记录绑定清单版本、阶段、实际被测目标、环境、执行者、逐项结果和证据，并记录当时工作区快照。界面勾表示对应阶段已验证通过，展开内容标明本地/发布、自测/人工；人工接受仍单独计算，不将自测当人工确认；不同目标或环境不能拼凑验收结果。
 - agentWorkspace：path、repository、branch、head、upstream、changeStatus、changedFiles、relatedCommits、commitChanges、runFiles、observedAt、error。changeStatus 分别记录是否有未提交改动及待推送提交，允许未知。changedFiles 保存路径、变更类型、是否暂存、改名前路径；冲突不标为已暂存。Git 使用工作台的有界只读命令与 porcelain v2 NUL 解析器，不 fetch。推送状态基于本地上游；修改文件属于共享工作区，relatedCommits 仅接受明确关联的 SHA，不自动认领 HEAD 或全部分支提交。runFiles 是 Agent 在 finish-task-run 的必填 changedFiles 中明确申报的本次执行文件（仓库相对路径）；空数组明确表示没有代码变更，null 表示旧记录未申报，后续观测保留它，不冒充 Git 观测。commitChanges 按明确关联提交保存不可变文件清单（SHA、files、error），与当前未提交文件分开；提交后工作区干净不会清空提交文件。旧快照没有清单时通过 commit-files IPC 按需只读补查，不写回历史。
 - agentConversation：每项记录 agent、conversationId、verified。只有明确的 codex 来源只读查询本地 Codex 索引核实对话是否存在；不要求 cwd 或项目相同，也不要求旧工作区仍存在。其他来源保持待核实；所有 MCP 写入要求 agentConversation 必填且非空，create-task 放在 initialRun 内；支持 ID 或 codex://threads/<id> 并规范化存 ID，未知时不得猜造。历史记录及 App 人工创建可以为空，展示为历史未关联；新协议不伪补旧来源。Header 不会自动提供对话 ID，不扫描完整历史、不猜造 ID。当前只有已核实 Codex 引用提供跳转。
-- timeline：服务记录时间、来源、类型、摘要，可附发布引用与工作区快照。执行摘要演变后，早先的处理原因仍可从时间线检索。Agent 不需要提交整条时间线。
+- timeline：服务端追加的不可变活动线，包含来源/本次对话、评论/回复、状态、计划、验证、内容及工作区变化和 before/after。note 与相关业务事件分别保留；事务拒绝改写、删除或重排旧事件。旧来源未知不补造。具体模型、评论例外、schema 6 与分页见 [TaskRun 活动](task-run-activity.md)。Agent 不提交整条时间线。
 
 ## 执行与状态
 
@@ -23,13 +23,15 @@ finish-task-run 原子保存非空 conclusion、必填对话、必填 changedFil
 
 ## MCP 与来源
 
-暴露 create-task、create-task-run、update-task-run、finish-task-run、find-task-runs 五个工具。四个写入工具返回 taskId、runId、任务 revision、清单版本和检查项 ID 等紧凑回执；更新只提交变化字段。通常开始实施创建一次、实现告一段落更新一次；发布及重新处理再按事实补记。不轮询，不在每条消息后维护。
+暴露 create-task、create-task-run、update-task-run、finish-task-run、comment-task-run、find-task-runs 六个工具。五个写入工具返回 taskId、runId、任务 revision、清单版本、检查项 ID 和 activityId 等紧凑回执；更新只提交变化字段。comment-task-run 在任意历史或已完成 Run 上追加评论/回复，不要求 expectedRevision，不改开发状态；每条评论保留实际 Agent 和对话。通常开始实施创建一次、实现告一段落更新一次；发布及重新处理再按事实补记。不轮询，不在每条消息后维护。
 
 HTTP 请求携带 X-CodePet-Agent，默认配置为 codex。Rust 从每条请求的上下文取得来源，创建时固化 createdBy，后续更新者写进 timeline，不能改掉创建者。来源是客户端声明的标记；Bearer 认证与 agent/human 权限判断独立，Header 不能授予人工验收权限。保留的 stdio 入口使用 CODEPET_AGENT，缺省 codex，仍暴露相同五工具。
 
 ## 存储与迁移
 
-活动账本在 data/tasks/v4/projects/<projectId>/tasks/<taskId>.json。聚合事务沿用 Store 的文件锁、原子 JSON 写入、事务恢复和幂等回执。expectedRevision 是整个 Task 聚合的版本；冲突保留人工草稿。重试先读取已提交回执，再访问工作区，所以路径被清理后仍可重试成功。查询默认返回按 Run 展开的紧凑摘要，历史执行命中时保留其 runId；workspace 只参与软排序。runId 可独立读取详情，taskId 单独使用读当前执行；history 显式获取主题内执行摘要，执行标题、类型和目标随结果返回；本次执行文件与未提交文件在 MCP 回复中各最多显示 20 项；提交清单最多 5 个提交、每个 10 个文件，并标记数量和截断，避免挤占对话上下文。完整证据仍保存在账本。
+当前记录 schema 为 6，继续使用 tasks/v4 稳定目录；读取兼容 4/5/6，成功写入保存 6，以阻止旧 writer 丢弃新增活动元数据。后文 schema 4/5 是对应阶段的迁移历史。
+
+活动账本在 data/tasks/v4/projects/<projectId>/tasks/<taskId>.json。聚合事务沿用 Store 的文件锁、原子 JSON 写入、事务恢复和幂等回执。业务更新的 expectedRevision 是整个 Task 聚合的版本；冲突保留人工草稿。评论在文件锁内读取最新聚合后追加，不要求 expectedRevision，仍增加聚合版本以便发现新活动。重试先读取已提交回执，再访问工作区，所以路径被清理后仍可重试成功。查询默认返回按 Run 展开的紧凑摘要，历史执行命中时保留其 runId；workspace 只参与软排序。runId 可独立读取详情，taskId 单独使用读当前执行；history 显式获取主题内执行摘要，执行标题、类型和目标随结果返回；本次执行文件与未提交文件在 MCP 回复中各最多显示 20 项；提交清单最多 5 个提交、每个 10 个文件，并标记数量和截断，避免挤占对话上下文。完整证据仍保存在账本。
 
 首次读取优先在一个事务中导入 v3；没有 v3 时导入 v2，旧文件不修改。v3 的 Task.kind 复制到各 Run，表示继承旧类型，不能声称当时分别记录过；卡片使用“首次处理 / 第 N 次处理”，goal 继承旧任务标题，solution 留空，description 原样保留。保留 Task/执行/检查项 ID、修订、计划与验证记录、旧 Git 快照、对话、时间线和发布引用；旧 objective 合并到说明。bug/investigation 映射 bugfix，feature 保持。旧 Agent 没有具体来源时记 unknown，不猜为 codex；旧观测缺文件清单时明确提示，之后的当前执行写入会重新观测。旧发布引用没有独立时间戳，迁移事件记录迁移时刻并注明原始发生时间未知。旧 v1 对话抽取不在迁移范围内。
 
@@ -111,7 +113,7 @@ App 的已完成卡片与更多菜单将动作明确命名为“改为开发中�
 
 多次执行合并到同一任务后，原界面把任务信息、运行导航和整段执行正文同时铺开，导致阅读层级混杂。现将 TaskRunDetail 收敛为任务概览：固定任务头部，下方独立滚动执行摘要；每条显示序号、标题、目标摘要、状态和元信息，按现有执行数组倒序展示，并保留原序号。任务列表可由工具栏收起，隐藏时移除分隔条和键盘焦点入口；展开恢复原宽度，切页后保留本窗口偏好。
 
-TaskRunContent 单独承载执行正文，以 15px 正文、16px 分区标题和较深的主题文字提高可读性。点击执行才通过唯一 AppSidePanelHost 打开，桌面显示全局第三栏，窄屏使用框架抽屉；页面不创建局部侧栏。代码变更在同一面板切换，返回保留验收展开状态、正文位置与查看变更按钮的焦点。关闭侧栏返回原执行按钮，切换任务或离开页面释放侧栏。完成/人工恢复后回到概览；历史执行始终只读。保存失败在当前侧栏内显示，避免窄屏被遮在抽屉后。
+TaskRunContent 单独承载执行正文，以 15px 正文、16px 分区标题和较深的主题文字提高可读性。点击执行才通过唯一 AppSidePanelHost 打开，桌面显示全局第三栏，窄屏使用框架抽屉；页面不创建局部侧栏。代码变更在同一面板切换，返回保留验收展开状态、正文位置与查看变更按钮的焦点。关闭侧栏返回原执行按钮，切换任务或离开页面释放侧栏。完成/人工恢复后回到概览；历史执行的开发字段始终只读；允许追加评论和回复。保存失败在当前侧栏内显示，避免窄屏被遮在抽屉后。
 
 相关模块：TaskLedger 负责列表展开状态、面板路由与人工动作；TaskRunDetail 负责信息层级和执行入口；TaskRunContent 负责原四区正文；taskLedger.css 让主题、焦点和状态样式同时作用于主区与框架内的侧栏；codexWorkbenchSession 只保存窗口级列表偏好。本次无数据结构或 Rust/MCP 协议变化，仍使用 API32，既有清单与历史不迁移。
 

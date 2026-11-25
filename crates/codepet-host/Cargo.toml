@@ -18,6 +18,8 @@ codepet-lan-channel-sdk = { path = "../../sdk/rust/codepet-lan-channel-sdk", ver
 codepet-provider-sdk = { path = "../../sdk/rust/codepet-provider-sdk", version = "0.1.0" }
 futures-util = "0.3"
 flate2 = "1"
+sha2 = "0.10"
+fs2 = "0.4"
 bytes = "1"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
@@ -31,7 +33,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 subtle = "2"
 tempfile = "3"
-tokio = { version = "1", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"
 jsonschema = { version = "0.61.2", default-features = false }

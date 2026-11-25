@@ -19,7 +19,12 @@ fn matches_query(task: &Task, run: &TaskRun, query: &str) -> bool {
         run.description.as_str(),
     ]
     .into_iter()
-    .chain(run.timeline.iter().map(|event| event.summary.as_str()))
+    .map(str::to_owned)
+    .chain(
+        run.timeline
+            .iter()
+            .flat_map(|event| [event.summary.clone(), json!(event.changes).to_string()]),
+    )
     .collect::<Vec<_>>()
     .join(" ")
     .to_lowercase()
@@ -33,6 +38,21 @@ impl Ledger {
         }
         if let Some(id) = &input.run_id {
             valid_id(id)?;
+        }
+        if input.activity_after.is_some() && input.activity_before.is_some() {
+            return Err("activityAfter 与 activityBefore 不能同时使用".into());
+        }
+        let limit = input.activity_limit.unwrap_or(20);
+        if !(1..=50).contains(&limit) {
+            return Err("活动分页大小必须为 1–50".into());
+        }
+        if (input.activity_after.is_some()
+            || input.activity_before.is_some()
+            || input.activity_limit.is_some())
+            && input.task_id.is_none()
+            && input.run_id.is_none()
+        {
+            return Err("读取活动需要 taskId 或 runId".into());
         }
         let tasks = self.list()?;
         let projects = Self::projects(&self.store()?)?;
@@ -55,7 +75,14 @@ impl Ledger {
                     .ok_or("执行不存在")?,
                 None => task.runs.last().ok_or("任务没有执行")?,
             };
-            return Ok(run_detail(task, run, input.history));
+            let mut result = run_detail(task, run, input.history);
+            result["activity"] = activity_page(
+                run,
+                input.activity_after.as_deref(),
+                input.activity_before.as_deref(),
+                limit,
+            )?;
+            return Ok(result);
         }
 
         let query = input.query.unwrap_or_default().trim().to_lowercase();
@@ -145,6 +172,7 @@ fn run_detail(task: &Task, run: &TaskRun, history: bool) -> Value {
     });
     let progress = run.timeline.last().map(|entry| {
         json!({
+            "id":entry.id,"replyTo":entry.reply_to,"agentConversation":entry.agent_conversation,
             "at":entry.at, "actor":entry.actor, "kind":entry.kind,
             "summary":entry.summary.chars().take(2000).collect::<String>(),
             "reference":entry.reference,
@@ -179,6 +207,36 @@ fn run_detail(task: &Task, run: &TaskRun, history: bool) -> Value {
             .collect::<Vec<_>>());
     }
     result
+}
+
+fn activity_page(
+    run: &TaskRun,
+    after: Option<&str>,
+    before: Option<&str>,
+    limit: usize,
+) -> Result<Value> {
+    let index = |id: &str| {
+        run.timeline
+            .iter()
+            .position(|entry| entry.id == id)
+            .ok_or("活动游标不存在于此执行")
+    };
+    let (start, end) = if let Some(id) = after {
+        let start = index(id)? + 1;
+        (start, (start + limit).min(run.timeline.len()))
+    } else {
+        let end = before.map(index).transpose()?.unwrap_or(run.timeline.len());
+        (end.saturating_sub(limit), end)
+    };
+    let entries = &run.timeline[start..end];
+    Ok(
+        json!({"items":entries.iter().map(|entry| json!({"id":entry.id,"at":entry.at,
+        "actor":entry.actor,"actorRole":entry.actor_role,"kind":entry.kind,"summary":entry.summary,
+        "reference":entry.reference,"replyTo":entry.reply_to,"agentConversation":entry.agent_conversation,
+        "workspace":entry.agent_workspace.as_ref().map(|workspace| &workspace.path)})).collect::<Vec<_>>(),
+        "total":run.timeline.len(),"hasEarlier":start>0,"hasMore":end<run.timeline.len(),
+        "firstCursor":entries.first().map(|entry|&entry.id),"nextCursor":entries.last().map(|entry|&entry.id)}),
+    )
 }
 
 #[cfg(test)]

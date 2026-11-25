@@ -80,6 +80,14 @@ const runtimeConnections = () => runtimeInventory.map((item) => ({providerId:ite
 mockIPC((command, raw) => {
   if (command === "task_ledger_request") {
     const request = (raw as any).request;
+    if(request.op==='model-catalog')return [{id:'ddalcu/Qwen3.8-27B-MLX-Serve-4bit',kind:'llm'},{id:'Qwen3-Embedding-0.6B-8bit',kind:'embedding',dimensions:1024}];
+    if(request.op==='local-model-runtime'){
+      const absent=new URLSearchParams(location.search).has('mlxMissing');
+      if(request.action==='prepare')return {id:'qa-confirm',version:'v26.11.3',bytes:122812556,sourceUrl:'https://github.com/ddalcu/mlx-serve/releases'};
+      if(request.action==='install'){Object.assign(window,{__mlxJob:{id:'qa-install',state:'downloading',stage:'正在下载 MLX-Serve',downloadedBytes:31457280,totalBytes:122812556,version:'v26.11.3',canCancel:true,error:null}});}
+      if(request.action==='cancel')Object.assign(window,{__mlxJob:{...(window as any).__mlxJob,state:'cancelled',stage:'已取消安装',canCancel:false}});
+      return {supported:true,reason:null,installation:absent?null:{name:'MLX Core',version:'26.9.2',path:'/Applications/MLX Core.app',source:'system'},endpoint:'http://127.0.0.1:11234/v1',job:(window as any).__mlxJob??null};
+    }
     if (request.op === "recall-history") return recallHistoryFixture(request);
     if (request.op === "recall-graph") {
       const options = new URLSearchParams(location.search);
@@ -91,7 +99,7 @@ mockIPC((command, raw) => {
     if (["model-settings", "save-model-settings"].includes(request.op)) {
       if (new URLSearchParams(location.search).has("modelError") && request.op === "save-model-settings") throw new Error("模型 API 地址无效（界面验证）");
       const profile = { endpoint: "http://127.0.0.1:11234/v1", model: "Qwen3.8-27B", apiKey: "", hasApiKey: true, dimensions: 1024 };
-      return { settings: request.settings ?? { enabled: true, llm: profile, embedding: {...profile, model: "Qwen3-Embedding-0.6B-8bit"}, plainJson: false, llmExtraBody: {} }, usage: {models: [{purpose:"llm",model:"Qwen3.8-27B",requests:12,succeeded:11,inputTokens:20480,outputTokens:1320,reportedRequests:10}]} };
+      return { settings: request.settings ? {...request.settings,llm:{...request.settings.llm,apiKey:"",hasApiKey:!!request.settings.llm.apiKey||request.settings.llm.hasApiKey},embedding:{...request.settings.embedding,apiKey:"",hasApiKey:!!request.settings.embedding.apiKey||request.settings.embedding.hasApiKey}} : { enabled: true, llm: profile, embedding: {...profile, model: "Qwen3-Embedding-0.6B-8bit"}, plainJson: false, llmExtraBody: {} }, usage: {models: [{purpose:"llm",model:"Qwen3.8-27B",requests:12,succeeded:11,inputTokens:20480,outputTokens:1320,reportedRequests:10}]} };
     }
     if (request.op === "list") return fetch('/artifacts/task-ledger-qa/native/report.json').then(r => r.json()).then(report => new URLSearchParams(location.search).has('taskOverflow') ? taskLedgerOverflow(report.taskSnapshot) : [report.taskSnapshot]);
     if (request.op === "setup") return {config: '[mcp_servers.codepet_tasks]\nurl = "http://127.0.0.1:47623/mcp"\nhttp_headers = { "X-CodePet-Agent" = "codex" }', instructions: '界面验收样例，不修改本机配置。'};

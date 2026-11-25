@@ -13,6 +13,27 @@ pub(crate) async fn task_ledger_request(
     if window.label() != "main" {
         return Err("任务操作仅允许主窗口调用".into());
     }
+    if request["op"] == "model-catalog" {
+        let profile = codepet_host::model_gateway::catalog::profile(
+            runtime.ledger().data_directory(),
+            request["purpose"].as_str().ok_or("缺少模型用途")?,
+            request["profile"].clone(),
+        )?;
+        return serde_json::to_value(codepet_host::model_gateway::catalog::models(profile).await?)
+            .map_err(|error| error.to_string());
+    }
+    if request["op"] == "local-model-runtime" {
+        let root = codepet_paths::PathManager::discover()
+            .map_err(|error| error.to_string())?
+            .workspace
+            .join("tools/local-models");
+        return codepet_host::local_models::request(
+            root,
+            request["action"].as_str().unwrap_or("status"),
+            request["id"].as_str(),
+        )
+        .await;
+    }
     if matches!(
         request["op"].as_str(),
         Some("model-settings" | "save-model-settings")

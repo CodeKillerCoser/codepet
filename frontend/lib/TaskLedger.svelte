@@ -82,11 +82,22 @@
   }
   onMount(() => {
     void load();
+    let active=true,reading=false;
+    const refreshActivity=async()=>{
+      if(reading||document.hidden||!selectedId||!runPanelOpen||busy||[taskDialog,runDialog,setupDialog].some(dialog=>dialog?.isOpen()))return;
+      const id=selectedId;reading=true;
+      try{
+        const latest=await api<Task>('get',{taskId:id});
+        if(active&&selectedId===id&&!busy&&![taskDialog,runDialog,setupDialog].some(dialog=>dialog?.isOpen())&&latest.revision>(tasks.find(task=>task.id===id)?.revision??0))tasks=tasks.map(task=>task.id===id?latest:task);
+      }catch{/* Keep the visible snapshot. Explicit refresh reports service errors. */}
+      finally{reading=false;}
+    };
+    const activityTimer=setInterval(()=>void refreshActivity(),5000);
     const focus = () => {
       if (!busy && ![taskDialog, runDialog, setupDialog].some(d => d?.isOpen())) void load();
     };
     window.addEventListener('focus', focus);
-    return () => window.removeEventListener('focus', focus);
+    return () => {active=false;clearInterval(activityTimer);window.removeEventListener('focus', focus);};
   });
   async function select(task: Task, _button: HTMLButtonElement) {
     selectedId=task.id;runId='';lastTaskId=task.id;runPanelOpen=false;

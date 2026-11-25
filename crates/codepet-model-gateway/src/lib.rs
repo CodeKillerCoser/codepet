@@ -1,5 +1,6 @@
 //! Authenticated, loopback-only model forwarding shared by the host and task MCP.
 pub mod settings;
+pub mod catalog;
 pub mod usage;
 use axum::{
     extract::{DefaultBodyLimit, Extension, Request, State},

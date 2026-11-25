@@ -113,7 +113,7 @@ async fn http_writes_share_the_app_ledger_and_survive_restart_without_sessions()
     let initialized = endpoint.rpc("initialize", init()).await;
     assert_eq!(initialized["serverInfo"]["name"], "codepet-tasks");
     let tools = endpoint.rpc("tools/list", json!({})).await;
-    assert_eq!(tools["tools"].as_array().unwrap().len(), 5);
+    assert_eq!(tools["tools"].as_array().unwrap().len(), 6);
     assert!(serde_json::to_vec(&tools).unwrap().len() < 24000);
     let input = json!({"agentWorkspace":{"path":workspace},"title":"HTTP 任务","description":"通过本机 HTTP 登记目标","initialRun":{"agentConversation":["00000000-0000-4000-8000-000000000003"]}});
     let (first, retry) = tokio::join!(
@@ -263,7 +263,7 @@ async fn official_sdk_client_negotiates_and_calls_the_http_tools() {
             .auth_header(endpoint.authorization.trim_start_matches("Bearer ")),
     );
     let client = ClientConfig::default().serve(transport).await.unwrap();
-    assert_eq!(client.list_all_tools().await.unwrap().len(), 5);
+    assert_eq!(client.list_all_tools().await.unwrap().len(), 6);
     let result = client
         .call_tool(
             CallToolRequestParams::new("find-task-runs")
@@ -343,6 +343,41 @@ async fn request_header_is_required_and_each_writer_has_its_own_identity() {
     let task = endpoint.runtime.ledger().get(&task.id).unwrap();
     assert_eq!(task.runs[1].created_by, "codex-c");
     assert_eq!(task.runs[0].created_by, "codex-a");
+    let comment = json!({"taskId":task.id,"runId":task.runs[0].id,"comment":"跨 Agent 复核历史执行","agentConversation":["agent-b-chat"],"operationId":"http-comment-one"});
+    let response = rpc(Some("codex-b"), "comment-task-run", comment.clone())
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_ne!(response["result"]["isError"], true, "{response}");
+    let posted: Value =
+        serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(posted["runId"], task.runs[0].id);
+    let reply = json!({"taskId":task.id,"runId":task.runs[0].id,"comment":"已复核，补充上下文","replyTo":posted["activityId"],"agentConversation":["agent-c-chat"]});
+    let response = rpc(Some("codex-c"), "comment-task-run", reply)
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+    assert_ne!(response["result"]["isError"], true, "{response}");
+    let latest = endpoint.runtime.ledger().get(&task.id).unwrap();
+    let comments = latest.runs[0]
+        .timeline
+        .iter()
+        .filter(|event| event.kind == "comment")
+        .collect::<Vec<_>>();
+    assert_eq!(comments.len(), 2);
+    assert_eq!(comments[1].actor, "codex-c");
+    assert_eq!(
+        comments[1].reply_to.as_deref(),
+        posted["activityId"].as_str()
+    );
+    assert_eq!(json!(latest.runs[1]), json!(task.runs[1]));
+    let task = latest;
     let denied = json!({"taskId":task.id,"runId":task.runs[1].id,"expectedRevision":task.revision,"status":"closed"});
     let result = rpc(Some("codex-c"), "update-task-run", denied)
         .send()
@@ -363,7 +398,9 @@ async fn request_header_is_required_and_each_writer_has_its_own_identity() {
             "用户标记完成",
         )
         .unwrap();
-    let closed = ledger.complete_task(&task.id, closed.revision, "用户完成整个任务").unwrap();
+    let closed = ledger
+        .complete_task(&task.id, closed.revision, "用户完成整个任务")
+        .unwrap();
     let before = json!(ledger.get(&task.id).unwrap());
     for (name, input) in [
         (

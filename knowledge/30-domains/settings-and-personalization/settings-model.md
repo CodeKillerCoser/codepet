@@ -18,7 +18,7 @@
 
 所有区域都使用 serde defaults，确保新增字段后旧设置文件仍能加载。
 
-“模型配置”页独立使用 Host Model Gateway 的配置与用量接口，模型密钥不进入通用 `AppSettings` 或 `settings-updated` 广播。数据保存在活动数据目录的 `model-gateway/config.json`，仅主窗口 IPC 可写，读取时脱敏；LLM 与 embedding 分开配置，相同 endpoint 下空 key 保留旧值，更换 endpoint 时不继承旧密钥。具体运行和分发边界见 [TaskRun sidecar runbook](../../40-runbooks/task-run-recall-sidecar.md)。
+“模型配置”页独立使用 Host Model Gateway 的配置与用量接口，模型密钥不进入通用 `AppSettings` 或 `settings-updated` 广播。数据保存在活动数据目录的 `model-gateway/config.json`，仅主窗口 IPC 可写，读取时脱敏；LLM 与 embedding 分开配置，相同 endpoint 下空 key 保留旧值，更换 endpoint 时不继承旧密钥。本地运行环境检测/安装和语言、向量模型分栏已实现，模型列表经 Host 检测，见 [本地模型环境与模型配置](model-environment-and-profiles.md)。具体运行和分发边界见 [TaskRun sidecar runbook](../../40-runbooks/task-run-recall-sidecar.md)。
 
 `activityFilters` 现在以 `byAgent` 保存每个 Agent 的标题和内容关键词过滤。旧的顶层 `titleKeywords` 和 `messageKeywords` 字段保留为兼容入口；前端归一化会把旧全局过滤迁移成每个 Agent 各自的过滤配置。
 

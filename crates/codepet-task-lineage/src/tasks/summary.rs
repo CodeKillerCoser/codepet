@@ -23,9 +23,9 @@ impl Task {
     /// Read compatibility only: an old current-run closure represented a human Task lock.
     /// Preserve that intent without rewriting historical runs or writing on reads.
     pub(super) fn normalize_completion(&mut self) {
-        // Old writers reject schema 5, preventing them from dropping the Task completion lock.
+        // Old writers reject schema 6, preventing loss of immutable activity metadata.
         // Reads upgrade only in memory; the next atomic mutation persists the guarded format.
-        self.schema_version = 5;
+        self.schema_version = 6;
         if self.status_aggregation_version == 0 {
             if let Some(run) = self.runs.last().filter(|r| r.status == RunStatus::Closed) {
                 self.completion = Some(run.closure.clone().unwrap_or(Closure {
