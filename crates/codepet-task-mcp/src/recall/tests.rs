@@ -2,6 +2,20 @@ use super::*;
 use codepet_model_gateway::settings::{Profile, Settings};
 
 #[tokio::test]
+async fn manual_processing_validates_ids_and_requires_enabled_models_before_starting() {
+    let temp = tempfile::tempdir().unwrap();
+    let recall = Recall::shared(&Ledger::new(temp.path()));
+    let operation = uuid::Uuid::new_v4().to_string();
+    assert!(recall
+        .history(json!({"action":"enqueue","taskId":"invalid","operationId":operation}))
+        .await
+        .unwrap_err()
+        .contains("ID 无效"));
+    assert!(recall.history(json!({"action":"enqueue","taskId":uuid::Uuid::new_v4().to_string(),"operationId":operation})).await.unwrap_err().contains("模型配置"));
+    assert!(recall.process.lock().await.is_none());
+}
+
+#[tokio::test]
 async fn busy_preview_does_not_restart_or_interrupt_ingestion() {
     use axum::{
         http::StatusCode,

@@ -19,7 +19,11 @@ class HistoryMixin:
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(runs)")}
         if "job_id" not in columns:
             self.db.execute("ALTER TABLE runs ADD COLUMN job_id TEXT")
+        if "rebuild" not in columns:
+            self.db.execute("ALTER TABLE runs ADD COLUMN rebuild INTEGER NOT NULL DEFAULT 0")
         self.db.executescript("""
+            CREATE TABLE IF NOT EXISTS manual_requests(
+                id TEXT PRIMARY KEY, task_id TEXT NOT NULL, receipt TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS processing_jobs(
                 id TEXT PRIMARY KEY, run_id TEXT NOT NULL, content_hash TEXT NOT NULL,
                 document TEXT NOT NULL, models TEXT NOT NULL, state TEXT NOT NULL,
@@ -55,6 +59,36 @@ class HistoryMixin:
     def retire_queued(self, job, reason="文档已更新"):
         if job:
             self.db.execute("UPDATE processing_jobs SET state='superseded',finished_at=?,phase=? WHERE id=? AND state='queued'", (time.time(), reason, job))
+
+    def enqueue_task(self, task_id, operation_id):
+        uuid.UUID(task_id)
+        uuid.UUID(operation_id)
+        with self.lock, self.db:
+            previous = self.db.execute("SELECT * FROM manual_requests WHERE id=?", (operation_id,)).fetchone()
+            if previous:
+                if previous["task_id"] != task_id:
+                    raise QueueConflict("操作 ID 已用于另一个任务")
+                return json.loads(previous["receipt"])
+            rows = self.db.execute("SELECT * FROM runs WHERE deleted=0 AND eligible=1 AND json_extract(document,'$.taskId')=?", (task_id,)).fetchall()
+            if not rows:
+                raise QueueConflict("任务没有可加工的已结束执行")
+            queued, existing, jobs = 0, 0, []
+            for row in rows:
+                if row["state"] in ("pending", "processing", "failed") and row["job_id"]:
+                    if row["state"] == "failed":
+                        self.db.execute("UPDATE runs SET retry_at=0 WHERE run_id=?", (row["run_id"],))
+                    existing += 1
+                    jobs.append(row["job_id"])
+                    continue
+                job = self.enqueue(json.loads(row["document"]))
+                self.db.execute("UPDATE processing_jobs SET phase='等待加工（手动触发）' WHERE id=?", (job,))
+                self.db.execute("UPDATE runs SET state='pending',job_id=?,retry_at=0,attempts=0,error=NULL,rebuild=? WHERE run_id=?",
+                    (job, bool(row["data_id"]) or row["rebuild"], row["run_id"]))
+                queued += 1
+                jobs.append(job)
+            receipt = {"taskId":task_id, "queued":queued, "existing":existing, "jobIds":jobs}
+            self.db.execute("INSERT INTO manual_requests VALUES(?,?,?)", (operation_id, task_id, json.dumps(receipt)))
+            return receipt
 
     def start_attempt(self, row):
         job = row["job_id"]

@@ -4,12 +4,14 @@
   import TaskRunStatus from './TaskRunStatus.svelte';
   import TaskRunCounts from './TaskRunCounts.svelte';
   import TaskStatus from './TaskStatus.svelte';
+  import TaskProcessingButton from './TaskProcessingButton.svelte';
   import {currentRun,kinds,actorLabel,criterionCheck,formatTaskTime as fmt,type Task} from './taskLedger';
 
   export let task:Task;
   export let runId='';
   export let panelOpen=false;
   export let busy=false;
+  export let onProcessingFeedback:(message:string,error:boolean)=>void=()=>{};
   export let onEditTask:()=>void;
   export let onCompleteTask:()=>void=()=>{};
   export let onRestoreTask:(button:HTMLButtonElement)=>void=()=>{};
@@ -35,6 +37,7 @@
   <div class="task-info" role="group" aria-label="任务信息">
     <header class="task-heading">
       <h3 tabindex="-1" bind:this={heading}>{task.title}</h3>
+      <TaskProcessingButton {task} disabled={busy} onFeedback={onProcessingFeedback}/>
       <button class="quiet metadata-edit" disabled={busy} aria-label="修改任务信息" title="修改任务信息" on:click={onEditTask}><Pencil size={17}/></button>
     </header>
     <div class="task-state"><TaskRunStatus subject="任务" status={task.summary.status} current {busy} onComplete={onCompleteTask} onRestore={onRestoreTask}/><TaskRunCounts summary={task.summary}/></div>

@@ -106,6 +106,12 @@ mockIPC(async(command,args:any)=>{
  if(command.startsWith('plugin:event|'))return 1;
  if(command==='codex_workbench_request')return args.request.op==='projects'?{projects:[],warnings:[]}:[];
  if(command!=='task_ledger_request')throw Error(`Unexpected ${command}`);
+ if(args.request.op==='recall-history'&&args.request.action==='enqueue'){
+  if(new URLSearchParams(location.search).has('processingError'))throw Error('请先在设置 → 模型配置中启用任务召回并配置模型');
+  const task=tasks.find(task=>task.id===args.request.taskId);
+  (window as any).__processingRequests=[...((window as any).__processingRequests??[]),args.request];
+  return {taskId:task?.id,queued:task?.runs.filter(run=>run.status!=='in_progress').length??0,existing:0};
+ }
  if(args.request.op==='list')return tasks.map(qaView);
  if(args.request.op==='get')return qaView(tasks.find(t=>t.id===args.request.taskId)!);
  if(args.request.op==='complete-task'){

@@ -75,7 +75,10 @@ class Engine:
         item = DataItem(data=doc["text"], label=doc.get("taskTitle", "Task run"), literal_text=True,
                         external_metadata={k:doc[k] for k in ("runId", "taskId", "contentHash")})
         if row["data_id"] and self.dataset:
-            result = await cognee.update(data_id=UUID(row["data_id"]), data=item, dataset_id=UUID(self.dataset))
+            # Cognee resets this document's pipeline stamp. Keep incremental
+            # loading enabled so unrelated finished documents are not rebuilt.
+            options = {"chunk_level_diff":False, "data_cache":False} if row.get("rebuild") else {}
+            result = await cognee.update(data_id=UUID(row["data_id"]), data=item, dataset_id=UUID(self.dataset), **options)
             if result.get("status") == "failed":
                 raise RuntimeError("Cognee update failed")
             return row["data_id"]

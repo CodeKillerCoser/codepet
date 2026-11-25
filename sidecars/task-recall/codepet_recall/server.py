@@ -95,6 +95,8 @@ class Service:
 
     def history(self, body):
         action = body.get("action", "list")
+        if action == "enqueue":
+            return self.catalog.enqueue_task(body["taskId"], body["operationId"])
         if action == "cancel":
             return self.catalog.cancel(body["jobId"])
         if action == "retry":

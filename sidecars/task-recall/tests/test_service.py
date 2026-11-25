@@ -77,6 +77,11 @@ class ServiceTests(unittest.TestCase):
                 with self.assertRaises(HTTPError) as caught:
                     request("/history", {"action":"cancel", "jobId":job})
                 self.assertEqual(caught.exception.code, 409)
+                operation = str(uuid.uuid4())
+                queued = request("/history", {"action":"enqueue", "taskId":doc["taskId"], "operationId":operation})
+                self.assertEqual(queued["queued"], 1)
+                self.assertNotEqual(queued["jobIds"], [job])
+                self.assertEqual(request("/history", {"action":"enqueue", "taskId":doc["taskId"], "operationId":operation}), queued)
                 attached,other = start()
                 self.assertFalse(other["owned"])
                 self.assertEqual(info["endpoint"],other["endpoint"])

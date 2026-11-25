@@ -2,6 +2,7 @@
   import {ArrowDown, ArrowUp, FolderClosed, Layers, ListChecks} from '@lucide/svelte';
   import TaskRunCounts from './TaskRunCounts.svelte';
   import TaskStatus from './TaskStatus.svelte';
+  import TaskProcessingButton from './TaskProcessingButton.svelte';
   import {currentRun,criterionCheck,statuses,formatTaskTime as fmt,type Task,type RunStatus} from './taskLedger';
   export let tasks:Task[]=[];
   export let total=0;
@@ -12,6 +13,8 @@
   export let sort:'updated_desc'|'updated_asc'|'title'='updated_desc';
   export let onSort:(sort:'updated_desc'|'updated_asc'|'title')=>void;
   export let onSelect:(task:Task,button:HTMLButtonElement)=>void;
+  export let busy=false;
+  export let onProcessingFeedback:(message:string,error:boolean)=>void=()=>{};
   let root:HTMLElement;
   const states:RunStatus[]=['in_progress','ready_for_delivery','published','closed'];
   $: ordered=[...tasks].sort((a,b)=>sort==='title'?a.title.localeCompare(b.title,'zh-CN'):((sort==='updated_asc'?1:-1)*(a.updatedAt-b.updatedAt)||a.id.localeCompare(b.id)));
@@ -35,12 +38,15 @@
      <div class="board-cards">
       {#each group as task (task.id)}
        {@const checks=progress(task)}
+       <div class="board-task-item">
        <button class="task-row board-task" data-task-id={task.id} aria-label={task.title} on:click={event=>onSelect(task,event.currentTarget)}>
         {#if showProject}<span class="card-project"><FolderClosed size={12}/>{task.projectName}</span>{/if}
         <strong title={task.title}>{task.title}</strong>
         <TaskRunCounts summary={task.summary}/>
         <span class="card-summary"><span title="执行次数"><Layers size={12}/>{task.runs.length} 次执行</span>{#if checks.total}<span class="card-checks" title="当前执行验收进度"><ListChecks size={13}/>{checks.passed}/{checks.total}</span>{/if}<time title={fmt(task.updatedAt)} datetime={new Date(task.updatedAt).toISOString()}>{fmt(task.updatedAt)}</time></span>
        </button>
+       <div class="card-processing"><TaskProcessingButton {task} disabled={busy} onFeedback={onProcessingFeedback}/></div>
+       </div>
       {:else}<p class="column-empty">暂无任务</p>{/each}
      </div>
     </section>
@@ -59,7 +65,7 @@
     {#each ordered as task (task.id)}
      {@const run=currentRun(task)}{@const checks=progress(task)}
      <tr class="task-table-row">
-      <th scope="row"><button class="task-row table-task" data-task-id={task.id} title={task.title} on:click={event=>onSelect(task,event.currentTarget)}>{task.title}</button></th>
+      <th scope="row"><div class="table-title"><button class="task-row table-task" data-task-id={task.id} title={task.title} on:click={event=>onSelect(task,event.currentTarget)}>{task.title}</button><TaskProcessingButton {task} disabled={busy} onFeedback={onProcessingFeedback}/></div></th>
       <td class="project-column"><span title={task.projectName}>{task.projectName}</span></td>
       <td class="task-state-cell"><TaskStatus status={task.summary.status}/><TaskRunCounts summary={task.summary}/></td>
       <td class="current-column"><span title={run.title}>{run.title}</span></td>
@@ -82,6 +88,7 @@
  .board-heading h3{display:flex;align-items:center;gap:9px;}
  .column-count{font-size:var(--font-size-caption);color:var(--task-secondary);font-weight:var(--font-weight-regular);}
  .board-cards{display:flex;flex-direction:column;gap:8px;}
+ .board-task-item{position:relative;min-width:0;}.card-processing{position:absolute;top:6px;right:6px;}.board-task-item .board-task>strong,.board-task-item .card-project{padding-right:28px;}.table-title{display:flex;align-items:center;gap:6px;min-width:0;}.table-title .table-task{flex:1;}
  .task-collection .board-task{display:flex;flex-direction:column;align-items:stretch;width:100%;gap:7px;padding:12px;text-align:left;background:var(--wb-panel);border:1px solid var(--wb-border);border-radius:7px;}
  .task-collection .board-task:hover{border-color:var(--wb-border-strong);}
  .board-task strong{font-size:var(--font-size-body);line-height:var(--line-height-body-relaxed);font-weight:var(--font-weight-medium);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;}

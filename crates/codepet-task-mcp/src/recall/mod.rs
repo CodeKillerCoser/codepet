@@ -128,13 +128,29 @@ impl Recall {
     pub async fn graph(&self) -> Result<Value, String> {
         self.request("/graph", Some(json!({"semantic":true}))).await
     }
-    /// Main-window inspection only; not exposed as an Agent MCP tool.
+    /// Main-window history and queue controls; not exposed as an Agent MCP tool.
     pub async fn history(&self, input: Value) -> Result<Value, String> {
         let action = input["action"].as_str().unwrap_or("list");
-        if !matches!(action, "list" | "detail" | "cancel" | "retry") {
+        if !matches!(action, "list" | "detail" | "cancel" | "retry" | "enqueue") {
             return Err("未知加工历史操作".into());
         }
-        if action != "list" {
+        if action == "enqueue" {
+            for key in ["taskId", "operationId"] {
+                let id = input[key].as_str().ok_or("缺少任务或操作 ID")?;
+                uuid::Uuid::parse_str(id).map_err(|_| "任务或操作 ID 无效")?;
+            }
+            if !settings::read(self.ledger.data_directory())?.enabled {
+                return Err("请先在设置 → 模型配置中启用任务召回并配置模型".into());
+            }
+            let documents = self.documents().await?;
+            if !documents
+                .iter()
+                .any(|doc| doc["taskId"] == input["taskId"] && doc["eligible"] == true)
+            {
+                return Err("任务没有可加工的已结束执行，请先完成开发".into());
+            }
+            self.sync().await?;
+        } else if action != "list" {
             let id = input["jobId"].as_str().ok_or("缺少加工记录 ID")?;
             uuid::Uuid::parse_str(id).map_err(|_| "加工记录 ID 无效")?;
         }

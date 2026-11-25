@@ -81,6 +81,7 @@ class Catalog(HistoryMixin):
                     VALUES(?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET document=excluded.document,
                     desired_hash=excluded.desired_hash, eligible=excluded.eligible, deleted=0,
                     state=excluded.state, retry_at=CASE WHEN desired_hash!=excluded.desired_hash THEN 0 ELSE retry_at END,
+                    rebuild=CASE WHEN desired_hash!=excluded.desired_hash THEN 0 ELSE rebuild END,
                     attempts=CASE WHEN desired_hash!=excluded.desired_hash THEN 0 ELSE attempts END""",
                     (doc["runId"], json.dumps(doc, ensure_ascii=False), doc["contentHash"], eligible, state))
                 self.db.execute("UPDATE runs SET job_id=? WHERE run_id=?", (job, doc["runId"]))
@@ -131,7 +132,7 @@ class Catalog(HistoryMixin):
             elif row["deleted"]:
                 self.db.execute("DELETE FROM runs WHERE run_id=?", (row["run_id"],))
             else:
-                self.db.execute("UPDATE runs SET state='ready',data_id=?,indexed_hash=?,error=NULL,attempts=0 WHERE run_id=?",
+                self.db.execute("UPDATE runs SET state='ready',data_id=?,indexed_hash=?,error=NULL,attempts=0,rebuild=0 WHERE run_id=?",
                                 (data_id,row["desired_hash"],row["run_id"]))
                 self.end_attempt(row, "completed", result)
 

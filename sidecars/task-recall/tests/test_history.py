@@ -107,6 +107,60 @@ class HistoryTests(unittest.TestCase):
         self.assertIsNone(job["elapsedMs"])
         self.assertIsNone(self.catalog.claim())
 
+    def test_manual_task_groups_finished_runs_and_reuses_pending_work(self):
+        other = document("另一执行", taskId=self.doc["taskId"])
+        draft = document("开发中", taskId=self.doc["taskId"], eligible=False)
+        unrelated = document("另一个任务")
+        self.catalog.finish(self.catalog.claim(), "old-data")
+        self.catalog.sync([self.doc, other, draft, unrelated])
+        before = len(self.items())
+        result = self.catalog.enqueue_task(self.doc["taskId"], str(uuid.uuid4()))
+        self.assertEqual(result["queued"], 1)
+        self.assertEqual(result["existing"], 1)
+        self.assertEqual(len(self.items()), before + 1)
+        self.assertEqual({row["runId"] for row in self.items() if row["id"] in result["jobIds"]}, {self.doc["runId"], other["runId"]})
+        self.assertFalse(any(row["runId"] == draft["runId"] for row in self.items()))
+
+    def test_manual_receipt_is_idempotent_even_after_completion_and_restart(self):
+        self.catalog.finish(self.catalog.claim(), "existing-data")
+        operation = str(uuid.uuid4())
+        receipt = self.catalog.enqueue_task(self.doc["taskId"], operation)
+        row = self.catalog.claim()
+        self.assertTrue(row["rebuild"])
+        self.catalog.finish(row, "existing-data")
+        self.catalog.db.close(); self.catalog = Catalog(self.root / "current")
+        self.assertEqual(self.catalog.enqueue_task(self.doc["taskId"], operation), receipt)
+        self.assertIsNone(self.catalog.claim())
+        self.assertEqual(len(self.items()), 2)
+        with self.assertRaises(QueueConflict):
+            self.catalog.enqueue_task(str(uuid.uuid4()), operation)
+
+    def test_manual_rebuild_survives_retry_restart_and_cancellation(self):
+        self.catalog.finish(self.catalog.claim(), "existing-data")
+        result = self.catalog.enqueue_task(self.doc["taskId"], str(uuid.uuid4()))
+        self.catalog.cancel(result["jobIds"][0])
+        self.catalog.sync([self.doc])
+        self.assertIsNone(self.catalog.claim())
+        self.catalog.enqueue_task(self.doc["taskId"], str(uuid.uuid4()))
+        first = self.catalog.claim()
+        self.catalog.finish(first, error="TimeoutError")
+        self.catalog.enqueue_task(self.doc["taskId"], str(uuid.uuid4()))
+        self.assertTrue(self.catalog.claim()["rebuild"])
+        self.catalog.db.close(); self.catalog = Catalog(self.root / "current")
+        recovered = self.catalog.claim()
+        self.assertTrue(recovered["rebuild"])
+        self.catalog.finish(recovered, "existing-data")
+        self.assertEqual(self.catalog.db.execute("SELECT rebuild FROM runs").fetchone()[0], 0)
+
+    def test_manual_rejects_invalid_missing_and_developing_tasks(self):
+        with self.assertRaises(ValueError):
+            self.catalog.enqueue_task("invalid", str(uuid.uuid4()))
+        with self.assertRaises(QueueConflict):
+            self.catalog.enqueue_task(str(uuid.uuid4()), str(uuid.uuid4()))
+        self.catalog.sync([{**self.doc, "eligible":False}])
+        with self.assertRaises(QueueConflict):
+            self.catalog.enqueue_task(self.doc["taskId"], str(uuid.uuid4()))
+
     def test_cross_configuration_history_is_paginated_and_inactive_queue_paused(self):
         other = Catalog(self.root / "previous")
         other.sync([document("旧配置")]); other.claim(); other.db.close()

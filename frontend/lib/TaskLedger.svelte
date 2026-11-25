@@ -36,7 +36,7 @@
   let panelTaskId='';
   let changesKey='', changesSequence=0;
   let commits:CommitChange[]=[], changesLoading=false, changesError='';
-  let loading = true, busy = false, error = '', message = '';
+  let loading = true, busy = false, error = '', message = '', processingError = '';
   let detail: TaskRunDetail;
   let taskDialog: Dialog.ModalHandle, runDialog: Dialog.ModalHandle;
   let runReturnFocus: HTMLElement | undefined;
@@ -187,6 +187,7 @@
     moreOpen = false; moreTrigger?.focus(); error = '';
     try { await setupDialog.show(); } catch (e) { error = String(e); }
   }
+  function processingFeedback(value:string,failed:boolean){processingError=failed?value:'';message=failed?'':value;}
   async function openChat(conversationId: string) {
     try { await api('openChat', {taskId: selected?.id, conversationId}); }
     catch (e) { error = String(e); }
@@ -249,13 +250,14 @@
     </div>
   </div>
   {#if error && !runPanelOpen}<p role="alert" class="error">{error}</p>{/if}
+  {#if processingError}<p role="alert" class="error">{processingError}</p>{/if}
   {#if message}<p class="message" role="status">{message}</p>{/if}
   {#if selected&&run}
     <section class="task-detail" aria-label="任务详情">
-      <TaskRunDetail task={selected} {runId} panelOpen={runPanelOpen} bind:this={detail} onEditTask={()=>editTask(selected)} onCompleteTask={completeTask} onRestoreTask={createRun} {busy} onOpenRun={openRun}/>
+      <TaskRunDetail task={selected} {runId} panelOpen={runPanelOpen} bind:this={detail} onEditTask={()=>editTask(selected)} onCompleteTask={completeTask} onRestoreTask={createRun} {busy} onOpenRun={openRun} onProcessingFeedback={processingFeedback}/>
     </section>
   {:else}
-    <TaskCollection bind:this={collection} tasks={filtered} total={tasks.length} {loading} {view} {status} {project} {sort} onSort={value=>sort=value} onSelect={select}/>
+    <TaskCollection bind:this={collection} tasks={filtered} total={tasks.length} {loading} {view} {status} {project} {sort} {busy} onSort={value=>sort=value} onSelect={select} onProcessingFeedback={processingFeedback}/>
   {/if}
 </section>
 

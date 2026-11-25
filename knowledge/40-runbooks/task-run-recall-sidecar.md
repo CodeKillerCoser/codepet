@@ -93,7 +93,7 @@ Python catalog/service 7 项（含模型初始化失败时保留全文）、Gate
 
 真实 native semantic 预览回归 7.40 秒通过、未产生模型用量；`preview-graph.json` 包含 152 节点、347 关系及 152 个原生语义坐标。主界面四视图、820×600、空态、繁忙与错误恢复完成 Chromium 验证。
 
-实际回执在 `artifacts/task-recall-sidecar-qa/`：`real/query.json`、`graph.json`、`update-report.json`、`mcp-recall-report.json` 与设置页截图。主界面左侧“任务图谱”展示原生 Graph、Schema、Memory、Semantic 视图。图与语义坐标均由 Cognee 导出，iframe 渲染层、异常状态与依赖兼容处理见 [预览说明](../30-domains/task-management/task-knowledge-preview.md)。加工历史新增后要求 backend API 36 和更新后的 sidecar；按次取消、重启恢复与模型用量归属见 [加工历史](../30-domains/task-management/task-processing-history.md)。真实 smoke 同时检查所有加工请求归属，以及后续召回查询不改变该次加工用量。
+实际回执在 `artifacts/task-recall-sidecar-qa/`：`real/query.json`、`graph.json`、`update-report.json`、`mcp-recall-report.json` 与设置页截图。主界面左侧“任务图谱”展示原生 Graph、Schema、Memory、Semantic 视图。图与语义坐标均由 Cognee 导出，iframe 渲染层、异常状态与依赖兼容处理见 [预览说明](../30-domains/task-management/task-knowledge-preview.md)。加工历史与任务列表主动加工要求 backend API 38 和更新后的 sidecar；按次取消、重启恢复、幂等入队及模型用量归属见 [加工历史](../30-domains/task-management/task-processing-history.md)。真实 smoke 同时检查所有加工请求归属、召回查询不改变该次加工用量，以及主动重新加工保留原生文档 ID 并使用新加工记录计费。
 
 ## 2026-11-25 主干分发构建验证
 

@@ -86,7 +86,7 @@ try {
   assert.equal(detail.result.source, "cognee");
   assert.ok(detail.result.entityCount > 0, "native extraction result must be saved");
   assert.ok(detail.finishedAt && detail.elapsedMs >= 0);
-  const attemptUsage = () => JSON.parse(execFileSync("python3", ["-c", "import sqlite3,json,sys; c=sqlite3.connect(sys.argv[1]); r=c.execute('SELECT count(*),coalesce(sum(input),0),coalesce(sum(output),0),coalesce(sum(reported),0) FROM usage JOIN processing_usage ON usage.rowid=processing_usage.usage_row WHERE job_id=?',(sys.argv[2],)).fetchone(); print(json.dumps(dict(zip([\"requests\",\"inputTokens\",\"outputTokens\",\"reportedRequests\"],r))))", join(data,"model-gateway/usage.sqlite"), completed.id], {encoding:"utf8"}));
+  const attemptUsage = (jobId=completed.id) => JSON.parse(execFileSync("python3", ["-c", "import sqlite3,json,sys; c=sqlite3.connect(sys.argv[1]); r=c.execute('SELECT count(*),coalesce(sum(input),0),coalesce(sum(output),0),coalesce(sum(reported),0) FROM usage JOIN processing_usage ON usage.rowid=processing_usage.usage_row WHERE job_id=?',(sys.argv[2],)).fetchone(); print(json.dumps(dict(zip([\"requests\",\"inputTokens\",\"outputTokens\",\"reportedRequests\"],r))))", join(data,"model-gateway/usage.sqlite"), jobId], {encoding:"utf8"}));
   const usageBeforeQuery = attemptUsage();
   const totalRequestsBeforeQuery = Number(execFileSync("python3", ["-c", "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute('SELECT count(*) FROM usage').fetchone()[0])", join(data,"model-gateway/usage.sqlite")], {encoding:"utf8"}));
   assert.equal(usageBeforeQuery.requests, totalRequestsBeforeQuery, "all processing calls, including embedding SDK calls, must be attributed");
@@ -99,8 +99,29 @@ try {
   const graph = await local(info, "/graph", {});
   assert.ok(graph.nodes.length > 0);
   assert.deepEqual(attemptUsage(), usageBeforeQuery, "recall queries must not be counted against the completed processing attempt");
+  const sourceId=()=>execFileSync('python3',['-c',"import sqlite3,pathlib,sys; p=next(pathlib.Path(sys.argv[1]).glob('*/catalog.sqlite')); print(sqlite3.connect(p).execute('SELECT data_id FROM runs WHERE run_id=?',(sys.argv[2],)).fetchone()[0])",join(data,'tasks/recall/catalogs'),receipt.runId],{encoding:'utf8'}).trim();
+  const originalSourceId=sourceId(),operationId=randomUUID();
+  const manualInput={action:'enqueue',taskId:receipt.taskId,operationId};
+  const manual=await local(info,'/history',manualInput);
+  assert.equal(manual.queued,1);assert.notEqual(manual.jobIds[0],completed.id);
+  assert.deepEqual(await local(info,'/history',manualInput),manual,'retrying a manual request must reuse its receipt');
+  let manualDetail;
+  for(let attempt=0;attempt<120;attempt++){
+    manualDetail=await local(info,'/history',{action:'detail',jobId:manual.jobIds[0]});
+    if(manualDetail.state==='completed')break;
+    assert.notEqual(manualDetail.state,'failed',`manual rebuild failed: ${manualDetail.error}`);
+    assert.ok(attempt<119,'manual rebuild did not complete');
+    await new Promise(resolve=>setTimeout(resolve,2000));
+  }
+  assert.equal(sourceId(),originalSourceId,'manual rebuild must keep the native document id');
+  assert.ok(manualDetail.result.entityCount>0);
+  const manualUsage=attemptUsage(manual.jobIds[0]);
+  assert.ok(manualUsage.requests>0,'manual rebuild must actually invoke the configured models');
+  assert.deepEqual(attemptUsage(),usageBeforeQuery,'reprocessing must not modify the first attempt usage');
+  assert.deepEqual(await local(info,'/history',manualInput),manual,'a late retry after completion must not enqueue again');
+  console.log(JSON.stringify({manualProcessing:true,sourceIdPreserved:true,manualUsage}));
   const output = join(root, "artifacts/task-recall-sidecar-qa"); await mkdir(output, { recursive: true });
-  await writeFile(join(output, "mcp-recall-report.json"), JSON.stringify({ success: true, finishTriggered: true, result, graphNodes: graph.nodes.length, processing:detail, processingUsage:usageBeforeQuery }, null, 2));
+  await writeFile(join(output, "mcp-recall-report.json"), JSON.stringify({ success: true, finishTriggered: true, result, graphNodes: graph.nodes.length, processing:detail, processingUsage:usageBeforeQuery,manualProcessing:manualDetail,manualUsage }, null, 2));
   console.log(JSON.stringify({ success: true, finishTriggered: true, routes: result.recall.routes, runId: receipt.runId, graphNodes: graph.nodes.length, processingHistory:true, processingUsage:usageBeforeQuery }));
 } finally {
   child.stdin.end();
