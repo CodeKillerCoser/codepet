@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button } from "./ui/button/index";
-  import { onMount } from "svelte";
+  import { onMount, type Snippet } from "svelte";
   import { ArrowLeft, ArrowRight, Copy, Home, Minus, PanelLeft, Settings, Square, X } from "@lucide/svelte";
   import { createWindowChrome } from "./windowChrome";
 
@@ -13,6 +13,7 @@
   export let onForward: () => void = () => {};
   export let settingsActive = false;
   export let onSettings: () => void = () => {};
+  export let actions: Snippet | undefined = undefined;
   const chrome = createWindowChrome();
   let maximized = false;
   let anchor = { left: 88, centerY: 20 };
@@ -41,6 +42,7 @@
   <Button class="window-toolbar-button" type="button" aria-label="前进" title="前进" disabled={!canGoForward} onclick={onForward}><ArrowRight size={16} /></Button>
   </div>
   <div class="window-drag-space" data-tauri-drag-region></div>
+  {@render actions?.()}
   <Button class="window-toolbar-button settings-entry" type="button" aria-label="设置" title="设置" aria-pressed={settingsActive} onclick={onSettings}><Settings size={18} /></Button>
   {#if chrome.platform === "windows" && chrome.native}
     <div class="window-controls">

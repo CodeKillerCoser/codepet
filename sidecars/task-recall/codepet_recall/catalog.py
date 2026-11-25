@@ -9,6 +9,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from .history import HistoryMixin
 
 
 def tokens(text):
@@ -32,8 +33,8 @@ def validate_document(doc):
     return doc
 
 
-class Catalog:
-    def __init__(self, root: Path):
+class Catalog(HistoryMixin):
+    def __init__(self, root: Path, models=None, usage_tracking=True):
         root.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
         self.db = sqlite3.connect(root / "catalog.sqlite", check_same_thread=False)
@@ -48,9 +49,7 @@ class Catalog:
                 retry_at REAL NOT NULL DEFAULT 0, error TEXT);
             CREATE VIRTUAL TABLE IF NOT EXISTS run_fts USING fts5(run_id UNINDEXED, terms);
         """)
-        # An interrupted operation is rebuilt from its durable desired document.
-        self.db.execute("UPDATE runs SET state='pending' WHERE state='processing'")
-        self.db.commit()
+        self.init_history(models, usage_tracking)
 
     def sync(self, documents):
         if len(documents) > 10000:
@@ -71,17 +70,26 @@ class Catalog:
                     state = "draft"
                 elif old and old["state"] == "draft":
                     state = "pending"
+                job = old["job_id"] if old else None
+                if changed or (old and old["state"] == "draft" and eligible):
+                    self.retire_queued(job)
+                    job = self.enqueue(doc) if eligible else None
+                elif not eligible:
+                    self.retire_queued(job, "执行尚未完成")
+                    job = None
                 self.db.execute("""INSERT INTO runs(run_id,document,desired_hash,eligible,state)
                     VALUES(?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET document=excluded.document,
                     desired_hash=excluded.desired_hash, eligible=excluded.eligible, deleted=0,
                     state=excluded.state, retry_at=CASE WHEN desired_hash!=excluded.desired_hash THEN 0 ELSE retry_at END,
                     attempts=CASE WHEN desired_hash!=excluded.desired_hash THEN 0 ELSE attempts END""",
                     (doc["runId"], json.dumps(doc, ensure_ascii=False), doc["contentHash"], eligible, state))
+                self.db.execute("UPDATE runs SET job_id=? WHERE run_id=?", (job, doc["runId"]))
                 if changed:
                     self.db.execute("DELETE FROM run_fts WHERE run_id=?", (doc["runId"],))
                     self.db.execute("INSERT INTO run_fts VALUES(?,?)", (doc["runId"], " ".join(tokens(doc["text"]))))
             for missing in {key for key in set(existing) - set(ids) if not existing[key]["deleted"]}:
-                self.db.execute("UPDATE runs SET deleted=1,state='pending',retry_at=0 WHERE run_id=?", (missing,))
+                self.retire_queued(existing[missing]["job_id"], "原始执行已删除")
+                self.db.execute("UPDATE runs SET deleted=1,state='pending',retry_at=0,job_id=NULL WHERE run_id=?", (missing,))
                 self.db.execute("DELETE FROM run_fts WHERE run_id=?", (missing,))
         return self.status()
 
@@ -96,27 +104,36 @@ class Catalog:
             row = self.db.execute("""SELECT * FROM runs WHERE (eligible=1 OR deleted=1)
                 AND state IN ('pending','failed') AND retry_at<=? ORDER BY attempts,run_id LIMIT 1""", (time.time(),)).fetchone()
             if row:
-                self.db.execute("UPDATE runs SET state='processing' WHERE run_id=?", (row["run_id"],))
-                return dict(row)
+                row = dict(row)
+                row["job_id"] = self.start_attempt(row)
+                self.db.execute("UPDATE runs SET state='processing',job_id=? WHERE run_id=?", (row["job_id"], row["run_id"]))
+                return row
 
-    def finish(self, row, data_id=None, error=None):
+    def finish(self, row, data_id=None, error=None, result=None):
         with self.lock, self.db:
             current = self.db.execute("SELECT * FROM runs WHERE run_id=?", (row["run_id"],)).fetchone()
             if not current:
+                self.end_attempt(row, "superseded", result)
                 return
             if (current["desired_hash"] != row["desired_hash"] or current["deleted"] != row["deleted"]
                     or current["eligible"] != row["eligible"]):
-                state = "pending" if current["eligible"] or current["deleted"] else "draft"
+                state = current["state"] if current["job_id"] != row.get("job_id") else ("pending" if current["eligible"] or current["deleted"] else "draft")
                 self.db.execute("UPDATE runs SET data_id=COALESCE(?,data_id),state=? WHERE run_id=?", (data_id,state,row["run_id"]))
+                self.end_attempt(row, "superseded", result)
             elif error:
                 attempts = current["attempts"] + 1
                 self.db.execute("UPDATE runs SET state='failed',error=?,attempts=?,retry_at=? WHERE run_id=?",
                                 (error,attempts,time.time() + min(300, 2 ** min(attempts, 8)),row["run_id"]))
+                self.end_attempt(row, "failed", error=error)
+                if not row["deleted"]:
+                    job = self.enqueue(json.loads(row["document"]))
+                    self.db.execute("UPDATE runs SET job_id=? WHERE run_id=?", (job, row["run_id"]))
             elif row["deleted"]:
                 self.db.execute("DELETE FROM runs WHERE run_id=?", (row["run_id"],))
             else:
                 self.db.execute("UPDATE runs SET state='ready',data_id=?,indexed_hash=?,error=NULL,attempts=0 WHERE run_id=?",
                                 (data_id,row["desired_hash"],row["run_id"]))
+                self.end_attempt(row, "completed", result)
 
     def ready(self):
         with self.lock:

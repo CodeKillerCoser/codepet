@@ -5,8 +5,8 @@
   export let current: AppRoute;
   export let onNavigate: (route: AppRoute) => void;
   const entries = [
-    { route: "tasks", label: "Codex工作台", icon: Activity },
-    { route: "knowledge", label: "知识图谱", icon: Network },
+    { route: "tasks", label: "AgentHub", icon: Activity },
+    { route: "knowledge", label: "任务图谱", icon: Network },
     { route: "connections", label: "连接接入", icon: Cable },
     { route: "usage", label: "用量", icon: BarChart3 },
     { route: "personalize", label: "宠物制作", icon: Palette },

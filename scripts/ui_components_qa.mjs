@@ -85,7 +85,7 @@ try {
       await button('设置').click(); await button('返回主界面').click(); await button('连接接入').click();
     }
     await button('返回主界面').click();
-    await page.getByRole('region', { name: 'Codex工作台', exact: true }).waitFor();
+    await page.getByRole('region', { name: 'AgentHub', exact: true }).waitFor();
   }
   await go(); await button('连接接入').click();
   const firstTab = page.getByRole('tab', { name: '活动接入', exact: true });
@@ -114,7 +114,7 @@ try {
 
   // Keep the upstream workbench route, and test the legacy history component in isolation.
   await button('返回主界面').click();
-  await page.getByRole('region', { name: 'Codex工作台', exact: true }).waitFor();
+  await page.getByRole('region', { name: 'AgentHub', exact: true }).waitFor();
   await page.goto('http://127.0.0.1:1449/frontend/qa/main-window.html?uiHistory');
   const history = page.getByRole('dialog', { name: '抽取历史', exact: true });
   await history.waitFor();

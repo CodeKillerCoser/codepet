@@ -14,18 +14,19 @@ test('uses a real snapshot, retains the view during busy refresh, and cleans it 
   vi.mocked(loadRecallGraph).mockResolvedValue(graph);
   vi.mocked(renderRecallGraph).mockResolvedValue({detail:{nodes:2,links:1},destroy});
   component=mount(TaskKnowledgePage,{target:document.body}); await settle();
-  expect(document.body.textContent).toContain('2 个节点 · 1 条关系');
+  expect(document.body.textContent).not.toContain('个节点');
   expect(renderRecallGraph).toHaveBeenCalledWith(expect.any(HTMLElement),graph,expect.any(AbortSignal));
   let reject!: (cause:Error) => void;
   vi.mocked(loadRecallGraph).mockImplementationOnce(() => new Promise((_,fail) => {reject=fail;}));
-  const button=[...document.querySelectorAll('button')].find(b=>b.textContent?.includes('刷新图谱'))!;
-  button.focus(); button.click(); await settle();
-  expect(button.disabled).toBe(true); expect(destroy).not.toHaveBeenCalled();
+  const refresh=(component as {refresh:()=>Promise<void>}).refresh(); await settle();
+  expect(document.querySelector('[role=status]')?.textContent).toContain('更新图谱');
+  expect(destroy).not.toHaveBeenCalled();
   reject(new Error('任务召回请求失败 (409)')); await settle();
   expect(document.querySelector('[role=status]')?.textContent).toContain('加工任务记录');
   expect(document.querySelector('[role=alert]')).toBeNull();
-  expect(document.body.textContent).toContain('2 个节点');
-  expect(destroy).not.toHaveBeenCalled(); expect(button.disabled).toBe(false);
+  await refresh;
+  expect(document.querySelector('.graph-surface')).not.toBeNull();
+  expect(destroy).not.toHaveBeenCalled();
   await unmount(component); component=undefined; expect(destroy).toHaveBeenCalledTimes(1);
 });
 

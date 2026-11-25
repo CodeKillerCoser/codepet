@@ -35,6 +35,14 @@
 
 边框沿用 Radix Gray：4 阶分隔与容器轮廓、6 阶控件默认边框、8 阶悬停或增强边框。主窗口不以纯黑或透明黑叠加模拟边框，暗色主题由对应 gray palette 提供。状态以图标及文本表达，不依赖大面积背景色。
 
+## 按钮交互
+
+主窗口按钮统一采用无色或中性灰背景。`frontend/lib/theme/main-window.css` 定义 `--hover_background_color: var(--gray-3)`、`--press_background_color: var(--gray-4)`；Radix 明暗 palette 自动适配主题。原 `--color-main-hover`、`--color-main-selected` 分别作这两个值的别名，主操作、选中导航和工具栏也使用灰阶，不单独使用黄色。
+
+`frontend/main-window.css` 统一提供可用按钮 hover、鼠标按下及持久选中背景，覆盖主内容、全局侧栏和 portal 弹窗。disabled/aria-disabled 不产生新反馈；switch 的 checked 轨道保留独立状态语义。按钮形状、默认透明或浅灰背景仍由组件承担，成功/失败等内容状态保留语义色。Cognee 沙箱内的上游渲染不读取主窗口样式。
+
+该变更涉及主题角色和公共交互层，避免时钟关闭后变灰、展开后仍出现黄底，或主按钮悬停回退为黄色。修改后检查明暗主题下的时钟关闭/展开、hover/按下/释放、侧栏操作、设置主按钮、disabled 与全局弹窗，验证实际 computed style，不只检索变量名。
+
 ## 验证
 
 - 修改 token 时运行 `npx vitest run frontend/styles.test.ts` 和主题相关测试。

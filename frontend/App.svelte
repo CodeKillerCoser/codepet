@@ -8,6 +8,7 @@
   import PermissionSettings from "./lib/PermissionSettings.svelte";
   import ModelSettings from "./lib/ModelSettings.svelte";
   import TaskKnowledgePage from "./lib/TaskKnowledgePage.svelte";
+  import RecallHistory from "./lib/RecallHistory.svelte";
   import { consumeReloadNotice, webcontentReloading } from "./lib/webcontent";
   import EventJournal from "./lib/EventJournal.svelte";
   import AppSidePanelHost from "./lib/shell/AppSidePanelHost.svelte";
@@ -25,7 +26,7 @@
   import { LogicalPosition } from "@tauri-apps/api/dpi";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
-  import { Activity, FolderCog, PlugZap, Plus, RefreshCw, ShieldAlert } from "@lucide/svelte";
+  import { Activity, Clock, FolderCog, PlugZap, Plus, RefreshCw, ShieldAlert } from "@lucide/svelte";
   import { onMount, tick } from "svelte";
   import ProviderRuntimeInfo from "./lib/ProviderRuntimeInfo.svelte";
   import { shouldShowRuntime, isBuiltinProvider } from "./lib/agentRuntime";
@@ -62,6 +63,9 @@
   let contentElement: HTMLDivElement;
   let workbenchView: 'code' | 'tasks' = 'code';
   let pageHeading: HTMLHeadingElement;
+  let recallHistoryOpen = false;
+  let recallHistoryTrigger: HTMLElement | undefined;
+  let graphRevision = 0;
   let renderedRoute: AppRoute = "tasks";
   $: if (tab !== renderedRoute) {
     sidePanel.dismiss(false);
@@ -69,7 +73,7 @@
     void tick().then(() => {
       contentElement?.scrollTo({ top: 0 });
       if (!document.activeElement?.closest('[role="tablist"]')) {
-        const heading = tab === "tasks" || tab === "extraction" ? contentElement?.querySelector<HTMLElement>(".workbench") : pageHeading;
+        const heading = tab === "tasks" || tab === "extraction" ? contentElement?.querySelector<HTMLElement>(".workbench") : tab === "knowledge" ? contentElement?.querySelector<HTMLElement>(".knowledge-page") : pageHeading;
         heading?.focus({ preventScroll: true });
       }
     });
@@ -1056,7 +1060,8 @@
 </script>
 
 <main data-side-panel-layout style:--app-side-panel-width={`${$sidePanelWidth}px`} class:resizing-side-panel={$sidePanelResizing} class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed} class:has-side-panel-column={!!$sidePanelCurrent && $sidePanelMode === "column"} inert={$webcontentReloading}>
-  <WindowToolbar bind:collapsed={sidebarCollapsed} canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onHome={() => navigation.navigate("tasks")} onBack={navigation.back} onForward={navigation.forward} settingsActive={isSettingsRoute(tab)} onSettings={() => navigation.navigate("settings")} onError={(message) => error = message} />
+  {#snippet graphActions()}<Button class="window-toolbar-button" bind:ref={recallHistoryTrigger} aria-label="加工历史" title="加工历史" aria-expanded={recallHistoryOpen} aria-pressed={recallHistoryOpen} onclick={() => recallHistoryOpen = !recallHistoryOpen}><Clock size={18}/></Button>{/snippet}
+  <WindowToolbar actions={tab === "knowledge" ? graphActions : undefined} bind:collapsed={sidebarCollapsed} canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onHome={() => navigation.navigate("tasks")} onBack={navigation.back} onForward={navigation.forward} settingsActive={isSettingsRoute(tab)} onSettings={() => navigation.navigate("settings")} onError={(message) => error = message} />
   <aside id="main-sidebar" class="sidebar" inert={sidebarCollapsed}>
     <MainNavigation current={tab} onNavigate={navigation.navigate} />
   </aside>
@@ -1073,7 +1078,8 @@
   {/snippet}
   <AppContentPane
     workbench={tab === "tasks" || tab === "extraction"}
-    heading={tab === "tasks" || tab === "extraction" ? undefined : pageHeader}
+    canvas={tab === "knowledge"}
+    heading={tab === "tasks" || tab === "extraction" || tab === "knowledge" ? undefined : pageHeader}
     navigation={tab === "tasks" || tab === "extraction" ? workbenchNavigation : isConnectionRoute(tab) ? connectionNavigation : undefined}
     bind:contentElement
   >
@@ -1086,7 +1092,7 @@
     {#if tab === "tasks" || tab === "extraction"}
       <CodexWorkbench bind:view={workbenchView} />
     {:else if tab === "knowledge"}
-      <TaskKnowledgePage onModels={() => navigation.navigate('models')} />
+      <TaskKnowledgePage revision={graphRevision} onModels={() => navigation.navigate('models')} />
     {:else if tab === "connections"}
       <div class="agent-workspace">
         <section class="overview-grid" aria-label="运行概览">
@@ -1277,6 +1283,7 @@
   </AppContentPane>
 
   <AppSidePanelHost />
+  <RecallHistory open={recallHistoryOpen} returnFocus={recallHistoryTrigger} onClose={() => recallHistoryOpen = false} onProcessed={() => graphRevision++}/>
 
   <PairDeviceDialog
     open={pairDeviceDialogOpen}

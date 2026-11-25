@@ -66,6 +66,17 @@ class ServiceTests(unittest.TestCase):
                 doc = {"runId":str(uuid.uuid4()),"taskId":str(uuid.uuid4()),"eligible":True,
                        "text":text,"contentHash":hashlib.sha256(text.encode()).hexdigest()}
                 request("/sync",{"documents":[doc]})
+                jobs = request("/history", {"action":"list"})
+                self.assertEqual(jobs["counts"]["queued"], 1)
+                job = jobs["items"][0]["id"]
+                request("/history", {"action":"cancel", "jobId":job})
+                request("/sync", {"documents":[doc]})
+                detail = request("/history", {"action":"detail", "jobId":job})
+                self.assertEqual(detail["state"], "cancelled")
+                self.assertFalse(detail["usageTracked"])
+                with self.assertRaises(HTTPError) as caught:
+                    request("/history", {"action":"cancel", "jobId":job})
+                self.assertEqual(caught.exception.code, 409)
                 attached,other = start()
                 self.assertFalse(other["owned"])
                 self.assertEqual(info["endpoint"],other["endpoint"])

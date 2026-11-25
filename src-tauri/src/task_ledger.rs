@@ -40,6 +40,9 @@ pub(crate) async fn task_ledger_request(
     if request["op"].as_str() == Some("recall-graph") {
         return runtime.recall().graph().await;
     }
+    if request["op"].as_str() == Some("recall-history") {
+        return runtime.recall().history(request.clone()).await;
+    }
     if request["op"].as_str() == Some("setup") {
         let mut config = crate::task_mcp_setup::configuration(
             &app,

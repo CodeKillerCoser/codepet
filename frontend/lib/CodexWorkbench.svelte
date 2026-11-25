@@ -81,7 +81,7 @@
 
 <svelte:window on:keydown={(event) => {if (event.key === 'Escape' && moreOpen) {event.preventDefault(); moreOpen = false; document.querySelector<HTMLElement>('.more-filters summary')?.focus();}}}/>
 
-<section class="workbench" aria-label="Codex工作台" tabindex="-1">
+<section class="workbench" aria-label="AgentHub" tabindex="-1">
   {#if view==='tasks'}<TaskLedger workspaceHint={selected?.path??''}/>{:else}
   <div class="wb-body">
     <div class="scanbar">

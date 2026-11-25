@@ -71,8 +71,23 @@
 .main-theme .window-controls button { width: 46px; border-radius: 0; }
 .main-theme .window-controls button:hover,
 .main-theme .window-toolbar-button:hover { background: var(--color-main-hover); }
+.main-theme .window-toolbar-button[aria-pressed="true"] { background:var(--color-main-selected);color:var(--color-main-selected-text); }
 .main-theme .window-controls .window-close:hover { background: var(--color-main-close-hover); color: var(--color-main-on-close); }
 .main-theme .window-controls button:focus-visible { outline-offset: -3px; }
+
+/* One neutral interaction palette for shell, content and portaled dialogs.
+   Switch tracks retain checked semantics; hover/press rules apply to enabled controls. */
+.main-theme :is(button, [role="button"], a[data-slot="button"]):not([role="switch"]):is([aria-pressed="true"], [aria-selected="true"], .active, .chosen, .selected, .enabled) {
+  background-color: var(--press_background_color);
+}
+.main-theme :is(button, [role="button"], a[data-slot="button"]):not(:disabled):not([aria-disabled="true"]):not([role="switch"]):hover {
+  background-color: var(--hover_background_color);
+  color: var(--app-text);
+}
+.main-theme :is(button, [role="button"], a[data-slot="button"]):not(:disabled):not([aria-disabled="true"]):not([role="switch"]):active {
+  background-color: var(--press_background_color);
+  color: var(--app-text);
+}
 
 .main-theme .sidebar {
   grid-column: 1;
@@ -151,6 +166,8 @@
   scrollbar-gutter: stable;
 }
 .main-theme .content > * { min-width: 0; }
+.main-theme .canvas > .content { display:flex;flex-direction:column;padding:0;overflow:hidden;scrollbar-gutter:auto; }
+.main-theme .canvas > .content > div { display:flex;flex-direction:column;min-height:0;flex:1; }
 .main-theme .content .pixel-panel { background: transparent; border: 0; box-shadow: none; backdrop-filter: none; }
 .main-theme :is(.agent-workspace, .connection-workspace, .usage-workspace, .personal-grid, .personal-side) { gap: 24px; }
 .main-theme :is(.agent-section, .device-section, .runtime-section, .usage-panel, .usage-table, .pet-editor, .appearance-editor, .bubble-editor, .sound-editor, .robot-editor, .event-log) { padding: 0; gap: 16px; }
@@ -175,7 +192,7 @@
 .main-theme .panel-head .icon-button { width: 32px; height: 32px; }
 .main-theme :is(.icon-button, .row-actions button, .segmented button, .power-button, .data-directory button):hover { transform: none; }
 .main-theme :is(.primary-action, .connection-primary-button) { background: var(--color-main-accent-solid); border-color: var(--color-main-accent-solid); color: var(--color-main-on-accent); }
-.main-theme :is(.primary-action, .connection-primary-button):hover { background: var(--amber-10); }
+.main-theme :is(.primary-action, .connection-primary-button):hover { background: var(--hover_background_color); }
 .main-theme .segmented button.active { background: var(--color-main-selected); color: var(--color-main-selected-text); border-color: var(--app-border-strong); }
 .main-theme button:disabled { opacity: 1; color: var(--app-muted); cursor: not-allowed; }
 .main-theme :is(.primary-action, .connection-primary-button):disabled { background: var(--app-surface-soft); border-color: var(--app-border-strong); color: var(--app-muted); }

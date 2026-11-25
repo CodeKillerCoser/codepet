@@ -100,6 +100,10 @@ class Engine:
                     return str(data.id)
         raise RuntimeError("Cognee source provenance missing")
 
+    async def result(self, document):
+        from .results import processing_result
+        return processing_result(await self.graph(), document)
+
     async def graph(self, semantic=False):
         await self.initialize()
         if not self.dataset:

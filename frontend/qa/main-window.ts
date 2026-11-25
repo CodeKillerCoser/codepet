@@ -1,3 +1,4 @@
+import {recallHistoryFixture} from './recall-history-fixture';
 import {taskLedgerOverflow} from './taskLedgerOverflow';
 // Browser-only QA fixture. This entry is excluded from production build inputs.
 import { emit } from "@tauri-apps/api/event";
@@ -74,6 +75,7 @@ const runtimeConnections = () => runtimeInventory.map((item) => ({providerId:ite
 mockIPC((command, raw) => {
   if (command === "task_ledger_request") {
     const request = (raw as any).request;
+    if (request.op === "recall-history") return recallHistoryFixture(request);
     if (request.op === "recall-graph") {
       const options = new URLSearchParams(location.search);
       if (options.has("graphBusy")) throw new Error("任务召回请求失败 (409)");

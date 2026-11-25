@@ -2,7 +2,7 @@
 pub mod settings;
 pub mod usage;
 use axum::{
-    extract::{DefaultBodyLimit, Request, State},
+    extract::{DefaultBodyLimit, Extension, Request, State},
     http::{header, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -30,6 +30,8 @@ struct Access {
     model_slot: Semaphore,
     stop: watch::Receiver<bool>,
 }
+#[derive(Clone)]
+struct ProcessingJob(Option<String>);
 pub struct ModelGateway {
     pub endpoint: String,
     pub token: String,
@@ -89,7 +91,7 @@ impl ModelGateway {
         })
     }
 }
-async fn authorize(State(state): State<Arc<Access>>, request: Request, next: Next) -> Response {
+async fn authorize(State(state): State<Arc<Access>>, mut request: Request, next: Next) -> Response {
     let headers = request.headers();
     if headers.get_all(header::HOST).iter().count() != 1
         || headers.get(header::HOST).and_then(|v| v.to_str().ok()) != Some(&state.authority)
@@ -105,20 +107,50 @@ async fn authorize(State(state): State<Arc<Access>>, request: Request, next: Nex
     if !valid {
         return StatusCode::UNAUTHORIZED.into_response();
     }
+    let trace = "x-codepet-processing-job";
+    if headers.get_all(trace).iter().count() > 1 {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let job = if let Some(value) = headers.get(trace) {
+        let Ok(id) = value
+            .to_str()
+            .map_err(|_| ())
+            .and_then(|s| uuid::Uuid::parse_str(s).map_err(|_| ()))
+        else {
+            return StatusCode::BAD_REQUEST.into_response();
+        };
+        Some(id.to_string())
+    } else {
+        None
+    };
+    request.extensions_mut().insert(ProcessingJob(job));
     let mut stop = state.stop.clone();
     tokio::select! {
         response = next.run(request) => response,
         _ = stop.changed() => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }
-async fn chat(State(state): State<Arc<Access>>, Json(body): Json<Value>) -> Response {
-    forward(state, body, false).await
+async fn chat(
+    State(state): State<Arc<Access>>,
+    Extension(job): Extension<ProcessingJob>,
+    Json(body): Json<Value>,
+) -> Response {
+    forward(state, body, false, job.0).await
 }
-async fn embeddings(State(state): State<Arc<Access>>, Json(body): Json<Value>) -> Response {
-    forward(state, body, true).await
+async fn embeddings(
+    State(state): State<Arc<Access>>,
+    Extension(job): Extension<ProcessingJob>,
+    Json(body): Json<Value>,
+) -> Response {
+    forward(state, body, true, job.0).await
 }
 
-async fn forward(state: Arc<Access>, mut body: Value, embedding: bool) -> Response {
+async fn forward(
+    state: Arc<Access>,
+    mut body: Value,
+    embedding: bool,
+    job: Option<String>,
+) -> Response {
     if !state.settings.enabled {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
@@ -194,6 +226,7 @@ async fn forward(state: Arc<Access>, mut body: Value, embedding: bool) -> Respon
             ok,
             &value,
             started.elapsed().as_millis(),
+            job.as_deref(),
         )
         .is_err()
         {

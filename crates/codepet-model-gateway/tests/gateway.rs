@@ -157,3 +157,79 @@ fn endpoint_and_advanced_options_are_validated() {
         .insert("model".into(), json!("override"));
     assert!(settings::validate(&settings).is_err());
 }
+
+#[tokio::test]
+async fn attempt_usage_is_exact_across_batches_queries_and_missing_reports() {
+    let data = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}/v1", listener.local_addr().unwrap());
+    let upstream = tokio::spawn(async move {
+        axum::serve(listener, Router::new()
+            .route("/v1/chat/completions", post(|headers: axum::http::HeaderMap, Json(body): Json<Value>| async move {
+                assert!(!headers.contains_key("x-codepet-processing-job"), "private attempt identity must not reach the provider");
+                if body["missing"] == true { Json(json!({"choices":[]})) }
+                else { Json(json!({"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":3}})) }
+            }))
+            .route("/v1/embeddings", post(|Json(body): Json<Value>| async move {
+                let count = body["input"].as_array().unwrap().len();
+                Json(json!({"data":(0..count).map(|i|json!({"index":i,"embedding":[1.0,2.0]})).collect::<Vec<_>>(),"usage":{"prompt_tokens":count}}))
+            }))).await.unwrap();
+    });
+    let profile = Profile {
+        endpoint,
+        model: "test".into(),
+        dimensions: 2,
+        ..Default::default()
+    };
+    let gateway = ModelGateway::start(
+        data.path(),
+        Settings {
+            enabled: true,
+            llm: profile.clone(),
+            embedding: profile,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let first = uuid::Uuid::new_v4().to_string();
+    let second = uuid::Uuid::new_v4().to_string();
+    for (job, missing) in [(Some(&first), false), (Some(&second), true), (None, false)] {
+        let mut request = client
+            .post(format!("{}/chat/completions", gateway.endpoint))
+            .bearer_auth(&gateway.token)
+            .json(&json!({"messages":[],"missing":missing}));
+        if let Some(job) = job {
+            request = request.header("x-codepet-processing-job", job);
+        }
+        assert!(request.send().await.unwrap().status().is_success());
+    }
+    assert!(client
+        .post(format!("{}/embeddings", gateway.endpoint))
+        .bearer_auth(&gateway.token)
+        .header("x-codepet-processing-job", &first)
+        .json(&json!({"input":vec!["text";9]}))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .is_success());
+    let usage = usage::for_jobs(data.path(), &[first.clone(), second.clone()]).unwrap();
+    assert_eq!(usage[&first]["requests"], 3);
+    assert_eq!(usage[&first]["knownTokens"], 22);
+    assert_eq!(usage[&first]["complete"], true);
+    assert_eq!(usage[&second]["requests"], 1);
+    assert_eq!(usage[&second]["complete"], false);
+    assert_eq!(usage[&second]["reportedRequests"], 0);
+    let bad = client
+        .post(format!("{}/chat/completions", gateway.endpoint))
+        .bearer_auth(&gateway.token)
+        .header("x-codepet-processing-job", "invalid")
+        .json(&json!({}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), 400);
+    upstream.abort();
+}

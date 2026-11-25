@@ -83,7 +83,7 @@ impl Process {
         }
         let gateway = ModelGateway::start(data, settings.clone()).await?;
         let fingerprint = fingerprint(&settings);
-        let config = json!({"enabled":settings.enabled,"fingerprint":fingerprint,
+        let config = json!({"enabled":settings.enabled,"fingerprint":fingerprint,"usageTracking":true,
             "llm":{"model":settings.llm.model},"embedding":{"model":settings.embedding.model,"dimensions":settings.embedding.dimensions},
             "gatewayEndpoint":gateway.endpoint,"gatewayToken":gateway.token});
         let mut command = Command::new(root.join(relative));

@@ -477,11 +477,11 @@ try {
   assert.ok(!(await page.locator('.app-shell').getAttribute('class')).includes('has-side-panel-column'));
   assert.equal(await page.getByRole('button', { name: '任务抽取', exact: true }).count(), 0);
   await page.getByRole('button', { name: '后退', exact: true }).click();
-  await page.getByRole('region', { name: 'Codex工作台', exact: true }).waitFor();
+  await page.getByRole('region', { name: 'AgentHub', exact: true }).waitFor();
   assert.equal(await page.locator('.worktree-row').count(), 1, 'Real App route navigation preserves the scan');
   assert.ok(await page.locator('.workbench').evaluate(element => element === document.activeElement));
   assert.equal(await page.locator('.wb-header').count(), 0);
-  await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: 'Codex工作台', exact: true }).waitFor();
+  await page.getByRole('navigation', { name: '主导航' }).getByRole('button', { name: 'AgentHub', exact: true }).waitFor();
   await page.emulateMedia({ colorScheme: 'light' });
   await page.goto('http://127.0.0.1:1437/frontend/qa/main-window.html?theme=system');
   await page.getByRole('button', { name: '确认', exact: true }).waitFor();

@@ -128,6 +128,55 @@ impl Recall {
     pub async fn graph(&self) -> Result<Value, String> {
         self.request("/graph", Some(json!({"semantic":true}))).await
     }
+    /// Main-window inspection only; not exposed as an Agent MCP tool.
+    pub async fn history(&self, input: Value) -> Result<Value, String> {
+        let action = input["action"].as_str().unwrap_or("list");
+        if !matches!(action, "list" | "detail" | "cancel" | "retry") {
+            return Err("未知加工历史操作".into());
+        }
+        if action != "list" {
+            let id = input["jobId"].as_str().ok_or("缺少加工记录 ID")?;
+            uuid::Uuid::parse_str(id).map_err(|_| "加工记录 ID 无效")?;
+        }
+        let mut result = self
+            .request("/history", Some(input.clone()))
+            .await
+            .map_err(|error| {
+                if error.contains("(409)") {
+                    "加工队列已变化，请刷新后重试".to_owned()
+                } else if error.contains("(404)") {
+                    "召回组件需要更新，请重新启动新版 Code Pet".to_owned()
+                } else {
+                    error
+                }
+            })?;
+        if matches!(action, "list" | "detail") {
+            let ids = if action == "detail" {
+                vec![result["id"].as_str().unwrap_or_default().to_owned()]
+            } else {
+                result["items"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|r| r["id"].as_str().map(str::to_owned))
+                    .collect()
+            };
+            let data = self.ledger.data_directory().to_owned();
+            let usage = tokio::task::spawn_blocking(move || {
+                codepet_model_gateway::usage::for_jobs(&data, &ids)
+            })
+            .await
+            .map_err(|e| e.to_string())??;
+            if action == "detail" {
+                result["usage"] = usage[result["id"].as_str().unwrap_or_default()].clone();
+            } else if let Some(items) = result["items"].as_array_mut() {
+                for item in items {
+                    item["usage"] = usage[item["id"].as_str().unwrap_or_default()].clone();
+                }
+            }
+        }
+        Ok(result)
+    }
     pub async fn find(&self, input: FindTaskRunsInput) -> Result<Value, String> {
         let query = input.query.as_deref().unwrap_or("").trim().to_owned();
         if input.task_id.is_some() || input.run_id.is_some() || query.is_empty() {

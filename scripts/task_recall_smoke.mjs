@@ -79,6 +79,18 @@ try {
     assert.ok(attempt < 119, "finish did not produce an indexed Run");
     await new Promise(resolve => setTimeout(resolve, 2000));
   }
+  const processing = await local(info, "/history", { action: "list" });
+  const completed = processing.items.find(item => item.runId === receipt.runId && item.state === "completed");
+  assert.ok(completed, "the completed processing attempt must be persisted");
+  const detail = await local(info, "/history", { action: "detail", jobId: completed.id });
+  assert.equal(detail.result.source, "cognee");
+  assert.ok(detail.result.entityCount > 0, "native extraction result must be saved");
+  assert.ok(detail.finishedAt && detail.elapsedMs >= 0);
+  const attemptUsage = () => JSON.parse(execFileSync("python3", ["-c", "import sqlite3,json,sys; c=sqlite3.connect(sys.argv[1]); r=c.execute('SELECT count(*),coalesce(sum(input),0),coalesce(sum(output),0),coalesce(sum(reported),0) FROM usage JOIN processing_usage ON usage.rowid=processing_usage.usage_row WHERE job_id=?',(sys.argv[2],)).fetchone(); print(json.dumps(dict(zip([\"requests\",\"inputTokens\",\"outputTokens\",\"reportedRequests\"],r))))", join(data,"model-gateway/usage.sqlite"), completed.id], {encoding:"utf8"}));
+  const usageBeforeQuery = attemptUsage();
+  const totalRequestsBeforeQuery = Number(execFileSync("python3", ["-c", "import sqlite3,sys; c=sqlite3.connect(sys.argv[1]); print(c.execute('SELECT count(*) FROM usage').fetchone()[0])", join(data,"model-gateway/usage.sqlite")], {encoding:"utf8"}));
+  assert.equal(usageBeforeQuery.requests, totalRequestsBeforeQuery, "all processing calls, including embedding SDK calls, must be attributed");
+  assert.ok(usageBeforeQuery.requests > 0, "Gateway must attribute actual model requests to this attempt");
   const result = await call("find-task-runs", { workspace, query: "把侧栏面板拖窄后，双击可以还原一半窗口的比例" });
   assert.equal(result.runs[0]?.runId, receipt.runId);
   assert.equal(result.runs[0]?.isCurrentRun, true);
@@ -86,9 +98,10 @@ try {
   for (const route of ["semantic", "graph", "fulltext"]) assert.ok(result.runs[0].recall.evidence.some(item => item.route === route), `missing ${route}`);
   const graph = await local(info, "/graph", {});
   assert.ok(graph.nodes.length > 0);
+  assert.deepEqual(attemptUsage(), usageBeforeQuery, "recall queries must not be counted against the completed processing attempt");
   const output = join(root, "artifacts/task-recall-sidecar-qa"); await mkdir(output, { recursive: true });
-  await writeFile(join(output, "mcp-recall-report.json"), JSON.stringify({ success: true, finishTriggered: true, result, graphNodes: graph.nodes.length }, null, 2));
-  console.log(JSON.stringify({ success: true, finishTriggered: true, routes: result.recall.routes, runId: receipt.runId, graphNodes: graph.nodes.length }));
+  await writeFile(join(output, "mcp-recall-report.json"), JSON.stringify({ success: true, finishTriggered: true, result, graphNodes: graph.nodes.length, processing:detail, processingUsage:usageBeforeQuery }, null, 2));
+  console.log(JSON.stringify({ success: true, finishTriggered: true, routes: result.recall.routes, runId: receipt.runId, graphNodes: graph.nodes.length, processingHistory:true, processingUsage:usageBeforeQuery }));
 } finally {
   child.stdin.end();
   await new Promise(resolve => { if (child.exitCode !== null) return resolve(); const timer = setTimeout(() => child.kill(), 5000); child.once("exit", () => { clearTimeout(timer); resolve(); }); });

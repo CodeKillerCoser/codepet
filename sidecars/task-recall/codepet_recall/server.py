@@ -15,6 +15,8 @@ from urllib.request import Request, ProxyHandler, build_opener
 
 from .catalog import Catalog
 from .engine import Engine
+from .history import QueueConflict, read_history
+from .model_trace import attempt_id
 
 
 def lock_file(path):
@@ -40,7 +42,9 @@ def lock_file(path):
 class Service:
     def __init__(self, root, config):
         self.config = config
-        self.catalog = Catalog(root / "catalogs" / config["fingerprint"])
+        self.root = root
+        models = {key:config.get(key, {}).get("model", "") for key in ("llm", "embedding")}
+        self.catalog = Catalog(root / "catalogs" / config["fingerprint"], models, bool(config.get("usageTracking")))
         self.engine = Engine(root / "indexes", config)
         self.busy = threading.Lock()
         self.loop = asyncio.new_event_loop()
@@ -55,9 +59,9 @@ class Service:
             try:
                 row = self.catalog.claim()
                 if row:
-                    future = asyncio.run_coroutine_threadsafe(self.engine.process(row), self.loop)
-                    data_id = future.result()
-                    self.catalog.finish(row, data_id=data_id)
+                    future = asyncio.run_coroutine_threadsafe(self.process(row), self.loop)
+                    data_id, result = future.result()
+                    self.catalog.finish(row, data_id=data_id, result=result)
             except Exception as error:
                 if row:
                     # Exception class only: third-party errors can contain prompts or keys.
@@ -65,6 +69,41 @@ class Service:
                     print("Task recall processing failed: " + type(error).__name__, file=sys.stderr, flush=True)
             finally:
                 self.busy.release()
+
+    async def process(self, row):
+        # Capture identity in the pipeline coroutine, so concurrent SDK child tasks
+        # carry their own trace rather than a mutable process-wide current job.
+        await self.engine.initialize()
+        from .model_trace import install
+        install(self.config["gatewayEndpoint"], self.config["gatewayToken"])
+        token = attempt_id.set(row.get("job_id"))
+        try:
+            data_id = await self.engine.process(row)
+            result = None
+            if not row["deleted"]:
+                self.catalog.phase(row.get("job_id"), "读取加工结果")
+                try:
+                    result = await self.engine.result(json.loads(row["document"]))
+                except Exception:
+                    # The index is already committed. A preview failure must not
+                    # repeat extraction and charge the model a second time.
+                    result = {"description":"索引已更新，结果快照暂不可用", "indexUpdated":True,
+                              "summaries":[], "entities":[], "snapshotUnavailable":True}
+            return data_id, result
+        finally:
+            attempt_id.reset(token)
+
+    def history(self, body):
+        action = body.get("action", "list")
+        if action == "cancel":
+            return self.catalog.cancel(body["jobId"])
+        if action == "retry":
+            return self.catalog.retry(body["jobId"])
+        if action not in ("list", "detail"):
+            raise ValueError("Unknown history action")
+        return read_history(self.root / "catalogs", self.config["fingerprint"],
+            job=body["jobId"] if action == "detail" else None,
+            offset=body.get("offset", 0), limit=body.get("limit", 40), state=body.get("state"))
 
     def query(self, body):
         query = body.get("query", "")
@@ -160,6 +199,8 @@ def main():
                         result = service.catalog.sync(body["documents"])
                     elif self.path == "/query":
                         result = service.query(body)
+                    elif self.path == "/history":
+                        result = service.history(body)
                     elif self.path == "/graph":
                         if not service.busy.acquire(blocking=False):
                             self.send_error(409, "Index busy")
@@ -180,6 +221,8 @@ def main():
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
                 self.wfile.write(raw)
+            except QueueConflict:
+                self.send_error(409, "Processing queue changed")
             except (ValueError, KeyError, TypeError):
                 self.send_error(400, "Invalid recall request")
             except Exception:
