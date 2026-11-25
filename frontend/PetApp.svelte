@@ -141,7 +141,10 @@
         if (!petWindowElement) return;
         nativePointer = point;
         const hit = document.elementFromPoint(point.x, point.y);
-        const hosted = Boolean(hit?.closest('[data-window-host][data-presented] [data-native-window-region]')) && !hit?.closest('[data-window-control], [data-morphing]');
+        // The entire stable native slot delegates input to WindowServer, even
+        // while focus/order is settling. Recovery controls live in the Dock.
+        const hosted = Boolean(hit?.closest('[data-window-host]')) && !hit?.closest('[data-native-paused], [data-window-control], [data-morphing]') &&
+          hit?.closest('[data-dock-frame]')?.getAttribute('data-phase') === 'open';
         const ignoreCursor = !petDragging && (hosted || shouldIgnorePetWindowCursor(point, collectPetHitRects(petWindowElement)) && !isPointOnOpaquePetImage(petWindowElement, point));
         await setPetWindowCursorEventsIgnored(ignoreCursor);
       } while (drawerHitPending);

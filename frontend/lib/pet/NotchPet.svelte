@@ -242,8 +242,6 @@
               style:left={`${area.x}px`} style:top={`${area.y}px`}
               style:width={`${area.width}px`} style:height={`${area.height}px`}></div>
           {/each}
-          <button type="button" class="activate-window" data-window-control on:click={() => dock.activateSelected()}>激活{selectedWindow.name}窗口</button>
-          <button type="button" class="retry-window" data-window-control on:click={() => dock.activateSelected()}>重新显示{selectedWindow.name}窗口</button>
         </div>
       {/if}
       {#if actionNotice}<p class="action-notice" role="status">{actionNotice}</p>{/if}
@@ -253,9 +251,6 @@
   .drop-hint {position:absolute;inset:0;z-index:5;display:grid;place-items:center;background:var(--gray-3);border:1px dashed var(--gray-8);border-radius:8px;color:var(--gray-12);font-size:var(--font-size-sm);pointer-events:none}
   .native-window-region { position:absolute; }
   .window-host { position:relative; min-height:0; flex:none; display:grid; place-items:center; }
-  .activate-window, .retry-window { color:var(--gray-11); font:inherit; cursor:pointer; }
-  .window-host:not(:global([data-covered])) .activate-window { display:none; }
-  .window-host:not(:global([data-missing])) .retry-window { display:none; }
   .notch-task-list.hosting { flex-shrink:0; max-height:85px; }
   .hosting .completed-heading,.hosting .task-group.completed,.hosting .notch-task:not(:first-child),.hosting .empty-state { display:none; }
   .notch-task-list.help-open:not(.hosting) { min-height:min(170px,calc(var(--notch-max-height) - 80px)); }

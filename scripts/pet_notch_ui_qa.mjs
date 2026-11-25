@@ -484,16 +484,19 @@ try {
     window.__petQa.cursor={x:-120,y:180,pressed:false,externalReleases:1,releasePoint:{x:r.x+4,y:r.y+4}};
   });
   await page.waitForSelector('[data-window-host][data-presented]');
-  // Drag-out relinquishes the identity and goes back to the notification page.
-  const releasesBeforeDetach = await page.evaluate(() => {
-    const q = window.__petQa;
-    q.drawerDetached = true; q.drawerChanged(false);
-    return q.drawerCalls.filter(op => op === 'release').length;
+  // Native content is never a drop target or a source of selection commands.
+  const nativeCalls = await page.evaluate(() => window.__petQa.drawerCalls.filter(op=>['drop','dragProbe','dragEnd','dockClick','activate','release'].includes(op)).length);
+  await page.locator('[data-window-host]').evaluate(el => {
+    const r=el.getBoundingClientRect(); window.__petQa.cursor={x:r.x+80,y:r.y+80,pressed:true,externalReleases:1};
   });
-  await page.waitForSelector('[data-window-host]', {state:'detached'});
-  await page.getByRole('button', {name:'显示窗口 Dock', exact:true}).focus();
-  assert.equal(await page.getByTitle('便笺 · QA', {exact:true}).count(),0);
-  assert.equal(await page.evaluate(() => window.__petQa.drawerCalls.filter(op => op === 'release').length), releasesBeforeDetach);
+  await page.waitForFunction(() => window.__petQa.ignored === true);
+  await page.waitForTimeout(120);
+  await page.evaluate(() => { window.__petQa.cursor={x:-120,y:700,pressed:false,externalReleases:1}; });
+  await page.waitForTimeout(150);
+  assert.equal(await page.locator('[data-window-host]').count(),1);
+  assert.equal(await page.evaluate(() => window.__petQa.drawerCalls.filter(op=>['drop','dragProbe','dragEnd','dockClick','activate','release'].includes(op)).length),nativeCalls);
+  await page.getByRole('button', {name:'显示窗口 Dock',exact:true}).focus();
+  await page.getByRole('button', {name:'释放当前窗口',exact:true}).click();
   await page.waitForSelector('[data-window-host]', {state:'detached'});
   // Exercise drop pinning, occlusion and activation with a simulated AX window.
   await page.getByRole('button', {name:'固定展开', exact:true}).click();
@@ -578,9 +581,9 @@ try {
   await page.locator('[data-window-host]').evaluate(el => {
     const r=el.getBoundingClientRect(); window.__petQa.cursor={x:r.x+12,y:r.y+40};
   });
-  await page.waitForFunction(() => window.__petQa.ignored === false);
+  await page.waitForFunction(() => window.__petQa.ignored === true);
   // A host move masks only the unconfirmed strip. An occluder arriving while
-  // that IPC is in flight must revoke input without flashing the whole panel.
+  // that IPC is in flight must revoke visual holes while leaving input native.
   await page.locator('[data-window-host]').evaluate(el => {
     const r=el.getBoundingClientRect(); window.__petQa.cursor={x:r.x+120,y:r.y+40};
   });
@@ -594,21 +597,44 @@ try {
   await page.evaluate(() => {const q=window.__petQa; q.drawerCovered=true; q.drawerChanged(true);});
   await page.waitForFunction(() => !document.querySelector('[data-native-window-region]'));
   assert.ok(await page.locator('.notch-backdrop').evaluate(el => el.style.clipPath.includes('path(')));
-  await page.waitForFunction(() => window.__petQa.ignored === false);
+  await page.waitForFunction(() => window.__petQa.ignored === true);
   await page.evaluate(() => window.__petQa.drawerChanged(true,0,0,true)); // Space/target disappeared.
   await page.waitForSelector('[data-window-host]:not([data-presented])');
   await page.evaluate(() => {window.__petQa.pendingDrawer=null; window.__finishDrawer();});
   await page.waitForSelector('[data-window-host][data-covered]');
   await page.waitForSelector('[data-window-host]:not([data-presented])');
-  await page.getByRole('button',{name:'激活便笺窗口'}).click();
+  await page.getByRole('button',{name:'重新显示当前窗口'}).click();
   await page.waitForSelector('[data-window-host][data-presented]');
   assert.ok(await page.evaluate(() => window.__petQa.drawerCalls.includes('activate')));
+  // A short focus/order transition closes the aperture without an activation
+  // prompt or activating the app again. Recovery is passive.
+  const passiveActivations = await page.evaluate(() => {
+    const q=window.__petQa; q.drawerCovered=true; q.drawerChanged(true);
+    return q.drawerCalls.filter(op=>op==='activate').length;
+  });
+  await page.waitForFunction(() => !document.querySelector('[data-native-window-region]'));
+  assert.equal(await page.getByRole('button',{name:'激活便笺窗口'}).isVisible(),false);
+  await page.evaluate(() => {const q=window.__petQa; q.drawerCovered=false; q.drawerChanged(true);});
+  await page.waitForSelector('[data-window-host][data-presented]');
+  assert.equal(await page.evaluate(() => window.__petQa.drawerCalls.filter(op=>op==='activate').length),passiveActivations);
+  // A failed AX request must never implicitly release or remove the Dock item.
+  const syncFailureReleases = await page.evaluate(() => {
+    const q=window.__petQa; q.drawerSyncFailure=true; q.drawerChanged(false);
+    return q.drawerCalls.filter(op=>op==='release').length;
+  });
+  await page.waitForSelector('[data-window-host][data-missing]');
+  await page.waitForTimeout(650); // Include a failed passive retry.
+  assert.equal(await page.evaluate(() => window.__petQa.ignored),true,'a transient failure must not capture native content input');
+  assert.equal(await page.getByTitle('便笺 · QA',{exact:true}).count(),1);
+  assert.equal(await page.evaluate(() => window.__petQa.drawerCalls.filter(op=>op==='release').length),syncFailureReleases);
+  await page.evaluate(() => {const q=window.__petQa; q.drawerSyncFailure=false; q.drawerChanged(false);});
+  await page.waitForSelector('[data-window-host][data-presented]');
   const activations = await page.evaluate(() => {
     const q = window.__petQa;
     q.drawerAwaitingSurface = true; q.drawerChanged(true);
     return q.drawerCalls.filter(op => op === 'activate').length;
   });
-  await page.getByRole('button',{name:'重新显示便笺窗口'}).waitFor();
+  await page.waitForSelector('[data-window-host][data-missing]');
   assert.equal(await page.getByRole('button',{name:'激活便笺窗口'}).isVisible(),false);
   assert.equal(await page.locator('[data-native-window-region]').count(),0);
   await page.evaluate(() => { window.__petQa.drawerAwaitingSurface = false; });

@@ -28,7 +28,7 @@ const qa = {
   surface: { revision: 1, mode: 'floating' as 'floating' | 'docked', dragging: false, snapCandidate: false, canDock: true, availableHeight: 860, availableWidth: 1440, nativeDrag: true, physicalNotch: true, topInset: 0, notchWidth: 185 },
   drawerCalls: [] as string[],
   drawerCovered: false,
-  drawerDetached: false,
+  drawerSyncFailure: false,
   drawerAwaitingSurface: false,
   drawerMinimumWidth: 0,
   drawerResize: null as {width: number; height: number} | null,
@@ -102,7 +102,7 @@ mockIPC((command, args: any) => {
     if (args.operation === 'release') return qa.pendingRelease ?? true;
     if (args.operation === 'activate') qa.drawerCovered = false;
     if (args.operation === 'show' || args.operation === 'activate') {
-      if (qa.drawerDetached) { qa.drawerDetached = false; return {detached:'notes'}; }
+      if (qa.drawerSyncFailure) throw new Error('QA temporary AX failure');
       const {width,height} = args.region;
       const size = qa.drawerResize ?? {width:Math.max(width,qa.drawerMinimumWidth),height};
       const result = {...size,resizing:!!qa.drawerResize,awaitingSurface:qa.drawerAwaitingSurface,

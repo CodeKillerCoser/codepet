@@ -8,6 +8,8 @@ typedef NS_ENUM(uint8_t, CPDrawerChange) {
 };
 void cp_drawer_connect(void *host, void (*notify)(CPDrawerChange change, double dx, double dy));
 CGWindowID cp_drawer_host_number(void);
+// Main thread: managed content is never a new drag/drop source.
+BOOL cp_drawer_is_target(CGWindowID number);
 void cp_drawer_host_changed(void);
 void cp_drawer_set_level(void *host, NSInteger level);
 BOOL cp_drawer_order_with_target(CGWindowID number, NSInteger level);

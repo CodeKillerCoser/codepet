@@ -113,7 +113,7 @@ static void checkHostedResize(MinimumWindow *fixture, CPDrawerEntry *entry, CGRe
         CGRect measured = samples[i], after;
         assert(place(entry,measured));
         [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.08]];
-        NSDictionary *layout = followPresentedWindow(entry,slot,available,YES,press);
+        NSDictionary *layout = followPresentedWindow(entry,slot,available,YES);
         assert([layout[@"resizing"] boolValue]);
         // The compositor can include a focus border while tracking. AX
         // below must converge to exact coordinates after release.
@@ -122,7 +122,7 @@ static void checkHostedResize(MinimumWindow *fixture, CPDrawerEntry *entry, CGRe
         assert(getFrame(entry,&after) && CGRectEqualToRect(after,measured));
         slot.size = CGSizeMake(MIN(available.width,measured.size.width),MIN(available.height,measured.size.height));
     }
-    assert(!followPresentedWindow(entry,slot,available,NO,press));
+    assert(!followPresentedWindow(entry,slot,available,NO));
     CGRect fitted;
     assert(fitWindow(entry,slot,&fitted) && nearFrame(fitted,slot));
     assert(restore(entry) && getFrame(entry,&fitted) && nearFrame(fitted,original));
@@ -184,42 +184,51 @@ static void checkNativeDrop(CPDrawerEntry *entry, CGRect original) {
     assert([droppedWindow()[@"ignored"] isEqual:@"no-source-event"]); // Each release can be consumed only once.
 }
 
-// Replay both a fast release between polls and a drag observed while held.
-static void checkDragOut(CPDrawerEntry *entry, CGRect slot) {
-    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.08]];
+// Hosted gestures remain native: moving out and back never changes ownership,
+// and passive readback must not snap a moved window back into the slot.
+static void checkNativeOwnership(CPDrawerEntry *entry, CGRect slot) {
     assert(getFrame(entry,&slot));
+    entry.original = slot; entry.attached = YES;
     entry.windowID = identifyWindow(windowStack(),entry.pid,slot);
     assert(entry.windowID);
-    for (NSString *operation in @[@"park",@"dockClick",@"drop",@"show",@"reset"]) {
-        current = @"fixture";
-        entries = [@{current:entry} mutableCopy];
-        lastActual = lastFrame = slot;
-        CGRect startFrame;
-        assert(boundsOf(windowInfo(entry.windowID),&startFrame));
-        CGPoint start = CGPointMake(CGRectGetMidX(startFrame),CGRectGetMinY(startFrame)+18);
-        CGPoint end = CGPointMake(start.x-45,start.y+32);
+    current = @"fixture";
+    entries = [@{current:entry} mutableCopy];
+    lastActual = lastFrame = slot;
+    cp_drawer_watch(entry.element,entry.pid,entry.windowID);
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.08]];
+    for (NSNumber *offset in @[@0,@12,@80,@0]) {
+        CGPoint start = CGPointMake(CGRectGetMidX(slot),CGRectGetMinY(slot)+18);
         fixtureMouse(kCGEventLeftMouseDown,entry.windowID,start,NO);
-        assert(!detachMovedWindow(capturedPress(NO),end)); // A content drag.
-        CGRect moved = CGRectOffset(slot,-45,32), after;
+        assert(!capturedPress(NO).began); // No drag source or release serial.
+        uint32_t releases = releaseSerial;
+        CGRect moved = CGRectOffset(slot,-offset.doubleValue,32), after;
         assert(place(entry,moved));
         [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.06]];
-        id reply;
-        if ([operation isEqual:@"show"]) {
-            reply = detachMovedWindow(capturedPress(NO),end);
-            fixtureMouse(kCGEventLeftMouseUp,entry.windowID,end,NO);
-        } else {
-            fixtureMouse(kCGEventLeftMouseUp,entry.windowID,end,NO);
-            reply = run(operation,current,slot,slot.size);
-        }
-        if ([operation isEqual:@"reset"]) assert([reply isEqual:@YES]);
-        else assert([reply[@"detached"] isEqual:@"fixture"]);
-        assert(!current && !entries.count);
-        assert(droppedWindow()[@"ignored"]); // Finishing this drag cannot re-pin.
-        assert([run(@"reset",nil,CGRectZero,CGSizeZero) isEqual:@YES]);
+        fixtureMouse(kCGEventLeftMouseUp,entry.windowID,CGPointMake(start.x-offset.doubleValue,start.y+32),NO);
+        assert(releaseSerial == releases);
+        NSDictionary *layout = run(@"show",current,slot,slot.size);
+        assert(!layout[@"error"] && entries.count == 1 && current);
         assert(getFrame(entry,&after) && nearFrame(after,moved));
-        assert(place(entry,slot));
-        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.06]];
     }
+    assert([run(@"release",current,CGRectZero,CGSizeZero) isEqual:@YES]);
+    assert(!entries.count && !current);
+    assert(place(entry,slot));
+}
+
+static void checkFitRetry(CPDrawerEntry *entry, CGRect original) {
+    id window = entry.element;
+    entry.original = original; entry.attached = YES;
+    entry.element = CFBridgingRelease(AXUIElementCreateApplication(getpid())); // No window frame attributes.
+    entries = [@{@"retry":entry} mutableCopy]; current = nil;
+    CGRect slot = CGRectOffset(original,12,12);
+    assert(run(@"show",@"retry",slot,slot.size)[@"error"]);
+    assert(entry.fitPending && entry.attached && entries.count == 1 && [current isEqual:@"retry"]);
+    entry.element = window;
+    assert(!run(@"show",@"retry",slot,slot.size)[@"error"]);
+    CGRect after;
+    assert(!entry.fitPending && getFrame(entry,&after) && nearFrame(after,slot));
+    assert([run(@"release",@"retry",CGRectZero,CGSizeZero) isEqual:@YES]);
+    assert(getFrame(entry,&after) && nearFrame(after,original));
 }
 
 static int drawerEvents;
@@ -248,6 +257,13 @@ static void checkDrawerEvents(NSWindow *window, CPDrawerEntry *entry) {
     assert([visibleParts(@[host,surface(1,slot)],other,slot,slot, NULL) isEqual:@[]]);
     cp_drawer_watch(entry.element,entry.pid,(CGWindowID)window.windowNumber);
     pump();
+    assert(!sourceAt((CGWindowID)window.windowNumber,CGPointMake(0,0),NO).began);
+    uint32_t releases = releaseSerial;
+    int notices = drawerEvents;
+    fixtureMouse(kCGEventLeftMouseDown,(CGWindowID)window.windowNumber,CGPointMake(0,0),NO);
+    fixtureMouse(kCGEventLeftMouseUp,(CGWindowID)window.windowNumber,CGPointMake(0,0),NO);
+    pump();
+    assert(!capturedPress(NO).began && releaseSerial == releases && drawerEvents == notices);
     hostDX = 0;
     [window setFrameOrigin:NSMakePoint(origin.x+18,origin.y)];
     cp_drawer_host_changed(); // A native drag and its AppKit notification coalesce.
@@ -353,6 +369,7 @@ int main(int argc, const char **argv) {
         NSRect originalFrame = fixture.frame;
         CGRect original;
         assert(getFrame(entry, &original));
+        checkFitRetry(entry,original);
         checkClampedMinimum(fixture,entry,original);
         checkHostedResize(fixture,entry,original);
         if (argc == 2 && !strcmp(argv[1],"--fit")) { [fixture orderOut:nil]; return 0; }
@@ -375,7 +392,7 @@ int main(int argc, const char **argv) {
         assert(onscreen.count > 0);
         checkDrawerEvents(fixture,entry);
         checkNativeDrop(entry, original);
-        checkDragOut(entry,original);
+        checkNativeOwnership(entry,original);
         checkGroupedWindows(fixture,argv[0]);
         entry.original = original;
         entry.attached = YES;

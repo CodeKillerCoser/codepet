@@ -41,6 +41,7 @@ void cp_drawer_connect(void *host, void (*notify)(CPDrawerChange,double,double))
 }
 
 CGWindowID cp_drawer_host_number(void) { return atomic_load(&hostNumber); }
+BOOL cp_drawer_is_target(CGWindowID number) { return number && number == watchedNumber; }
 
 static void wakeDrawer(CPDrawerChange change) {
     if (!watchedWindow || !notifyDrawer) return;

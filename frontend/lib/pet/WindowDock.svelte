@@ -1,7 +1,7 @@
 <script lang="ts">
   import { listen } from '@tauri-apps/api/event';
   import { onMount, tick } from 'svelte';
-  import { Plus, Unlink, X } from '@lucide/svelte';
+  import { Plus, RotateCcw, Unlink, X } from '@lucide/svelte';
   import petIcon from '../../../src-tauri/icons/32x32.png';
   import { defaultDrawerSize, drawerCommand, serializeDrawer, type DrawerWindow, type DrawerPointer, type DrawerRect, type DrawerSelectionOperation } from './windowDrawer';
   export let syncHitRegions: () => Promise<void>;
@@ -33,6 +33,8 @@
   let dirty = false, immediateCheck = false, epoch = 0, lastPath = '';
   const idleCheckMs = 500;
   let awaitingSince: number | undefined;
+  let coveredSince: number | undefined;
+  let syncError = '';
   function cancelCheck() { clearTimeout(check); check = undefined; immediateCheck = false; }
   function schedule(delay = 0) {
     if (disposed || suspended || !selected) return;
@@ -98,6 +100,14 @@
     const released = point.externalReleases !== undefined && lastExternalRelease !== undefined &&
       lastExternalRelease !== point.externalReleases;
     lastExternalRelease = point.externalReleases;
+    // Content is excluded from our gesture handling. Native content presses
+    // also never increment the backend's external drop/release counter.
+    const inNative = inside(host,point) && !inside(edge,point) &&
+      !(visible && inside(bar,point)) && !(helpOpen && inside(helpPanel,point));
+    if (inNative || released && point.releasePoint && inside(host,point.releasePoint)) {
+      pressed = down; tracking = false; dropReady = false; gesture++;
+      return;
+    }
     const inPanel = inside(panel, point);
     if (down && !pressed) {
       gesture++;
@@ -126,7 +136,6 @@
     void serializeDrawer(() => drawerCommand(operation))
       .then(async target => {
         if (!target || disposed) return;
-        if ('detached' in target) { forgetWindow(target.detached); return; }
         openPanel();
         await choose(target);
       }).catch(e => { if (reportFailure && !disposed) failed(e); });
@@ -144,6 +153,7 @@
     host?.toggleAttribute('data-presented', Boolean(rect && parts.length));
     host?.toggleAttribute('data-covered', covered);
     host?.removeAttribute('data-missing');
+    if (rect) host?.removeAttribute('data-native-paused');
     if (updateHit && (hadHole !== Boolean(host?.hasAttribute('data-presented')) || regionsChanged)) {
       void tick().then(() => { if (!disposed) return syncHitRegions(); }).catch(failed);
     }
@@ -159,6 +169,7 @@
   }
   async function coverBeforeMove() {
     const openHole = host?.hasAttribute('data-presented');
+    host?.setAttribute('data-native-paused','');
     aperture(undefined, [], false);
     // Wait for both the opaque paint and the native input update before moving the window.
     const inputReady = tick().then(syncHitRegions);
@@ -173,8 +184,7 @@
   async function park() {
     if (!presented) { aperture(); return; }
     await coverBeforeMove();
-    const result = await drawerCommand('park');
-    if (typeof result === 'object') forgetWindow(result.detached);
+    await drawerCommand('park');
     presented = false;
     resizing = false;
   }
@@ -203,19 +213,18 @@
         if (disposed || suspended || busy || selected !== target) return;
         const op = activateNext ? 'activate' : 'show';
         activateNext = false;
+        // Even a failed native command may have moved the window partway.
+        presented = true;
         const layout = await drawerCommand(op, target.id, {
           x: rect.x, y: rect.y, width: rect.width, height: rect.height, maxWidth, maxHeight,
         });
-        if ('detached' in layout) {
-          if (!disposed) forgetWindow(layout.detached);
-          return;
-        }
         if ('pending' in layout) {
           retryDelay = 16;
           if (op === 'activate') activateNext = true;
           aperture();
           return;
         }
+        syncError = '';
         presented = true;
         if (disposed || busy || selected !== target || suspended || generation !== epoch) return;
         resizing = layout.resizing;
@@ -247,6 +256,7 @@
           return;
         }
         if (layout.awaitingSurface) {
+          coveredSince = undefined;
           aperture();
           awaitingSince ??= performance.now();
           if (performance.now() - awaitingSince < 400) retryDelay = 50;
@@ -254,24 +264,23 @@
           return;
         }
         awaitingSince = undefined;
-        aperture(rect, layout.visible, true, !layout.visible.length);
+        if (layout.visible.length) coveredSince = undefined;
+        else coveredSince ??= performance.now();
+        const covered = coveredSince !== undefined && performance.now() - coveredSince >= 400;
+        if (!layout.visible.length && !covered) retryDelay = 50;
+        // Retry the compositor briefly while focus/order changes settle.
+        // Visibility checks never request application activation.
+        aperture(rect, layout.visible, true, covered);
       });
     } catch (e) {
       if (disposed || busy || suspended || selected !== target || generation !== epoch) return;
-      // Restore even if a move succeeded but size or visibility readback failed.
-      busy = true;
-      try {
-        await restoreWindow(target.id);
-      } catch (releaseError) {
-        // Keep the entry reachable so the user can retry restoration.
-        suspended = true;
-        reveal();
-        failed(releaseError);
-        return;
-      } finally {
-        busy = false;
-      }
-      failed(e);
+      // A failed read/move is not consent to relinquish this window. Keep its
+      // Dock entry and original geometry, close the aperture, and retry.
+      aperture();
+      host?.setAttribute('data-missing', '');
+      awaitingSince = coveredSince = undefined;
+      const message = String(e);
+      if (message !== syncError) { syncError = message; failed(e); }
     } finally {
       syncing = false;
       const delay = dirty ? 0 : retryDelay;
@@ -291,12 +300,13 @@
       }
       if (selected?.id !== target?.id) await serializeDrawer(park);
       activateNext = Boolean(target);
-      awaitingSince = undefined;
+      awaitingSince = coveredSince = undefined;
+      syncError = '';
       selected = target; helpOpen = false; suspended = false; error = '';
     } catch (e) { failed(e); }
     finally { busy = false; schedule(); deferHide(); }
   }
-  export function activateSelected() { if (selected) void choose(selected); }
+  function activateSelected() { if (selected) void choose(selected); }
   async function dragHelp() {
     if (busy) return;
     helpOpen = true; reveal(); busy = true; error = '';
@@ -389,7 +399,7 @@
       {/each}
     </div>
     <button aria-label="拖入窗口说明" aria-expanded={helpOpen} title="拖动窗口标题栏到桌宠以钉住" on:click={() => helpOpen ? (helpOpen=false) : dragHelp()}><Plus size={15}/></button>
-    {#if selected}<button title="释放当前窗口" aria-label="释放当前窗口" on:click={release}><Unlink size={15}/></button>{/if}
+    {#if selected}<button title="重新显示当前窗口" aria-label="重新显示当前窗口" on:click={activateSelected}><RotateCcw size={15}/></button><button title="释放当前窗口" aria-label="释放当前窗口" on:click={release}><Unlink size={15}/></button>{/if}
   </nav>
 {/if}
 {#if helpOpen}
