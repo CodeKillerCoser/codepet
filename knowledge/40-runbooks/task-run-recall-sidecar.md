@@ -95,4 +95,19 @@ Python catalog/service 7 项（含模型初始化失败时保留全文）、Gate
 
 实际回执在 `artifacts/task-recall-sidecar-qa/`：`real/query.json`、`graph.json`、`update-report.json`、`mcp-recall-report.json` 与设置页截图。主界面左侧“知识图谱”展示原生 Graph、Schema、Memory、Semantic 视图。图与语义坐标均由 Cognee 导出，iframe 渲染层、异常状态与依赖兼容处理见 [预览说明](../30-domains/task-management/task-knowledge-preview.md)。
 
-Windows 和 macOS 正式证书安装器尚未在本机验证；开发压缩包已实际解压、校验并运行。云端服务、全量用户数据规模和召回精度基线需要后续验证；当前 top-k 向量召回没有统一跨模型置信度阈值。
+## 2026-11-25 主干分发构建验证
+
+[Build 45540988394](https://github.com/CodeKillerCoser/codepet/actions/runs/45540988394) 从主干 `bcdc2a7aacb6912284223bb59e28ad0348e4addd` 构建 `0.3.12-beta+bcdc2a7`，macOS ARM64 和 Windows x86_64 两个任务均成功；Windows 同时生成 updater 签名文件。模型权重未内置。
+
+| 产物 | 实际字节数 |
+| --- | ---: |
+| macOS DMG | 452,920,196 |
+| macOS sidecar 压缩资源 / 解压文件 | 396,428,329 / 1,188,760,141 |
+| Windows EXE | 476,098,643 |
+| Windows sidecar 压缩资源 / 解压文件 | 438,772,701 / 1,378,167,257 |
+
+macOS 从 Actions 下载 DMG，核对 artifact SHA-256、`hdiutil verify`、App 版本和 `codesign --verify --deep --strict`；只读挂载后取出 sidecar，逐项验证 27,102 个文件哈希。使用包内独立 CPython 运行服务鉴权、singleton、EOF、重启全文检索测试，并用包内 MCP 可执行文件完成 12 次真实 stdio 工具调用。另在隔离目录实际加载 Cognee 1.6.10、Ladybug 和 LanceDB，图查询和向量读写通过，检查未调用模型。挂载和临时解压目录已清理。
+
+同轮 [Android Release 45540620692](https://github.com/CodeKillerCoser/codepet-remote/actions/runs/45540620692) 构建 Remote `0.1.3+4`，APK 为 114,281,210 字节；517 项 Flutter 测试和 analyze 通过，`apksigner` 校验通过，正式证书 SHA-256 为 `cee49b08b2bf2e20b1b862c1953782e4709615420dd4c7b5b2e5ab9e040e2665`。
+
+验证边界：Windows 已完成原生 CI 构建，本机未执行 Windows 安装或模型召回；macOS 未覆盖原生 App 的模型保存 IPC 与 GUI 完整验收。云端服务、全量用户数据规模和召回精度基线需要后续验证；当前 top-k 向量召回没有统一跨模型置信度阈值。

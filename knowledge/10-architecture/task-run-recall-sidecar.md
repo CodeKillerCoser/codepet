@@ -54,7 +54,7 @@ Model Gateway 是独立 Rust 模块，由 `codepet-host::model_gateway` 暴露�
 - 索引更新失败或乱序：catalog 重启/重试/新版覆盖测试、原生更新/删除验证、返回前哈希校验。
 - 多客户端和孤儿进程：真实进程的 singleton、stdin EOF、退出/重连测试。
 - 鉴权与代理：伪造 token、Host/Origin、代理环境、模型覆盖与缺失用量测试。
-- 签名/平台差异：签名后运行真实 Cognee，原生 Windows CI 构建；macOS 证书发布与 Windows 完整安装器仍需各平台验收。
+- 签名/平台差异：签名后运行真实 Cognee，macOS 固定证书安装包验证及原生 Windows CI 构建已通过；Windows 安装与运行仍需目标平台验收，构建证据见配套 runbook。
 
 ## 测试计划
 
@@ -66,4 +66,4 @@ Model Gateway 是独立 Rust 模块，由 `codepet-host::model_gateway` 暴露�
 
 ## 未知项
 
-云端供应商的逐模型计费规则未接入。向量阈值、跨语言召回质量及大规模数据耗时尚未建立生产基线。旧配置索引的自动回收、Windows 运行验证及证书签名安装器需要单独记录结果。
+云端供应商的逐模型计费规则未接入。向量阈值、跨语言召回质量及大规模数据耗时尚未建立生产基线。旧配置索引的自动回收、Windows 运行验证及原生 App 完整验收仍需后续覆盖。
