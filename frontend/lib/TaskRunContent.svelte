@@ -76,8 +76,8 @@
   .workspace-section .info-grid>div{grid-template-columns:2.8em minmax(0,1fr);}
   .code-summary{display:flex;gap:8px 12px;align-items:baseline;flex-wrap:wrap;}
   .task-run-panel .changes-toggle{padding:0;min-height:24px;font-size:var(--font-size-label);}
-  .panel-conversations{margin-top:var(--space-related);}
-  .task-run-panel .conversation-link{display:inline-flex;align-items:center;gap:6px;font-size:var(--font-size-caption);padding:2px 0;min-height:28px;color:var(--wb-info-text);}
+  .panel-conversations{display:flex;flex-wrap:wrap;gap:8px;margin-top:var(--space-block);}
+  .task-run-panel .conversation-link{display:inline-flex;align-items:center;gap:6px;font-family:var(--font-family-code);font-size:var(--font-size-xs);padding:4px 10px;min-height:28px;border-radius:6px;background:var(--wb-info-bg);color:var(--wb-info-text);}
   .historical-description{margin-top:var(--space-related);font-size:var(--font-size-label);color:var(--task-secondary);}
   .history-note{font-size:var(--font-size-caption);margin:14px 0 0;}
 </style>

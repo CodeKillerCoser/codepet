@@ -21,12 +21,13 @@
   --color-main-border: var(--sand-6);
   --color-main-border-strong: var(--sand-8);
   --color-main-control: var(--sand-8);
-  --color-main-hover: var(--sand-4);
+  --color-main-hover: var(--sand-3);
+  --color-main-press: var(--sand-4);
   --color-main-selected: var(--amber-3);
   --color-main-selected-border: color-mix(in srgb, var(--amber-9) 34%, transparent);
   --color-main-selected-text: var(--amber-12);
   --hover_background_color: var(--color-main-hover);
-  --press_background_color: var(--color-main-selected);
+  --press_background_color: var(--color-main-press);
   --color-main-accent-solid: var(--amber-9);
   --color-main-accent-hover: var(--amber-10);
   --color-main-on-accent: #1c1917;
@@ -78,7 +79,8 @@
   --color-main-border: var(--sand-6);
   --color-main-border-strong: var(--sand-8);
   --color-main-control: var(--sand-8);
-  --color-main-hover: var(--sand-4);
+  --color-main-hover: var(--sand-3);
+  --color-main-press: var(--sand-4);
   --color-main-selected: color-mix(in srgb, var(--amber-9) 14%, var(--color-main-chrome));
   --color-main-selected-border: color-mix(in srgb, var(--amber-9) 28%, transparent);
   --color-main-selected-text: var(--amber-11);
@@ -99,7 +101,8 @@
   --color-main-border: var(--slate-6);
   --color-main-border-strong: var(--slate-8);
   --color-main-control: var(--slate-8);
-  --color-main-hover: var(--slate-4);
+  --color-main-hover: var(--slate-3);
+  --color-main-press: var(--slate-4);
   --color-main-selected: var(--blue-3);
   --color-main-selected-border: color-mix(in srgb, var(--blue-9) 28%, transparent);
   --color-main-selected-text: var(--blue-12);
@@ -123,7 +126,8 @@
   --color-main-border: var(--slate-6);
   --color-main-border-strong: var(--slate-8);
   --color-main-control: var(--slate-8);
-  --color-main-hover: var(--slate-4);
+  --color-main-hover: var(--slate-3);
+  --color-main-press: var(--slate-4);
   --color-main-selected: color-mix(in srgb, var(--blue-9) 17%, var(--color-main-chrome));
   --color-main-selected-border: color-mix(in srgb, var(--blue-9) 32%, transparent);
   --color-main-selected-text: var(--blue-11);
@@ -145,7 +149,8 @@
   --color-main-border: var(--sage-6);
   --color-main-border-strong: var(--sage-8);
   --color-main-control: var(--sage-8);
-  --color-main-hover: var(--sage-4);
+  --color-main-hover: var(--sage-3);
+  --color-main-press: var(--sage-4);
   --color-main-selected: var(--grass-3);
   --color-main-selected-border: color-mix(in srgb, var(--grass-9) 32%, transparent);
   --color-main-selected-text: var(--grass-12);
@@ -169,7 +174,8 @@
   --color-main-border: var(--sage-6);
   --color-main-border-strong: var(--sage-8);
   --color-main-control: var(--sage-8);
-  --color-main-hover: var(--sage-4);
+  --color-main-hover: var(--sage-3);
+  --color-main-press: var(--sage-4);
   --color-main-selected: color-mix(in srgb, var(--grass-9) 16%, var(--color-main-chrome));
   --color-main-selected-border: color-mix(in srgb, var(--grass-9) 30%, transparent);
   --color-main-selected-text: var(--grass-11);
@@ -192,6 +198,7 @@
   --color-main-border-strong: var(--brown-8);
   --color-main-control: var(--brown-8);
   --color-main-hover: var(--brown-3);
+  --color-main-press: var(--brown-4);
   --color-main-selected: var(--brown-4);
   --color-main-selected-border: color-mix(in srgb, var(--brown-9) 34%, transparent);
   --color-main-selected-text: var(--brown-12);
@@ -216,6 +223,7 @@
   --color-main-border-strong: var(--brown-8);
   --color-main-control: var(--brown-8);
   --color-main-hover: var(--brown-3);
+  --color-main-press: var(--brown-4);
   --color-main-selected: color-mix(in srgb, var(--brown-9) 20%, var(--color-main-chrome));
   --color-main-selected-border: color-mix(in srgb, var(--brown-9) 36%, transparent);
   --color-main-selected-text: var(--brown-11);

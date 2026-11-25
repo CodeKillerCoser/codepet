@@ -177,7 +177,7 @@
           <div class="model-save-row">
             <span class="model-hint">
               密钥留空保留已保存值；更换地址后需重新填写。
-            </span><button type="submit" bind:this={saveButton}>
+            </span><button class="primary-action" type="submit" bind:this={saveButton}>
               {busy ? "保存中…" : "保存模型配置"}
             </button>
           </div>

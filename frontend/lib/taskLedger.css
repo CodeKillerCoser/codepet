@@ -69,8 +69,10 @@
 .task-ledger .view-switch button{display:flex;align-items:center;gap:5px;padding:3px 8px;min-height:28px;border:0;font-size:var(--font-size-caption);background:transparent;color:var(--task-secondary);}
 .task-ledger .view-switch button.active{background:var(--wb-control);color:var(--wb-text);}
 .task-ledger .filters{flex:1 1 350px;max-width:510px;min-width:0;display:grid;grid-template-columns:minmax(100px,1fr) minmax(90px,112px) minmax(90px,108px);gap:5px;}
+.main-theme .task-ledger .filters :is(input,select),
 .task-ledger .filters :is(input,select){width:100%;height:32px;font-size:var(--font-size-caption);border-color:var(--wb-border);background:var(--wb-control);padding:4px 8px;}
-.task-ledger .filters :is(input,select):hover{border-color:var(--wb-border);}
+.main-theme .task-ledger .filters :is(input,select):hover,
+.task-ledger .filters :is(input,select):hover{border-color:var(--wb-border-strong);}
 .task-ledger .toolbar-actions{display:flex;align-items:center;gap:5px;margin-left:auto;flex:none;}
 .task-ledger .toolbar button{white-space:nowrap;}
 .task-ledger .toolbar .primary{font-size:var(--font-size-caption);padding:5px 10px;}
@@ -116,5 +118,6 @@
 
 .ledger-dialog header button{display:grid;place-items:center;width:30px;height:30px;min-height:30px;padding:0;border:0;background:transparent;}
 .task-ledger .status-filter{position:relative;min-width:0;}
-.task-ledger .status-filter>span{position:absolute;left:8px;top:50%;transform:translateY(-50%);display:flex;pointer-events:none;}
+.task-ledger .status-filter>span{position:absolute;left:8px;top:50%;transform:translateY(-50%);display:flex;pointer-events:none;color:var(--wb-muted);}
+.main-theme .task-ledger .status-filter select,
 .task-ledger .status-filter select{padding-left:30px;}

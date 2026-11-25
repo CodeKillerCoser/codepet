@@ -69,43 +69,58 @@
 </article>
 
 <style>
-  .provider-info { display: grid; align-content: start; box-sizing: border-box; min-height: 0; grid-template-columns: minmax(0, 1fr); overflow-x: hidden; overflow-y: visible; gap: 12px; min-width: 0; padding: 14px 4px; border: 0; border-bottom: 1px solid var(--app-border); border-radius: 0; background: var(--app-surface); }
-  header { display: flex; align-items: center; gap: 12px; }
-  .provider-icon { width: 40px; height: 40px; flex: 0 0 40px; display: grid; place-items: center; color: var(--app-muted); }
-  .provider-icon img { width: 32px; height: 32px; object-fit: contain; }
-  .provider-details { position: relative; min-width: 0; }
-  .provider-details.removable dl > div:last-child dd { padding-right: 34px; }
-  .remove-provider { position: absolute; right: 0; bottom: 2px; display: grid; place-items: center; width: 28px; height: 28px; color: var(--app-danger); background: transparent; border: 0; border-radius: 5px; padding: 0; cursor: pointer; }
-  .remove-provider:hover { background: color-mix(in srgb, var(--app-danger) 8%, var(--app-surface)); }
+  .provider-info {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    box-sizing: border-box;
+    min-height: 0;
+    min-width: 0;
+    overflow: hidden;
+    gap: 14px;
+    padding: 16px;
+    border: 1px solid var(--app-border);
+    border-radius: 12px;
+    background: var(--app-surface-soft);
+  }
+  header { display: flex; align-items: center; gap: 12px; min-width: 0; }
+  .provider-icon {
+    width: 38px;
+    height: 38px;
+    flex: 0 0 38px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--app-border);
+    border-radius: 10px;
+    background: var(--app-surface);
+    color: var(--app-muted);
+  }
+  .provider-icon img { width: 24px; height: 24px; object-fit: contain; }
+  .provider-details { position: relative; min-width: 0; padding-top: 10px; border-top: 1px solid var(--color-main-divider, var(--app-border)); }
+  .provider-details.removable dl > div:last-child dd { padding-right: 32px; }
+  .remove-provider { position: absolute; right: 0; bottom: 0; display: grid; place-items: center; width: 28px; height: 28px; color: var(--app-danger); background: transparent; border: 0; border-radius: 6px; padding: 0; cursor: pointer; }
+  .remove-provider:hover { background: color-mix(in srgb, var(--app-danger) 10%, var(--app-surface)); }
   .remove-provider:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
   .remove-provider:disabled { opacity: .5; cursor: default; }
-  .provider-identity { flex: 1; min-width: 0; display: grid; gap: 5px; }
-  .name-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
-  .kind { font-size: var(--font-size-caption); color: var(--app-muted); padding: 2px 6px; border-radius: 4px; background: var(--app-surface-soft); white-space: nowrap; flex-shrink: 0; }
+  .provider-identity { flex: 1; min-width: 0; display: grid; gap: 4px; }
+  .name-line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .kind { font-size: var(--font-size-2xs); color: var(--app-muted); padding: 2px 6px; border: 1px solid var(--app-border); border-radius: 5px; background: var(--app-surface); white-space: nowrap; flex-shrink: 0; }
   h3 { margin: 0; min-width: 0; font: var(--font-subheading); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .provider-identity :global(.provider-connection) { margin: 0; }
-  dl { display: grid; gap: 2px; margin: 0; }
-  dl > div { display: grid; grid-template-columns: 90px minmax(0, 1fr); gap: 12px; align-items: center; min-height: 28px; }
+  dl { display: grid; gap: 4px; margin: 0; }
+  dl > div { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 10px; align-items: center; min-height: 26px; }
   dt, dd { margin: 0; min-width: 0; font-size: var(--font-size-caption); }
-  dt { color: var(--app-muted); }
-  dd { text-align: right; overflow-wrap: anywhere; }
-  .path-value { font-family: var(--font-family-code); font-size: var(--font-size-code); }
-  .path-select { position: relative; min-width: 0; height: 32px; border-radius: 5px; }
-  .path-display { position: absolute; inset: 0 24px 0 0; display: grid; align-items: center; min-width: 0; pointer-events: none; }
+  dt { color: var(--app-muted); white-space: nowrap; }
+  dd { text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--app-text); }
+  .path-value { font-family: var(--font-family-code); font-size: var(--font-size-xs); }
+  .path-select { position: relative; min-width: 0; height: 28px; border-radius: 5px; }
+  .path-display { position: absolute; inset: 0 22px 0 0; display: grid; align-items: center; min-width: 0; pointer-events: none; font-family: var(--font-family-code); font-size: var(--font-size-xs); }
   select { appearance: none; position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
   select:disabled { cursor: default; }
   .path-select:focus-within { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
-  .path-select:hover { background: var(--app-surface-soft); }
+  .path-select:hover { background: var(--color-main-hover, var(--app-surface)); }
   .path-select :global(svg) { position: absolute; right: 2px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--app-muted); }
-  .diagnostic { display: flex; align-items: start; gap: 8px; padding: 10px; border-radius: 6px; color: var(--app-danger); background: color-mix(in srgb, var(--app-danger) 6%, var(--app-surface)); }
+  .diagnostic { display: flex; align-items: start; gap: 8px; padding: 10px; border-radius: 8px; color: var(--app-danger); background: color-mix(in srgb, var(--app-danger) 8%, var(--app-surface)); }
   .diagnostic p { margin: 0; overflow-wrap: anywhere; font-size: var(--font-size-caption); }
   .diagnostic :global(svg) { flex-shrink: 0; }
-  @container (min-width: 620px) {
-    .provider-info { grid-template-columns: minmax(170px,.8fr) minmax(0,1.5fr); align-items: start; gap: 20px; }
-    header { padding-top: 4px; }
-    .diagnostic { grid-column: 1 / -1; }
-  }
-  @media (max-width: 640px) {
-    dl > div { grid-template-columns: 90px minmax(0, 1fr); gap: 12px; }
-  }
 </style>

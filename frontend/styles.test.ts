@@ -119,6 +119,19 @@ describe("theme tokens", () => {
     const notchSource = readFileSync(resolve(__dirname, "lib/pet/NotchPet.svelte"), "utf8");
     expect(notchSource).not.toMatch(/var\(--(?:gray|green|blue|amber|red)-\d+\)/);
   });
+
+  test("keeps underline horizontal tabs transparent and status-filter select padded for its icon", () => {
+    const mainWindowShell = readFileSync(resolve(__dirname, "main-window.css"), "utf8");
+    const uiCss = readFileSync(resolve(__dirname, "lib/ui/ui.css"), "utf8");
+    const taskLedgerCss = readFileSync(resolve(__dirname, "lib/taskLedger.css"), "utf8");
+
+    expect(mainWindowTheme).toContain("--press_background_color: var(--color-main-press);");
+    expect(mainWindowTheme).not.toContain("--press_background_color: var(--color-main-selected);");
+    expect(mainWindowShell).toContain(':where(:not([role="switch"]):not([role="tab"])):where([aria-pressed="true"]');
+    expect(uiCss).toContain('.horizontal-tabs button[aria-selected="true"] { color: var(--app-text); font-weight: var(--font-weight-active); background: transparent; }');
+    expect(taskLedgerCss).toContain(".main-theme .task-ledger .status-filter select");
+    expect(taskLedgerCss).toContain("padding-left:30px;");
+  });
 });
 
 describe("pet message bubble activity", () => {

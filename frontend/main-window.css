@@ -76,15 +76,15 @@
 .main-theme .window-controls button:focus-visible { outline-offset: -3px; }
 
 /* One neutral interaction palette for shell, content and portaled dialogs.
-   Switch tracks retain checked semantics; hover/press rules apply to enabled controls. */
-.main-theme :is(button, [role="button"], a[data-slot="button"]):not([role="switch"]):is([aria-pressed="true"], [aria-selected="true"], .active, .chosen, .selected, .enabled) {
+   Keep specificity low via :where() so explicit component active/primary states always win. */
+.main-theme :where(button, [role="button"], a[data-slot="button"]):where(:not([role="switch"]):not([role="tab"])):where([aria-pressed="true"], [aria-selected="true"], .active, .chosen, .selected, .enabled) {
   background-color: var(--press_background_color);
 }
-.main-theme :is(button, [role="button"], a[data-slot="button"]):not(:disabled):not([aria-disabled="true"]):not([role="switch"]):hover {
+.main-theme :where(button, [role="button"], a[data-slot="button"]):where(:not(:disabled):not([aria-disabled="true"]):not([role="switch"]):not([role="tab"]):not(.primary):not(.primary-action):not(.connection-primary-button)):hover {
   background-color: var(--hover_background_color);
   color: var(--app-text);
 }
-.main-theme :is(button, [role="button"], a[data-slot="button"]):not(:disabled):not([aria-disabled="true"]):not([role="switch"]):active {
+.main-theme :where(button, [role="button"], a[data-slot="button"]):where(:not(:disabled):not([aria-disabled="true"]):not([role="switch"]):not([role="tab"]):not(.primary):not(.primary-action):not(.connection-primary-button)):active {
   background-color: var(--press_background_color);
   color: var(--app-text);
 }
@@ -92,8 +92,10 @@
 .main-theme .sidebar {
   grid-column: 1;
   grid-row: 2;
+  display: flex;
+  flex-direction: column;
   gap: 0;
-  padding: 0 12px;
+  padding: 0 12px 10px;
   border: 0;
   background: var(--app-bg);
   box-shadow: none;
@@ -103,6 +105,27 @@
   opacity: 1;
   transform: translateX(0);
   transition: opacity 160ms ease, transform 220ms ease, padding 220ms ease, visibility 0s;
+}
+.main-theme .sidebar-footer {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 8px 4px;
+  border-top: 1px solid var(--color-main-divider);
+  color: var(--app-muted);
+  font-size: var(--font-size-caption);
+  white-space: nowrap;
+}
+.main-theme .sidebar-status-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--app-border-strong);
+}
+.main-theme .sidebar-status-dot.online {
+  background: var(--app-good);
 }
 .main-theme .window-toolbar.macos .window-toolbar-button { height: 28px; min-height: 28px; }
 .main-theme .sidebar .tabs, .main-theme .sidebar .brand { white-space: nowrap; }
@@ -372,18 +395,30 @@
 .main-theme .page-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .main-theme .page-heading-row button { flex-shrink: 0; }
 
-/* Provider information groups retain content height rather than stretching grid rows. */
-.main-theme .runtime-section { padding: 0; border: 0; background: transparent; box-shadow: none; align-content: start; gap: 24px; }
-.main-theme .runtime-group { display: grid; align-content: start; gap: 12px; min-width: 0; }
-.main-theme .runtime-group-title { margin: 0; font-size: var(--font-size-label); font-weight: var(--font-weight-medium); color: var(--app-text); }
-.main-theme .runtime-list { grid-template-columns: minmax(0, 1fr); gap: 0; container-type: inline-size; align-content: start; align-items: start; }
+/* Provider information groups render as responsive cards with aligned header actions. */
+.main-theme .runtime-section { padding: 0; border: 0; background: transparent; box-shadow: none; align-content: start; gap: 28px; }
+.main-theme .runtime-group { display: grid; align-content: start; gap: 14px; min-width: 0; }
+.main-theme .runtime-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.main-theme .runtime-group-title { margin: 0; font: var(--font-section); color: var(--app-text); }
+.main-theme .runtime-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(272px, 1fr)); gap: 14px; align-content: start; align-items: stretch; }
 .main-theme .runtime-actions { justify-content: flex-end; margin-top: 8px; }
-.main-theme .runtime-empty { margin: 20px 0; color: var(--app-muted); font-size: var(--font-size-caption); }
-.main-theme .runtime-custom-provider { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; padding: 16px; border: 1px dashed var(--app-border); border-radius: 8px; }
-.main-theme .runtime-custom-provider h3 { margin: 0; flex: 1; font: var(--font-subheading); }
-.main-theme .runtime-custom-provider p { flex-basis: 100%; margin: 0; color: var(--app-muted); overflow-wrap: anywhere; }
-.main-theme .runtime-add-provider { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid var(--app-border); border-radius: 10px; background: transparent; color: var(--app-text); }
-.main-theme .runtime-add-provider:hover:not(:disabled) { background: var(--color-main-hover); }
+.main-theme .runtime-empty { grid-column: 1 / -1; margin: 12px 0; color: var(--app-muted); font-size: var(--font-size-caption); }
+.main-theme .runtime-custom-provider {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  min-height: 176px;
+  padding: 20px;
+  border: 1px dashed var(--app-border-strong);
+  border-radius: 12px;
+  background: transparent;
+  text-align: center;
+}
+.main-theme .runtime-custom-provider h3 { margin: 0; font: var(--font-subheading); color: var(--app-text); }
+.main-theme .runtime-custom-provider p { margin: 0; color: var(--app-muted); font-size: var(--font-size-caption); overflow-wrap: anywhere; }
+.main-theme .runtime-add-provider { display: grid; place-items: center; width: 38px; height: 38px; padding: 0; border: 1px solid var(--app-border); border-radius: 10px; background: var(--app-surface-soft); color: var(--app-text); }
+.main-theme .runtime-add-provider:hover:not(:disabled) { background: var(--color-main-hover); border-color: var(--app-border-strong); }
 
 .main-theme .runtime-operation-error, .main-theme .runtime-operation-notice { margin: 0; padding: 12px 14px; border-radius: 8px; font-size: var(--font-size-sm); overflow-wrap: anywhere; }
 .main-theme .runtime-operation-error { color: var(--app-danger); background: color-mix(in srgb, var(--app-danger) 6%, var(--app-surface)); }

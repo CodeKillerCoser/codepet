@@ -76,7 +76,7 @@
     <p class="usage-note">时间按 UTC 显示。累计与每日峰值基于整个查询范围，不受分页影响。</p>
     {#if source?.dataset.baseBucketMinutes === 1440}<p class="usage-note">该来源仅支持每日总量，不提供模型和输入、输出、缓存拆分。</p>{/if}
     {#if error}<p role="alert">{error}</p>{/if}
-    {#if error || discoveryErrors.length || (!loading && !sources.length)}<button type="button" on:click={onConnections}>配置运行时</button>{/if}
+    {#if error || discoveryErrors.length || (!loading && !sources.length)}<button class="usage-action" type="button" on:click={onConnections}>配置运行时</button>{/if}
     {#each discoveryErrors as failure}<p role="status">{failure}</p>{/each}
     {#if loading}<p role="status">正在查询用量…</p>{/if}
     {#if !loading && !sources.length && !error}<div class="empty-state"><strong>没有可查询的用量来源</strong><p>请先连接支持用量查询的 Provider。</p></div>{/if}
@@ -94,7 +94,7 @@
         <div class="usage-results"><table><thead><tr><th>时间（UTC）</th><th>模型</th>{#each metrics as [,label]}<th>{label}</th>{/each}</tr></thead><tbody>
           {#each result.rows as row}<tr><td>{row.bucket ? date(row.bucket.from) : "累计"}{row.provisional ? " · 进行中" : ""}</td><td>{activeQuery?.aggregation.groupBy.length ? row.modelId ?? "未知模型" : "全部"}</td>{#each metrics as [metric]}<td>{#if metric === "totalTokens"}<span class="token-bar" style={`--fill:${100 * (row.values.totalTokens?.value ?? 0) / max}%`}>{number(row.values[metric]?.value)}</span>{:else}{number(row.values[metric]?.value)}{/if}</td>{/each}</tr>{/each}
         </tbody></table></div>
-        {#if result.nextCursor}<button disabled={loading} on:click={() => query(source, true)}>加载更多</button>{/if}
+        {#if result.nextCursor}<button class="usage-action" disabled={loading} on:click={() => query(source, true)}>加载更多</button>{/if}
       {/if}
     </section>
   {/if}
@@ -104,6 +104,10 @@
   .usage-controls { flex-wrap: wrap; align-items: end; }
   .usage-controls label { min-width: 0; max-width: 100%; }
   select, input { max-width: 100%; font: inherit; }
+  button { min-height: 32px; padding: 5px 12px; border: 1px solid var(--app-border); border-radius: 6px; background: var(--app-surface-soft); color: var(--app-text); font: var(--font-label); cursor: pointer; }
+  button:hover:not(:disabled) { background: var(--color-main-hover); border-color: var(--app-border-strong); }
+  button:disabled { opacity: 0.6; cursor: not-allowed; }
+  .usage-action { justify-self: start; }
   .usage-note { color: var(--app-muted); font: var(--font-caption); margin: 0; overflow-wrap: anywhere; }
   .usage-results { overflow-x: auto; max-width: 100%; }
   table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }

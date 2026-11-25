@@ -54,7 +54,7 @@
   padding: 16px;
   background: var(--app-surface-soft);
   border: 1px solid var(--app-border);
-  border-radius: 8px;
+  border-radius: 12px;
 }
 .model-runtime-icon {
   display: grid;
@@ -196,6 +196,18 @@
 .model-install-dialog button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+.model-settings button.primary-action,
+.model-install-dialog button.primary-action {
+  background: var(--color-main-accent-solid);
+  border-color: var(--color-main-accent-solid);
+  color: var(--color-main-on-accent);
+  font-weight: var(--font-weight-medium);
+}
+.model-settings button.primary-action:hover:not(:disabled),
+.model-install-dialog button.primary-action:hover:not(:disabled) {
+  background: var(--color-main-accent-hover);
+  border-color: var(--color-main-accent-hover);
 }
 .model-settings button.model-icon,
 .model-install-dialog button.model-icon {

@@ -1055,6 +1055,7 @@
   $: recentVisibleEvents = events.slice(-5).reverse();
   $: enabledSources = petSources.filter(source => source.enabled);
   $: receivingSources = petSources.filter(source => source.connected);
+  $: onlineProviderCount = providerConnections.filter((state) => state.connectionStatus === "online").length;
   $: pageTitle = routeTitle(tab);
   $: appTheme = themeClassNames(
     settings?.appearance.theme === "dark" || (settings?.appearance.theme === "system" && systemDark) ? "dark" : "light",
@@ -1067,6 +1068,10 @@
   <WindowToolbar actions={tab === "knowledge" ? graphActions : undefined} bind:collapsed={sidebarCollapsed} canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onHome={() => navigation.navigate("tasks")} onBack={navigation.back} onForward={navigation.forward} settingsActive={isSettingsRoute(tab)} onSettings={() => navigation.navigate("settings")} onError={(message) => error = message} />
   <aside id="main-sidebar" class="sidebar" inert={sidebarCollapsed}>
     <MainNavigation current={tab} onNavigate={navigation.navigate} />
+    <div class="sidebar-footer" aria-live="polite">
+      <span class="sidebar-status-dot" class:online={onlineProviderCount > 0} aria-hidden="true"></span>
+      <span>{onlineProviderCount} 个运行时在线</span>
+    </div>
   </aside>
 
   {#snippet pageHeader()}
@@ -1191,7 +1196,10 @@
           {#if providerOperationError}<p bind:this={providerErrorElement} class="runtime-operation-error" role="alert" tabindex="-1">{providerOperationError}</p>{/if}
           {#if providerImportNotice}<p class="runtime-operation-notice" role="status">{providerImportNotice}</p>{/if}
           <div class="runtime-group">
-            <h3 class="runtime-group-title">内置 Provider</h3>
+            <div class="runtime-group-head">
+              <h3 class="runtime-group-title">内置 Provider</h3>
+              <Button class="runtime-refresh-button" type="button" disabled={busyRuntime !== null || providerImportBusy} onclick={refreshRuntimes}><RefreshCw size={15} /> {busyRuntime === "all" ? "检测中…" : "重新检测"}</Button>
+            </div>
             <div class="runtime-list">
               {#each agentRuntimes.filter((runtime) => isBuiltinProvider(runtime.providerId) && shouldShowRuntime(runtime)) as runtime (runtime.providerId)}
                 <ProviderRuntimeInfo {runtime} connection={providerConnections.find((state) => (state.pluginId ?? state.providerId) === runtime.providerId)} connectionsLoaded={providerConnectionsLoaded} busy={busyRuntime === "all" || busyRuntime === runtime.providerId} onSelect={selectInstalledRuntime} />
@@ -1199,23 +1207,19 @@
                 <p class="runtime-empty">{agentRuntimes.length ? "未检测到已安装的运行时" : "运行时状态尚未加载"}</p>
               {/each}
             </div>
-            <div class="runtime-actions">
-              <Button type="button" disabled={busyRuntime !== null || providerImportBusy} onclick={refreshRuntimes}><RefreshCw size={16} /> {busyRuntime === "all" ? "检测中…" : "重新检测"}</Button>
-            </div>
           </div>
-          {#if agentRuntimes.some((runtime) => !isBuiltinProvider(runtime.providerId))}
-            <div class="runtime-group">
-              <h3 class="runtime-group-title">自定义 Provider</h3>
-              <div class="runtime-list">
-                {#each agentRuntimes.filter((runtime) => !isBuiltinProvider(runtime.providerId)) as runtime (runtime.providerId)}
-                  <ProviderRuntimeInfo {runtime} connection={providerConnections.find((state) => (state.pluginId ?? state.providerId) === runtime.providerId)} connectionsLoaded={providerConnectionsLoaded} busy={providerImportBusy || busyRuntime === "all" || busyRuntime === runtime.providerId} onSelect={selectInstalledRuntime} onRemove={removeCustomProvider} />
-                {/each}
+          <div class="runtime-group">
+            <h3 class="runtime-group-title">自定义 Provider</h3>
+            <div class="runtime-list">
+              {#each agentRuntimes.filter((runtime) => !isBuiltinProvider(runtime.providerId)) as runtime (runtime.providerId)}
+                <ProviderRuntimeInfo {runtime} connection={providerConnections.find((state) => (state.pluginId ?? state.providerId) === runtime.providerId)} connectionsLoaded={providerConnectionsLoaded} busy={providerImportBusy || busyRuntime === "all" || busyRuntime === runtime.providerId} onSelect={selectInstalledRuntime} onRemove={removeCustomProvider} />
+              {/each}
+              <div class="runtime-custom-provider">
+                <Button bind:ref={providerAddButton} class="runtime-add-provider" type="button" aria-label="添加自定义 Provider" title="选择 Provider manifest" disabled={providerImportBusy} onclick={addCustomProvider}><Plus size={20} aria-hidden="true" /></Button>
+                <h3>导入自定义 Provider</h3>
+                <p>选择 codepet-provider.json</p>
               </div>
             </div>
-          {/if}
-          <div class="runtime-custom-provider">
-            <h3>添加自定义 Provider</h3>
-            <Button bind:ref={providerAddButton} class="runtime-add-provider" type="button" aria-label="添加自定义 Provider" title="选择 Provider manifest" disabled={providerImportBusy} onclick={addCustomProvider}><Plus size={24} aria-hidden="true" /></Button>
           </div>
         </section>
       </div>
