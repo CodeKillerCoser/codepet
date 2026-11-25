@@ -114,14 +114,18 @@ static void checkHostedResize(MinimumWindow *fixture, CPDrawerEntry *entry, CGRe
         assert(place(entry,measured));
         [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.08]];
         NSDictionary *layout = followPresentedWindow(entry,slot,available,YES);
-        assert([layout[@"resizing"] boolValue]);
+        assert([layout[@"resizing"] boolValue] && [layout[@"tracking"] boolValue]);
         // The compositor can include a focus border while tracking. AX
         // below must converge to exact coordinates after release.
         assert(fabs([layout[@"width"] doubleValue]-measured.size.width)<=6 &&
                fabs([layout[@"height"] doubleValue]-measured.size.height)<=6);
         assert(getFrame(entry,&after) && CGRectEqualToRect(after,measured));
-        slot.size = CGSizeMake(MIN(available.width,measured.size.width),MIN(available.height,measured.size.height));
+        assert(CGRectEqualToRect(slot,lastFrame)); // Host does not chase intermediate sizes.
     }
+    NSDictionary *released = followPresentedWindow(entry,slot,available,NO);
+    assert([released[@"resizing"] boolValue] && ![released[@"tracking"] boolValue]);
+    slot.size = CGSizeMake(MIN(available.width,[released[@"width"] doubleValue]),
+                           MIN(available.height,[released[@"height"] doubleValue]));
     assert(!followPresentedWindow(entry,slot,available,NO));
     CGRect fitted;
     assert(fitWindow(entry,slot,&fitted) && nearFrame(fitted,slot));
@@ -185,8 +189,9 @@ static void checkNativeDrop(CPDrawerEntry *entry, CGRect original) {
 }
 
 // Hosted gestures remain native: moving out and back never changes ownership,
-// and passive readback must not snap a moved window back into the slot.
+// and geometry remains read-only until mouse-up snaps it back into the slot.
 static void checkNativeOwnership(CPDrawerEntry *entry, CGRect slot) {
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.08]];
     assert(getFrame(entry,&slot));
     entry.original = slot; entry.attached = YES;
     entry.windowID = identifyWindow(windowStack(),entry.pid,slot);
@@ -204,11 +209,13 @@ static void checkNativeOwnership(CPDrawerEntry *entry, CGRect slot) {
         CGRect moved = CGRectOffset(slot,-offset.doubleValue,32), after;
         assert(place(entry,moved));
         [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.06]];
+        NSDictionary *heldLayout = runWithButtonState(@"show",current,slot,slot.size,YES);
+        assert(heldLayout && getFrame(entry,&after) && nearFrame(after,moved));
         fixtureMouse(kCGEventLeftMouseUp,entry.windowID,CGPointMake(start.x-offset.doubleValue,start.y+32),NO);
         assert(releaseSerial == releases);
-        NSDictionary *layout = run(@"show",current,slot,slot.size);
+        NSDictionary *layout = runWithButtonState(@"show",current,slot,slot.size,NO);
         assert(!layout[@"error"] && entries.count == 1 && current);
-        assert(getFrame(entry,&after) && nearFrame(after,moved));
+        assert(getFrame(entry,&after) && nearFrame(after,slot));
     }
     assert([run(@"release",current,CGRectZero,CGSizeZero) isEqual:@YES]);
     assert(!entries.count && !current);
@@ -221,10 +228,10 @@ static void checkFitRetry(CPDrawerEntry *entry, CGRect original) {
     entry.element = CFBridgingRelease(AXUIElementCreateApplication(getpid())); // No window frame attributes.
     entries = [@{@"retry":entry} mutableCopy]; current = nil;
     CGRect slot = CGRectOffset(original,12,12);
-    assert(run(@"show",@"retry",slot,slot.size)[@"error"]);
+    assert(runWithButtonState(@"show",@"retry",slot,slot.size,NO)[@"error"]);
     assert(entry.fitPending && entry.attached && entries.count == 1 && [current isEqual:@"retry"]);
     entry.element = window;
-    assert(!run(@"show",@"retry",slot,slot.size)[@"error"]);
+    assert(!runWithButtonState(@"show",@"retry",slot,slot.size,NO)[@"error"]);
     CGRect after;
     assert(!entry.fitPending && getFrame(entry,&after) && nearFrame(after,slot));
     assert([run(@"release",@"retry",CGRectZero,CGSizeZero) isEqual:@YES]);
@@ -277,6 +284,9 @@ static void checkDrawerEvents(NSWindow *window, CPDrawerEntry *entry) {
     int stopped = drawerEvents;
     [window setFrameOrigin:origin]; cp_drawer_host_changed(); pump();
     assert(drawerEvents == stopped);
+    // Later drop tests use this same disposable window as the source, not as
+    // the host. Do not leak its host identity into source exclusion checks.
+    cp_drawer_connect(NULL,NULL);
 }
 
 // The target lives in another process. Check WindowServer's actual ordering
@@ -372,6 +382,13 @@ int main(int argc, const char **argv) {
         checkFitRetry(entry,original);
         checkClampedMinimum(fixture,entry,original);
         checkHostedResize(fixture,entry,original);
+        if (argc == 2 && !strcmp(argv[1],"--geometry")) {
+            // Geometry/input ownership does not require bringing the fixture
+            // in front of the user's status panels or other active windows.
+            checkNativeOwnership(entry,original);
+            [fixture orderOut:nil];
+            return 0;
+        }
         if (argc == 2 && !strcmp(argv[1],"--fit")) { [fixture orderOut:nil]; return 0; }
         assert([attribute(elementOf(entry), kAXSubroleAttribute) isEqual:@"AXDialog"]);
         assert(isDraggableWindow(entry.element));

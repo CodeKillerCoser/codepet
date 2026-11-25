@@ -606,7 +606,7 @@ static NSDictionary *presentation(CPDrawerEntry *entry, CGRect actual, CGRect sl
     NSString *state = resizing ? @"native-resize" : grow ? @"resize-panel" : !parts ? @"awaiting-surface" : parts.count ? @"visible" : @"covered";
     NSMutableDictionary *result = [@{@"width":@(actual.size.width), @"height":@(actual.size.height),
                                      @"visible":parts ?: @[], @"awaitingSurface":@(!grow && !parts),
-                                     @"resizing":@(resizing)} mutableCopy];
+                                     @"resizing":@(resizing), @"tracking":@NO} mutableCopy];
     if (![state isEqual:entry.presentationState]) {
         entry.presentationState = state;
         result[@"diagnostic"] = [NSString stringWithFormat:@"%@ requested %.0fx%.0f measured %.0fx%.0f",
@@ -651,6 +651,11 @@ static void activateEntry(CPDrawerEntry *entry) {
 }
 
 static NSDictionary *failure(NSString *message) { return @{@"error":message}; }
+static NSDictionary *trackingPresentation(CPDrawerEntry *entry, CGRect measured, CGRect slot, BOOL resizing, BOOL held) {
+    NSMutableDictionary *layout = [presentation(entry,measured,slot,resizing) mutableCopy];
+    layout[@"tracking"] = @(held);
+    return layout;
+}
 // During an owner's resize loop its AX server can lag the compositor. Read
 // only the selected surface and leave both position and size to the owner.
 static NSDictionary *followPresentedWindow(CPDrawerEntry *entry, CGRect slot, CGSize limit, BOOL held) {
@@ -663,7 +668,7 @@ static NSDictionary *followPresentedWindow(CPDrawerEntry *entry, CGRect slot, CG
     // Some owners report movement before their first resize event on the
     // top/left edge. A position write here would interrupt the native drag.
     if (liveFrame && !entry.followingResize && CGSizeEqualToSize(measured.size,lastActual.size))
-        return presentation(entry,(CGRect){measured.origin,lastActual.size},slot,NO);
+        return trackingPresentation(entry,(CGRect){measured.origin,lastActual.size},slot,NO,held);
     // A CG focus border may extend beyond the AX frame. Do not negotiate a
     // new preferred size for a two-point focus decoration.
     if (liveFrame) {
@@ -676,16 +681,18 @@ static NSDictionary *followPresentedWindow(CPDrawerEntry *entry, CGRect slot, CG
         CGSize desired = CGSizeMake(MIN(limit.width,MAX(30,ceil(measured.size.width))),
                                     MIN(limit.height,MAX(30,ceil(measured.size.height))));
         if (held || fabs(slot.size.width-desired.width)>0.5 || fabs(slot.size.height-desired.height)>0.5)
-            return presentation(entry,measured,slot,YES);
+            return trackingPresentation(entry,measured,slot,YES,held);
         entry.followingResize = NO;
     }
-    if (CGRectEqualToRect(slot,lastFrame)) {
+    // Native tracking owns geometry while held. After mouse-up, a moved
+    // window must re-enter fitWindow instead of becoming a permanent offset.
+    if (CGRectEqualToRect(slot,lastFrame) && (held || alignedWithSlot(measured,slot))) {
         lastActual = measured;
-        return presentation(entry,measured,slot,NO);
+        return trackingPresentation(entry,measured,slot,NO,held);
     }
     return nil;
 }
-static id run(NSString *operation,NSString *key,CGRect rect,CGSize limit) {
+static id runWithButtonState(NSString *operation,NSString *key,CGRect rect,CGSize limit,BOOL held) {
     if (!entries) entries=[NSMutableDictionary new];
     if ([operation isEqual:@"reset"]) {
         capturedPress(YES);
@@ -736,7 +743,6 @@ static id run(NSString *operation,NSString *key,CGRect rect,CGSize limit) {
         entry.original=original; entry.attached=YES;
     }
     if (!activating && [current isEqual:key]) {
-        BOOL held = CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState,kCGMouseButtonLeft);
         // Our own header may move the presentation. No native content press is
         // classified; all other held interactions leave the target read-only.
         BOOL nativeHeld = held && !capturedPress(NO).pet;
@@ -785,6 +791,10 @@ static id run(NSString *operation,NSString *key,CGRect rect,CGSize limit) {
         }
     }
     return layout;
+}
+static id run(NSString *operation,NSString *key,CGRect rect,CGSize limit) {
+    BOOL held = CGEventSourceButtonState(kCGEventSourceStateCombinedSessionState,kCGMouseButtonLeft);
+    return runWithButtonState(operation,key,rect,limit,held);
 }
 char *cp_drawer_call(const char *op,const char *key,double x,double y,double w,double h,double maxW,double maxH) {
     @autoreleasepool {

@@ -547,6 +547,19 @@ try {
   assert.ok(await drawerNav.isVisible(), 'pin keeps the Dock visible');
   await page.getByRole('button',{name:'取消固定',exact:true}).click();
   const captures = await page.evaluate(() => window.__petQa.frameCaptures);
+  const beforeNativeResize = await page.locator('[data-dock-frame]').boundingBox();
+  const resizeChecks = await page.locator('[data-window-host]').evaluate(el => {
+    const q=window.__petQa, r=el.getBoundingClientRect();
+    q.cursor={x:r.x+2,y:r.y+2,pressed:true};
+    q.drawerTracking=true; q.drawerResize={width:910,height:610}; q.drawerChanged(false);
+    return q.drawerCalls.filter(op=>op==='show').length;
+  });
+  await page.waitForFunction(n=>window.__petQa.drawerCalls.filter(op=>op==='show').length>n,resizeChecks);
+  await page.waitForTimeout(150);
+  assert.deepEqual(await page.locator('[data-dock-frame]').boundingBox(),beforeNativeResize,'native edge tracking must not move or resize the host');
+  assert.equal(await page.locator('[data-window-host]').evaluate(el=>el.clientWidth),800);
+  await page.evaluate(()=>{const q=window.__petQa; q.drawerTracking=false; q.cursor={...q.cursor,pressed:false}; q.drawerChanged(false);});
+  await page.waitForFunction(()=>document.querySelector('[data-window-host]')?.clientWidth===910);
   for (const [width,height] of [[910,610],[680,420]]) {
     await page.evaluate(size => {
       const q = window.__petQa;

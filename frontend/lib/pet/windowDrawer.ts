@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core';
 export interface DrawerPointer { x: number; y: number; pressed?: boolean; externalReleases?: number; releasePoint?: { x: number; y: number } }
 
 export interface DrawerRect { x: number; y: number; width: number; height: number }
-export interface DrawerPresentation { width: number; height: number; visible: DrawerRect[]; awaitingSurface: boolean; resizing: boolean }
+export interface DrawerPresentation { width: number; height: number; visible: DrawerRect[]; awaitingSurface: boolean; resizing: boolean; tracking: boolean }
 
 export interface DrawerWindow {
   id: string;

@@ -97,6 +97,9 @@
   // Probe only at the destination and require the actual window to have moved.
   function sampleDrag(point: DrawerPointer) {
     const down = Boolean(point.pressed);
+    // Wake geometry reconciliation on global mouse-up without interpreting
+    // the native content gesture or sending a drop/release command.
+    if (pressed && !down) schedule();
     const released = point.externalReleases !== undefined && lastExternalRelease !== undefined &&
       lastExternalRelease !== point.externalReleases;
     lastExternalRelease = point.externalReleases;
@@ -227,7 +230,14 @@
         syncError = '';
         presented = true;
         if (disposed || busy || selected !== target || suspended || generation !== epoch) return;
-        resizing = layout.resizing;
+        resizing = layout.resizing || Boolean(layout.tracking);
+        if (layout.tracking) {
+          // Keep the shell's frame stable while the owner tracks a drag/edge.
+          // Recentring it per pixel shifts the slot underneath the native window.
+          aperture(rect,layout.visible);
+          retryDelay = 50;
+          return;
+        }
         if (resizing) {
           const width = Math.min(Math.floor(maxWidth), Math.max(30,Math.ceil(layout.width)));
           const height = Math.min(Math.floor(maxHeight), Math.max(30,Math.ceil(layout.height)));

@@ -32,6 +32,7 @@ const qa = {
   drawerAwaitingSurface: false,
   drawerMinimumWidth: 0,
   drawerResize: null as {width: number; height: number} | null,
+  drawerTracking: false,
   frameCaptures: 0,
   drawerChanged: (cover: boolean, dx=0, dy=0, seal=false) => fire('pet-drawer-changed', {cover,dx,dy,seal}),
   pendingCursorCapture: null as Promise<void> | null,
@@ -105,7 +106,7 @@ mockIPC((command, args: any) => {
       if (qa.drawerSyncFailure) throw new Error('QA temporary AX failure');
       const {width,height} = args.region;
       const size = qa.drawerResize ?? {width:Math.max(width,qa.drawerMinimumWidth),height};
-      const result = {...size,resizing:!!qa.drawerResize,awaitingSurface:qa.drawerAwaitingSurface,
+      const result = {...size,resizing:!!qa.drawerResize,tracking:qa.drawerTracking,awaitingSurface:qa.drawerAwaitingSurface,
         visible:qa.drawerCovered || qa.drawerAwaitingSurface ? [] :
         [{x:qa.drawerInset,y:0,width:Math.min(width,size.width)-qa.drawerInset,height:Math.min(height,size.height)}]};
       return qa.pendingDrawer ? qa.pendingDrawer.then(() => result) : result;
