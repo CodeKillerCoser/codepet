@@ -1,0 +1,59 @@
+{
+  "cognee": "1.6.10",
+  "d3": "7.9.0",
+  "files": [
+    {
+      "path": "template.html",
+      "sha256": "60c2a10b8a996e46d478036cbc8a7af2b792c87c103c886496cc60333a7db4a4"
+    },
+    {
+      "path": "ui_chrome.js",
+      "sha256": "6626efc07611475e2d176090d9feae924386c26959a2868ec5376aae522b53c5"
+    },
+    {
+      "path": "schema_view.js",
+      "sha256": "3b9f07381d28e4b8e7cce5e42956051b0383490d112f73abaa1f63f76d5528c4"
+    },
+    {
+      "path": "story_view.js",
+      "sha256": "a9669c6238a8b2f679b1d610ee677a9f2a337280baa77bab2829308836118949"
+    },
+    {
+      "path": "inspector.js",
+      "sha256": "a633b7b9001c82976112511750c0dff4d64bfc2bd206a2c865aa65a7293f2c26"
+    },
+    {
+      "path": "memory_map.js",
+      "sha256": "f7fa8a428931bd7bc79307b6d462e44b81423e30ad9e7cbad6dc0b2d45321fe0"
+    },
+    {
+      "path": "semantic_map.js",
+      "sha256": "23d241e0d03675ec0b5d84bde9cbecbb1ef15b93d3f7ad9936160eaa9c2c61ff"
+    },
+    {
+      "path": "d3.v7.9.0.min.js",
+      "sha256": "f2094bbf6141b359722c4fe454eb6c4b0f0e42cc10cc7af921fc158fceb86539"
+    },
+    {
+      "path": "inter.css",
+      "sha256": "6f3c8739cd38df2572978ef7d17f231d4f3ccb2fadeb6a06d13bfbed4e01ac42"
+    },
+    {
+      "path": "inter-87e867b52640b3.ttf",
+      "sha256": "e7a1aaf7eda9f2fad4131725fa556265ec75ca7b2d756260173a040363e8d4f7"
+    },
+    {
+      "path": "inter-6f49e1b28bce73.ttf",
+      "sha256": "b37284b5701b6b168dfc770aa1a4ac492106422fd3ba76bc7641e37434e8019c"
+    },
+    {
+      "path": "inter-a699af1dea30b7.ttf",
+      "sha256": "1b08e7fc267a5c7e1d614100f604b83e7e8a0be241f0f288faa2b3ac93a683ba"
+    },
+    {
+      "path": "inter-e45972c7e9f24d.ttf",
+      "sha256": "8c883f63b2c4157d997319f2c8bc6995ed4357ef371940d31ca159004a4aae63"
+    }
+  ],
+  "notes": "Cognee template and view JavaScript copied unchanged. Only Inter CSS font URLs localized. See licenses/."
+}

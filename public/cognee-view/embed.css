@@ -1,0 +1,11 @@
+/* Host sizing only. Pinned upstream rendering and interaction code stays unchanged. */
+#header{top:38px;height:auto;min-height:24px;padding:0 12px}
+#header .logo{display:none}
+#stats{gap:4px 12px;flex-wrap:wrap;font-size:10px}
+#search-box{top:78px;left:12px;width:min(280px,calc(100vw - 24px))}
+#theme-toggle{top:5px!important;right:8px!important;padding:5px 8px!important;font-size:11px!important}
+#controls{bottom:8px;left:8px;right:8px;transform:none;justify-content:center;flex-wrap:wrap;gap:2px}
+.ctrl-btn{padding:5px 8px}
+#legend{bottom:52px;left:8px;padding:6px 10px;max-width:min(380px,calc(100vw - 16px));max-height:90px;overflow:auto;font-size:10px}
+#info-panel{top:78px;right:8px;width:min(320px,calc(100vw - 16px));max-height:calc(100vh - 132px)}
+@media(max-width:500px){#view-tabs{left:8px!important;right:8px!important;transform:none!important;justify-content:center}#view-tabs .tab-btn{padding:6px 12px!important}#theme-toggle{top:37px!important}#header{top:72px}#search-box{top:109px}#legend{max-height:62px}}
