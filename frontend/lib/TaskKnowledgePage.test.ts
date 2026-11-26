@@ -1,9 +1,13 @@
 // @vitest-environment jsdom
-import { afterEach, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { mount, unmount, tick } from 'svelte';
 import TaskKnowledgePage from './TaskKnowledgePage.svelte';
 import { loadRecallGraph, renderRecallGraph } from './cogneeGraph';
+import { modelGatewayRequest, type ModelConfiguration } from './modelGateway';
 vi.mock('./cogneeGraph', () => ({loadRecallGraph:vi.fn(),renderRecallGraph:vi.fn()}));
+vi.mock('./modelGateway', () => ({modelGatewayRequest:vi.fn()}));
+const configuration = (enabled = true): ModelConfiguration => ({settings:{enabled, llm:{endpoint:'http://127.0.0.1:11234/v1',model:'local-chat',apiKey:'',dimensions:0},embedding:{endpoint:'http://127.0.0.1:11234/v1',model:'local-embedding',apiKey:'',dimensions:1024},plainJson:false,llmExtraBody:{}},usage:{models:[]}});
+beforeEach(() => { vi.mocked(modelGatewayRequest).mockResolvedValue(configuration()); });
 const graph = {nodes:[{id:'a'},{id:'b'}],links:[{source:'a',target:'b'}]};
 let component: ReturnType<typeof mount> | undefined;
 const settle = async () => { for (let i=0;i<6;i++) { await Promise.resolve(); await tick(); } };
@@ -30,13 +34,49 @@ test('uses a real snapshot, retains the view during busy refresh, and cleans it 
   await unmount(component); component=undefined; expect(destroy).toHaveBeenCalledTimes(1);
 });
 
-test('empty graph directs the user to model settings without fabricating nodes',async () => {
+test('only missing models direct the empty graph to configuration',async () => {
   vi.mocked(loadRecallGraph).mockResolvedValue({nodes:[],links:[]});
+  const missing = configuration(false); missing.settings.embedding.model = '';
+  vi.mocked(modelGatewayRequest).mockResolvedValue(missing);
   const onModels=vi.fn(); component=mount(TaskKnowledgePage,{target:document.body,props:{onModels}}); await settle();
-  expect(document.body.textContent).toContain('还没有可预览的知识图谱');
+  expect(document.body.textContent).toContain('尚未配置任务模型');
   expect(renderRecallGraph).not.toHaveBeenCalled();
   [...document.querySelectorAll('button')].find(b=>b.textContent==='配置模型')!.click();
   expect(onModels).toHaveBeenCalledOnce(); expect(loadRecallGraph).toHaveBeenCalledOnce();
+});
+
+test('configured local models with processing disabled do not ask for reconfiguration',async () => {
+  vi.mocked(loadRecallGraph).mockResolvedValue({nodes:[],links:[]});
+  vi.mocked(modelGatewayRequest).mockResolvedValue(configuration(false));
+  const onModels=vi.fn(); component=mount(TaskKnowledgePage,{target:document.body,props:{onModels}}); await settle();
+  expect(document.body.textContent).toContain('任务加工尚未启用');
+  expect(document.body.textContent).toContain('模型已配置');
+  expect(document.body.textContent).not.toContain('配置模型');
+  [...document.querySelectorAll('button')].find(b=>b.textContent==='模型设置')!.click();
+  expect(onModels).toHaveBeenCalledOnce();
+  expect(modelGatewayRequest).toHaveBeenCalledWith('model-settings');
+  // The empty state never changes the user's processing setting itself.
+  expect(modelGatewayRequest).toHaveBeenCalledOnce();
+});
+
+test('enabled empty index offers refresh and rechecks settings on refresh',async () => {
+  vi.mocked(loadRecallGraph).mockResolvedValue({nodes:[],links:[]});
+  component=mount(TaskKnowledgePage,{target:document.body}); await settle();
+  expect(document.body.textContent).toContain('任务加工已启用');
+  expect(document.body.textContent).not.toContain('配置模型');
+  vi.mocked(modelGatewayRequest).mockResolvedValue(configuration(false));
+  [...document.querySelectorAll('button')].find(b=>b.textContent==='刷新图谱')!.click(); await settle();
+  expect(document.body.textContent).toContain('任务加工尚未启用');
+  expect(modelGatewayRequest).toHaveBeenCalledTimes(2);
+});
+
+test('unreadable settings are an error rather than a missing-model claim',async () => {
+  vi.mocked(loadRecallGraph).mockResolvedValue({nodes:[],links:[]});
+  vi.mocked(modelGatewayRequest).mockRejectedValue(new Error('模型配置文件无效'));
+  component=mount(TaskKnowledgePage,{target:document.body}); await settle();
+  expect(document.querySelector('[role=alert]')?.textContent).toContain('模型配置文件无效');
+  expect(document.body.textContent).not.toContain('尚未配置任务模型');
+  expect(document.body.textContent).not.toContain('配置模型');
 });
 
 test('leaving before an IPC reply prevents a late renderer from being mounted',async () => {
