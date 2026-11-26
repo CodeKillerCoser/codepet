@@ -52,7 +52,7 @@ export function assemble(input, resources) {
     SEARCH_EVENTS: snapshot.searchEvents, SEMANTIC_POSITIONS: snapshot.semanticPositions,
     SEMANTIC_CLUSTERS: snapshot.semanticClusters,
   };
-  for (const [token, value] of Object.entries(values)) html = html.replaceAll(`__${token}__`, () => safeJSON(value));
+  for (const [token, value] of Object.entries(values)) html = html.replaceAll(`__${token}__`, () => token === 'SEMANTIC_CLUSTERS' ? `(window._codepetSemanticClusters = ${safeJSON(value ?? {})})` : safeJSON(value));
   if (/__[A-Z_]+__/.test(html)) throw new Error('Unresolved Cognee template token');
   html = html.replace(/<script src="https:\/\/d3js\.org\/d3\.v7\.min\.js"><\/script>/,
     () => `<script>${resources.d3}</script>`);

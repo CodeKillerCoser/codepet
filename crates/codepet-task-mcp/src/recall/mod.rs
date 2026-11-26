@@ -126,7 +126,10 @@ impl Recall {
         }
     }
     pub async fn graph(&self) -> Result<Value, String> {
-        self.request("/graph", Some(json!({"semantic":true}))).await
+        self.graph_preview(true).await
+    }
+    pub async fn graph_preview(&self, semantic: bool) -> Result<Value, String> {
+        self.request("/graph", Some(json!({"semantic":semantic}))).await
     }
     /// Main-window history and queue controls; not exposed as an Agent MCP tool.
     pub async fn history(&self, input: Value) -> Result<Value, String> {

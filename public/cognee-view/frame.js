@@ -1,3 +1,31 @@
+// Integration hooks around unmodified upstream views. Semantic data stays native.
+function connectSemantic(token) {
+  const nativeRender = window._renderSemanticView;
+  let loaded = !!window._semanticPositions, pending = false;
+  window._renderSemanticView = function (...args) {
+    if (loaded) return nativeRender(...args);
+    document.getElementById('semantic-status').textContent = '正在读取语义布局…';
+    if (!pending) {
+      pending = true;
+      parent.postMessage({type:'codepet:cognee:semantic',token},'*');
+    }
+  };
+  window.addEventListener('message',event => {
+    if (event.source !== parent || event.data?.token !== token) return;
+    if (event.data.type === 'codepet:cognee:semantic-error') {
+      pending = false;
+      document.getElementById('semantic-status').textContent = '语义布局暂不可用，请再次点击 Semantic 重试；图谱更新后请刷新页面。';
+    } else if (event.data.type === 'codepet:cognee:semantic-result') {
+      window._semanticPositions = event.data.positions;
+      const clusters = window._codepetSemanticClusters;
+      Object.keys(clusters).forEach(key => delete clusters[key]);
+      Object.assign(clusters,event.data.clusters ?? {});
+      pending = false; loaded = true;
+      if (document.getElementById('semantic-view').style.display !== 'none') nativeRender();
+    }
+  });
+}
+
 window.addEventListener('message',function receive(event) {
   if (event.source !== parent || event.data?.type !== 'codepet:cognee:render'
       || typeof event.data.html !== 'string' || typeof event.data.token !== 'string') return;
@@ -10,6 +38,15 @@ window.addEventListener('message',function receive(event) {
   <\/script>`;
   const ready = `<script>
     const initialized = window.d3 && ['_requestGraphRedraw','_renderSchemaGraph','_renderMemoryView','_renderSemanticView'].every(key => typeof window[key] === 'function');
+    if (initialized && ${event.data.lazySemantic === true}) (${connectSemantic.toString()})(${token});
+    // Story nodes already have fixed native targets. Do not wait several seconds
+    // for a force simulation whose ticks cannot move any of them.
+    const pinned = Object.values(window._vizNodeById || {});
+    if (initialized && pinned.length && pinned.every(node => Number.isFinite(node.fx) && Number.isFinite(node.fy))) {
+      pinned.forEach(node => { node.x = node.fx; node.y = node.fy; });
+      window._requestGraphRedraw();
+      document.getElementById('loading-overlay')?.classList.add('hidden');
+    }
     if (initialized) document.getElementById('btn-fit')?.click();
     parent.postMessage({type:initialized?'codepet:cognee:ready':'codepet:cognee:error',token:${token},
       nodes:Object.keys(window._vizNodeById||{}).length,links:(window._vizLinks||[]).length},'*');

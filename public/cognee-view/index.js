@@ -41,21 +41,34 @@ export async function mountCogneeGraph(host,input,options={}) {
   frame.src = new URL('frame.html',base).href;
   const token = crypto.randomUUID();
   let cleanup;
+  let disposed = false, semanticLoading = false;
   const ready = new Promise((resolve,reject) => {
     const timer = setTimeout(() => finish(new Error('图预览初始化超时，请重试')),15000);
     function finish(error,detail) {
-      clearTimeout(timer); window.removeEventListener('message',receive);
+      clearTimeout(timer);
+      if (error) window.removeEventListener('message',receive);
       error ? reject(error) : resolve(detail);
     }
-    function receive(event) {
-      if (event.source !== frame.contentWindow || event.origin !== 'null' || event.data?.token !== token) return;
+    async function receive(event) {
+      if (disposed || event.source !== frame.contentWindow || event.origin !== 'null' || event.data?.token !== token) return;
       if (event.data.type === 'codepet:cognee:ready') finish(null,event.data);
       if (event.data.type === 'codepet:cognee:error') finish(new Error('Cognee 图预览初始化失败'));
+      if (event.data.type === 'codepet:cognee:semantic' && options.loadSemantic && !semanticLoading) {
+        semanticLoading = true;
+        try {
+          const snapshot = normalizeSnapshot(await options.loadSemantic());
+          if (!disposed) frame.contentWindow.postMessage({type:'codepet:cognee:semantic-result',token,
+            positions:snapshot.semanticPositions,clusters:snapshot.semanticClusters},'*');
+        } catch {
+          if (!disposed) frame.contentWindow.postMessage({type:'codepet:cognee:semantic-error',token},'*');
+        } finally { semanticLoading = false; }
+      }
     }
-    cleanup = () => { frame.remove(); finish(new Error('图预览已取消')); };
+    cleanup = () => { disposed = true; frame.remove(); window.removeEventListener('message',receive); finish(new Error('图预览已取消')); };
     window.addEventListener('message',receive);
     // An opaque sandbox cannot receive a message targeted to the Host origin.
-    frame.addEventListener('load',() => frame.contentWindow.postMessage({type:'codepet:cognee:render',html,token},'*'),{once:true});
+    frame.addEventListener('load',() => frame.contentWindow.postMessage({type:'codepet:cognee:render',html,token,
+      lazySemantic:typeof options.loadSemantic === 'function'},'*'),{once:true});
     frame.addEventListener('error',() => finish(new Error('无法打开图预览')),{once:true});
   });
   const abort = () => cleanup();
@@ -65,7 +78,7 @@ export async function mountCogneeGraph(host,input,options={}) {
   try {
     const detail = await ready;
     frame.style.visibility = 'visible';
-    return {detail,destroy(){frame.remove();}};
-  } catch (error) { frame.remove(); throw error; }
+    return {detail,destroy:cleanup};
+  } catch (error) { cleanup(); throw error; }
   finally { options.signal?.removeEventListener('abort',abort); }
 }

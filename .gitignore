@@ -39,3 +39,5 @@ src-tauri/resources/task-recall/*
 !src-tauri/resources/task-recall/.gitkeep
 sidecars/task-recall/.venv/
 sidecars/task-recall/**/__pycache__/
+
+artifacts/graph-performance/

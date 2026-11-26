@@ -59,7 +59,10 @@ pub(crate) async fn task_ledger_request(
         return Ok(result);
     }
     if request["op"].as_str() == Some("recall-graph") {
-        return runtime.recall().graph().await;
+        return runtime
+            .recall()
+            .graph_preview(request["semantic"].as_bool().unwrap_or(true))
+            .await;
     }
     if request["op"].as_str() == Some("recall-history") {
         return runtime.recall().history(request.clone()).await;

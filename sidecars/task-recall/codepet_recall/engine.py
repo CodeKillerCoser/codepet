@@ -4,7 +4,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
+from .graph_cache import GraphCache
 
 
 def plain(value):
@@ -26,6 +27,8 @@ class Engine:
         self.dataset = None
         self.owners = {}
         self.initialized = False
+        self.preview_lock = asyncio.Lock()
+        self.preview = GraphCache(root / config["fingerprint"]) if config.get("fingerprint") else None
 
     async def initialize(self):
         if self.initialized:
@@ -64,6 +67,16 @@ class Engine:
             self.dataset = json.loads(info.read_text())["id"]
 
     async def process(self, row):
+        async with self.preview_lock:
+            if self.preview:
+                self.preview.invalidate()
+            try:
+                return await self._process(row)
+            finally:
+                if self.preview:
+                    self.preview.invalidate()
+
+    async def _process(self, row):
         await self.initialize()
         import cognee
         from cognee.tasks.ingestion.data_item import DataItem
@@ -111,13 +124,29 @@ class Engine:
         await self.initialize()
         if not self.dataset:
             return {"nodes":[], "links":[]}
-        from cognee.api.v1.visualize import visualize_graph_json, visualize_semantic_json
-        from cognee.modules.users.methods import get_default_user
-        user = await get_default_user()
-        result = plain(await visualize_graph_json(dataset=self.dataset, user=user, full=True))
-        if semantic:
-            result.update(plain(await visualize_semantic_json(dataset=self.dataset, user=user, full=True)))
-        return result
+        async with self.preview_lock:
+            base = self.preview.get(self.dataset, False) if self.preview else None
+            cached = self.preview.get(self.dataset, semantic) if self.preview else None
+            if cached is not None and (not semantic or (base is not None
+                    and base["previewVersion"] == cached["previewVersion"])):
+                return cached
+            if semantic:
+                from .semantic_layout import install
+                install()
+            from cognee.api.v1.visualize import visualize_graph_json, visualize_semantic_json
+            from cognee.modules.users.methods import get_default_user
+            user = await get_default_user()
+            if base is None:
+                base = plain(await visualize_graph_json(dataset=self.dataset, user=user, full=True))
+                base["previewVersion"] = str(uuid4())
+                if self.preview:
+                    self.preview.put(self.dataset, False, base)
+            if not semantic:
+                return base
+            result = {**base, **plain(await visualize_semantic_json(dataset=self.dataset, user=user, full=True))}
+            if self.preview:
+                self.preview.put(self.dataset, True, result)
+            return result
 
     async def search(self, query, ready):
         await self.initialize()

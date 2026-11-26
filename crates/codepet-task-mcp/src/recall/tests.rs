@@ -53,6 +53,24 @@ async fn busy_preview_does_not_restart_or_interrupt_ingestion() {
 }
 
 #[tokio::test]
+async fn graph_preview_defers_semantic_but_legacy_graph_keeps_it() {
+    use axum::{routing::post, Json, Router};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        axum::serve(listener, Router::new().route("/graph", post(|Json(body): Json<Value>| async move { Json(body) }))).await.unwrap();
+    });
+    let temp = tempfile::tempdir().unwrap();
+    let recall = Recall::shared(&Ledger::new(temp.path()));
+    *recall.process.lock().await = Some(Arc::new(process::Process::test_client(
+        endpoint, process::fingerprint(&Settings::default()),
+    )));
+    assert_eq!(recall.graph_preview(false).await.unwrap()["semantic"], false);
+    assert_eq!(recall.graph().await.unwrap()["semantic"], true);
+    task.abort();
+}
+
+#[tokio::test]
 #[ignore = "requires an already processed native Cognee dataset"]
 async fn real_semantic_preview_export() {
     let output = PathBuf::from(std::env::var("CODEPET_RECALL_PROBE_OUTPUT").unwrap());
