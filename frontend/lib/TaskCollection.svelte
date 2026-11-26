@@ -64,7 +64,7 @@
    <tbody>
     {#each ordered as task (task.id)}
      {@const run=currentRun(task)}{@const checks=progress(task)}
-     <tr class="task-table-row">
+     <tr class="task-table-row ui-selectable-row">
       <th scope="row"><div class="table-title"><button class="task-row table-task" data-task-id={task.id} title={task.title} on:click={event=>onSelect(task,event.currentTarget)}>{task.title}</button><TaskProcessingButton {task} disabled={busy} onFeedback={onProcessingFeedback}/></div></th>
       <td class="project-column"><span title={task.projectName}>{task.projectName}</span></td>
       <td class="task-state-cell"><TaskStatus status={task.summary.status}/><TaskRunCounts summary={task.summary}/></td>
@@ -89,8 +89,9 @@
  .column-count{font-size:var(--font-size-caption);color:var(--task-secondary);font-weight:var(--font-weight-regular);}
  .board-cards{display:flex;flex-direction:column;gap:8px;}
  .board-task-item{position:relative;min-width:0;}.card-processing{position:absolute;top:6px;right:6px;}.board-task-item .board-task>strong,.board-task-item .card-project{padding-right:28px;}.table-title{display:flex;align-items:center;gap:6px;min-width:0;}.table-title .table-task{flex:1;}
- .task-collection .board-task{display:flex;flex-direction:column;align-items:stretch;width:100%;gap:7px;padding:12px;text-align:left;background:var(--wb-panel);border:1px solid var(--wb-border);border-radius:7px;}
- .task-collection .board-task:hover{border-color:var(--wb-border-strong);}
+ .task-collection .board-task{display:flex;flex-direction:column;align-items:stretch;width:100%;gap:8px;padding:12px 14px;text-align:left;background:var(--wb-panel);border:1px solid var(--wb-border);border-radius:10px;box-shadow:var(--shadow-control,none);transition:background-color 140ms ease,border-color 140ms ease,box-shadow 140ms ease;}
+ .task-collection .board-task:hover{background:var(--color-main-hover);border-color:var(--wb-border-strong);box-shadow:var(--shadow-card,none);}
+ .task-collection .board-task:active{background:var(--color-main-press);}
  .board-task strong{font-size:var(--font-size-body);line-height:var(--line-height-body-relaxed);font-weight:var(--font-weight-medium);overflow-wrap:anywhere;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;}
  .card-project{display:flex;align-items:center;gap:5px;font-size:var(--font-size-caption);color:var(--task-secondary);}
  .card-summary{display:flex;align-items:center;gap:6px 10px;flex-wrap:wrap;color:var(--task-secondary);font-size:var(--font-size-caption);margin-top:0;}
@@ -103,7 +104,7 @@
  .task-table thead{position:sticky;top:-18px;z-index:1;background:var(--wb-panel);}
  .task-table thead th{color:var(--task-secondary);font-weight:var(--font-weight-emphasis);font-size:var(--font-size-label);height:38px;}
  .task-table tbody tr{height:48px;}
- .task-table tbody tr:hover,.task-table tbody tr:focus-within{background:var(--wb-control);}
+ .task-table tbody tr:focus-within{background:var(--color-main-hover);}
  .task-table th:first-child{padding-left:4px;}
  .task-collection .table-task{display:block;min-width:0;width:100%;padding:2px 0;text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:var(--font-size-body);font-weight:var(--font-weight-medium);border:0;border-radius:3px;background:transparent;}
  .task-collection .table-task:hover{color:var(--wb-text);background:transparent;}

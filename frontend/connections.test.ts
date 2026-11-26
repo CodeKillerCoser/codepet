@@ -9,12 +9,13 @@ const deviceListSource = readFileSync(resolve(__dirname, "lib/RemoteDeviceList.s
 const pairDialogSource = readFileSync(resolve(__dirname, "lib/PairDeviceDialog.svelte"), "utf8");
 
 describe("connections workspace", () => {
-  it("groups activity, devices and runtime controls under connection navigation", () => {
+  it("groups activity and runtime controls under agent navigation with remote control standalone", () => {
     const connectionStart = appSource.indexOf('{:else if tab === "connections"}');
     const usageStart = appSource.indexOf('{:else if tab === "usage"}', connectionStart);
     const connectionSource = appSource.slice(connectionStart, usageStart);
 
-    expect(navigationSource).toContain('route: "connections", label: "连接接入", icon: Cable');
+    expect(navigationSource).toContain('route: "connections", label: "智能体", icon: Bot');
+    expect(navigationSource).toContain('route: "devices", label: "远程控制", icon: MonitorSmartphone');
     expect(connectionSource.indexOf('<h3>设备</h3>')).toBeGreaterThan(-1);
     expect(connectionSource.indexOf('<h3>设备</h3>')).toBeLessThan(connectionSource.indexOf('class="runtime-list"'));
     expect(connectionSource).toContain("onclick={refreshRuntimes}");

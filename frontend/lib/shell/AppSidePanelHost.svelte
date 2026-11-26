@@ -146,7 +146,7 @@
   :global(.app-side-panel[data-mode="drawer"][data-state="closed"]) { animation: app-panel-exit 220ms ease both; pointer-events: none; }
   @keyframes app-panel-enter { from { transform: translateX(100%); } to { transform: translateX(0); } }
   @keyframes app-panel-exit { from { transform: translateX(0); } to { transform: translateX(100%); } }
-  .panel-card { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; border: 1px solid var(--color-main-outline); border-radius: 16px; background: var(--app-surface); }
+  .panel-card { display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; overflow: hidden; border: 1px solid var(--color-main-outline); border-radius: 14px; background: var(--app-surface); box-shadow: var(--shadow-pane, none); }
   .panel-header { display: flex; align-items: center; justify-content: space-between; flex: none; gap: 16px; min-height: 52px; padding: 10px var(--app-content-inset,24px); border-bottom: 1px solid var(--color-main-divider); }
   .panel-header :global(h3) { margin: 0; min-width: 0; font: var(--font-section); overflow-wrap: anywhere; }
   .panel-header :global(h3:focus) { outline: none; }

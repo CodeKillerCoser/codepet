@@ -81,7 +81,7 @@
 
 <svelte:window on:keydown={(event) => {if (event.key === 'Escape' && moreOpen) {event.preventDefault(); moreOpen = false; document.querySelector<HTMLElement>('.more-filters summary')?.focus();}}}/>
 
-<section class="workbench" aria-label="AgentHub" tabindex="-1">
+<section class="workbench" aria-label={view === 'tasks' ? '工作台' : '工作树'} tabindex="-1">
   {#if view==='tasks'}<TaskLedger workspaceHint={selected?.path??''}/>{:else}
   <div class="wb-body">
     <div class="scanbar">
@@ -103,9 +103,9 @@
     {#if error}<div class="error" role="alert">{error}<button aria-label="关闭错误" on:click={() => session.patch({ error: '' })}>×</button></div>{/if}
     {#if warnings.length}<div class="read-notice" role="status"><span>{#if unreadable.length}<strong>{unreadable.length} 棵工作树读取失败</strong> · {/if}{warnings.length} 条读取提示</span><div>{#if unreadable.length}<button on:click={showUnreadable}>仅看失败工作树</button>{/if}<button on:click={() => warningDialog.showModal()}>查看详情</button></div></div>{/if}
     <div class="overview" aria-label="工作树概览">
-      <button class:chosen={status === 'all'} aria-pressed={status === 'all'} on:click={() => status = 'all'}>全部工作树 <strong>{base.length}</strong></button>
-      <button class:chosen={status === 'dirty'} aria-pressed={status === 'dirty'} on:click={() => status = status === 'dirty' ? 'all' : 'dirty'}>未提交 <strong>{base.filter(r => statusMatches(r,'dirty')).length}</strong></button>
-      <button class:chosen={status === 'unpushed'} aria-pressed={status === 'unpushed'} on:click={() => status = status === 'unpushed' ? 'all' : 'unpushed'}>待推送 <strong>{base.filter(r => statusMatches(r,'unpushed')).length}</strong></button>
+      <button class="ui-selectable" class:chosen={status === 'all'} class:selected={status === 'all'} aria-pressed={status === 'all'} on:click={() => status = 'all'}>全部工作树 <strong>{base.length}</strong></button>
+      <button class="ui-selectable" class:chosen={status === 'dirty'} class:selected={status === 'dirty'} aria-pressed={status === 'dirty'} on:click={() => status = status === 'dirty' ? 'all' : 'dirty'}>未提交 <strong>{base.filter(r => statusMatches(r,'dirty')).length}</strong></button>
+      <button class="ui-selectable" class:chosen={status === 'unpushed'} class:selected={status === 'unpushed'} aria-pressed={status === 'unpushed'} on:click={() => status = status === 'unpushed' ? 'all' : 'unpushed'}>待推送 <strong>{base.filter(r => statusMatches(r,'unpushed')).length}</strong></button>
       <span>{base.reduce((sum,r) => sum+r.conversations.length,0)} 条关联历史 · 含归档</span>
     </div>
     <div class="workspace">
@@ -117,7 +117,7 @@
           {#if period === 'date'}<input type="date" aria-label="起始日期" bind:value={date}/>{/if}
           <select aria-label="提交状态" bind:value={status}><option value="all">全部状态</option><option value="dirty">未提交</option><option value="unpushed">未推送</option><option value="pushed">无待推送提交</option><option value="clean">干净 · 无上游</option><option value="error">读取失败</option></select>
           <details class="more-filters" bind:open={moreOpen}
-            on:focusout={(event) => {if (!event.currentTarget.contains(event.relatedTarget as Node)) moreOpen = false;}}><summary aria-label="更多筛选与说明" title="更多筛选与说明" class:active={related}><SlidersHorizontal size={16}/></summary><div role="group" aria-label="更多筛选选项" on:pointerdown={retainPopupFocus}>
+            on:focusout={(event) => {if (!event.currentTarget.contains(event.relatedTarget as Node)) moreOpen = false;}}><summary class="ui-selectable" aria-label="更多筛选与说明" title="更多筛选与说明" class:active={related} class:selected={related}><SlidersHorizontal size={16}/></summary><div role="group" aria-label="更多筛选选项" on:pointerdown={retainPopupFocus}>
             <label class="check"><input type="checkbox" bind:checked={related}/>仅有关联对话</label>
             <button on:click={() => {reset(); moreOpen = false;}}>重置筛选</button>
             <button on:click={() => {moreOpen = false; sourceDialog.showModal();}}>数据来源</button>
@@ -125,7 +125,7 @@
         </div>
         <div class="column-head"><span>分支与工作目录</span><span>对话与活动</span><span>Git 状态</span></div>
         <div class="worktree-list">
-          {#each rows as row (row.id)}<article class:selected={detailOpen && selected?.id === row.id} class="worktree-row">
+          {#each rows as row (row.id)}<article class:selected={detailOpen && selected?.id === row.id} class="worktree-row ui-selectable-row">
             <button class="row-select" on:click={(event) => selectRow(row,event.currentTarget)} aria-expanded={detailOpen && selected?.id === row.id}>
               <span class="identity"><b class="branch">{branchLabel(row)}</b><span class="project-name">{row.projectName}{row.main ? ' · 主工作区' : ''}</span><small title={row.path}>{row.path.split(/[\\/]/).slice(-2).join('/')}</small></span>
               <span class="activity"><span>{row.conversations.length ? `${row.conversations.length} 条对话` : '未关联对话'}</span><span class="source-names">{[...new Set(row.conversations.map(c => c.source))].join(' · ')}</span><small>{fmt(activity(row))}</small></span>
@@ -194,7 +194,7 @@
   button, input, select {
     border: 1px solid var(--wb-border);
     border-radius: 6px;
-    background: var(--wb-panel);
+    background-color: var(--wb-panel);
   }
   button { cursor: pointer; padding: 6px 10px; }
   button:hover { border-color: var(--wb-border-strong); }
@@ -205,41 +205,45 @@
   .wb-body { width: 100%; margin: 0; padding: 0; }
   .scanbar { display: flex; gap: 8px; align-items: flex-start; }
   .project-picker { position: relative; flex: 1; min-width: 0; }
-  .tags { min-height: 36px; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 5px; background: var(--wb-panel); border: 1px solid var(--wb-border); border-radius: 7px; }
-  .tags:focus-within { border-color: var(--wb-border-strong); }
+  .tags { min-height: 36px; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 4px 6px; background: var(--wb-panel); border: 1px solid var(--wb-border); border-radius: 8px; box-shadow: var(--shadow-control, none); transition: border-color 140ms ease, box-shadow 140ms ease; }
+  .tags:focus-within { border-color: var(--wb-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-focus-ring) 14%, transparent); }
   .workbench .tags input { flex: 1; width: 50px; min-width: 30px; min-height: 24px; height: 24px; padding: 2px 4px; border: 0; border-radius: 0; outline: none; background: transparent; font-size: var(--font-size-caption); line-height: var(--line-height-copy-compact); color: var(--wb-text); }
-  .tag { display: flex; align-items: center; gap: 5px; background: var(--wb-control); border: 1px solid var(--wb-border); padding: 1px 5px; border-radius: 4px; max-width: 100%; overflow-wrap: anywhere; font-size: var(--font-size-sm); }
-  .tag button { display: flex; padding: 3px; border: 0; background: transparent; color: var(--wb-muted); }
-  .project-options { position: absolute; top: 100%; left: 0; right: 0; margin-top: 5px; z-index: 10; background: var(--wb-panel); border: 1px solid var(--wb-border-strong); border-radius: 7px; max-height: 290px; overflow: auto; padding: 5px; box-shadow: 0 10px 25px var(--wb-shadow); }
+  .tag { display: inline-flex; align-items: center; gap: 4px; background: var(--wb-control); border: 1px solid var(--wb-border); padding: 2px 6px 2px 8px; border-radius: 6px; max-width: 100%; overflow-wrap: anywhere; font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); }
+  .tag button { display: flex; padding: 2px; border: 0; background: transparent; color: var(--wb-muted); }
+  .project-options { position: absolute; top: 100%; left: 0; right: 0; margin-top: 5px; z-index: 10; background: var(--wb-panel); border: 1px solid var(--wb-border-strong); border-radius: 9px; max-height: 290px; overflow: auto; padding: 5px; box-shadow: 0 10px 28px var(--wb-shadow); }
   .project-options button { display: block; width: 100%; text-align: left; background: transparent; border: 0; }
-  .project-options button:hover { background: var(--wb-control); }
+  .project-options button:hover { background: var(--color-main-hover); }
+  .project-options button:active { background: var(--color-main-press); }
   .project-options small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wb-muted); font-size: var(--font-size-xs); }
-  .refresh { height: 34px; width: 34px; display: grid; place-items: center; flex: none; padding: 0; background: var(--wb-control); border-color: transparent; }
-  .refresh:hover { border-color: var(--wb-border); }
-  .confirm { min-height: 34px; min-width: 72px; padding: 6px 18px; font-size: var(--font-size-label); font-weight: var(--font-weight-medium); background: var(--wb-primary); border-color: var(--wb-primary); color: var(--wb-on-primary); }
+  .refresh { height: 36px; width: 36px; display: grid; place-items: center; flex: none; padding: 0; background: var(--wb-panel); border-color: var(--wb-border); border-radius: 8px; box-shadow: var(--shadow-control, none); color: var(--wb-muted); }
+  .refresh:hover { background: var(--color-main-hover); border-color: var(--wb-border-strong); color: var(--wb-text); }
+  .refresh:active { background: var(--color-main-press); }
+  .confirm { min-height: 36px; min-width: 72px; padding: 6px 16px; border-radius: 8px; font-size: var(--font-size-label); font-weight: var(--font-weight-medium); background: var(--wb-primary); border-color: var(--wb-primary); color: var(--wb-on-primary); box-shadow: var(--shadow-primary, none); }
   .confirm:hover:not(:disabled) { background: var(--color-main-accent-hover, var(--wb-primary)); border-color: var(--color-main-accent-hover, var(--wb-primary)); }
+  .confirm:active:not(:disabled) { transform: scale(0.985); }
   .scan-status { display: flex; flex-wrap: wrap; gap: 12px; color: var(--wb-muted); font-size: var(--font-size-caption); }
   .scan-status:not(:empty) { margin-top: 7px; }
-  .read-notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--wb-border); border-radius: 6px; color: var(--wb-muted); margin-top: 12px; font-size: var(--font-size-caption); }
+  .read-notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--wb-border); border-radius: 8px; background: var(--wb-control); color: var(--wb-muted); margin-top: 12px; font-size: var(--font-size-caption); }
   .read-notice strong { color: var(--wb-text); font-weight: var(--font-weight-medium); }
   .read-notice>div { display: flex; gap: 8px; }
-  .read-notice button { padding: 3px 7px; font-size: var(--font-size-caption); background: transparent; }
-  .error { padding: 10px; color: var(--wb-danger-text); background: var(--wb-danger-bg); overflow-wrap: anywhere; border-radius: 5px; }
+  .read-notice button { padding: 3px 8px; font-size: var(--font-size-caption); background: var(--wb-panel); box-shadow: var(--shadow-control, none); }
+  .error { padding: 10px 12px; color: var(--wb-danger-text); background: var(--wb-danger-bg); overflow-wrap: anywhere; border-radius: 8px; }
   .error>button { float: right; }
-  .overview { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin: 14px 0 10px; }
-  .overview button { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 5px 10px; border-color: transparent; background: transparent; font-size: var(--font-size-label); color: var(--wb-muted); }
-  .overview button.chosen { color: var(--wb-text); background: var(--wb-control); }
-  .overview strong { font-size: var(--font-size-label); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; color: var(--wb-text); }
+  .overview { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin: 14px 0 10px; }
+  .overview button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 4px 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); color: var(--wb-muted); }
+  .overview strong { font-size: var(--font-size-caption); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; color: inherit; }
   .overview>span { margin-left: auto; color: var(--wb-muted); font-size: var(--font-size-caption); }
   .workspace { background: var(--wb-panel); }
   .results { min-width: 0; }
   .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 0 12px; border-bottom: 1px solid var(--wb-border); }
-  .search { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 160px; border: 1px solid transparent; border-radius: 6px; background: var(--wb-control); padding-left: 8px; color: var(--wb-muted); }
+  .search { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 160px; border: 1px solid transparent; border-radius: 7px; background: var(--wb-control); padding-left: 8px; color: var(--wb-muted); }
   .search:hover, .search:focus-within { border-color: var(--wb-border); }
   .workbench .search input, .chat-search input { width: 100%; min-height: 32px; height: 32px; background: transparent; color: var(--wb-text); border: 0; padding: 4px 6px; font-size: var(--font-size-label); line-height: var(--line-height-copy-compact); }
   :global(.main-theme) .filters select,
   :global(.main-theme) .filters>input,
-  .filters select, .filters>input { min-height: 32px; height: 32px; padding: 4px 8px; font-size: var(--font-size-label); border-color: transparent; background: var(--wb-control); }
+  .filters select, .filters>input { min-height: 32px; height: 32px; padding: 4px 10px; border-radius: 7px; font-size: var(--font-size-label); border-color: transparent; background-color: var(--wb-control); }
+  :global(.main-theme) .filters select,
+  .filters select { padding-right: 26px; }
   :global(.main-theme) .filters select:hover,
   :global(.main-theme) .filters>input:hover,
   .filters select:hover, .filters>input:hover { border-color: var(--wb-border); }
@@ -248,7 +252,7 @@
   .check input { width: 13px; height: 13px; margin: 0; accent-color: var(--wb-accent); }
   .project-filter, .more-filters { position: relative; flex: none; }
   summary { cursor: pointer; }
-  .project-filter summary { display: inline-flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 8px; border: 1px solid transparent; border-radius: 6px; background: var(--wb-control); white-space: nowrap; font-size: var(--font-size-label); min-height: 32px; height: 32px; max-width: 150px; list-style: none; }
+  .project-filter summary { display: inline-flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 10px; border: 1px solid transparent; border-radius: 7px; background: var(--wb-control); white-space: nowrap; font-size: var(--font-size-label); min-height: 32px; height: 32px; max-width: 150px; list-style: none; }
   .project-filter summary::-webkit-details-marker { display: none; }
   .project-filter summary:hover { border-color: var(--wb-border); }
   .project-filter summary > span { overflow: hidden; text-overflow: ellipsis; }
@@ -259,18 +263,18 @@
   .project-filter .check { padding: 6px 0; }
   .more-filters summary { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid transparent; border-radius: 6px; color: var(--wb-muted); list-style: none; }
   .more-filters summary::-webkit-details-marker { display: none; }
-  .more-filters summary:hover, .more-filters summary.active { background: var(--wb-control); color: var(--wb-text); }
   .more-filters>div { right: 0; display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 168px; }
   .more-filters .check { padding: 6px 4px; }
   .more-filters button { text-align: left; border: 0; background: transparent; font-size: var(--font-size-label); padding: 6px 4px; }
-  .more-filters button:hover { background: var(--wb-control); }
+  .more-filters button:hover { background: var(--color-main-hover); }
+  .more-filters button:active { background: var(--color-main-press); }
   .column-head { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr) 80px; gap: 16px; padding: 10px 10px; color: var(--wb-muted); font-size: var(--font-size-label); font-weight: var(--font-weight-emphasis); background: transparent; border-bottom: 1px solid var(--wb-border); }
   .worktree-list { padding: 0; }
   .worktree-row { position: relative; border-bottom: 1px solid var(--wb-border); background: transparent; padding-right: 86px; border-radius: 10px; }
   .worktree-row:last-child { border-bottom: 0; }
-  .worktree-row.selected { background: var(--wb-control); box-shadow: inset 3px 0 0 var(--wb-accent); border-bottom-color: transparent; }
+  .worktree-row.selected { border-bottom-color: transparent; }
   .row-select { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr); gap: 16px; align-items: center; width: 100%; padding: 12px 12px; min-height: 76px; text-align: left; border: 0; background: transparent; font-size: var(--font-size-sm); border-radius: 10px; }
-  .row-select:hover { background: var(--wb-sheen); }
+  .row-select:hover, .row-select:active { background: transparent; }
   .identity { display: flex; align-items: flex-start; flex-direction: column; gap: 4px; min-width: 0; }
   .branch { font: var(--font-weight-semibold) var(--font-size-caption)/var(--line-height-copy-compact) var(--font-family-code); overflow-wrap: anywhere; }
   .project-name { font-size: var(--font-size-xs); color: var(--wb-muted); overflow-wrap: anywhere; }
@@ -278,19 +282,22 @@
   .activity { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
   .activity small, .source-names { color: var(--wb-muted); font-size: var(--font-size-xs); }
   .git-state { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-  .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; background: var(--wb-neutral-bg); color: var(--wb-neutral-text); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); line-height: var(--line-height-normal); }
+  .badge { display: inline-flex; align-items: center; padding: 2px 8px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: 999px; background: var(--wb-neutral-bg); color: var(--wb-neutral-text); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); line-height: var(--line-height-normal); }
   .badge.amber { background: var(--wb-warning-bg); color: var(--wb-warning-text); }
   .badge.blue { background: var(--wb-info-bg); color: var(--wb-info-text); }
   .badge.green { background: var(--wb-success-bg); color: var(--wb-success-text); }
   .badge.danger { background: var(--wb-danger-bg); color: var(--wb-danger-text); }
   .recheck { position: absolute; top: 50%; right: 10px; transform: translateY(-50%); min-height: 28px; padding: 3px 8px; font-size: var(--font-size-xs); color: var(--wb-muted); background: transparent; border-color: transparent; }
-  .recheck:hover { background: var(--wb-control); color: var(--wb-text); }
+  .recheck:hover { background: var(--color-main-hover); border-color: transparent; box-shadow: none; color: var(--color-main-selected-text); }
+  .recheck:active { background: var(--color-main-press); }
   .detail { min-width: 0; }
   .detail-workspace-card { padding: 14px; border: 1px solid var(--wb-border); border-radius: 10px; background: var(--wb-control); }
   .detail-eyebrow { font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); color: var(--wb-muted); margin-bottom: 4px; }
   .path { font: var(--font-size-xs)/var(--line-height-body-relaxed) var(--font-family-code); overflow-wrap: anywhere; color: var(--wb-muted); margin: 0 0 12px; }
   .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 10px; font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); min-height: 32px; background: var(--wb-panel); }
+  .actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 10px; font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); min-height: 32px; background: var(--wb-panel); box-shadow: var(--shadow-control, none); }
+  .actions button:hover { background: var(--color-main-hover); border-color: var(--wb-border-strong); color: var(--color-main-selected-text); }
+  .actions button:active { background: var(--color-main-press); }
   .git-summary { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); margin: 14px 0 4px; overflow-wrap: anywhere; }
   .git-summary.has-error { color: var(--wb-danger-text); }
   .comparison-note { font-size: var(--font-size-xs); color: var(--wb-muted); margin: 0 0 14px; }

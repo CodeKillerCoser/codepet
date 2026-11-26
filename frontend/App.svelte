@@ -13,7 +13,8 @@
   import EventJournal from "./lib/EventJournal.svelte";
   import AppSidePanelHost from "./lib/shell/AppSidePanelHost.svelte";
   import AppContentPane from "./lib/shell/AppContentPane.svelte";
-  import WorkbenchNavigation from "./lib/WorkbenchNavigation.svelte";
+  import SidebarResizeHandle from "./lib/shell/SidebarResizeHandle.svelte";
+  import { createSidebarWidth } from "./lib/shell/sidebar";
   import { provideSidePanel } from "./lib/shell/sidePanel";
   import CodexWorkbench from "./lib/CodexWorkbench.svelte";
   import MainNavigation from "./lib/MainNavigation.svelte";
@@ -54,6 +55,9 @@
   const sidePanelMode = sidePanel.mode;
   const sidePanelWidth = sidePanel.width;
   const sidePanelResizing = sidePanel.resizing;
+  const sidebar = createSidebarWidth();
+  const sidebarWidth = sidebar.width;
+  const sidebarResizing = sidebar.resizing;
   const resourceReloaded = consumeReloadNotice();
   const navigation = createNavigation(resourceReloaded ? "about" : "tasks");
   let pendingSettingsSaves = 0;
@@ -61,19 +65,19 @@
   $: if (tab === "devices") void refreshRemoteAccess();
   let sidebarCollapsed = false;
   let contentElement: HTMLDivElement;
-  let workbenchView: 'code' | 'tasks' = 'code';
   let pageHeading: HTMLHeadingElement;
   let recallHistoryOpen = false;
   let recallHistoryTrigger: HTMLElement | undefined;
   let graphRevision = 0;
   let renderedRoute: AppRoute = "tasks";
+  $: isWorkbenchRoute = tab === "tasks" || tab === "worktrees" || tab === "extraction";
   $: if (tab !== renderedRoute) {
     sidePanel.dismiss(false);
     renderedRoute = tab;
     void tick().then(() => {
       contentElement?.scrollTo({ top: 0 });
       if (!document.activeElement?.closest('[role="tablist"]')) {
-        const heading = tab === "tasks" || tab === "extraction" ? contentElement?.querySelector<HTMLElement>(".workbench") : tab === "knowledge" ? contentElement?.querySelector<HTMLElement>(".knowledge-page") : pageHeading;
+        const heading = isWorkbenchRoute ? contentElement?.querySelector<HTMLElement>(".workbench") : tab === "knowledge" ? contentElement?.querySelector<HTMLElement>(".knowledge-page") : pageHeading;
         heading?.focus({ preventScroll: true });
       }
     });
@@ -151,6 +155,9 @@
   $: visibleRemoteDiagnostic = remoteRuntimeStatus?.diagnostic ?? remoteCommandError;
 
   onMount(() => {
+    const syncSidebarViewport = () => sidebar.setViewportWidth(window.innerWidth);
+    syncSidebarViewport();
+    window.addEventListener("resize", syncSidebarViewport);
     const media = window.matchMedia("(prefers-color-scheme: dark)");
     systemDark = media.matches;
     const syncTheme = () => {
@@ -204,6 +211,7 @@
 
     return () => {
       disposed = true;
+      window.removeEventListener("resize", syncSidebarViewport);
       runtimeObserver.dispose();
       media.removeEventListener("change", syncTheme);
       unlistenPetEvent?.();
@@ -1063,7 +1071,7 @@
   );
 </script>
 
-<main data-side-panel-layout style:--app-side-panel-width={`${$sidePanelWidth}px`} class:resizing-side-panel={$sidePanelResizing} class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed} class:has-side-panel-column={!!$sidePanelCurrent && $sidePanelMode === "column"} inert={$webcontentReloading}>
+<main data-side-panel-layout style:--app-sidebar-width={`${$sidebarWidth}px`} style:--app-side-panel-width={`${$sidePanelWidth}px`} class:resizing-side-panel={$sidePanelResizing} class:resizing-sidebar={$sidebarResizing} class={`app-shell main-theme ${appTheme}`} class:sidebar-collapsed={sidebarCollapsed} class:has-side-panel-column={!!$sidePanelCurrent && $sidePanelMode === "column"} inert={$webcontentReloading}>
   {#snippet graphActions()}<Button class="window-toolbar-button" bind:ref={recallHistoryTrigger} aria-label="加工历史" title="加工历史" aria-expanded={recallHistoryOpen} aria-pressed={recallHistoryOpen} onclick={() => recallHistoryOpen = !recallHistoryOpen}><Clock size={18}/></Button>{/snippet}
   <WindowToolbar actions={tab === "knowledge" ? graphActions : undefined} bind:collapsed={sidebarCollapsed} canGoBack={$navigation.canGoBack} canGoForward={$navigation.canGoForward} onHome={() => navigation.navigate("tasks")} onBack={navigation.back} onForward={navigation.forward} settingsActive={isSettingsRoute(tab)} onSettings={() => navigation.navigate("settings")} onError={(message) => error = message} />
   <aside id="main-sidebar" class="sidebar" inert={sidebarCollapsed}>
@@ -1072,6 +1080,7 @@
       <span class="sidebar-status-dot" class:online={onlineProviderCount > 0} aria-hidden="true"></span>
       <span>{onlineProviderCount} 个运行时在线</span>
     </div>
+    <SidebarResizeHandle controller={sidebar} controls="main-sidebar" hidden={sidebarCollapsed} />
   </aside>
 
   {#snippet pageHeader()}
@@ -1080,25 +1089,24 @@
         {#if error}<p class="error">{error}</p>{/if}
       </div>
   {/snippet}
-  {#snippet workbenchNavigation()}<WorkbenchNavigation bind:view={workbenchView} />{/snippet}
   {#snippet connectionNavigation()}
-      <HorizontalTabs items={connectionRoutes} value={tab} label="连接接入分区" panelId="connection-panel" onChange={navigation.navigate} />
+      <HorizontalTabs items={connectionRoutes} value={tab} label="智能体分区" panelId="connection-panel" onChange={navigation.navigate} />
   {/snippet}
   <AppContentPane
-    workbench={tab === "tasks" || tab === "extraction"}
+    workbench={isWorkbenchRoute}
     canvas={tab === "knowledge"}
-    heading={tab === "tasks" || tab === "extraction" || tab === "knowledge" ? undefined : pageHeader}
-    navigation={tab === "tasks" || tab === "extraction" ? workbenchNavigation : isConnectionRoute(tab) ? connectionNavigation : undefined}
+    heading={isWorkbenchRoute || tab === "knowledge" ? undefined : pageHeader}
+    navigation={isConnectionRoute(tab) ? connectionNavigation : undefined}
     bind:contentElement
   >
     <!-- The panel is focusable only while it has the tabpanel role. -->
     <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-    <div id={isConnectionRoute(tab) ? "connection-panel" : tab === "tasks" || tab === "extraction" ? "codex-workbench-panel" : undefined} role={isConnectionRoute(tab) || tab === "tasks" || tab === "extraction" ? "tabpanel" : undefined} aria-labelledby={isConnectionRoute(tab) ? `tab-${tab}` : tab === "tasks" || tab === "extraction" ? `tab-${workbenchView}` : undefined} tabindex={isConnectionRoute(tab) || tab === "tasks" || tab === "extraction" ? 0 : undefined}>
+    <div id={isConnectionRoute(tab) ? "connection-panel" : isWorkbenchRoute ? "codex-workbench-panel" : undefined} role={isConnectionRoute(tab) ? "tabpanel" : undefined} aria-labelledby={isConnectionRoute(tab) ? `tab-${tab}` : undefined} tabindex={isConnectionRoute(tab) ? 0 : undefined}>
     {#if appearanceVisited && settings}
       <div hidden={tab !== "appearance"}><AppearanceSettings {settings} bind:pending={appearancePending} onChange={(next) => settings = next} onSave={persistSettings} /></div>
     {/if}
-    {#if tab === "tasks" || tab === "extraction"}
-      <CodexWorkbench bind:view={workbenchView} />
+    {#if isWorkbenchRoute}
+      <CodexWorkbench view={tab === "tasks" ? "tasks" : "code"} />
     {:else if tab === "knowledge"}
       <TaskKnowledgePage revision={graphRevision} onModels={() => navigation.navigate('models')} />
     {:else if tab === "connections"}

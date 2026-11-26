@@ -5,7 +5,7 @@
 
   let { controls, variant = 'column' }: { controls: string; variant?: SidePanelMode } = $props();
   const panel = useSidePanel();
-  const width = panel.width, bounds = panel.bounds, current = panel.current, mode = panel.mode;
+  const width = panel.width, bounds = panel.bounds, current = panel.current, mode = panel.mode, resizing = panel.resizing;
   const drawerWidth = panel.drawerWidth, drawerBounds = panel.drawerBounds;
   const currentWidth = $derived(variant === 'drawer' ? $drawerWidth : $width);
   const currentBounds = $derived(variant === 'drawer' ? $drawerBounds : $bounds);
@@ -30,7 +30,6 @@
   function start(event: PointerEvent) {
     if (event.button !== 0 || !event.isPrimary) return;
     event.preventDefault();
-    handle.focus({ preventScroll: true });
     drag = { pointerId: event.pointerId, x: event.clientX, width: currentWidth, mode: variant, ratio: get(panel.drawerRatio) };
     handle.setPointerCapture(event.pointerId);
     panel.setResizing(true);
@@ -58,7 +57,7 @@
 }} />
 
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (A focusable separator implements the ARIA window splitter keyboard pattern.) -->
-<div class="side-panel-resize-handle" bind:this={handle} role="separator" tabindex="0"
+<div class="side-panel-resize-handle" class:dragging={$resizing} bind:this={handle} role="separator" tabindex="0"
   aria-label="调整侧栏宽度" aria-orientation="vertical" aria-controls={controls} aria-describedby={hintId}
   aria-valuemin={currentBounds.min} aria-valuemax={currentBounds.max} aria-valuenow={currentWidth} aria-valuetext={`${Math.round(currentWidth)} 像素`}
   title="拖动调整侧栏宽度，双击恢复默认宽度"
@@ -74,7 +73,8 @@
 
 <style>
   .side-panel-resize-handle { position: absolute; inset: 0 auto 0 0; width: 8px; cursor: col-resize; touch-action: none; user-select: none; outline: none; }
-  .side-panel-resize-handle::after { content: ''; position: absolute; inset: 12px 3px; border-radius: 2px; background: transparent; }
-  .side-panel-resize-handle:hover::after { background: var(--app-border-strong); }
-  .side-panel-resize-handle:focus-visible::after { background: var(--color-focus-ring); }
+  .side-panel-resize-handle::after { content: ''; position: absolute; inset: 12px 3px; border-radius: 2px; background: transparent; transition: background-color 140ms ease; }
+  .side-panel-resize-handle:hover::after { background: var(--color-main-selected); }
+  .side-panel-resize-handle.dragging::after,
+  .side-panel-resize-handle:focus-visible::after { background: var(--color-main-press); }
 </style>

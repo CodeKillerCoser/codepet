@@ -1,6 +1,6 @@
 import { get } from "svelte/store";
 import { expect, test } from "vitest";
-import { createNavigation } from "./navigation";
+import { connectionRoutes, createNavigation, isConnectionRoute, isSettingsRoute, routeTitle } from "./navigation";
 
 test("page history records settings and restores the previous page without adding entries", () => {
   const history = createNavigation("tasks");
@@ -36,4 +36,21 @@ test("history restores the exact connection and settings subsection", () => {
   expect(get(history).current).toBe("extraction");
   history.navigate("runtimes");
   expect(get(history)).toMatchObject({entries: ["devices", "extraction", "runtimes"], canGoForward: false});
+});
+
+test("maps main navigation and settings routes to expected titles and groups", () => {
+  expect(routeTitle("tasks")).toBe("工作台");
+  expect(routeTitle("worktrees")).toBe("工作树");
+  expect(routeTitle("knowledge")).toBe("工作记忆");
+  expect(routeTitle("connections")).toBe("智能体");
+  expect(routeTitle("runtimes")).toBe("智能体");
+  expect(routeTitle("devices")).toBe("远程控制");
+  expect(routeTitle("usage")).toBe("用量");
+  expect(routeTitle("appearance")).toBe("外观");
+  expect(routeTitle("personalize")).toBe("桌宠");
+  expect(connectionRoutes.map((entry) => entry.route)).toEqual(["connections", "runtimes"]);
+  expect(isConnectionRoute("connections")).toBe(true);
+  expect(isConnectionRoute("runtimes")).toBe(true);
+  expect(isConnectionRoute("devices")).toBe(false);
+  expect(isSettingsRoute("personalize")).toBe(true);
 });

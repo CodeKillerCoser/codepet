@@ -241,8 +241,8 @@
     {:else}
       <div class="collection-heading"><h3>全部任务</h3><span>{filtered.length}</span></div>
       <div class="view-switch" role="group" aria-label="任务视图">
-        <button class:active={view==='board'} aria-pressed={view==='board'} disabled={!boardFits} title={boardFits?'看板':'内容区宽度不足，已自动使用表格'} on:click={()=>view='board'}><Columns3 size={15}/>看板</button>
-        <button class:active={view==='table'} aria-pressed={view==='table'} on:click={()=>view='table'}><Table2 size={15}/>表格</button>
+        <button class="ui-selectable" class:active={view==='board'} class:selected={view==='board'} aria-pressed={view==='board'} disabled={!boardFits} title={boardFits?'看板':'内容区宽度不足，已自动使用表格'} on:click={()=>view='board'}><Columns3 size={15}/>看板</button>
+        <button class="ui-selectable" class:active={view==='table'} class:selected={view==='table'} aria-pressed={view==='table'} on:click={()=>view='table'}><Table2 size={15}/>表格</button>
       </div>
       <div class="filters" role="search" aria-label="筛选任务">
         <input aria-label="搜索任务" placeholder="搜索任务…" bind:value={query}/>

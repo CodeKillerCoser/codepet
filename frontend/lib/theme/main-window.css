@@ -12,28 +12,43 @@
   --letter-spacing-caps: 0;
   --letter-spacing-caps-wide: 0;
 
-  /* Preset palette hooks (default: warm-stone light). */
-  --color-main-chrome: #f3f2ee;
-  --color-main-canvas: #ffffff;
-  --color-main-soft: var(--sand-2);
+  /* Preset palette hooks (default: warm-stone light — refined stone paper + espresso ink + soft amber interactive ramp). */
+  --color-main-chrome: #f2f1ed;
+  --color-main-canvas: #fcfbf9;
+  --color-main-soft: #f5f4f0;
   --color-main-outline: color-mix(in srgb, var(--sand-12) 8%, transparent);
-  --color-main-divider: color-mix(in srgb, var(--sand-12) 7%, transparent);
-  --color-main-border: var(--sand-6);
-  --color-main-border-strong: var(--sand-8);
-  --color-main-control: var(--sand-8);
-  --color-main-hover: var(--sand-3);
-  --color-main-press: var(--sand-4);
-  --color-main-selected: var(--amber-3);
-  --color-main-selected-border: color-mix(in srgb, var(--amber-9) 34%, transparent);
-  --color-main-selected-text: var(--amber-12);
+  --color-main-divider: color-mix(in srgb, var(--sand-12) 6.5%, transparent);
+  --color-main-border: color-mix(in srgb, var(--sand-12) 9.5%, transparent);
+  --color-main-border-strong: color-mix(in srgb, var(--sand-12) 17%, transparent);
+  --color-main-control: color-mix(in srgb, var(--sand-12) 12%, transparent);
+  --color-main-hover: color-mix(in srgb, #d4831a 6%, transparent);
+  --color-main-selected: color-mix(in srgb, #d4831a 13%, transparent);
+  --color-main-press: color-mix(in srgb, #d4831a 21%, transparent);
+  --color-main-selected-border: transparent;
+  --color-main-selected-text: #4a2508;
+  --color-nav-active-bg: var(--color-main-selected);
+  --color-nav-active-icon: var(--color-main-accent-text);
   --hover_background_color: var(--color-main-hover);
   --press_background_color: var(--color-main-press);
-  --color-main-accent-solid: var(--amber-9);
-  --color-main-accent-hover: var(--amber-10);
-  --color-main-on-accent: #1c1917;
-  --color-main-accent-text: var(--amber-11);
-  --color-main-accent-strong: var(--amber-12);
-  --color-focus-ring: var(--amber-11);
+  --color-main-accent-solid: #211f1c;
+  --color-main-accent-hover: #36332e;
+  --color-main-on-accent: #fcfbf9;
+  --color-main-accent-text: #b45309;
+  --color-main-accent-strong: #92400e;
+  --color-focus-ring: #b45309;
+
+  --shadow-pane: 0 1px 2px color-mix(in srgb, var(--sand-12) 3.5%, transparent);
+  --shadow-nav-active: none;
+  --shadow-control:
+    0 1px 2px color-mix(in srgb, var(--sand-12) 4.5%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--color-white) 72%, transparent);
+  --shadow-card:
+    0 2px 6px color-mix(in srgb, var(--sand-12) 6%, transparent),
+    0 1px 2px color-mix(in srgb, var(--sand-12) 4%, transparent);
+  --shadow-primary:
+    0 1px 2px color-mix(in srgb, var(--color-black) 18%, transparent),
+    inset 0 1px 0 color-mix(in srgb, var(--color-white) 14%, transparent);
+  --select-chevron-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2363635e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 
   --color-text-primary: var(--sand-12);
   --color-text-muted: var(--sand-11);
@@ -72,46 +87,63 @@
 .main-theme.dark {
   color-scheme: dark;
   --color-main-chrome: #161513;
-  --color-main-canvas: #10100f;
-  --color-main-soft: var(--sand-2);
-  --color-main-outline: color-mix(in srgb, var(--sand-12) 9%, transparent);
-  --color-main-divider: color-mix(in srgb, var(--sand-12) 8%, transparent);
-  --color-main-border: var(--sand-6);
-  --color-main-border-strong: var(--sand-8);
-  --color-main-control: var(--sand-8);
-  --color-main-hover: var(--sand-3);
-  --color-main-press: var(--sand-4);
-  --color-main-selected: color-mix(in srgb, var(--amber-9) 14%, var(--color-main-chrome));
-  --color-main-selected-border: color-mix(in srgb, var(--amber-9) 28%, transparent);
-  --color-main-selected-text: var(--amber-11);
-  --color-main-accent-solid: var(--amber-9);
-  --color-main-accent-hover: var(--amber-10);
+  --color-main-canvas: #11100f;
+  --color-main-soft: #1a1917;
+  --color-main-outline: color-mix(in srgb, var(--sand-12) 8%, transparent);
+  --color-main-divider: color-mix(in srgb, var(--sand-12) 7%, transparent);
+  --color-main-border: color-mix(in srgb, var(--sand-12) 10%, transparent);
+  --color-main-border-strong: color-mix(in srgb, var(--sand-12) 18%, transparent);
+  --color-main-control: color-mix(in srgb, var(--sand-12) 13%, transparent);
+  --color-main-hover: color-mix(in srgb, #e59a3c 8%, transparent);
+  --color-main-selected: color-mix(in srgb, #e59a3c 15%, transparent);
+  --color-main-press: color-mix(in srgb, #e59a3c 23%, transparent);
+  --color-main-selected-border: transparent;
+  --color-main-selected-text: #f6d49b;
+  --color-nav-active-bg: var(--color-main-selected);
+  --color-nav-active-icon: var(--color-main-accent-text);
+  --color-main-accent-solid: #edeae4;
+  --color-main-accent-hover: #ffffff;
   --color-main-on-accent: #161513;
-  --color-focus-ring: var(--amber-10);
-  --app-shadow: #00000048;
+  --color-main-accent-text: #e59a3c;
+  --color-main-accent-strong: #f0b25c;
+  --color-focus-ring: #e59a3c;
+  --app-shadow: #00000052;
+  --shadow-pane: 0 2px 6px #00000038;
+  --shadow-nav-active: none;
+  --shadow-control:
+    0 1px 2px #00000038,
+    inset 0 1px 0 color-mix(in srgb, var(--sand-12) 7%, transparent);
+  --shadow-card:
+    0 4px 12px #00000044,
+    inset 0 1px 0 color-mix(in srgb, var(--sand-12) 6%, transparent);
+  --shadow-primary:
+    0 1px 3px #00000048,
+    inset 0 1px 0 color-mix(in srgb, var(--color-white) 40%, transparent);
+  --select-chevron-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23b5b3ad' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 }
 
-/* Preset 2: Cool Slate — Crisp neutral-cool Slate + Blue ink accent. */
+/* Preset 2: Cool Slate — Crisp neutral-cool Slate + subtle cobalt-blue interactive ramp. */
 .main-theme.preset-cool-slate {
   --color-main-chrome: #f1f3f6;
   --color-main-canvas: #ffffff;
-  --color-main-soft: var(--slate-2);
+  --color-main-soft: #f5f7fa;
   --color-main-outline: color-mix(in srgb, var(--slate-12) 8%, transparent);
-  --color-main-divider: color-mix(in srgb, var(--slate-12) 7%, transparent);
-  --color-main-border: var(--slate-6);
-  --color-main-border-strong: var(--slate-8);
-  --color-main-control: var(--slate-8);
-  --color-main-hover: var(--slate-3);
-  --color-main-press: var(--slate-4);
-  --color-main-selected: var(--blue-3);
-  --color-main-selected-border: color-mix(in srgb, var(--blue-9) 28%, transparent);
-  --color-main-selected-text: var(--blue-12);
-  --color-main-accent-solid: var(--blue-11);
-  --color-main-accent-hover: var(--blue-10);
+  --color-main-divider: color-mix(in srgb, var(--slate-12) 6.5%, transparent);
+  --color-main-border: color-mix(in srgb, var(--slate-12) 9.5%, transparent);
+  --color-main-border-strong: color-mix(in srgb, var(--slate-12) 17%, transparent);
+  --color-main-control: color-mix(in srgb, var(--slate-12) 12%, transparent);
+  --color-main-hover: color-mix(in srgb, #2563eb 5.5%, transparent);
+  --color-main-selected: color-mix(in srgb, #2563eb 11.5%, transparent);
+  --color-main-press: color-mix(in srgb, #2563eb 19%, transparent);
+  --color-main-selected-border: transparent;
+  --color-main-selected-text: #163775;
+  --color-nav-active-bg: var(--color-main-selected);
+  --color-main-accent-solid: #18202c;
+  --color-main-accent-hover: #293548;
   --color-main-on-accent: #ffffff;
-  --color-main-accent-text: var(--blue-11);
-  --color-main-accent-strong: var(--blue-12);
-  --color-focus-ring: var(--blue-10);
+  --color-main-accent-text: #1d4ed8;
+  --color-main-accent-strong: #1e40af;
+  --color-focus-ring: #2563eb;
   --color-text-primary: var(--slate-12);
   --color-text-muted: var(--slate-11);
   --color-text-subtle: var(--slate-10);
@@ -120,46 +152,48 @@
 .main-theme.dark.preset-cool-slate {
   --color-main-chrome: #15171a;
   --color-main-canvas: #0f1114;
-  --color-main-soft: var(--slate-2);
+  --color-main-soft: #191c21;
   --color-main-outline: color-mix(in srgb, var(--slate-12) 9%, transparent);
-  --color-main-divider: color-mix(in srgb, var(--slate-12) 8%, transparent);
-  --color-main-border: var(--slate-6);
-  --color-main-border-strong: var(--slate-8);
-  --color-main-control: var(--slate-8);
-  --color-main-hover: var(--slate-3);
-  --color-main-press: var(--slate-4);
-  --color-main-selected: color-mix(in srgb, var(--blue-9) 17%, var(--color-main-chrome));
-  --color-main-selected-border: color-mix(in srgb, var(--blue-9) 32%, transparent);
-  --color-main-selected-text: var(--blue-11);
-  --color-main-accent-solid: var(--blue-9);
-  --color-main-accent-hover: var(--blue-10);
-  --color-main-on-accent: #ffffff;
-  --color-main-accent-text: var(--blue-11);
-  --color-main-accent-strong: var(--blue-12);
-  --color-focus-ring: var(--blue-10);
+  --color-main-divider: color-mix(in srgb, var(--slate-12) 7%, transparent);
+  --color-main-border: color-mix(in srgb, var(--slate-12) 10%, transparent);
+  --color-main-border-strong: color-mix(in srgb, var(--slate-12) 18%, transparent);
+  --color-main-control: color-mix(in srgb, var(--slate-12) 13%, transparent);
+  --color-main-hover: color-mix(in srgb, #60a5fa 8%, transparent);
+  --color-main-selected: color-mix(in srgb, #60a5fa 15%, transparent);
+  --color-main-press: color-mix(in srgb, #60a5fa 23%, transparent);
+  --color-main-selected-border: transparent;
+  --color-main-selected-text: #c2dcff;
+  --color-nav-active-bg: var(--color-main-selected);
+  --color-main-accent-solid: #e8edf5;
+  --color-main-accent-hover: #ffffff;
+  --color-main-on-accent: #101318;
+  --color-main-accent-text: #60a5fa;
+  --color-main-accent-strong: #93c5fd;
+  --color-focus-ring: #60a5fa;
 }
 
-/* Preset 3: Forest Sage — Quiet botanical Sage neutrals + Grass green accent. */
+/* Preset 3: Forest Sage — Quiet botanical Sage neutrals + soft sage-green interactive ramp. */
 .main-theme.preset-forest-sage {
   --color-main-chrome: #f0f3f0;
   --color-main-canvas: #fcfdfc;
-  --color-main-soft: var(--sage-2);
+  --color-main-soft: #f4f7f4;
   --color-main-outline: color-mix(in srgb, var(--sage-12) 8%, transparent);
-  --color-main-divider: color-mix(in srgb, var(--sage-12) 7%, transparent);
-  --color-main-border: var(--sage-6);
-  --color-main-border-strong: var(--sage-8);
-  --color-main-control: var(--sage-8);
-  --color-main-hover: var(--sage-3);
-  --color-main-press: var(--sage-4);
-  --color-main-selected: var(--grass-3);
-  --color-main-selected-border: color-mix(in srgb, var(--grass-9) 32%, transparent);
-  --color-main-selected-text: var(--grass-12);
-  --color-main-accent-solid: var(--grass-11);
-  --color-main-accent-hover: var(--grass-10);
-  --color-main-on-accent: #ffffff;
-  --color-main-accent-text: var(--grass-11);
-  --color-main-accent-strong: var(--grass-12);
-  --color-focus-ring: var(--grass-10);
+  --color-main-divider: color-mix(in srgb, var(--sage-12) 6.5%, transparent);
+  --color-main-border: color-mix(in srgb, var(--sage-12) 9.5%, transparent);
+  --color-main-border-strong: color-mix(in srgb, var(--sage-12) 17%, transparent);
+  --color-main-control: color-mix(in srgb, var(--sage-12) 12%, transparent);
+  --color-main-hover: color-mix(in srgb, #2e7d47 6%, transparent);
+  --color-main-selected: color-mix(in srgb, #2e7d47 12.5%, transparent);
+  --color-main-press: color-mix(in srgb, #2e7d47 20%, transparent);
+  --color-main-selected-border: transparent;
+  --color-main-selected-text: #164024;
+  --color-nav-active-bg: var(--color-main-selected);
+  --color-main-accent-solid: #1a241d;
+  --color-main-accent-hover: #29382e;
+  --color-main-on-accent: #fcfdfc;
+  --color-main-accent-text: #256c3c;
+  --color-main-accent-strong: #1c542e;
+  --color-focus-ring: #2e7d47;
   --color-text-primary: var(--sage-12);
   --color-text-muted: var(--sage-11);
   --color-text-subtle: var(--sage-10);
@@ -168,46 +202,48 @@
 .main-theme.dark.preset-forest-sage {
   --color-main-chrome: #141715;
   --color-main-canvas: #0f1210;
-  --color-main-soft: var(--sage-2);
+  --color-main-soft: #181c19;
   --color-main-outline: color-mix(in srgb, var(--sage-12) 9%, transparent);
-  --color-main-divider: color-mix(in srgb, var(--sage-12) 8%, transparent);
-  --color-main-border: var(--sage-6);
-  --color-main-border-strong: var(--sage-8);
-  --color-main-control: var(--sage-8);
-  --color-main-hover: var(--sage-3);
-  --color-main-press: var(--sage-4);
-  --color-main-selected: color-mix(in srgb, var(--grass-9) 16%, var(--color-main-chrome));
-  --color-main-selected-border: color-mix(in srgb, var(--grass-9) 30%, transparent);
-  --color-main-selected-text: var(--grass-11);
-  --color-main-accent-solid: var(--grass-9);
-  --color-main-accent-hover: var(--grass-10);
+  --color-main-divider: color-mix(in srgb, var(--sage-12) 7%, transparent);
+  --color-main-border: color-mix(in srgb, var(--sage-12) 10%, transparent);
+  --color-main-border-strong: color-mix(in srgb, var(--sage-12) 18%, transparent);
+  --color-main-control: color-mix(in srgb, var(--sage-12) 13%, transparent);
+  --color-main-hover: color-mix(in srgb, #52b772 8%, transparent);
+  --color-main-selected: color-mix(in srgb, #52b772 15%, transparent);
+  --color-main-press: color-mix(in srgb, #52b772 23%, transparent);
+  --color-main-selected-border: transparent;
+  --color-main-selected-text: #bae8c8;
+  --color-nav-active-bg: var(--color-main-selected);
+  --color-main-accent-solid: #e7efe9;
+  --color-main-accent-hover: #ffffff;
   --color-main-on-accent: #0f1210;
-  --color-main-accent-text: var(--grass-11);
-  --color-main-accent-strong: var(--grass-12);
-  --color-focus-ring: var(--grass-10);
+  --color-main-accent-text: #52b772;
+  --color-main-accent-strong: #7cd497;
+  --color-focus-ring: #52b772;
 }
 
-/* Preset 4: Caramel Earth — Warm parchment Sand + rich Brown/Caramel accent. */
+/* Preset 4: Caramel Earth — Warm parchment Sand + soft roasted-caramel interactive ramp. */
 .main-theme.preset-caramel-earth {
-  --color-main-chrome: #f5efe7;
+  --color-main-chrome: #f4eee6;
   --color-main-canvas: #fffdfa;
-  --color-main-soft: var(--brown-2);
-  --color-main-outline: color-mix(in srgb, var(--brown-12) 9%, transparent);
-  --color-main-divider: color-mix(in srgb, var(--brown-12) 8%, transparent);
-  --color-main-border: var(--brown-6);
-  --color-main-border-strong: var(--brown-8);
-  --color-main-control: var(--brown-8);
-  --color-main-hover: var(--brown-3);
-  --color-main-press: var(--brown-4);
-  --color-main-selected: var(--brown-4);
-  --color-main-selected-border: color-mix(in srgb, var(--brown-9) 34%, transparent);
-  --color-main-selected-text: var(--brown-12);
-  --color-main-accent-solid: var(--brown-11);
-  --color-main-accent-hover: var(--brown-10);
-  --color-main-on-accent: #ffffff;
-  --color-main-accent-text: var(--brown-11);
-  --color-main-accent-strong: var(--brown-12);
-  --color-focus-ring: var(--brown-10);
+  --color-main-soft: #f7f2eb;
+  --color-main-outline: color-mix(in srgb, var(--brown-12) 8.5%, transparent);
+  --color-main-divider: color-mix(in srgb, var(--brown-12) 6.5%, transparent);
+  --color-main-border: color-mix(in srgb, var(--brown-12) 10%, transparent);
+  --color-main-border-strong: color-mix(in srgb, var(--brown-12) 18%, transparent);
+  --color-main-control: color-mix(in srgb, var(--brown-12) 12.5%, transparent);
+  --color-main-hover: color-mix(in srgb, #a35d2c 6%, transparent);
+  --color-main-selected: color-mix(in srgb, #a35d2c 13%, transparent);
+  --color-main-press: color-mix(in srgb, #a35d2c 21%, transparent);
+  --color-main-selected-border: transparent;
+  --color-main-selected-text: #47240f;
+  --color-nav-active-bg: var(--color-main-selected);
+  --color-main-accent-solid: #2b1e16;
+  --color-main-accent-hover: #402e23;
+  --color-main-on-accent: #fffdfa;
+  --color-main-accent-text: #8c4c20;
+  --color-main-accent-strong: #6e3a17;
+  --color-focus-ring: #a35d2c;
   --color-text-primary: var(--sand-12);
   --color-text-muted: var(--sand-11);
   --color-text-subtle: var(--sand-10);
@@ -216,28 +252,29 @@
 .main-theme.dark.preset-caramel-earth {
   --color-main-chrome: #191512;
   --color-main-canvas: #120f0d;
-  --color-main-soft: var(--brown-2);
-  --color-main-outline: color-mix(in srgb, var(--brown-12) 10%, transparent);
-  --color-main-divider: color-mix(in srgb, var(--brown-12) 8%, transparent);
-  --color-main-border: var(--brown-6);
-  --color-main-border-strong: var(--brown-8);
-  --color-main-control: var(--brown-8);
-  --color-main-hover: var(--brown-3);
-  --color-main-press: var(--brown-4);
-  --color-main-selected: color-mix(in srgb, var(--brown-9) 20%, var(--color-main-chrome));
-  --color-main-selected-border: color-mix(in srgb, var(--brown-9) 36%, transparent);
-  --color-main-selected-text: var(--brown-11);
-  --color-main-accent-solid: var(--brown-9);
-  --color-main-accent-hover: var(--brown-10);
-  --color-main-on-accent: #120f0d;
-  --color-main-accent-text: var(--brown-11);
-  --color-main-accent-strong: var(--brown-12);
-  --color-focus-ring: var(--brown-10);
+  --color-main-soft: #1d1815;
+  --color-main-outline: color-mix(in srgb, var(--brown-12) 9.5%, transparent);
+  --color-main-divider: color-mix(in srgb, var(--brown-12) 7.5%, transparent);
+  --color-main-border: color-mix(in srgb, var(--brown-12) 10.5%, transparent);
+  --color-main-border-strong: color-mix(in srgb, var(--brown-12) 18.5%, transparent);
+  --color-main-control: color-mix(in srgb, var(--brown-12) 13.5%, transparent);
+  --color-main-hover: color-mix(in srgb, #cc8b5c 8%, transparent);
+  --color-main-selected: color-mix(in srgb, #cc8b5c 15%, transparent);
+  --color-main-press: color-mix(in srgb, #cc8b5c 23%, transparent);
+  --color-main-selected-border: transparent;
+  --color-main-selected-text: #f0d0b6;
+  --color-nav-active-bg: var(--color-main-selected);
+  --color-main-accent-solid: #efe7df;
+  --color-main-accent-hover: #ffffff;
+  --color-main-on-accent: #14100d;
+  --color-main-accent-text: #cc8b5c;
+  --color-main-accent-strong: #e2ad84;
+  --color-focus-ring: #cc8b5c;
 }
 
 /* Preset preview swatches used in Settings without exposing raw hex outside theme/. */
-.theme-swatch-warm-stone { --swatch-chrome: #f3f2ee; --swatch-canvas: #ffffff; --swatch-accent: #ffc53d; }
-.dark .theme-swatch-warm-stone { --swatch-chrome: #161513; --swatch-canvas: #10100f; --swatch-accent: #ffc53d; }
+.theme-swatch-warm-stone { --swatch-chrome: #f2f1ed; --swatch-canvas: #fcfbf9; --swatch-accent: #b45309; }
+.dark .theme-swatch-warm-stone { --swatch-chrome: #161513; --swatch-canvas: #11100f; --swatch-accent: #e59a3c; }
 .theme-swatch-cool-slate { --swatch-chrome: #f1f3f6; --swatch-canvas: #ffffff; --swatch-accent: #0d74ce; }
 .dark .theme-swatch-cool-slate { --swatch-chrome: #15171a; --swatch-canvas: #0f1114; --swatch-accent: #0090ff; }
 .theme-swatch-forest-sage { --swatch-chrome: #f0f3f0; --swatch-canvas: #fcfdfc; --swatch-accent: #2a7e3b; }
@@ -272,11 +309,11 @@
   --wb-danger-text: var(--color-main-danger-text);
   --wb-primary: var(--color-main-accent-solid);
   --wb-on-primary: var(--color-main-on-accent);
-  --wb-neutral-bg: var(--color-main-hover);
+  --wb-neutral-bg: var(--app-surface-soft);
   --wb-neutral-text: var(--app-muted);
   --wb-shadow: var(--app-shadow);
   --wb-scrim: var(--color-main-scrim);
-  --wb-sheen: color-mix(in srgb, var(--app-text) 3%, transparent);
+  --wb-sheen: var(--color-main-hover);
   --wb-glow: color-mix(in srgb, var(--app-accent) 12%, transparent);
   --wb-deleted-text: var(--red-5);
   --wb-inserted-text: var(--grass-5);

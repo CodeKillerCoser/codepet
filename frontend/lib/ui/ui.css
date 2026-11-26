@@ -70,9 +70,47 @@
 .cn-switch-thumb[data-state="checked"] { transform: translateX(14px); }
 .main-theme .settings-card label > .cn-switch:disabled { opacity: .5; cursor: not-allowed; }
 
-.horizontal-tabs { display: flex; gap: 24px; border-bottom: 1px solid var(--app-border); margin-bottom: 24px; overflow-x: auto; flex-shrink: 0; }
-.horizontal-tabs button { position: relative; flex-shrink: 0; border: 0; border-radius: 0; background: transparent; color: var(--app-muted); font: inherit; padding: 12px 0 14px; box-shadow: none; }
+.horizontal-tabs { display: flex; gap: 22px; border-bottom: 1px solid var(--color-main-divider, var(--app-border)); margin-bottom: 20px; overflow-x: auto; flex-shrink: 0; }
+.horizontal-tabs button { position: relative; flex-shrink: 0; border: 0; border-radius: 0; background: transparent; color: var(--app-muted); font-size: var(--font-size-label); font-weight: var(--font-weight-medium); padding: 10px 0 11px; box-shadow: none; transition: color 140ms ease; }
 .horizontal-tabs button:hover { color: var(--app-text); background: transparent; }
 .horizontal-tabs button[aria-selected="true"] { color: var(--app-text); font-weight: var(--font-weight-active); background: transparent; }
 .horizontal-tabs button[aria-selected="true"]::after { content: ""; position: absolute; bottom: 0; left: 0; right: 0; height: 2px; background: var(--app-accent); border-radius: 2px; }
 .horizontal-tabs button:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -3px; }
+
+/* Shared theme-adaptive interactive state template (hover < selected < press, borderless).
+ * Apply `ui-selectable` to clickable nav items, filter pills, and segmented controls,
+ * and toggle `selected` for the active state. Apply `ui-selectable-row` to full-width rows.
+ */
+.main-theme .ui-selectable,
+.main-theme .ui-selectable-row {
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.main-theme .ui-selectable:hover:not(:disabled),
+.main-theme .ui-selectable-row:hover {
+  background-color: var(--color-main-hover);
+}
+.main-theme .ui-selectable:hover:not(:disabled) {
+  color: var(--app-text);
+}
+.main-theme .ui-selectable.selected,
+.main-theme .ui-selectable.selected:hover:not(:disabled) {
+  background-color: var(--color-main-selected);
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--color-main-selected-text);
+}
+.main-theme .ui-selectable-row.selected,
+.main-theme .ui-selectable-row.selected:hover {
+  background-color: var(--color-main-selected);
+  box-shadow: none;
+}
+.main-theme .ui-selectable:active:not(:disabled),
+.main-theme .ui-selectable.selected:active:not(:disabled),
+.main-theme .ui-selectable-row:active,
+.main-theme .ui-selectable-row.selected:active {
+  background-color: var(--color-main-press);
+}
+.main-theme .ui-selectable:active:not(:disabled),
+.main-theme .ui-selectable.selected:active:not(:disabled) {
+  color: var(--color-main-selected-text);
+}
