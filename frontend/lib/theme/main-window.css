@@ -50,9 +50,9 @@
     inset 0 1px 0 color-mix(in srgb, var(--color-white) 14%, transparent);
   --select-chevron-url: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2363635e' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
 
-  --color-text-primary: var(--sand-12);
-  --color-text-muted: var(--sand-11);
-  --color-text-subtle: var(--sand-10);
+  --color-text-primary: #191816;
+  --color-text-muted: #4c4b46;
+  --color-text-subtle: #66645e;
 
   --color-main-scrim: #00000038;
   --color-history-scrim: #0004;
@@ -107,6 +107,9 @@
   --color-main-accent-text: #e59a3c;
   --color-main-accent-strong: #f0b25c;
   --color-focus-ring: #e59a3c;
+  --color-text-primary: #f3f2ee;
+  --color-text-muted: #c4c1ba;
+  --color-text-subtle: #9a978f;
   --app-shadow: #00000052;
   --shadow-pane: 0 2px 6px #00000038;
   --shadow-nav-active: none;
@@ -144,9 +147,9 @@
   --color-main-accent-text: #1d4ed8;
   --color-main-accent-strong: #1e40af;
   --color-focus-ring: #2563eb;
-  --color-text-primary: var(--slate-12);
-  --color-text-muted: var(--slate-11);
-  --color-text-subtle: var(--slate-10);
+  --color-text-primary: #14171c;
+  --color-text-muted: #474d57;
+  --color-text-subtle: #616873;
 }
 
 .main-theme.dark.preset-cool-slate {
@@ -170,6 +173,9 @@
   --color-main-accent-text: #60a5fa;
   --color-main-accent-strong: #93c5fd;
   --color-focus-ring: #60a5fa;
+  --color-text-primary: #eef1f6;
+  --color-text-muted: #bcc3cf;
+  --color-text-subtle: #929aa8;
 }
 
 /* Preset 3: Forest Sage — Quiet botanical Sage neutrals + soft sage-green interactive ramp. */
@@ -194,9 +200,9 @@
   --color-main-accent-text: #256c3c;
   --color-main-accent-strong: #1c542e;
   --color-focus-ring: #2e7d47;
-  --color-text-primary: var(--sage-12);
-  --color-text-muted: var(--sage-11);
-  --color-text-subtle: var(--sage-10);
+  --color-text-primary: #141b17;
+  --color-text-muted: #45504a;
+  --color-text-subtle: #5e6963;
 }
 
 .main-theme.dark.preset-forest-sage {
@@ -220,6 +226,9 @@
   --color-main-accent-text: #52b772;
   --color-main-accent-strong: #7cd497;
   --color-focus-ring: #52b772;
+  --color-text-primary: #edf3ef;
+  --color-text-muted: #b9c5bd;
+  --color-text-subtle: #8f9c94;
 }
 
 /* Preset 4: Caramel Earth — Warm parchment Sand + soft roasted-caramel interactive ramp. */
@@ -244,9 +253,9 @@
   --color-main-accent-text: #8c4c20;
   --color-main-accent-strong: #6e3a17;
   --color-focus-ring: #a35d2c;
-  --color-text-primary: var(--sand-12);
-  --color-text-muted: var(--sand-11);
-  --color-text-subtle: var(--sand-10);
+  --color-text-primary: #1c1612;
+  --color-text-muted: #524942;
+  --color-text-subtle: #6c6259;
 }
 
 .main-theme.dark.preset-caramel-earth {
@@ -270,6 +279,9 @@
   --color-main-accent-text: #cc8b5c;
   --color-main-accent-strong: #e2ad84;
   --color-focus-ring: #cc8b5c;
+  --color-text-primary: #f5efe9;
+  --color-text-muted: #cbbeb3;
+  --color-text-subtle: #a29489;
 }
 
 /* Preset preview swatches used in Settings without exposing raw hex outside theme/. */

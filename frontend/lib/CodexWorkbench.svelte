@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { listen } from '@tauri-apps/api/event';
-  import { Search, RefreshCw, FolderOpen, Terminal, ExternalLink, X, SlidersHorizontal, ChevronDown } from '@lucide/svelte';
+  import { Search, RefreshCw, FolderOpen, Terminal, ExternalLink, X, SlidersHorizontal, ChevronDown, Plus } from '@lucide/svelte';
   import { MergeView } from '@codemirror/merge';
   import { EditorView } from '@codemirror/view';
   import { EditorState } from '@codemirror/state';
@@ -84,58 +84,92 @@
 <section class="workbench" aria-label={view === 'tasks' ? '工作台' : '工作树'} tabindex="-1">
   {#if view==='tasks'}<TaskLedger workspaceHint={selected?.path??''}/>{:else}
   <div class="wb-body">
-    <div class="scanbar">
+    <header class="wb-head">
+      <div class="wb-heading">
+        <h3>工作树</h3>
+        <span>{rows.length}</span>
+      </div>
       <div class="project-picker" on:focusout={(e) => { if (!(e.currentTarget.contains(e.relatedTarget as Node))) pickerOpen = false; }}>
-        <div class="tags">{#each draft as id}<span class="tag">{projects.find(p => p.id === id)?.name}<button aria-label={`移除 ${projects.find(p => p.id === id)?.name}`} on:click={() => toggleProject(id)}><X size={12}/></button></span>{/each}<input bind:this={projectInput} aria-label="搜索并选择项目" placeholder={draft.length ? '' : '选择项目，键入搜索…'} bind:value={projectSearch} on:focus={() => pickerOpen = true} on:click={() => pickerOpen = true} on:input={() => pickerOpen = true} on:keydown={(e) => { if(e.key === 'Escape') {e.preventDefault(); pickerOpen = false;} if(e.key === 'ArrowDown') {e.preventDefault(); pickerOpen = true; tick().then(() => document.querySelector<HTMLButtonElement>('.project-options button')?.focus());} }} /></div>
+        <div class="tags" class:open={pickerOpen}>
+          {#each draft as id}
+            <span class="tag">{projects.find(p => p.id === id)?.name}<button aria-label={`移除 ${projects.find(p => p.id === id)?.name}`} on:click={() => toggleProject(id)}><X size={12}/></button></span>
+          {/each}
+          <label class="picker-input-wrap">
+            <Plus size={13} aria-hidden="true" />
+            <input bind:this={projectInput} aria-label="搜索并选择项目" placeholder={draft.length ? '添加工作区' : '选择工作区…'} bind:value={projectSearch} on:focus={() => pickerOpen = true} on:click={() => pickerOpen = true} on:input={() => pickerOpen = true} on:keydown={(e) => { if(e.key === 'Escape') {e.preventDefault(); pickerOpen = false;} if(e.key === 'ArrowDown') {e.preventDefault(); pickerOpen = true; tick().then(() => document.querySelector<HTMLButtonElement>('.project-options button')?.focus());} }} />
+          </label>
+        </div>
         {#if pickerOpen}
           <div class="project-options" role="group" aria-label="项目选项">
             {#each projects.filter(p => !draft.includes(p.id) && p.name.toLowerCase().includes(projectSearch.toLowerCase())) as p}
               <button on:pointerdown={retainPopupFocus} on:click={() => toggleProject(p.id)}>{p.name}<small>{p.roots.join(' · ')}</small></button>
-            {:else}<p>没有其他匹配项目</p>{/each}
-            {#if draft.length}<button on:pointerdown={retainPopupFocus} on:click={() => updateProjectSelection([])}>清空选择</button>{/if}
+            {:else}<p class="picker-empty">没有其他匹配项目</p>{/each}
+            {#if draft.length}<button class="picker-clear" on:pointerdown={retainPopupFocus} on:click={() => updateProjectSelection([])}>清空选择</button>{/if}
           </div>
         {/if}
       </div>
-      <button class="refresh" aria-label="刷新项目列表" disabled={catalogLoading} on:click={() => loadProjects()}><RefreshCw size={18}/></button>
-      <button class="confirm" disabled={!draft.length || catalogLoading} on:click={scan} title={loading ? '重新开始扫描' : '扫描所选项目'}>确认</button>
-    </div>
-    <div class="scan-status" role="status">{#if loading}{progress.phase === 'history' ? '读取项目与会话索引…' : `检测工作树 ${progress.checked}/${progress.total}`}{:else if snapshot}{snapshot.projects.length} 个项目 · 扫描于 {fmt(snapshot.scannedAt)}{/if}{#if changed}<span>范围已变更，等待确认</span>{/if}</div>
-    {#if error}<div class="error" role="alert">{error}<button aria-label="关闭错误" on:click={() => session.patch({ error: '' })}>×</button></div>{/if}
-    {#if warnings.length}<div class="read-notice" role="status"><span>{#if unreadable.length}<strong>{unreadable.length} 棵工作树读取失败</strong> · {/if}{warnings.length} 条读取提示</span><div>{#if unreadable.length}<button on:click={showUnreadable}>仅看失败工作树</button>{/if}<button on:click={() => warningDialog.showModal()}>查看详情</button></div></div>{/if}
-    <div class="overview" aria-label="工作树概览">
-      <button class="ui-selectable" class:chosen={status === 'all'} class:selected={status === 'all'} aria-pressed={status === 'all'} on:click={() => status = 'all'}>全部工作树 <strong>{base.length}</strong></button>
-      <button class="ui-selectable" class:chosen={status === 'dirty'} class:selected={status === 'dirty'} aria-pressed={status === 'dirty'} on:click={() => status = status === 'dirty' ? 'all' : 'dirty'}>未提交 <strong>{base.filter(r => statusMatches(r,'dirty')).length}</strong></button>
-      <button class="ui-selectable" class:chosen={status === 'unpushed'} class:selected={status === 'unpushed'} aria-pressed={status === 'unpushed'} on:click={() => status = status === 'unpushed' ? 'all' : 'unpushed'}>待推送 <strong>{base.filter(r => statusMatches(r,'unpushed')).length}</strong></button>
-      <span>{base.reduce((sum,r) => sum+r.conversations.length,0)} 条关联历史 · 含归档</span>
+      <div class="scan-actions">
+        <div class="scan-status" role="status">
+          {#if loading}
+            {progress.phase === 'history' ? '读取索引…' : `检测 ${progress.checked}/${progress.total}`}
+          {:else if changed}
+            <span class="scope-changed">范围已变更</span>
+          {:else if snapshot}
+            扫描于 {fmt(snapshot.scannedAt)}
+          {/if}
+        </div>
+        <button class="refresh ui-selectable" aria-label="刷新项目列表" title="刷新项目列表" disabled={catalogLoading} on:click={() => loadProjects()}><RefreshCw size={15}/></button>
+        <button class="confirm" disabled={!draft.length || catalogLoading} on:click={scan} title={loading ? '重新开始扫描' : '扫描所选项目'}>确认</button>
+      </div>
+    </header>
+    {#if error}<div class="error" role="alert"><span>{error}</span><button aria-label="关闭错误" on:click={() => session.patch({ error: '' })}>×</button></div>{/if}
+    {#if warnings.length}<div class="read-notice" role="status"><span>{#if unreadable.length}<strong>{unreadable.length} 棵工作树读取失败</strong> · {/if}{warnings.length} 条读取提示</span><div>{#if unreadable.length}<button class="notice-link" on:click={showUnreadable}>仅看失败</button>{/if}<button class="notice-link" on:click={() => warningDialog.showModal()}>查看详情</button></div></div>{/if}
+    <div class="filter-bar">
+      <div class="overview" aria-label="工作树概览">
+        <button class="ui-selectable" class:chosen={status === 'all'} class:selected={status === 'all'} aria-pressed={status === 'all'} on:click={() => status = 'all'}>全部 <strong>{base.length}</strong></button>
+        <button class="ui-selectable" class:chosen={status === 'dirty'} class:selected={status === 'dirty'} aria-pressed={status === 'dirty'} on:click={() => status = status === 'dirty' ? 'all' : 'dirty'}>未提交 <strong>{base.filter(r => statusMatches(r,'dirty')).length}</strong></button>
+        <button class="ui-selectable" class:chosen={status === 'unpushed'} class:selected={status === 'unpushed'} aria-pressed={status === 'unpushed'} on:click={() => status = status === 'unpushed' ? 'all' : 'unpushed'}>待推送 <strong>{base.filter(r => statusMatches(r,'unpushed')).length}</strong></button>
+      </div>
+      <div class="filters">
+        <label class="search"><Search size={14}/><input aria-label="搜索工作树与对话" bind:value={query} placeholder="搜分支、路径、对话…"/></label>
+        <details class="project-filter"><summary aria-label="筛选项目"><span>{filterProjects.length ? `已选 ${filterProjects.length} 个` : '全部项目'}</span><ChevronDown size={13} class="disclosure-chevron" aria-hidden="true"/></summary><div>{#each snapshot?.projects ?? [] as p}<label class="check"><input type="checkbox" value={p.id} bind:group={filterProjects}/>{p.name}</label>{:else}<span class="filter-empty">扫描后可筛选项目</span>{/each}</div></details>
+        <select aria-label="最近活动" title="按关联主对话的最新更新时间计算，包含归档" bind:value={period}><option value="all">不限时间</option><option value="1">今天</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="date">指定日期起</option></select>
+        {#if period === 'date'}<input type="date" aria-label="起始日期" bind:value={date}/>{/if}
+        <select aria-label="提交状态" bind:value={status}><option value="all">全部状态</option><option value="dirty">未提交</option><option value="unpushed">未推送</option><option value="pushed">无待推送提交</option><option value="clean">干净 · 无上游</option><option value="error">读取失败</option></select>
+        <details class="more-filters" bind:open={moreOpen}
+          on:focusout={(event) => {if (!event.currentTarget.contains(event.relatedTarget as Node)) moreOpen = false;}}><summary class="ui-selectable" aria-label="更多筛选与说明" title="更多筛选与说明" class:active={related} class:selected={related}><SlidersHorizontal size={15}/></summary><div role="group" aria-label="更多筛选选项" on:pointerdown={retainPopupFocus}>
+          <label class="check"><input type="checkbox" bind:checked={related}/>仅有关联对话</label>
+          <span class="more-meta">{base.reduce((sum,r) => sum+r.conversations.length,0)} 条关联历史 · 含归档</span>
+          <button on:click={() => {reset(); moreOpen = false;}}>重置筛选</button>
+          <button on:click={() => {moreOpen = false; sourceDialog.showModal();}}>数据来源</button>
+        </div></details>
+      </div>
     </div>
     <div class="workspace">
       <section class="results" aria-label="工作树列表">
-        <div class="filters">
-          <label class="search"><Search size={14}/><input aria-label="搜索工作树与对话" bind:value={query} placeholder="搜分支、路径、对话标题"/></label>
-          <details class="project-filter"><summary aria-label="筛选项目"><span>{filterProjects.length ? `已选 ${filterProjects.length} 个项目` : '全部项目'}</span><ChevronDown size={14} class="disclosure-chevron" aria-hidden="true"/></summary><div>{#each snapshot?.projects ?? [] as p}<label class="check"><input type="checkbox" value={p.id} bind:group={filterProjects}/>{p.name}</label>{:else}<span>扫描后可筛选项目</span>{/each}</div></details>
-          <select aria-label="最近活动" title="按关联主对话的最新更新时间计算，包含归档" bind:value={period}><option value="all">不限时间</option><option value="1">今天</option><option value="7">最近 7 天</option><option value="30">最近 30 天</option><option value="date">指定日期起</option></select>
-          {#if period === 'date'}<input type="date" aria-label="起始日期" bind:value={date}/>{/if}
-          <select aria-label="提交状态" bind:value={status}><option value="all">全部状态</option><option value="dirty">未提交</option><option value="unpushed">未推送</option><option value="pushed">无待推送提交</option><option value="clean">干净 · 无上游</option><option value="error">读取失败</option></select>
-          <details class="more-filters" bind:open={moreOpen}
-            on:focusout={(event) => {if (!event.currentTarget.contains(event.relatedTarget as Node)) moreOpen = false;}}><summary class="ui-selectable" aria-label="更多筛选与说明" title="更多筛选与说明" class:active={related} class:selected={related}><SlidersHorizontal size={16}/></summary><div role="group" aria-label="更多筛选选项" on:pointerdown={retainPopupFocus}>
-            <label class="check"><input type="checkbox" bind:checked={related}/>仅有关联对话</label>
-            <button on:click={() => {reset(); moreOpen = false;}}>重置筛选</button>
-            <button on:click={() => {moreOpen = false; sourceDialog.showModal();}}>数据来源</button>
-          </div></details>
-        </div>
-        <div class="column-head"><span>分支与工作目录</span><span>对话与活动</span><span>Git 状态</span></div>
+        <div class="column-head"><span>分支与工作目录</span><span>Git 状态</span><span>对话与活动</span></div>
         <div class="worktree-list">
-          {#each rows as row (row.id)}<article class:selected={detailOpen && selected?.id === row.id} class="worktree-row ui-selectable-row">
-            <button class="row-select" on:click={(event) => selectRow(row,event.currentTarget)} aria-expanded={detailOpen && selected?.id === row.id}>
-              <span class="identity"><b class="branch">{branchLabel(row)}</b><span class="project-name">{row.projectName}{row.main ? ' · 主工作区' : ''}</span><small title={row.path}>{row.path.split(/[\\/]/).slice(-2).join('/')}</small></span>
-              <span class="activity"><span>{row.conversations.length ? `${row.conversations.length} 条对话` : '未关联对话'}</span><span class="source-names">{[...new Set(row.conversations.map(c => c.source))].join(' · ')}</span><small>{fmt(activity(row))}</small></span>
-              <span class="git-state" title={gitSummary(row)}>{#if row.git.error}<span class="badge danger">读取失败</span>{:else}{#if row.git.changes.some(c => c.conflict)}<span class="badge danger">有冲突</span>{/if}{#if dirty(row)}<span class="badge amber">未提交 {row.git.changes.length}</span>{/if}{#if unpushed(row)}<span class="badge blue">待推送 {row.git.ahead}</span>{/if}{#if !dirty(row) && !unpushed(row)}<span class="badge" class:green={row.git.upstream && !row.git.behind} class:amber={!!row.git.behind}>{row.git.upstream ? (row.git.behind ? '落后上游' : '已同步') : '干净 · 无上游'}</span>{/if}{/if}</span>
-            </button>
-            <button class="recheck" disabled={loading || rechecking.has(row.id)} on:click={() => recheck(row)}>{rechecking.has(row.id) ? '检测中…' : '重新检测'}</button>
-          </article>{:else}<div class="empty">{loading ? '正在读取本地项目与对话…' : snapshot ? '没有符合条件的工作树' : '选择项目并确认，检查历史对话与 Git 状态。'}</div>{/each}
+          {#each rows as row (row.id)}
+            {@const sources = [...new Set(row.conversations.map(c => c.source))].join(' · ')}
+            <article class:selected={detailOpen && selected?.id === row.id} class="worktree-row ui-selectable-row">
+              <button class="row-select" on:click={(event) => selectRow(row,event.currentTarget)} aria-expanded={detailOpen && selected?.id === row.id}>
+                <span class="identity">
+                  <span class="branch-line"><b class="branch">{branchLabel(row)}</b>{#if row.main}<span class="main-tag">主工作区</span>{/if}</span>
+                  <span class="subline"><span class="project-name">{row.projectName}</span><span class="dot-sep" aria-hidden="true">·</span><small title={row.path}>{row.path.split(/[\\/]/).slice(-2).join('/')}</small></span>
+                </span>
+                <span class="git-state" title={gitSummary(row)}>{#if row.git.error}<span class="badge danger">读取失败</span>{:else}{#if row.git.changes.some(c => c.conflict)}<span class="badge danger">有冲突</span>{/if}{#if dirty(row)}<span class="badge amber">未提交 {row.git.changes.length}</span>{/if}{#if unpushed(row)}<span class="badge blue">待推送 {row.git.ahead}</span>{/if}{#if !dirty(row) && !unpushed(row)}<span class="badge" class:green={row.git.upstream && !row.git.behind} class:amber={!!row.git.behind}>{row.git.upstream ? (row.git.behind ? '落后上游' : '已同步') : '干净 · 无上游'}</span>{/if}{/if}</span>
+                <span class="activity">
+                  <span class="chat-count">{row.conversations.length ? `${row.conversations.length} 条对话` : '未关联对话'}</span>
+                  <span class="subline">{#if sources}<span class="source-names">{sources}</span><span class="dot-sep" aria-hidden="true">·</span>{/if}<small>{fmt(activity(row))}</small></span>
+                </span>
+              </button>
+              <button class="recheck ui-selectable" disabled={loading || rechecking.has(row.id)} on:click={() => recheck(row)}>{rechecking.has(row.id) ? '检测中…' : '重检'}</button>
+            </article>
+          {:else}
+            <div class="empty">{loading ? '正在读取本地项目与对话…' : snapshot ? '没有符合条件的工作树' : '选择工作区并点击确认，扫描分支、改动与关联对话。'}</div>
+          {/each}
         </div>
       </section>
-
     </div>
   </div>
   {/if}
@@ -203,127 +237,148 @@
   input, select { min-width: 0; }
   .workbench:focus { outline: none; }
   .wb-body { width: 100%; margin: 0; padding: 0; }
-  .scanbar { display: flex; gap: 8px; align-items: flex-start; }
-  .project-picker { position: relative; flex: 1; min-width: 0; }
-  .tags { min-height: 36px; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 4px 6px; background: var(--wb-panel); border: 1px solid var(--wb-border); border-radius: 8px; box-shadow: var(--shadow-control, none); transition: border-color 140ms ease, box-shadow 140ms ease; }
-  .tags:focus-within { border-color: var(--wb-border-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-focus-ring) 14%, transparent); }
-  .workbench .tags input { flex: 1; width: 50px; min-width: 30px; min-height: 24px; height: 24px; padding: 2px 4px; border: 0; border-radius: 0; outline: none; background: transparent; font-size: var(--font-size-caption); line-height: var(--line-height-copy-compact); color: var(--wb-text); }
-  .tag { display: inline-flex; align-items: center; gap: 4px; background: var(--wb-control); border: 1px solid var(--wb-border); padding: 2px 6px 2px 8px; border-radius: 6px; max-width: 100%; overflow-wrap: anywhere; font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); }
-  .tag button { display: flex; padding: 2px; border: 0; background: transparent; color: var(--wb-muted); }
-  .project-options { position: absolute; top: 100%; left: 0; right: 0; margin-top: 5px; z-index: 10; background: var(--wb-panel); border: 1px solid var(--wb-border-strong); border-radius: 9px; max-height: 290px; overflow: auto; padding: 5px; box-shadow: 0 10px 28px var(--wb-shadow); }
-  .project-options button { display: block; width: 100%; text-align: left; background: transparent; border: 0; }
+  .wb-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-width: 0; }
+  .wb-heading { display: flex; align-items: baseline; gap: 8px; flex: none; }
+  .wb-heading h3 { margin: 0; font: var(--font-section); color: var(--wb-text); }
+  .wb-heading > span { font-size: var(--font-size-caption); color: var(--wb-muted); font-variant-numeric: tabular-nums; }
+  .project-picker { position: relative; flex: 1 1 200px; min-width: 160px; }
+  .tags { min-height: 32px; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; padding: 2px 4px; background: transparent; border: 1px solid transparent; border-radius: 8px; transition: background-color 140ms ease, border-color 140ms ease; }
+  .tags:hover { background: var(--wb-control); }
+  .tags.open, .tags:focus-within { background: var(--wb-control); border-color: var(--wb-border); }
+  .tag { display: inline-flex; align-items: center; gap: 4px; background: var(--wb-control); border: 0; padding: 3px 6px 3px 9px; border-radius: 6px; max-width: 100%; overflow-wrap: anywhere; font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); color: var(--wb-text); }
+  .tags.open .tag, .tags:focus-within .tag, .tags:hover .tag { background: var(--wb-panel); }
+  .tag button { display: flex; padding: 2px; border: 0; border-radius: 4px; background: transparent; color: var(--wb-muted); }
+  .tag button:hover { color: var(--wb-text); background: var(--color-main-hover); }
+  .picker-input-wrap { display: inline-flex; align-items: center; gap: 4px; flex: 1 1 88px; min-width: 84px; padding: 0 4px; color: var(--wb-muted); }
+  .workbench .tags input { flex: 1; width: 64px; min-width: 56px; min-height: 24px; height: 24px; padding: 2px 2px; border: 0; border-radius: 0; outline: none; background: transparent; font-size: var(--font-size-caption); line-height: var(--line-height-copy-compact); color: var(--wb-text); }
+  .project-options { position: absolute; top: calc(100% + 4px); left: 0; min-width: min(320px, 100%); right: 0; z-index: 10; background: var(--wb-panel); border: 1px solid var(--wb-border); border-radius: 10px; max-height: 290px; overflow: auto; padding: 5px; box-shadow: 0 10px 28px var(--wb-shadow); }
+  .project-options button { display: block; width: 100%; text-align: left; background: transparent; border: 0; border-radius: 6px; padding: 7px 9px; font-size: var(--font-size-label); }
   .project-options button:hover { background: var(--color-main-hover); }
   .project-options button:active { background: var(--color-main-press); }
-  .project-options small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wb-muted); font-size: var(--font-size-xs); }
-  .refresh { height: 36px; width: 36px; display: grid; place-items: center; flex: none; padding: 0; background: var(--wb-panel); border-color: var(--wb-border); border-radius: 8px; box-shadow: var(--shadow-control, none); color: var(--wb-muted); }
-  .refresh:hover { background: var(--color-main-hover); border-color: var(--wb-border-strong); color: var(--wb-text); }
-  .refresh:active { background: var(--color-main-press); }
-  .confirm { min-height: 36px; min-width: 72px; padding: 6px 16px; border-radius: 8px; font-size: var(--font-size-label); font-weight: var(--font-weight-medium); background: var(--wb-primary); border-color: var(--wb-primary); color: var(--wb-on-primary); box-shadow: var(--shadow-primary, none); }
+  .project-options small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wb-muted); font-size: var(--font-size-xs); margin-top: 1px; }
+  .picker-empty { margin: 0; padding: 8px 10px; color: var(--wb-muted); font-size: var(--font-size-caption); }
+  .picker-clear { color: var(--wb-muted); margin-top: 2px; border-top: 1px solid var(--color-main-divider, var(--wb-border)); border-radius: 0 0 6px 6px; }
+  .scan-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; flex: none; }
+  .scan-status { color: var(--wb-muted); font-size: var(--font-size-caption); white-space: nowrap; margin-right: 4px; font-variant-numeric: tabular-nums; }
+  .scope-changed { color: var(--wb-accent); font-weight: var(--font-weight-medium); }
+  .refresh { height: 32px; width: 32px; display: grid; place-items: center; flex: none; padding: 0; background: transparent; border: 0; border-radius: 7px; color: var(--wb-muted); }
+  .confirm { min-height: 32px; height: 32px; min-width: 60px; padding: 5px 14px; border-radius: 7px; font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); background: var(--wb-primary); border-color: var(--wb-primary); color: var(--wb-on-primary); box-shadow: var(--shadow-primary, none); }
   .confirm:hover:not(:disabled) { background: var(--color-main-accent-hover, var(--wb-primary)); border-color: var(--color-main-accent-hover, var(--wb-primary)); }
   .confirm:active:not(:disabled) { transform: scale(0.985); }
-  .scan-status { display: flex; flex-wrap: wrap; gap: 12px; color: var(--wb-muted); font-size: var(--font-size-caption); }
-  .scan-status:not(:empty) { margin-top: 7px; }
-  .read-notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 8px 12px; border: 1px solid var(--wb-border); border-radius: 8px; background: var(--wb-control); color: var(--wb-muted); margin-top: 12px; font-size: var(--font-size-caption); }
+  .read-notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 7px 12px; border: 0; border-radius: 8px; background: var(--wb-control); color: var(--wb-muted); margin-top: 10px; font-size: var(--font-size-caption); }
   .read-notice strong { color: var(--wb-text); font-weight: var(--font-weight-medium); }
-  .read-notice>div { display: flex; gap: 8px; }
-  .read-notice button { padding: 3px 8px; font-size: var(--font-size-caption); background: var(--wb-panel); box-shadow: var(--shadow-control, none); }
-  .error { padding: 10px 12px; color: var(--wb-danger-text); background: var(--wb-danger-bg); overflow-wrap: anywhere; border-radius: 8px; }
-  .error>button { float: right; }
-  .overview { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin: 14px 0 10px; }
-  .overview button { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 4px 10px; border: 1px solid transparent; border-radius: 7px; background: transparent; font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); color: var(--wb-muted); }
+  .read-notice>div { display: flex; gap: 4px; }
+  .read-notice .notice-link { padding: 3px 8px; border: 0; border-radius: 6px; font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); background: transparent; color: var(--wb-accent); box-shadow: none; }
+  .read-notice .notice-link:hover { background: var(--color-main-hover); }
+  .error { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; margin-top: 10px; color: var(--wb-danger-text); background: var(--wb-danger-bg); overflow-wrap: anywhere; border-radius: 8px; font-size: var(--font-size-caption); }
+  .error>button { border: 0; background: transparent; padding: 2px 6px; min-height: 24px; }
+  .filter-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; margin-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--color-main-divider, var(--wb-border)); }
+  .overview { display: flex; align-items: center; flex-wrap: wrap; gap: 3px; flex: none; }
+  .overview button { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; height: 30px; padding: 0 10px; border: 0; border-radius: 7px; background: transparent; font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); color: var(--wb-muted); }
   .overview strong { font-size: var(--font-size-caption); font-weight: var(--font-weight-semibold); font-variant-numeric: tabular-nums; color: inherit; }
-  .overview>span { margin-left: auto; color: var(--wb-muted); font-size: var(--font-size-caption); }
   .workspace { background: var(--wb-panel); }
   .results { min-width: 0; }
-  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 0 12px; border-bottom: 1px solid var(--wb-border); }
-  .search { display: flex; align-items: center; gap: 5px; flex: 1; min-width: 160px; border: 1px solid transparent; border-radius: 7px; background: var(--wb-control); padding-left: 8px; color: var(--wb-muted); }
+  .filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1 1 360px; justify-content: flex-end; min-width: 0; }
+  .search { display: flex; align-items: center; gap: 5px; flex: 1 1 160px; max-width: 280px; min-width: 140px; border: 1px solid transparent; border-radius: 7px; background: var(--wb-control); padding-left: 9px; color: var(--wb-muted); }
   .search:hover, .search:focus-within { border-color: var(--wb-border); }
-  .workbench .search input, .chat-search input { width: 100%; min-height: 32px; height: 32px; background: transparent; color: var(--wb-text); border: 0; padding: 4px 6px; font-size: var(--font-size-label); line-height: var(--line-height-copy-compact); }
+  .workbench .search input, .chat-search input { width: 100%; min-height: 30px; height: 30px; background: transparent; color: var(--wb-text); border: 0; padding: 3px 6px; font-size: var(--font-size-caption); line-height: var(--line-height-copy-compact); }
   :global(.main-theme) .filters select,
   :global(.main-theme) .filters>input,
-  .filters select, .filters>input { min-height: 32px; height: 32px; padding: 4px 10px; border-radius: 7px; font-size: var(--font-size-label); border-color: transparent; background-color: var(--wb-control); }
+  .filters select, .filters>input { min-height: 30px; height: 30px; padding: 3px 10px; border-radius: 7px; font-size: var(--font-size-caption); border-color: transparent; background-color: var(--wb-control); }
   :global(.main-theme) .filters select,
   .filters select { padding-right: 26px; }
   :global(.main-theme) .filters select:hover,
   :global(.main-theme) .filters>input:hover,
   .filters select:hover, .filters>input:hover { border-color: var(--wb-border); }
-  .filters select { width: 120px; min-width: 96px; }
-  .check { display: flex; align-items: center; white-space: nowrap; font-size: var(--font-size-caption); color: var(--wb-muted); gap: 5px; }
+  .filters select { width: 108px; min-width: 92px; }
+  .check { display: flex; align-items: center; white-space: nowrap; font-size: var(--font-size-caption); color: var(--wb-muted); gap: 6px; }
   .check input { width: 13px; height: 13px; margin: 0; accent-color: var(--wb-accent); }
   .project-filter, .more-filters { position: relative; flex: none; }
   summary { cursor: pointer; }
-  .project-filter summary { display: inline-flex; align-items: center; justify-content: space-between; gap: 6px; padding: 4px 10px; border: 1px solid transparent; border-radius: 7px; background: var(--wb-control); white-space: nowrap; font-size: var(--font-size-label); min-height: 32px; height: 32px; max-width: 150px; list-style: none; }
+  .project-filter summary { display: inline-flex; align-items: center; justify-content: space-between; gap: 6px; padding: 3px 9px; border: 1px solid transparent; border-radius: 7px; background: var(--wb-control); white-space: nowrap; font-size: var(--font-size-caption); min-height: 30px; height: 30px; max-width: 136px; list-style: none; }
   .project-filter summary::-webkit-details-marker { display: none; }
   .project-filter summary:hover { border-color: var(--wb-border); }
   .project-filter summary > span { overflow: hidden; text-overflow: ellipsis; }
   .project-filter summary :global(.disclosure-chevron), .changes summary :global(.disclosure-chevron) { flex: none; color: var(--wb-muted); transition: transform 150ms ease; }
   .project-filter[open] summary :global(.disclosure-chevron), .changes[open] summary :global(.disclosure-chevron) { transform: rotate(180deg); }
-  .project-filter>div, .more-filters>div { position: absolute; top: calc(100% + 5px); z-index: 5; background: var(--wb-panel); padding: 12px; border: 1px solid var(--wb-border); border-radius: 6px; box-shadow: 0 6px 20px var(--wb-shadow); font-size: var(--font-size-label); }
-  .project-filter>div { left: 0; min-width: 200px; }
-  .project-filter .check { padding: 6px 0; }
-  .more-filters summary { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid transparent; border-radius: 6px; color: var(--wb-muted); list-style: none; }
+  .project-filter>div, .more-filters>div { position: absolute; top: calc(100% + 5px); z-index: 5; background: var(--wb-panel); padding: 10px; border: 1px solid var(--wb-border); border-radius: 9px; box-shadow: 0 8px 24px var(--wb-shadow); font-size: var(--font-size-caption); }
+  .project-filter>div { right: 0; min-width: 188px; }
+  .project-filter .check { padding: 5px 2px; }
+  .filter-empty, .more-meta { display: block; color: var(--wb-muted); font-size: var(--font-size-xs); padding: 4px 4px; }
+  .more-filters summary { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 7px; color: var(--wb-muted); list-style: none; }
   .more-filters summary::-webkit-details-marker { display: none; }
-  .more-filters>div { right: 0; display: flex; flex-direction: column; align-items: stretch; gap: 8px; min-width: 168px; }
+  .more-filters>div { right: 0; display: flex; flex-direction: column; align-items: stretch; gap: 4px; min-width: 176px; }
   .more-filters .check { padding: 6px 4px; }
-  .more-filters button { text-align: left; border: 0; background: transparent; font-size: var(--font-size-label); padding: 6px 4px; }
+  .more-filters button { text-align: left; border: 0; border-radius: 6px; background: transparent; font-size: var(--font-size-caption); padding: 6px 6px; }
   .more-filters button:hover { background: var(--color-main-hover); }
   .more-filters button:active { background: var(--color-main-press); }
-  .column-head { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr) 80px; gap: 16px; padding: 10px 10px; color: var(--wb-muted); font-size: var(--font-size-label); font-weight: var(--font-weight-emphasis); background: transparent; border-bottom: 1px solid var(--wb-border); }
-  .worktree-list { padding: 0; }
-  .worktree-row { position: relative; border-bottom: 1px solid var(--wb-border); background: transparent; padding-right: 86px; border-radius: 10px; }
-  .worktree-row:last-child { border-bottom: 0; }
-  .worktree-row.selected { border-bottom-color: transparent; }
-  .row-select { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(0,1fr) minmax(0,1fr); gap: 16px; align-items: center; width: 100%; padding: 12px 12px; min-height: 76px; text-align: left; border: 0; background: transparent; font-size: var(--font-size-sm); border-radius: 10px; }
+  .column-head { display: grid; grid-template-columns: minmax(0,1.65fr) minmax(0,1fr) minmax(0,0.9fr) 68px; gap: 16px; padding: 10px 12px 6px; color: var(--wb-muted); font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); background: transparent; }
+  .worktree-list { display: grid; gap: 2px; padding: 0; }
+  .worktree-row { position: relative; border: 0; background: transparent; padding-right: 68px; border-radius: 9px; }
+  .row-select { display: grid; grid-template-columns: minmax(0,1.65fr) minmax(0,1fr) minmax(0,0.9fr); gap: 16px; align-items: center; width: 100%; padding: 10px 12px; min-height: 58px; text-align: left; border: 0; background: transparent; font-size: var(--font-size-label); border-radius: 9px; }
   .row-select:hover, .row-select:active { background: transparent; }
-  .identity { display: flex; align-items: flex-start; flex-direction: column; gap: 4px; min-width: 0; }
-  .branch { font: var(--font-weight-semibold) var(--font-size-caption)/var(--line-height-copy-compact) var(--font-family-code); overflow-wrap: anywhere; }
-  .project-name { font-size: var(--font-size-xs); color: var(--wb-muted); overflow-wrap: anywhere; }
-  .identity>small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wb-muted); font-size: var(--font-size-xs); }
-  .activity { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
-  .activity small, .source-names { color: var(--wb-muted); font-size: var(--font-size-xs); }
+  .identity { display: flex; align-items: flex-start; flex-direction: column; gap: 3px; min-width: 0; }
+  .branch-line { display: flex; align-items: center; gap: 7px; max-width: 100%; min-width: 0; }
+  .branch { font: var(--font-weight-semibold) var(--font-size-label)/var(--line-height-copy-compact) var(--font-family-code); color: var(--wb-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .main-tag { flex: none; padding: 1px 6px; border-radius: 5px; background: var(--wb-control); color: var(--wb-muted); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
+  .subline { display: flex; align-items: center; gap: 5px; max-width: 100%; min-width: 0; color: var(--wb-muted); font-size: var(--font-size-caption); }
+  .dot-sep { flex: none; opacity: .55; }
+  .project-name { flex: none; font-size: var(--font-size-caption); color: var(--wb-muted); }
+  .identity small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--wb-muted); font-size: var(--font-size-caption); }
+  .activity { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; min-width: 0; }
+  .chat-count { font-size: var(--font-size-label); font-weight: var(--font-weight-medium); color: var(--wb-text); }
+  .activity small, .source-names { color: var(--wb-muted); font-size: var(--font-size-caption); font-variant-numeric: tabular-nums; }
   .git-state { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
-  .badge { display: inline-flex; align-items: center; padding: 2px 8px; border: 1px solid color-mix(in srgb, currentColor 18%, transparent); border-radius: 999px; background: var(--wb-neutral-bg); color: var(--wb-neutral-text); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); line-height: var(--line-height-normal); }
+  .badge { display: inline-flex; align-items: center; padding: 2px 8px; border: 0; border-radius: 6px; background: var(--wb-neutral-bg); color: var(--wb-muted); font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); line-height: var(--line-height-normal); }
   .badge.amber { background: var(--wb-warning-bg); color: var(--wb-warning-text); }
   .badge.blue { background: var(--wb-info-bg); color: var(--wb-info-text); }
   .badge.green { background: var(--wb-success-bg); color: var(--wb-success-text); }
   .badge.danger { background: var(--wb-danger-bg); color: var(--wb-danger-text); }
-  .recheck { position: absolute; top: 50%; right: 10px; transform: translateY(-50%); min-height: 28px; padding: 3px 8px; font-size: var(--font-size-xs); color: var(--wb-muted); background: transparent; border-color: transparent; }
-  .recheck:hover { background: var(--color-main-hover); border-color: transparent; box-shadow: none; color: var(--color-main-selected-text); }
-  .recheck:active { background: var(--color-main-press); }
+  .recheck { position: absolute; top: 50%; right: 10px; transform: translateY(-50%); min-height: 26px; height: 26px; padding: 0 8px; border: 0; border-radius: 6px; font-size: var(--font-size-xs); color: var(--wb-muted); background: transparent; opacity: 0; transition: opacity 120ms ease, background-color 140ms ease, color 140ms ease; }
+  .worktree-row:hover .recheck,
+  .worktree-row.selected .recheck,
+  .worktree-row:focus-within .recheck,
+  .recheck:disabled { opacity: 1; }
   .detail { min-width: 0; }
-  .detail-workspace-card { padding: 14px; border: 1px solid var(--wb-border); border-radius: 10px; background: var(--wb-control); }
+  .detail-workspace-card { padding: 14px; border: 0; border-radius: 10px; background: var(--wb-control); }
   .detail-eyebrow { font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); color: var(--wb-muted); margin-bottom: 4px; }
-  .path { font: var(--font-size-xs)/var(--line-height-body-relaxed) var(--font-family-code); overflow-wrap: anywhere; color: var(--wb-muted); margin: 0 0 12px; }
+  .path { font: var(--font-size-caption)/var(--line-height-body-relaxed) var(--font-family-code); overflow-wrap: anywhere; color: var(--wb-muted); margin: 0 0 12px; }
   .actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 10px; font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); min-height: 32px; background: var(--wb-panel); box-shadow: var(--shadow-control, none); }
-  .actions button:hover { background: var(--color-main-hover); border-color: var(--wb-border-strong); color: var(--color-main-selected-text); }
+  .actions button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 6px 10px; font-size: var(--font-size-caption); font-weight: var(--font-weight-medium); min-height: 32px; border: 0; border-radius: 7px; background: var(--wb-panel); color: var(--wb-text); box-shadow: none; }
+  .actions button:hover { background: var(--color-main-hover); color: var(--color-main-selected-text); }
   .actions button:active { background: var(--color-main-press); }
-  .git-summary { font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); margin: 14px 0 4px; overflow-wrap: anywhere; }
+  .git-summary { font-size: var(--font-size-body); font-weight: var(--font-weight-medium); color: var(--wb-text); margin: 16px 0 4px; overflow-wrap: anywhere; }
   .git-summary.has-error { color: var(--wb-danger-text); }
-  .comparison-note { font-size: var(--font-size-xs); color: var(--wb-muted); margin: 0 0 14px; }
-  .changes { font-size: var(--font-size-label); padding: 0 0 18px; border-bottom: 1px solid var(--wb-border); margin-top: 14px; }
-  .changes summary { display: inline-flex; align-items: center; gap: 6px; font-weight: var(--font-weight-medium); list-style: none; }
+  .comparison-note { font-size: var(--font-size-caption); color: var(--wb-muted); margin: 0 0 14px; }
+  .changes { font-size: var(--font-size-label); padding: 0 0 16px; border-bottom: 1px solid var(--color-main-divider, var(--wb-border)); margin-top: 14px; }
+  .changes summary { display: inline-flex; align-items: center; gap: 6px; font-weight: var(--font-weight-medium); color: var(--wb-text); list-style: none; }
   .changes summary::-webkit-details-marker { display: none; }
-  .change-list { display: grid; gap: 6px; max-height: 240px; overflow: auto; margin-top: 10px; }
-  .change { display: flex; align-items: center; gap: 6px; padding: 0; }
-  .change button { min-width: 0; padding: 8px 10px; font-size: var(--font-size-sm); text-align: left; overflow-wrap: anywhere; min-height: 36px; background: var(--wb-control); border: 1px solid var(--wb-border); border-radius: 8px; }
+  .change-list { display: grid; gap: 2px; max-height: 240px; overflow: auto; margin-top: 8px; }
+  .change { display: flex; align-items: center; gap: 4px; padding: 0; border-radius: 7px; transition: background-color 120ms ease; }
+  .change:hover { background: var(--color-main-hover); }
+  .change button { min-width: 0; padding: 7px 8px; font-size: var(--font-size-label); color: var(--wb-text); text-align: left; overflow-wrap: anywhere; min-height: 34px; background: transparent; border: 0; border-radius: 7px; }
   .change button:first-child { flex: 1; display: flex; align-items: center; gap: 8px; }
-  .file-kind { flex: none; padding: 2px 6px; border-radius: 5px; background: var(--wb-warning-bg); color: var(--wb-warning-text); font-size: var(--font-size-2xs); font-weight: var(--font-weight-medium); }
-  .change small { display: block; font-size: var(--font-size-2xs); color: var(--wb-muted); margin-top: 2px; }
-  .chat-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: var(--font-size-caption); margin-top: 18px; }
+  .change button:last-child { color: var(--wb-muted); opacity: 0; transition: opacity 120ms ease, color 120ms ease; }
+  .change:hover button:last-child, .change:focus-within button:last-child { opacity: 1; }
+  .change button:last-child:hover { color: var(--wb-text); background: var(--color-main-press); }
+  .file-kind { flex: none; padding: 2px 6px; border-radius: 5px; background: var(--wb-warning-bg); color: var(--wb-warning-text); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
+  .change small { display: block; font-size: var(--font-size-xs); color: var(--wb-muted); margin-top: 2px; }
+  .chat-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: var(--font-size-label); color: var(--wb-text); margin-top: 16px; }
   .chat-heading strong { font-weight: var(--font-weight-semibold); }
-  .chat-heading strong span { font-size: var(--font-size-sm); font-weight: var(--font-weight-regular); color: var(--wb-muted); margin-left: 3px; }
-  .explanation { color: var(--wb-muted); font-size: var(--font-size-xs); line-height: var(--line-height-reading); margin: 8px 0 12px; }
-  .chat-search { display: flex; align-items: center; gap: 4px; border: 1px solid var(--wb-border); border-radius: 6px; padding-left: 8px; color: var(--wb-muted); margin-bottom: 7px; }
-  .chats { display: grid; gap: 8px; }
-  .chats article { padding: 10px 12px; border: 1px solid var(--wb-border); border-radius: 8px; background: var(--wb-control); }
-  .chats article:last-child { border-bottom: 1px solid var(--wb-border); }
-  .chat-link { font-size: var(--font-size-caption); color: var(--wb-text); text-align: left; padding: 0; border: 0; background: transparent; line-height: var(--line-height-body-relaxed); overflow-wrap: anywhere; }
-  .chat-link:hover { color: var(--wb-info-text); }
+  .chat-heading strong span { font-size: var(--font-size-caption); font-weight: var(--font-weight-regular); color: var(--wb-muted); margin-left: 3px; }
+  .explanation { color: var(--wb-muted); font-size: var(--font-size-caption); line-height: var(--line-height-reading); margin: 6px 0 10px; }
+  .chat-search { display: flex; align-items: center; gap: 4px; border: 1px solid transparent; border-radius: 7px; background: var(--wb-control); padding-left: 8px; color: var(--wb-muted); margin-bottom: 8px; }
+  .chat-search:focus-within { border-color: var(--wb-border); }
+  .chats { display: grid; gap: 2px; }
+  .chats article { padding: 8px 10px; margin: 0 -10px; border: 0; border-radius: 8px; background: transparent; transition: background-color 120ms ease; }
+  .chats article:hover { background: var(--color-main-hover); }
+  .chat-link { font-size: var(--font-size-label); font-weight: var(--font-weight-medium); color: var(--wb-text); text-align: left; padding: 0; border: 0; background: transparent; line-height: var(--line-height-body-relaxed); overflow-wrap: anywhere; }
+  .chat-link:hover { color: var(--wb-accent); }
   .chat-link :global(svg) { display: inline; vertical-align: middle; color: var(--wb-muted); margin-left: 3px; }
-  .chats small { display: block; font-size: var(--font-size-xs); color: var(--wb-muted); margin-top: 4px; }
-  .load-chats { width: 100%; font-size: var(--font-size-sm); min-height: 34px; margin-top: 10px; background: var(--wb-control); }
-  .empty { text-align: center; padding: 40px 16px; color: var(--wb-muted); font-size: var(--font-size-sm); }
+  .chats small { display: block; font-size: var(--font-size-caption); color: var(--wb-muted); margin-top: 3px; }
+  .load-chats { width: 100%; font-size: var(--font-size-caption); min-height: 32px; margin-top: 8px; border: 0; border-radius: 7px; background: var(--wb-control); }
+  .load-chats:hover { background: var(--color-main-hover); }
+  .empty { text-align: center; padding: 48px 16px; color: var(--wb-muted); font-size: var(--font-size-caption); }
   .action-status { font-size: var(--font-size-sm); color: var(--wb-muted); margin: 12px 0 0; }
   :global(.wb-dialog) { font: var(--font-size-caption)/var(--line-height-body-relaxed) var(--font-family-ui); color: var(--wb-text); background: var(--wb-panel); border: 1px solid var(--wb-border); border-radius: 10px; width: min(90vw,700px); max-width: calc(100vw - 24px); max-height: 85vh; padding: 20px; color-scheme: inherit; }
   :global(.wb-dialog) header, .preview-body header { display: flex; align-items: center; justify-content: space-between; gap: 15px; margin-bottom: 14px; }
@@ -352,26 +407,24 @@
   .merge :global(.cm-merge-b .cm-changedLineGutter) { background: var(--wb-success-text); }
   .merge :global(.cm-collapsedLines) { background: var(--wb-control); color: var(--wb-muted); }
   @container(max-width:760px) {
-    .filters { flex-wrap: wrap; }
-    .search { flex-basis: 100%; }
-    .filters select { flex: 1; width: 110px; }
+    .filters { flex-wrap: wrap; justify-content: flex-start; }
+    .search { flex-basis: 100%; max-width: none; }
+    .filters select { flex: 1; width: 104px; }
     .more-filters { margin-left: auto; }
-    .column-head { grid-template-columns: minmax(0,1.5fr) minmax(0,1fr) minmax(0,.8fr); gap: 10px; padding-right: 16px; }
+    .column-head { grid-template-columns: minmax(0,1.5fr) minmax(0,.95fr) minmax(0,.85fr); gap: 10px; padding-right: 12px; }
     .worktree-row { padding-right: 0; }
-    .row-select { grid-template-columns: minmax(0,1.5fr) minmax(0,1fr) minmax(0,.8fr); gap: 10px; padding-bottom: 38px; }
-    .recheck { top: auto; bottom: 8px; transform: none; }
+    .row-select { grid-template-columns: minmax(0,1.5fr) minmax(0,.95fr) minmax(0,.85fr); gap: 10px; padding-bottom: 34px; }
+    .recheck { opacity: 1; top: auto; bottom: 6px; transform: none; }
   }
   @container(max-width:460px) {
-    .wb-body { padding-top: 16px; }
-    .confirm { min-width: 60px; padding: 6px 12px; }
+    .confirm { min-width: 56px; padding: 5px 12px; }
     .overview { gap: 2px; }
-    .overview button { padding: 5px 8px; gap: 5px; }
-    .overview>span { flex-basis: 100%; margin: 2px 0 0 8px; }
-    .filters { gap: 6px; padding: 10px; }
-    .filters select { width: 90px; padding: 5px; }
-    .project-filter summary { max-width: 105px; padding: 7px 5px; }
-    .branch { font-size: var(--font-size-sm); }
-    .git-state { flex-direction: column; }
+    .overview button { padding: 0 8px; gap: 4px; }
+    .filters { gap: 6px; }
+    .filters select { width: 90px; }
+    .project-filter summary { max-width: 105px; }
+    .branch { font-size: var(--font-size-caption); }
+    .git-state { flex-direction: column; align-items: flex-start; }
   }
   @media(max-width:520px) { .preview-body { padding: 16px; } }
 </style>
