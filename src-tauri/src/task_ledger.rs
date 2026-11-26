@@ -61,7 +61,10 @@ pub(crate) async fn task_ledger_request(
     if request["op"].as_str() == Some("recall-graph") {
         return runtime
             .recall()
-            .graph_preview(request["semantic"].as_bool().unwrap_or(true))
+            .graph_preview_since(
+                request["semantic"].as_bool().unwrap_or(true),
+                request["knownVersion"].as_str(),
+            )
             .await;
     }
     if request["op"].as_str() == Some("recall-history") {

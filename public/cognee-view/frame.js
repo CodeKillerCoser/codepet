@@ -1,4 +1,35 @@
 // Integration hooks around unmodified upstream views. Semantic data stays native.
+function connectViewState(token, initial) {
+  if (typeof document.querySelector !== 'function') return;
+  let interacting = false, timer;
+  function report() {
+    clearTimeout(timer);
+    const graph = {scale:window.scale,x:window.tx,y:window.ty};
+    parent.postMessage({type:'codepet:cognee:state',token,state:{
+      view:document.querySelector('.tab-btn.active')?.dataset.view ?? 'graph',
+      light:!!window._isLightMode,search:document.getElementById('search-input')?.value ?? '',
+      graph,interacting}},'*');
+  }
+  function later() { clearTimeout(timer); timer = setTimeout(report,100); }
+  document.addEventListener('pointerdown',() => { interacting = true; report(); });
+  for (const type of ['pointerup','pointercancel']) document.addEventListener(type,() => { interacting = false; later(); });
+  for (const type of ['click','input','change','wheel']) document.addEventListener(type,later);
+  initial = initial ?? {};
+  if (typeof initial.light === 'boolean' && initial.light !== !!window._isLightMode) document.getElementById('theme-toggle')?.click();
+  if (typeof initial.search === 'string') {
+    const input = document.getElementById('search-input');
+    if (input) { input.value = initial.search; input.dispatchEvent(new Event('input',{bubbles:true})); }
+  }
+  if (['graph','schema','memory','semantic'].includes(initial.view)) document.querySelector(`.tab-btn[data-view="${initial.view}"]`)?.click();
+  const graph = initial.graph;
+  if (graph && [graph.scale,graph.x,graph.y].every(Number.isFinite) && graph.scale > 0 && graph.scale <= 100) {
+    window.zoomAnim = null;
+    window.scale = graph.scale; window.tx = graph.x; window.ty = graph.y;
+    window._requestGraphRedraw?.();
+  }
+  report();
+}
+
 function connectSemantic(token) {
   const nativeRender = window._renderSemanticView;
   let loaded = !!window._semanticPositions, pending = false;
@@ -14,7 +45,12 @@ function connectSemantic(token) {
     if (event.source !== parent || event.data?.token !== token) return;
     if (event.data.type === 'codepet:cognee:semantic-error') {
       pending = false;
-      document.getElementById('semantic-status').textContent = '语义布局暂不可用，请再次点击 Semantic 重试；图谱更新后请刷新页面。';
+      document.getElementById('semantic-status').textContent = event.data.retryable
+        ? '语义布局正在后台准备，稍后自动更新…'
+        : '语义布局暂不可用，请再次点击 Semantic 重试；图谱更新后请刷新页面。';
+      if (event.data.retryable) setTimeout(() => {
+        if (!loaded && !pending && document.getElementById('semantic-view').style.display !== 'none') window._renderSemanticView();
+      },2000);
     } else if (event.data.type === 'codepet:cognee:semantic-result') {
       window._semanticPositions = event.data.positions;
       const clusters = window._codepetSemanticClusters;
@@ -31,6 +67,7 @@ window.addEventListener('message',function receive(event) {
       || typeof event.data.html !== 'string' || typeof event.data.token !== 'string') return;
   window.removeEventListener('message',receive);
   const token = JSON.stringify(event.data.token).replace(/</g,'\\u003c');
+  const state = JSON.stringify(event.data.viewState ?? {}).replace(/</g,'\\u003c');
   // Original view state stays inside this sandbox, separate from App navigation.
   const boundary = `<script>
     const replaceState = history.replaceState.bind(history);
@@ -48,6 +85,7 @@ window.addEventListener('message',function receive(event) {
       document.getElementById('loading-overlay')?.classList.add('hidden');
     }
     if (initialized) document.getElementById('btn-fit')?.click();
+    if (initialized) (${connectViewState.toString()})(${token},${state});
     parent.postMessage({type:initialized?'codepet:cognee:ready':'codepet:cognee:error',token:${token},
       nodes:Object.keys(window._vizNodeById||{}).length,links:(window._vizLinks||[]).length},'*');
   <\/script>`;

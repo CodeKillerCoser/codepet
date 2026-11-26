@@ -11,6 +11,9 @@
   let nodes = 0, links = 0;
   let rendering = false;
   let disposed = false;
+  let checking = false;
+  let version: string | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   let emptySettings: ModelSettings | null = null;
   $: modelsConfigured = !!emptySettings && [emptySettings.llm, emptySettings.embedding].every(profile => profile.endpoint.trim() && profile.model.trim()) && emptySettings.embedding.dimensions > 0;
   export let revision = 0;
@@ -18,11 +21,25 @@
   $: if (revision !== renderedRevision && loaded && !busy) { renderedRevision = revision; void refresh(); }
   let render: AbortController | undefined;
   export async function refresh() {
-    if (busy) return;
-    busy = true; error = ''; processing = false;
+    await readGraph(false);
+  }
+  function schedule() {
+    clearTimeout(timer);
+    if (!disposed) timer = setTimeout(() => {
+      if (document.visibilityState === 'hidden') schedule();
+      else void readGraph(true);
+    }, 5000);
+  }
+  async function readGraph(quiet: boolean) {
+    if (checking || disposed) return;
+    checking = true;
+    busy = !quiet || !loaded; error = '';
     try {
-      const graph = await loadRecallGraph();
+      const graph = await loadRecallGraph(false, version);
       if (disposed) return;
+      processing = !!graph.previewStatus?.updating;
+      if (view && graph.previewVersion && graph.previewVersion === version) return;
+      if (graph.unchanged) throw new Error('图谱快照已失效，请重新读取');
       if (!Array.isArray(graph.nodes) || !Array.isArray(graph.links)) throw new Error('图数据格式无效，请重试');
       if (!graph.nodes.length) {
         // An empty index does not imply missing models. Read the same saved
@@ -30,30 +47,39 @@
         const configuration = await modelGatewayRequest('model-settings');
         if (disposed) return;
         emptySettings = configuration.settings;
-        view?.destroy(); view = undefined; nodes = links = 0; loaded = true;
+        view?.destroy(); view = undefined; nodes = links = 0; version = undefined; loaded = true;
         return;
       }
       // Keep the existing view until a new native renderer has initialized.
       rendering = true;
       await tick();
+      const state = view?.getState?.();
+      if (quiet && state?.interacting) return;
       render = new AbortController();
-      const next = await renderRecallGraph(host, graph, render.signal);
+      const next = state ? await renderRecallGraph(host, graph, render.signal, state) : await renderRecallGraph(host, graph, render.signal);
       if (disposed) { next.destroy(); return; }
+      if (quiet && view?.getState && JSON.stringify(state) !== JSON.stringify(view.getState())) { next.destroy(); return; }
       view?.destroy(); view = next;
+      version = graph.previewVersion;
       nodes = graph.nodes.length; links = graph.links.length; loaded = true;
     } catch (cause) {
       if (!disposed) {
-        processing = String(cause).includes('(409)');
-        if (!processing) error = String(cause);
+        if (String(cause).includes('(409)')) processing = true;
+        else error = String(cause);
       }
-    } finally { if (!disposed) { busy = false; rendering = false; } }
+    } finally { if (!disposed) { checking = busy = rendering = false; schedule(); } }
   }
-  onMount(() => { void refresh(); return () => { disposed = true; render?.abort(); view?.destroy(); }; });
+  onMount(() => {
+    const visible = () => { if (document.visibilityState === 'visible') void readGraph(true); };
+    document.addEventListener('visibilitychange', visible);
+    void refresh();
+    return () => { disposed = true; clearTimeout(timer); document.removeEventListener('visibilitychange', visible); render?.abort(); view?.destroy(); };
+  });
 </script>
 
 <section class="knowledge-page" aria-label="工作记忆" tabindex="-1">
   {#if error}<div class="notice error" role="alert">{error}{#if loaded}<Button class="graph-button" type="button" disabled={busy} onclick={refresh}>重新读取</Button>{/if}</div>{/if}
-  {#if processing}<div class="notice" role="status">后台正在初始化或加工任务记录，原有预览会保留。{#if loaded}<Button class="graph-button" type="button" disabled={busy} onclick={refresh}>刷新图谱</Button>{/if}</div>{/if}
+  {#if processing}<div class="notice" role="status">后台正在加工任务记录，已完成的图谱保持可用并自动更新。{#if loaded}<Button class="graph-button" type="button" disabled={busy} onclick={refresh}>刷新图谱</Button>{/if}</div>{/if}
   {#if busy}<p class="notice" role="status">{nodes ? '正在更新图谱，当前预览保持可用…' : '正在读取真实任务图谱…'}</p>{/if}
   <div class="graph-surface" class:empty={!nodes && !rendering} bind:this={host} aria-label="Cognee 原生图预览"></div>
   {#if loaded && !nodes && !busy && !error && !processing}
@@ -67,7 +93,7 @@
       {/if}
     </div>
   {:else if !loaded && !busy && processing}
-    <div class="empty-state"><h3>图谱正在准备中</h3><p>后台加工完成后，刷新即可查看真实图谱。</p><Button class="graph-button" type="button" onclick={refresh}>刷新图谱</Button></div>
+    <div class="empty-state"><h3>正在准备首份图谱</h3><p>第一份图谱就绪后会自动显示，其余任务会继续在后台加工。</p><Button class="graph-button" type="button" onclick={refresh}>刷新图谱</Button></div>
   {:else if !loaded && !busy && error}
     <div class="empty-state"><h3>暂时无法读取图谱</h3><p>检查模型配置与后台服务，然后刷新重试。</p><Button class="graph-button" type="button" onclick={refresh}>重新读取</Button></div>
   {/if}

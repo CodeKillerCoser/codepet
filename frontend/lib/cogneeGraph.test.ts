@@ -8,4 +8,6 @@ test('the initial graph does not request semantic projection; only the Semantic 
   expect(taskRequest).toHaveBeenLastCalledWith('recall-graph',{semantic:false});
   await loadRecallGraph(true);
   expect(taskRequest).toHaveBeenLastCalledWith('recall-graph',{semantic:true});
+  await loadRecallGraph(false,'visible-snapshot');
+  expect(taskRequest).toHaveBeenLastCalledWith('recall-graph',{semantic:false,knownVersion:'visible-snapshot'});
 });

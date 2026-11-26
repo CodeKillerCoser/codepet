@@ -131,10 +131,12 @@ class Catalog(HistoryMixin):
                     self.db.execute("UPDATE runs SET job_id=? WHERE run_id=?", (job, row["run_id"]))
             elif row["deleted"]:
                 self.db.execute("DELETE FROM runs WHERE run_id=?", (row["run_id"],))
+                return True
             else:
                 self.db.execute("UPDATE runs SET state='ready',data_id=?,indexed_hash=?,error=NULL,attempts=0,rebuild=0 WHERE run_id=?",
                                 (data_id,row["desired_hash"],row["run_id"]))
                 self.end_attempt(row, "completed", result)
+                return True
 
     def ready(self):
         with self.lock:

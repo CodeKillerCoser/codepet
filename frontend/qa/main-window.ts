@@ -14,6 +14,7 @@ import type { LineageSnapshot, LineageMessage } from "../lib/taskLineage";
 let watch = { revision: 0, enabled: false, extract: false, threadId: null as string | null, model: "haiku", remainingJobs: 5, lastError: null };
 let config = { revision: 0, harness: "claude", harnessInstanceId: null, model: "haiku", reasoningEffort: "low", automatic: false, skill: "extract-tasks", prompt: "", budgetUsd: 0.25, timeoutSeconds: 90, intervalSeconds: 60, debounceSeconds: 20 };
 let jobs: any[] = [];
+let graphReads = 0;
 const timestamp = "2026-09-10T04:00:00Z";
 const data: LineageSnapshot = {
   threads: [
@@ -91,6 +92,14 @@ mockIPC((command, raw) => {
     if (request.op === "recall-history") return recallHistoryFixture(request);
     if (request.op === "recall-graph") {
       const options = new URLSearchParams(location.search);
+      if (options.has('graphProgressive')) {
+        if (++graphReads === 1) throw new Error('任务召回请求失败 (409)');
+        const version = (window as any).__qaGraphVersion ?? 'first';
+        const previewStatus = {updating:true,pending:13,processing:1,ready:1};
+        if (request.knownVersion === version) return {unchanged:true,previewVersion:version,previewStatus};
+        return fetch('/artifacts/graph-performance/progressive-native/graph.json').then(r=>r.json())
+          .then(snapshot=>({...snapshot,previewVersion:version,previewStatus}));
+      }
       if (options.has("graphBusy")) throw new Error("任务召回请求失败 (409)");
       if (options.has("graphError")) throw new Error("无法连接后台图服务");
       if (options.has("graphEmpty")) return {nodes:[],links:[]};

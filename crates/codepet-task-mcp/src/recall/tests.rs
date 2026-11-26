@@ -170,6 +170,13 @@ async fn graph_preview_defers_semantic_but_legacy_graph_keeps_it() {
         false
     );
     assert_eq!(recall.graph().await.unwrap()["semantic"], true);
+    assert_eq!(
+        recall
+            .graph_preview_since(false, Some("visible-snapshot"))
+            .await
+            .unwrap()["knownVersion"],
+        "visible-snapshot"
+    );
     task.abort();
 }
 

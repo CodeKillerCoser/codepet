@@ -17,6 +17,11 @@ from .engine import Engine
 from .history import QueueConflict, read_history
 from .model_trace import attempt_id
 from .lifecycle import acquire_service, StartupUnavailable
+from .published_preview import PublishedPreview
+
+
+class PreviewBusy(Exception):
+    pass
 
 
 class Service:
@@ -26,6 +31,10 @@ class Service:
         models = {key:config.get(key, {}).get("model", "") for key in ("llm", "embedding")}
         self.catalog = Catalog(root / "catalogs" / config["fingerprint"], models, bool(config.get("usageTracking")))
         self.engine = Engine(root / "indexes", config)
+        self.preview = PublishedPreview(root / "indexes" / config["fingerprint"])
+        self.preview_dirty = False
+        self.preview_pending = False
+        self.want_semantic = False
         self.busy = threading.Lock()
         self.loop = asyncio.new_event_loop()
         threading.Thread(target=self.worker, daemon=True).start()
@@ -40,8 +49,13 @@ class Service:
                 row = self.catalog.claim()
                 if row:
                     future = asyncio.run_coroutine_threadsafe(self.process(row), self.loop)
-                    data_id, result = future.result()
-                    self.catalog.finish(row, data_id=data_id, result=result)
+                    data_id, result, graph, projected = future.result()
+                    if self.catalog.finish(row, data_id=data_id, result=result):
+                        # Publish after the attempt is recorded, before the next
+                        # writer invalidates its live graph cache.
+                        self.preview.publish(self.engine.dataset, graph, projected)
+                        self.preview_dirty = False
+                        self.preview_pending = graph is None
             except Exception as error:
                 if row:
                     # Exception class only: third-party errors can contain prompts or keys.
@@ -54,12 +68,21 @@ class Service:
         # Capture identity in the pipeline coroutine, so concurrent SDK child tasks
         # carry their own trace rather than a mutable process-wide current job.
         await self.engine.initialize()
+        # Existing indexes should be visible even while the first new attempt
+        # is running. Native reads stay on the event loop under the writer lock.
+        if self.engine.dataset and not self.preview_dirty and self.preview.get() is None:
+            try:
+                self.preview.publish(self.engine.dataset, await self.engine.graph())
+            except Exception:
+                pass
         from .model_trace import install
         install(self.config["gatewayEndpoint"], self.config["gatewayToken"])
         token = attempt_id.set(row.get("job_id"))
         try:
+            self.preview_dirty = True
+            self.preview_pending = True
             data_id = await self.engine.process(row)
-            result = None
+            result = graph = projected = None
             if not row["deleted"]:
                 self.catalog.phase(row.get("job_id"), "读取加工结果")
                 try:
@@ -69,9 +92,57 @@ class Service:
                     # repeat extraction and charge the model a second time.
                     result = {"description":"索引已更新，结果快照暂不可用", "indexUpdated":True,
                               "summaries":[], "entities":[], "snapshotUnavailable":True}
-            return data_id, result
+            try:
+                graph = await self.engine.graph()
+                if self.want_semantic:
+                    projected = await self.engine.graph(semantic=True)
+            except Exception:
+                # Export/projection failure must not repeat successful model work.
+                pass
+            return data_id, result, graph, projected
         finally:
             attempt_id.reset(token)
+
+    def graph(self, body):
+        semantic = bool(body.get("semantic"))
+        if semantic:
+            self.want_semantic = True
+        snapshot = self.preview.get(semantic)
+        if snapshot is not None and (not self.preview_pending or self.busy.locked()) and (not semantic or "semantic_positions" in snapshot):
+            return self.graph_response(snapshot, body)
+        if not self.busy.acquire(blocking=False):
+            if snapshot is not None:
+                return self.graph_response(snapshot, body)
+            raise PreviewBusy()
+        try:
+            if self.preview_dirty:
+                if snapshot is not None:
+                    return self.graph_response(snapshot, body)
+                raise PreviewBusy()
+            future = asyncio.run_coroutine_threadsafe(self.engine.graph(semantic=semantic), self.loop)
+            try:
+                graph = future.result(timeout=45)
+            except concurrent.futures.TimeoutError:
+                future.cancel()
+                raise PreviewBusy()
+            # Empty indexes have no native version yet; don't persist them.
+            if graph.get("previewVersion"):
+                self.preview.publish(self.engine.dataset, graph, graph if semantic else None)
+                self.preview_pending = False
+            return self.graph_response(graph, body)
+        finally:
+            self.busy.release()
+
+    def graph_response(self, graph, body):
+        status = self.catalog.status()
+        result = {"previewVersion":graph.get("previewVersion"),
+                  "previewStatus":{"updating":bool(status["pending"]), "pending":status["pending"],
+                                   "processing":status["counts"].get("processing", 0),
+                                   "ready":status["ready"]}}
+        semantic_pending = bool(body.get("semantic") and "semantic_positions" not in graph)
+        if graph.get("previewVersion") and body.get("knownVersion") == graph["previewVersion"] and (not body.get("semantic") or semantic_pending):
+            return {**result, "unchanged":True, "semanticPending":semantic_pending}
+        return {**graph, **result, "semanticPending":semantic_pending}
 
     def history(self, body):
         action = body.get("action", "list")
@@ -179,13 +250,7 @@ def main():
                     elif self.path == "/history":
                         result = service.history(body)
                     elif self.path == "/graph":
-                        if not service.busy.acquire(blocking=False):
-                            self.send_error(409, "Index busy")
-                            return
-                        try:
-                            result = asyncio.run_coroutine_threadsafe(service.engine.graph(semantic=bool(body.get("semantic"))), service.loop).result(timeout=45)
-                        finally:
-                            service.busy.release()
+                        result = service.graph(body)
                     else:
                         self.send_error(404)
                         return
@@ -198,6 +263,8 @@ def main():
                 self.send_header("Content-Length", str(len(raw)))
                 self.end_headers()
                 self.wfile.write(raw)
+            except PreviewBusy:
+                self.send_error(409, "Preview preparing")
             except QueueConflict:
                 self.send_error(409, "Processing queue changed")
             except (ValueError, KeyError, TypeError):

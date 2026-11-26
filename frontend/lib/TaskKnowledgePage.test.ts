@@ -11,7 +11,55 @@ beforeEach(() => { vi.mocked(modelGatewayRequest).mockResolvedValue(configuratio
 const graph = {nodes:[{id:'a'},{id:'b'}],links:[{source:'a',target:'b'}]};
 let component: ReturnType<typeof mount> | undefined;
 const settle = async () => { for (let i=0;i<6;i++) { await Promise.resolve(); await tick(); } };
-afterEach(async () => { if (component) await unmount(component); component=undefined; document.body.innerHTML=''; vi.resetAllMocks(); });
+afterEach(async () => { if (component) await unmount(component); component=undefined; document.body.innerHTML=''; vi.resetAllMocks(); vi.useRealTimers(); });
+
+test('polls unchanged versions without redrawing and restores the current view on new versions',async () => {
+  vi.useFakeTimers();
+  const state={view:'schema',graph:{scale:2,x:30,y:40}};
+  const oldDestroy=vi.fn(),nextDestroy=vi.fn();
+  const first={...graph,previewVersion:'first',previewStatus:{updating:true,pending:14,processing:1,ready:1}};
+  vi.mocked(loadRecallGraph).mockResolvedValueOnce(first).mockResolvedValueOnce({previewVersion:'first',unchanged:true}).mockResolvedValueOnce({...first,previewVersion:'second'});
+  vi.mocked(renderRecallGraph).mockResolvedValueOnce({detail:{nodes:2,links:1},destroy:oldDestroy,getState:()=>state}).mockResolvedValueOnce({detail:{nodes:2,links:1},destroy:nextDestroy});
+  component=mount(TaskKnowledgePage,{target:document.body}); await settle();
+  await vi.advanceTimersByTimeAsync(5000); await settle();
+  expect(loadRecallGraph).toHaveBeenLastCalledWith(false,'first');
+  expect(renderRecallGraph).toHaveBeenCalledTimes(1);
+  expect(oldDestroy).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(5000); await settle();
+  expect(renderRecallGraph).toHaveBeenLastCalledWith(expect.any(HTMLElement),expect.objectContaining({previewVersion:'second'}),expect.any(AbortSignal),state);
+  expect(oldDestroy).toHaveBeenCalledOnce();
+  await unmount(component);component=undefined;
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(loadRecallGraph).toHaveBeenCalledTimes(3);
+  expect(nextDestroy).toHaveBeenCalledOnce();
+});
+
+test('the first completed preview appears automatically while the rest keeps processing',async () => {
+  vi.useFakeTimers();
+  vi.mocked(loadRecallGraph).mockRejectedValueOnce(new Error('(409)')).mockResolvedValue({...graph,previewVersion:'first',previewStatus:{updating:true,pending:13,processing:1,ready:1}});
+  vi.mocked(renderRecallGraph).mockResolvedValue({detail:{nodes:2,links:1},destroy:vi.fn()});
+  component=mount(TaskKnowledgePage,{target:document.body}); await settle();
+  expect(document.body.textContent).toContain('正在准备首份图谱');
+  await vi.advanceTimersByTimeAsync(5000); await settle();
+  expect(renderRecallGraph).toHaveBeenCalledOnce();
+  expect(document.body.textContent).not.toContain('正在准备首份图谱');
+  expect(document.body.textContent).toContain('自动更新');
+});
+
+test('a user changing views during background rendering keeps the current renderer',async () => {
+  vi.useFakeTimers();
+  let state={view:'graph'};
+  const destroy=vi.fn(),discard=vi.fn();
+  vi.mocked(loadRecallGraph).mockResolvedValueOnce({...graph,previewVersion:'first'}).mockResolvedValue({...graph,previewVersion:'second'});
+  let resolve!: (value:any)=>void;
+  vi.mocked(renderRecallGraph).mockResolvedValueOnce({detail:{nodes:2,links:1},destroy,getState:()=>state})
+    .mockImplementationOnce(()=>new Promise(done=>{resolve=done;}));
+  component=mount(TaskKnowledgePage,{target:document.body});await settle();
+  await vi.advanceTimersByTimeAsync(5000);await settle();
+  state={view:'schema'};
+  resolve({detail:{nodes:2,links:1},destroy:discard});await settle();
+  expect(destroy).not.toHaveBeenCalled();expect(discard).toHaveBeenCalledOnce();
+});
 
 test('uses a real snapshot, retains the view during busy refresh, and cleans it up',async () => {
   const destroy=vi.fn();

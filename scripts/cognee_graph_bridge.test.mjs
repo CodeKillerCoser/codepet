@@ -44,3 +44,38 @@ test('frame initialization does not depend on private upstream simulation variab
   assert.equal(messages.at(-1).nodes,1);
   assert.equal(context.window._vizNodeById.a.x,1);
 });
+
+test('busy Semantic retries only while its view remains open',()=>{
+  const {context,handlers,messages,elements}=harness();
+  const timers=[];context.setTimeout=callback=>timers.push(callback);
+  context.window._renderSemanticView=()=>{};
+  context.connectSemantic('bound-token');
+  context.window._renderSemanticView();
+  const receive=handlers.at(-1);
+  receive({source:context.parent,data:{type:'codepet:cognee:semantic-error',token:'bound-token',retryable:true}});
+  assert.match(elements.get('semantic-status').textContent,/自动更新/);
+  timers.shift()();assert.equal(messages.length,2);
+  receive({source:context.parent,data:{type:'codepet:cognee:semantic-error',token:'bound-token',retryable:true}});
+  elements.get('semantic-view').style.display='none';
+  timers.shift()();assert.equal(messages.length,2);
+});
+
+test('snapshot replacement restores the active view, search, theme and graph viewport',()=>{
+  const {context,messages,elements}=harness();
+  let view='graph';
+  context.document.querySelector=selector=>selector==='.tab-btn.active'?{dataset:{view}}:{click(){view='schema';}};
+  context.document.addEventListener=()=>{};
+  context.Event=class {constructor(type){this.type=type;}};
+  context.clearTimeout=()=>{}; context.setTimeout=()=>1;
+  elements.set('search-input',{value:'',dispatchEvent(){}});
+  context.window._isLightMode=true;
+  context.window._requestGraphRedraw=()=>{};
+  context.connectViewState('bound-token',{view:'schema',light:true,search:'task',graph:{scale:2,x:30,y:40}});
+  assert.equal(view,'schema');
+  assert.equal(elements.get('search-input').value,'task');
+  assert.equal(context.window.scale,2);
+  assert.equal(context.window.tx,30);
+  assert.equal(messages.at(-1).type,'codepet:cognee:state');
+  assert.equal(messages.at(-1).state.view,'schema');
+  assert.equal(messages.at(-1).state.interacting,false);
+});

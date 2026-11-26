@@ -1,5 +1,6 @@
 """Startup races use isolated processes and disabled models, never user indexes."""
 import json
+import hashlib
 from pathlib import Path
 import queue
 import subprocess
@@ -8,6 +9,7 @@ import tempfile
 import threading
 import time
 import unittest
+import uuid
 from unittest.mock import patch
 from urllib.error import URLError
 from urllib.request import Request, ProxyHandler, build_opener
@@ -32,13 +34,13 @@ class LifecycleTests(unittest.TestCase):
                 if not stream.closed:
                     stream.close()
 
-    def spawn(self, setup=""):
+    def spawn(self, setup="", enabled=False):
         source = Path(__file__).resolve().parents[1]
         script = f"import sys\nsys.path.insert(0, {str(source)!r})\nfrom codepet_recall import server\n{setup}\nserver.main()"
         child = subprocess.Popen([sys.executable, "-I", "-B", "-c", script, "--data-dir", str(self.root)],
                                  stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         self.children.append(child)
-        child.stdin.write(json.dumps({"enabled":False,"fingerprint":"lifecycle","bundleId":"fixture"}).encode() + b"\n")
+        child.stdin.write(json.dumps({"enabled":enabled,"fingerprint":"lifecycle","bundleId":"fixture"}).encode() + b"\n")
         child.stdin.flush()
         output = queue.Queue()
         threading.Thread(target=lambda: output.put(child.stdout.readline()), daemon=True).start()
@@ -109,6 +111,54 @@ server.Engine.graph = graph
                 opener.return_value.open.return_value.__enter__.return_value.read.return_value = json.dumps(health).encode()
                 with self.assertRaisesRegex(lifecycle.StartupUnavailable, "incompatible_service"):
                     lifecycle.acquire_service(self.root, {"fingerprint":"lifecycle","bundleId":"fixture"}, timeout=0.1)
+
+    def test_busy_service_serves_last_completed_preview_and_publishes_next_one(self):
+        blocked, release = self.root / "second-processing", self.root / "release-second"
+        _, output = self.spawn(f"""
+async def process(self, row):
+    doc = server.json.loads(row['document'])
+    if hasattr(self, 'fixture_node'):
+        server.Path({str(blocked)!r}).touch()
+        while not server.Path({str(release)!r}).exists():
+            await server.asyncio.sleep(0.01)
+    self.fixture_node = doc['runId']
+    self.engine.dataset = 'native-fixture'
+    root = self.preview.root
+    root.mkdir(parents=True, exist_ok=True)
+    (root / 'dataset.json').write_text(server.json.dumps({{'id':'native-fixture'}}))
+    graph = {{'nodes':[{{'id':doc['runId']}}], 'links':[], 'previewVersion':doc['runId']}}
+    return doc['runId'], {{'description':'isolated fixture'}}, graph, None
+server.Service.process = process
+""", enabled=True)
+        info = self.hello(output)
+        def document(text):
+            return {"runId":str(uuid.uuid4()),"taskId":str(uuid.uuid4()),"text":text,
+                    "contentHash":hashlib.sha256(text.encode()).hexdigest(),"eligible":True}
+        def wait_for(condition):
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline:
+                if condition():
+                    return
+                time.sleep(0.02)
+            self.fail("preview fixture did not reach its expected state")
+        first, second = document("first"), document("second")
+        self.request(info, "/sync", {"documents":[first]})
+        wait_for(lambda: self.request(info, "/health")["ready"] == 1)
+        self.request(info, "/sync", {"documents":[first, second]})
+        wait_for(blocked.exists)
+        snapshot = self.request(info, "/graph", {"semantic":False})
+        self.assertEqual(snapshot["nodes"], [{"id":first["runId"]}])
+        self.assertTrue(snapshot["previewStatus"]["updating"])
+        self.assertEqual(snapshot["previewStatus"]["processing"], 1)
+        same = self.request(info, "/graph", {"semantic":False,"knownVersion":snapshot["previewVersion"]})
+        self.assertTrue(same["unchanged"])
+        self.assertNotIn("nodes", same)
+        release.touch()
+        wait_for(lambda: self.request(info, "/health")["ready"] == 2)
+        latest = self.request(info, "/graph", {"semantic":False})
+        self.assertEqual(latest["nodes"], [{"id":second["runId"]}])
+        self.assertNotEqual(latest["previewVersion"], snapshot["previewVersion"])
+        self.assertFalse(latest["previewStatus"]["updating"])
 
 
 if __name__ == "__main__":

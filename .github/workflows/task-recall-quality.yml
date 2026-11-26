@@ -30,4 +30,7 @@ jobs:
       - run: python -m unittest discover -s sidecars/task-recall/tests -p test_service.py -v
         env:
           PYTHONPATH: sidecars/task-recall
+      - run: python -m unittest discover -s sidecars/task-recall/tests -p test_published_preview.py -v
+        env:
+          PYTHONPATH: sidecars/task-recall
       - run: cargo test --manifest-path crates/Cargo.toml -p codepet-task-mcp --lib
