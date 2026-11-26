@@ -1,6 +1,95 @@
 use super::*;
 use codepet_model_gateway::settings::{Profile, Settings};
 
+#[cfg(unix)]
+#[test]
+fn creating_the_ledger_does_not_bypass_shared_installation_state() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join("actual")).unwrap();
+    std::os::unix::fs::symlink(root.path().join("actual"), root.path().join("alias")).unwrap();
+    let ledger = Ledger::new(&root.path().join("alias/new-ledger"));
+    let first = Recall::shared(&ledger);
+    std::fs::create_dir_all(ledger.data_directory()).unwrap();
+    assert!(Arc::ptr_eq(&first, &Recall::shared(&ledger)));
+}
+
+#[tokio::test]
+async fn recall_waits_for_installation_but_mcp_configuration_does_not() {
+    use crate::http::HttpRuntime;
+    let temp = tempfile::tempdir().unwrap();
+    let (complete, waiting) = tokio::sync::oneshot::channel();
+    let runtime = HttpRuntime::start_on_prepared(
+        &tokio::runtime::Handle::current(),
+        temp.path().to_owned(),
+        0,
+        async { waiting.await.unwrap() },
+    );
+    tokio::time::timeout(Duration::from_secs(1), runtime.configuration())
+        .await
+        .unwrap()
+        .unwrap();
+    let recall = runtime.recall();
+    let request = {
+        let recall = recall.clone();
+        tokio::spawn(async move { recall.history(json!({"action":"list"})).await })
+    };
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!request.is_finished());
+    assert!(recall.process.lock().await.is_none());
+    complete.send(Err("fixture install failed".into())).unwrap();
+    assert!(request
+        .await
+        .unwrap()
+        .unwrap_err()
+        .contains("准备失败：fixture install failed"));
+    runtime.shutdown_once().await;
+}
+
+#[tokio::test]
+async fn stop_cancels_requests_waiting_for_installation() {
+    let temp = tempfile::tempdir().unwrap();
+    let recall = Recall::shared(&Ledger::new(temp.path()));
+    let (complete, waiting) = tokio::sync::oneshot::channel();
+    recall.prepare(&tokio::runtime::Handle::current(), async {
+        waiting.await.unwrap()
+    });
+    let request = {
+        let recall = recall.clone();
+        tokio::spawn(async move { recall.history(json!({"action":"list"})).await })
+    };
+    tokio::task::yield_now().await;
+    recall.stop().await;
+    assert!(tokio::time::timeout(Duration::from_millis(200), request)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap_err()
+        .contains("启动已取消"));
+    complete.send(Ok(())).unwrap();
+}
+
+#[tokio::test]
+async fn stop_is_not_lost_while_startup_holds_the_process_lock() {
+    let temp = tempfile::tempdir().unwrap();
+    let recall = Recall::shared(&Ledger::new(temp.path()));
+    let mut guard = recall.process.lock().await;
+    let stopping = {
+        let recall = recall.clone();
+        tokio::spawn(async move { recall.stop().await })
+    };
+    tokio::time::sleep(Duration::from_millis(1200)).await;
+    *guard = Some(Arc::new(process::Process::test_client(
+        "http://127.0.0.1:1".into(),
+        "startup".into(),
+    )));
+    drop(guard);
+    stopping.await.unwrap();
+    assert!(
+        recall.process.lock().await.is_none(),
+        "stop silently abandoned the startup lock"
+    );
+}
+
 #[tokio::test]
 async fn manual_processing_validates_ids_and_requires_enabled_models_before_starting() {
     let temp = tempfile::tempdir().unwrap();
@@ -58,14 +147,26 @@ async fn graph_preview_defers_semantic_but_legacy_graph_keeps_it() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let endpoint = format!("http://{}", listener.local_addr().unwrap());
     let task = tokio::spawn(async move {
-        axum::serve(listener, Router::new().route("/graph", post(|Json(body): Json<Value>| async move { Json(body) }))).await.unwrap();
+        axum::serve(
+            listener,
+            Router::new().route(
+                "/graph",
+                post(|Json(body): Json<Value>| async move { Json(body) }),
+            ),
+        )
+        .await
+        .unwrap();
     });
     let temp = tempfile::tempdir().unwrap();
     let recall = Recall::shared(&Ledger::new(temp.path()));
     *recall.process.lock().await = Some(Arc::new(process::Process::test_client(
-        endpoint, process::fingerprint(&Settings::default()),
+        endpoint,
+        process::fingerprint(&Settings::default()),
     )));
-    assert_eq!(recall.graph_preview(false).await.unwrap()["semantic"], false);
+    assert_eq!(
+        recall.graph_preview(false).await.unwrap()["semantic"],
+        false
+    );
     assert_eq!(recall.graph().await.unwrap()["semantic"], true);
     task.abort();
 }

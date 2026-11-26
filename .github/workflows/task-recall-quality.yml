@@ -1,0 +1,33 @@
+name: Task recall lifecycle
+on:
+  pull_request:
+    paths: ['crates/codepet-task-mcp/**', 'sidecars/task-recall/**', 'src-tauri/src/lib.rs', 'src-tauri/src/task_mcp_setup.rs', '.github/workflows/task-recall-quality.yml']
+  push:
+    branches: [main]
+    paths: ['crates/codepet-task-mcp/**', 'sidecars/task-recall/**', 'src-tauri/src/lib.rs', 'src-tauri/src/task_mcp_setup.rs', '.github/workflows/task-recall-quality.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  lifecycle:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates
+      - run: python -m unittest discover -s sidecars/task-recall/tests -p test_lifecycle.py -v
+        env:
+          PYTHONPATH: sidecars/task-recall
+      - run: python -m unittest discover -s sidecars/task-recall/tests -p test_service.py -v
+        env:
+          PYTHONPATH: sidecars/task-recall
+      - run: cargo test --manifest-path crates/Cargo.toml -p codepet-task-mcp --lib

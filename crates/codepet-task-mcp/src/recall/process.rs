@@ -68,10 +68,25 @@ impl Process {
     }
     pub async fn start(data: &Path, settings: settings::Settings) -> Result<Self, String> {
         let root = bundle().ok_or("未安装任务召回 sidecar")?;
-        let manifest: Value = serde_json::from_slice(
-            &std::fs::read(root.join("manifest.json")).map_err(|_| "任务召回 sidecar 未打包")?,
-        )
-        .map_err(|_| "任务召回清单无效")?;
+        // An attached owner may exit between its handshake and our first health
+        // request. Retry startup once, never replay an application mutation.
+        for attempt in 0..2 {
+            match Self::start_at(&root, data, &settings).await {
+                Err(error) if attempt == 0 && error == "任务召回服务连接失败" => continue,
+                result => return result,
+            }
+        }
+        unreachable!()
+    }
+    async fn start_at(
+        root: &Path,
+        data: &Path,
+        settings: &settings::Settings,
+    ) -> Result<Self, String> {
+        let bytes =
+            std::fs::read(root.join("manifest.json")).map_err(|_| "任务召回 sidecar 未打包")?;
+        let bundle_id = format!("{:x}", Sha256::digest(&bytes));
+        let manifest: Value = serde_json::from_slice(&bytes).map_err(|_| "任务召回清单无效")?;
         let relative = manifest["pythonPath"]
             .as_str()
             .ok_or("任务召回清单缺少 Python")?;
@@ -82,8 +97,8 @@ impl Process {
             return Err("任务召回路径无效".into());
         }
         let gateway = ModelGateway::start(data, settings.clone()).await?;
-        let fingerprint = fingerprint(&settings);
-        let config = json!({"enabled":settings.enabled,"fingerprint":fingerprint,"usageTracking":true,
+        let fingerprint = fingerprint(settings);
+        let config = json!({"enabled":settings.enabled,"fingerprint":fingerprint,"bundleId":bundle_id,"usageTracking":true,
             "llm":{"model":settings.llm.model},"embedding":{"model":settings.embedding.model,"dimensions":settings.embedding.dimensions},
             "gatewayEndpoint":gateway.endpoint,"gatewayToken":gateway.token});
         let mut command = Command::new(root.join(relative));
@@ -137,21 +152,34 @@ impl Process {
         let mut child = command.spawn().map_err(|_| "任务召回进程无法启动")?;
         let mut bytes = serde_json::to_vec(&config).unwrap();
         bytes.push(b'\n');
-        child
-            .stdin
-            .as_mut()
-            .unwrap()
-            .write_all(&bytes)
-            .await
-            .map_err(|_| "任务召回配置传递失败")?;
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            child.stdin.as_mut().unwrap().write_all(&bytes),
+        )
+        .await
+        .map_err(|_| "任务召回配置传递超时")?
+        .map_err(|_| "任务召回配置传递失败")?;
         let output = child.stdout.take().unwrap();
         let mut reader = BufReader::new(tokio::io::AsyncReadExt::take(output, 65536));
         let mut line = String::new();
-        tokio::time::timeout(Duration::from_secs(15), reader.read_line(&mut line))
+        let size = tokio::time::timeout(Duration::from_secs(15), reader.read_line(&mut line))
             .await
             .map_err(|_| "任务召回启动超时")?
             .map_err(|_| "任务召回握手失败")?;
-        let hello: Handshake = serde_json::from_str(&line).map_err(|_| "任务召回握手无效")?;
+        if size == 0 {
+            return Err("任务召回进程在就绪前退出，请检查组件完整性".into());
+        }
+        let hello: Value = serde_json::from_str(&line).map_err(|_| "任务召回握手无效")?;
+        if let Some(error) = hello["error"].as_str() {
+            return Err(match error {
+                "incompatible_service" => {
+                    "旧版或不同配置的召回服务仍在运行，请关闭旧版 Code Pet 并重新连接 Agent"
+                }
+                _ => "任务召回服务连接失败",
+            }
+            .into());
+        }
+        let hello: Handshake = serde_json::from_value(hello).map_err(|_| "任务召回握手无效")?;
         let url = reqwest::Url::parse(&hello.endpoint).map_err(|_| "任务召回地址无效")?;
         if hello.protocol != 1
             || url.scheme() != "http"
@@ -185,13 +213,50 @@ impl Process {
             *process.child.lock().unwrap() = Some(child);
             *process.gateway.lock().unwrap() = Some(gateway);
         } else {
-            let _ = child.wait().await;
+            tokio::time::timeout(Duration::from_secs(2), child.wait())
+                .await
+                .map_err(|_| "任务召回接入进程未退出")?
+                .map_err(|_| "任务召回接入进程退出失败")?;
         }
-        let health = process.request("/health", None).await?;
-        if health["fingerprint"] != process.fingerprint {
-            return Err("任务召回正在切换模型配置，请稍后重试".into());
+        if let Err(error) = process.wait_ready(&bundle_id).await {
+            process.shutdown().await;
+            return Err(error);
         }
         Ok(process)
+    }
+    async fn wait_ready(&self, bundle_id: &str) -> Result<(), String> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Ok(Ok(health)) = tokio::time::timeout_at(
+                deadline.min(tokio::time::Instant::now() + Duration::from_millis(500)),
+                self.request("/health", None),
+            )
+            .await
+            {
+                if health["protocol"] != 1
+                    || health["fingerprint"] != self.fingerprint
+                    || health["bundleId"] != bundle_id
+                {
+                    return Err(
+                        "召回服务版本或模型配置不匹配，请关闭旧版 Code Pet 并重新连接 Agent".into(),
+                    );
+                }
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err("任务召回服务连接失败".into());
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+    pub async fn shutdown(&self) {
+        let child = self.child.lock().unwrap().take();
+        if let Some(mut child) = child {
+            let _ = child.start_kill();
+            // The OS singleton lock is released on exit, not when kill is sent.
+            let _ = tokio::time::timeout(Duration::from_secs(3), child.wait()).await;
+        }
+        self.gateway.lock().unwrap().take();
     }
     pub fn stop(&self) {
         self.child.lock().unwrap().take();
@@ -226,5 +291,69 @@ impl Process {
 impl Drop for Process {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn readiness_retries_transient_health_but_rejects_an_old_bundle() {
+        use axum::{http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+        use std::sync::{
+            atomic::{AtomicUsize, Ordering},
+            Arc,
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let handler_calls = calls.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, Router::new().route("/health", get(move || {
+                let calls = handler_calls.clone();
+                async move {
+                    if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                        StatusCode::SERVICE_UNAVAILABLE.into_response()
+                    } else {
+                        Json(json!({"protocol":1,"fingerprint":"wanted","bundleId":"current"})).into_response()
+                    }
+                }
+            }))).await.unwrap();
+        });
+        let process = Process::test_client(endpoint, "wanted".into());
+        process.wait_ready("current").await.unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert!(process
+            .wait_ready("another-version")
+            .await
+            .unwrap_err()
+            .contains("不匹配"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires CODEPET_RECALL_LIFECYCLE_BUNDLE with the current Python sources"]
+    async fn native_start_attach_and_immediate_restart_release_the_owner_lock() {
+        let root = PathBuf::from(std::env::var_os("CODEPET_RECALL_LIFECYCLE_BUNDLE").unwrap());
+        let data = tempfile::tempdir().unwrap();
+        let config = settings::Settings::default();
+        for _ in 0..10 {
+            let owner = Process::start_at(&root, data.path(), &config)
+                .await
+                .unwrap();
+            assert!(owner.child.lock().unwrap().is_some());
+            let attached = Process::start_at(&root, data.path(), &config)
+                .await
+                .unwrap();
+            assert!(attached.child.lock().unwrap().is_none());
+            assert_eq!(owner.endpoint, attached.endpoint);
+            attached.shutdown().await;
+            assert_eq!(owner.request("/health", None).await.unwrap()["protocol"], 1);
+            owner.shutdown().await;
+            assert!(owner.child.lock().unwrap().is_none());
+            assert!(attached.request("/health", None).await.is_err());
+            // No sleep: the next iteration must acquire the released OS lock.
+        }
     }
 }

@@ -1,5 +1,6 @@
 //! Host-owned recall. Canonical ledger reads never wait for model extraction.
 pub mod bundle;
+mod preparation;
 mod process;
 mod snapshot;
 use codepet_model_gateway::settings;
@@ -7,33 +8,53 @@ use codepet_task_lineage::tasks::{FindTaskRunsInput, Ledger};
 use serde_json::{json, Value};
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, OnceLock, Weak},
     time::Duration,
 };
 use tokio::sync::Mutex as AsyncMutex;
+use tokio_util::sync::CancellationToken;
 
 pub struct Recall {
     ledger: Ledger,
     process: AsyncMutex<Option<Arc<process::Process>>>,
+    preparation: Mutex<Option<preparation::Preparation>>,
+    startup: Mutex<CancellationToken>,
+}
+fn ledger_key(path: &Path) -> PathBuf {
+    // On first launch the data directory may not exist yet. Resolve its existing
+    // ancestor so creating it later cannot bypass the shared preparation gate.
+    for ancestor in path.ancestors() {
+        if let Ok(canonical) = ancestor.canonicalize() {
+            return canonical.join(path.strip_prefix(ancestor).unwrap());
+        }
+    }
+    path.to_owned()
 }
 impl Recall {
     pub fn shared(ledger: &Ledger) -> Arc<Self> {
         static SERVICES: OnceLock<Mutex<HashMap<PathBuf, Weak<Recall>>>> = OnceLock::new();
         let mut services = SERVICES.get_or_init(Default::default).lock().unwrap();
-        let key = ledger
-            .data_directory()
-            .canonicalize()
-            .unwrap_or_else(|_| ledger.data_directory().to_owned());
+        let key = ledger_key(ledger.data_directory());
         if let Some(service) = services.get(&key).and_then(Weak::upgrade) {
             return service;
         }
         let service = Arc::new(Self {
             ledger: ledger.clone(),
             process: AsyncMutex::new(None),
+            preparation: Mutex::new(None),
+            startup: Mutex::new(CancellationToken::new()),
         });
         services.insert(key, Arc::downgrade(&service));
         service
+    }
+    pub(crate) fn prepare(
+        &self,
+        executor: &tokio::runtime::Handle,
+        install: impl std::future::Future<Output = Result<(), String>> + Send + 'static,
+    ) {
+        *self.preparation.lock().unwrap() =
+            Some(preparation::Preparation::start(executor, install));
     }
     pub fn watch(
         self: &Arc<Self>,
@@ -58,17 +79,32 @@ impl Recall {
         });
     }
     async fn request(&self, path: &str, body: Option<Value>) -> Result<Value, String> {
+        let startup = self.startup.lock().unwrap().clone();
+        let preparation = self.preparation.lock().unwrap().clone();
+        if let Some(preparation) = preparation {
+            tokio::select! {
+                biased;
+                _ = startup.cancelled() => return Err("任务召回启动已取消".into()),
+                result = preparation.wait() => result?,
+            }
+        }
+        let mut process = self.process.lock().await;
+        if startup.is_cancelled() {
+            return Err("任务召回启动已取消".into());
+        }
+        // A request queued behind startup may outlive a settings change.
         let config = settings::read(self.ledger.data_directory())?;
         let hash = process::fingerprint(&config);
-        let mut process = self.process.lock().await;
         if process.as_ref().is_some_and(|p| p.fingerprint != hash) {
-            process.as_ref().unwrap().stop();
-            *process = None;
+            process.take().unwrap().shutdown().await;
         }
         if process.is_none() {
-            *process = Some(Arc::new(
-                process::Process::start(self.ledger.data_directory(), config).await?,
-            ));
+            let active = tokio::select! {
+                biased;
+                _ = startup.cancelled() => return Err("任务召回启动已取消".into()),
+                result = process::Process::start(self.ledger.data_directory(), config) => result?,
+            };
+            *process = Some(Arc::new(active));
         }
         let active = process.as_ref().unwrap().clone();
         drop(process);
@@ -83,8 +119,8 @@ impl Recall {
         {
             let mut process = self.process.lock().await;
             if process.as_ref().is_some_and(|p| Arc::ptr_eq(p, &active)) {
-                active.stop();
                 *process = None;
+                active.shutdown().await;
             }
         }
         result
@@ -117,19 +153,21 @@ impl Recall {
         self.request("/sync", Some(json!({"documents":docs}))).await
     }
     pub async fn stop(&self) {
-        if let Ok(mut process) =
-            tokio::time::timeout(Duration::from_secs(1), self.process.lock()).await
-        {
-            if let Some(active) = process.take() {
-                active.stop();
-            }
+        // Cancel a pending handshake/install wait before acquiring its lock.
+        // New requests stay cancelled until the previous owner has exited.
+        self.startup.lock().unwrap().cancel();
+        let mut process = self.process.lock().await;
+        if let Some(active) = process.take() {
+            active.shutdown().await;
         }
+        *self.startup.lock().unwrap() = CancellationToken::new();
     }
     pub async fn graph(&self) -> Result<Value, String> {
         self.graph_preview(true).await
     }
     pub async fn graph_preview(&self, semantic: bool) -> Result<Value, String> {
-        self.request("/graph", Some(json!({"semantic":semantic}))).await
+        self.request("/graph", Some(json!({"semantic":semantic})))
+            .await
     }
     /// Main-window history and queue controls; not exposed as an Agent MCP tool.
     pub async fn history(&self, input: Value) -> Result<Value, String> {

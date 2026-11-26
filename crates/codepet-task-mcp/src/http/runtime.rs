@@ -48,8 +48,18 @@ impl HttpRuntime {
         Self::start_on(&tokio::runtime::Handle::current(), data, port)
     }
     pub fn start_on(executor: &tokio::runtime::Handle, data: PathBuf, port: u16) -> Self {
+        Self::start_on_prepared(executor, data, port, async { Ok(()) })
+    }
+    /// MCP/ledger stay available during installation; recall alone waits for it.
+    pub fn start_on_prepared(
+        executor: &tokio::runtime::Handle,
+        data: PathBuf,
+        port: u16,
+        install: impl std::future::Future<Output = Result<(), String>> + Send + 'static,
+    ) -> Self {
         let ledger = Ledger::new(&data);
         let recall = crate::recall::Recall::shared(&ledger);
+        recall.prepare(executor, install);
         let recall_watch = recall.watch(executor);
         let shutdown = HttpShutdown::default();
         let completed = Arc::new(AtomicBool::new(false));

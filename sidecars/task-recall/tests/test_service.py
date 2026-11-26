@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from urllib.error import HTTPError
 from urllib.request import Request, build_opener, ProxyHandler
@@ -16,6 +17,37 @@ import uuid
 
 
 class ServiceTests(unittest.TestCase):
+    def test_waiting_attacher_takes_over_when_owner_exits_before_ready(self):
+        from codepet_recall.lifecycle import lock_file
+
+        with tempfile.TemporaryDirectory() as temporary:
+            data = Path(temporary)
+            root = data / "tasks/recall"
+            root.mkdir(parents=True)
+            owner = lock_file(root / "service.lock")
+            self.assertIsNotNone(owner)
+            child = subprocess.Popen(
+                [sys.executable, "-I", "-B", str(Path(__file__).resolve().parents[1] / "main.py"),
+                 "--data-dir", str(data)], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                child.stdin.write(json.dumps({"enabled":False,"fingerprint":"handover"}).encode() + b"\n")
+                child.stdin.flush()
+                # Ensure the child has reached the non-owner path, then simulate
+                # an exiting owner that never published a healthy endpoint.
+                time.sleep(0.5)
+                owner.close()
+                output = queue.Queue()
+                threading.Thread(target=lambda: output.put(child.stdout.readline()), daemon=True).start()
+                line = output.get(timeout=4)
+                self.assertTrue(json.loads(line)["owned"])
+            finally:
+                owner.close()
+                if child.poll() is None:
+                    child.kill()
+                child.wait(timeout=5)
+                for stream in (child.stdin, child.stdout, child.stderr):
+                    stream.close()
+
     def test_auth_singleton_relocation_clean_environment_and_parent_eof(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

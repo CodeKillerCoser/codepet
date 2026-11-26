@@ -410,21 +410,26 @@ pub fn run() {
                 };
                 app.manage(std::sync::Mutex::new(guard));
             }
-            let task_mcp = codepet_task_mcp::http::HttpRuntime::start_on(
-                tauri::async_runtime::handle().inner(),
-                paths::for_package(app.package_info())?.data,
-                codepet_task_mcp::http::DEFAULT_HTTP_PORT,
-            );
-            let mcp_status = task_mcp.clone();
+            let mcp_data = paths::for_package(app.package_info())?.data;
             let mcp_app = app.handle().clone();
+            let task_mcp = codepet_task_mcp::http::HttpRuntime::start_on_prepared(
+                tauri::async_runtime::handle().inner(),
+                mcp_data.clone(),
+                codepet_task_mcp::http::DEFAULT_HTTP_PORT,
+                async move {
+                    match task_mcp_setup::configuration(&mcp_app, mcp_data).await {
+                        Ok(config) => {
+                            app_log::info("task_mcp", config["command"].as_str().unwrap_or("stdio ready"));
+                            Ok(())
+                        }
+                        Err(error) => {
+                            app_log::error("task_mcp", &error);
+                            Err(error)
+                        }
+                    }
+                },
+            );
             app.manage(task_mcp);
-            tauri::async_runtime::spawn(async move {
-                let data = mcp_status.ledger().data_directory().to_owned();
-                match task_mcp_setup::configuration(&mcp_app, data).await {
-                    Ok(config) => app_log::info("task_mcp", config["command"].as_str().unwrap_or("stdio ready")),
-                    Err(error) => app_log::error("task_mcp", &error),
-                }
-            });
             let handle = app.handle().clone();
             let (provider_host_state, remote_access_runtime) =
                 match ProviderHostState::from_app(&handle) {

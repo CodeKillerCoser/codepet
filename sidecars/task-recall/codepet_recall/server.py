@@ -11,32 +11,12 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.request import Request, ProxyHandler, build_opener
 
 from .catalog import Catalog
 from .engine import Engine
 from .history import QueueConflict, read_history
 from .model_trace import attempt_id
-
-
-def lock_file(path):
-    file = open(path, "a+b")
-    try:
-        if os.name == "nt":
-            import msvcrt
-            file.seek(0)
-            if not file.read(1):
-                file.write(b"0")
-                file.flush()
-            file.seek(0)
-            msvcrt.locking(file.fileno(), msvcrt.LK_NBLCK, 1)
-        else:
-            import fcntl
-            fcntl.flock(file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        return file
-    except OSError:
-        file.close()
-        return None
+from .lifecycle import acquire_service, StartupUnavailable
 
 
 class Service:
@@ -156,24 +136,18 @@ def main():
     handshake = sys.stdout
     # Nothing from Cognee/dependencies may corrupt the one-line startup protocol.
     sys.stdout = sys.stderr
-    owner = lock_file(root / "service.lock")
-    if not owner:
-        opener = build_opener(ProxyHandler({}))
-        for _ in range(100):
-            try:
-                info = json.loads((root / "runtime.json").read_text())
-                request = Request(info["endpoint"] + "/health", headers={"Authorization":"Bearer " + info["token"]})
-                with opener.open(request, timeout=0.3) as response:
-                    if json.load(response)["protocol"] == 1:
-                        handshake.write(json.dumps({**info,"owned":False}) + "\n")
-                        handshake.flush()
-                        return
-            except Exception:
-                time.sleep(0.1)
-        raise RuntimeError("Existing recall service unavailable")
     # Sensitive runtime credentials arrive over stdin, never argv or files.
-    config_line = sys.stdin.readline(65536)
-    config = json.loads(config_line)
+    config = json.loads(sys.stdin.readline(65536))
+    try:
+        owner, info = acquire_service(root, config)
+    except StartupUnavailable as error:
+        handshake.write(json.dumps({"error":str(error)}) + "\n")
+        handshake.flush()
+        return
+    if not owner:
+        handshake.write(json.dumps({**info,"owned":False}) + "\n")
+        handshake.flush()
+        return
     service = Service(root, config)
     token = secrets.token_hex(32)
 
@@ -191,7 +165,8 @@ def main():
                 return
             try:
                 if self.command == "GET" and self.path == "/health":
-                    result = {"protocol":1,"fingerprint":config["fingerprint"],**service.catalog.status()}
+                    result = {"protocol":1,"fingerprint":config["fingerprint"],
+                              "bundleId":config.get("bundleId", ""),**service.catalog.status()}
                 elif self.command == "POST":
                     size = int(self.headers.get("Content-Length", "0"))
                     if not 0 < size <= 32 * 1024 * 1024:
@@ -234,13 +209,6 @@ def main():
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     info = {"protocol":1,"endpoint":f"http://127.0.0.1:{server.server_port}","token":token}
-    temp = root / "runtime.tmp"
-    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as file:
-        json.dump(info, file)
-    os.replace(temp, root / "runtime.json")
-    handshake.write(json.dumps({**info,"owned":True}) + "\n")
-    handshake.flush()
 
     def watch_parent():
         while sys.stdin.buffer.read(1):
@@ -248,9 +216,20 @@ def main():
         # Native model/database calls may not cancel cooperatively. Process exit
         # releases the OS lock; catalog recovers processing work on next launch.
         os._exit(0)
-    threading.Thread(target=watch_parent, daemon=True).start()
-    # Native Arrow/Pandas initialization must run on the main interpreter
-    # thread; background-thread cold imports can exceed the preview deadline.
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    async def serve():
+        # Advertise only after entering the event loop and starting HTTP. A
+        # handshake means requests can be served, not merely that a socket bound.
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        temp = root / "runtime.tmp"
+        fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as file:
+            json.dump(info, file)
+        os.replace(temp, root / "runtime.json")
+        handshake.write(json.dumps({**info,"owned":True}) + "\n")
+        handshake.flush()
+        threading.Thread(target=watch_parent, daemon=True).start()
+        await asyncio.Event().wait()
+
+    # Native Arrow/Pandas initialization must stay on the main interpreter thread.
     asyncio.set_event_loop(service.loop)
-    service.loop.run_forever()
+    service.loop.run_until_complete(serve())
