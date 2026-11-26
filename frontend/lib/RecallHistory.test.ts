@@ -34,6 +34,14 @@ test('shared global panel renders history and the pop-out opens a higher global 
   expect(document.querySelectorAll('.app-side-panel')).toHaveLength(1);
 });
 
+test('queue and processing counts have visible labels instead of ambiguous icons alone',async()=>{
+  const items=Array.from({length:15},(_,index)=>({...job,id:`00000000-0000-4000-8000-${String(index+1).padStart(12,'0')}`,state:index===14?'processing' as const:'queued' as const}));
+  vi.mocked(historyRequest).mockResolvedValueOnce({items,total:15,counts:{queued:14,processing:1},offset:0,hasMore:false});
+  component=mount(Harness,{target:document.body});button('加工历史').click();await settle();
+  const summary=document.querySelector('.history-counts')!;
+  expect([...summary.children].map(item=>item.textContent?.trim())).toEqual(['已完成 0','失败 0','排队中 14','加工中 1']);
+});
+
 test('cancellation sends the attempt id and keeps the queue card on conflict',async()=>{
   component=mount(Harness,{target:document.body});button('加工历史').click();await settle();
   vi.mocked(historyRequest).mockImplementationOnce(async()=>{throw new Error('队列已变化');});

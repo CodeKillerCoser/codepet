@@ -5,7 +5,7 @@
   import AppSidePanel from './shell/AppSidePanel.svelte';
   import RecallStatusIcon from './RecallStatusIcon.svelte';
   import RecallProcessingDetail from './RecallProcessingDetail.svelte';
-  import { completedTime, duration, historyRequest, resultLabel, tokenLabel, type ProcessingHistory, type ProcessingJob } from './recallHistory';
+  import { completedTime, duration, historyRequest, processingLabels, resultLabel, tokenLabel, type ProcessingHistory, type ProcessingJob } from './recallHistory';
   export let open = false;
   export let returnFocus: HTMLElement | undefined = undefined;
   export let onClose: () => void;
@@ -54,7 +54,7 @@
       <select aria-label="筛选加工记录" bind:value={filter} onchange={() => page = 0}>
         <option value="">全部记录</option><option value="queued">排队中</option><option value="processing">加工中</option><option value="completed">已完成</option><option value="failed">失败</option><option value="cancelled">已取消</option><option value="interrupted">已中断</option><option value="paused">已暂停</option><option value="superseded">版本已更新</option>
       </select>
-      <div class="history-counts" aria-label="加工状态汇总">{#each ['completed', 'failed', 'queued', 'processing'] as state}<span><RecallStatusIcon state={state as ProcessingJob['state']}/><span>{history?.counts[state as ProcessingJob['state']] ?? 0}</span></span>{/each}</div>
+      <div class="history-counts" aria-label="加工状态汇总">{#each ['completed', 'failed', 'queued', 'processing'] as state}<span><span aria-hidden="true"><RecallStatusIcon state={state as ProcessingJob['state']}/></span><span>{processingLabels[state as ProcessingJob['state']]} {history?.counts[state as ProcessingJob['state']] ?? 0}</span></span>{/each}</div>
       <Button variant="ghost" size="icon-sm" aria-label="刷新加工历史" title="刷新加工历史" disabled={loading || !!busy} onclick={() => load(false)}><RefreshCw size={15}/></Button>
     </div>
     {#if loading}<p class="muted" role="status">读取加工历史…</p>{/if}
@@ -77,7 +77,7 @@
 <style>
   .recall-history{min-width:0;color:var(--app-text);font-size:var(--font-size-sm)}.history-controls{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
   .recall-history :global(button){display:inline-flex;align-items:center;justify-content:center;gap:5px;min-height:28px;border:0;border-radius:6px;background:transparent;color:var(--app-text);font:inherit;padding:4px 7px;cursor:pointer;box-sizing:border-box}.recall-history :global(button:hover){background:var(--color-main-hover)}.recall-history :global(button:focus-visible){outline:2px solid var(--color-focus-ring);outline-offset:2px}.recall-history :global(button:disabled){opacity:.5;cursor:wait}.job-heading :global(button),.history-controls :global(button){width:28px;padding:4px}
-  select{font:inherit;color:var(--app-text);background:var(--app-surface);border:1px solid var(--app-border);border-radius:6px;padding:6px 8px;min-width:0;max-width:100%}.history-counts{display:flex;gap:10px;align-items:center;margin-left:auto}.history-counts>span{display:inline-flex;align-items:center;gap:4px;color:var(--app-muted);font-variant-numeric:tabular-nums}
+  select{font:inherit;color:var(--app-text);background:var(--app-surface);border:1px solid var(--app-border);border-radius:6px;padding:6px 8px;min-width:0;max-width:100%}.history-counts{display:flex;gap:10px;align-items:center;margin-left:auto;flex-wrap:wrap}.history-counts>span{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;color:var(--app-muted);font-variant-numeric:tabular-nums}.history-counts>span>span[aria-hidden]{display:inline-flex}
   .history-list{display:grid;gap:10px}.history-job{border:1px solid var(--app-border);border-radius:var(--radius-md,8px);padding:12px;min-width:0;background:var(--app-surface)}
   .job-heading{display:flex;align-items:center;gap:7px;min-width:0}.job-heading h4{font:var(--font-section);font-size:var(--font-size-md);margin:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}.job-heading :global(button){margin-left:auto;flex:none}
   .job-identity,.job-metadata{color:var(--app-muted);font-size:var(--font-size-sm);margin:5px 0 0;line-height:var(--line-height-body-compact)}.job-identity{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.job-metadata{overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
