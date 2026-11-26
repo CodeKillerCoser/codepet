@@ -30,6 +30,8 @@
 
 Host 的 recall-history/enqueue 校验 taskId 和 operationId，要求已开启模型加工，再同步权威快照。Catalog 在同一事务中检查各 Run：排队或加工中复用原项，失败退避队列立即可领取；取消项重新排队；已完成项建立新的加工记录并持久化 rebuild 标记。manual_requests 保存操作回执，网络重试及重启后的迟到重试使用同一 operationId，不重复加工。前端失败后保留操作 ID，成功后下一次主动点击使用新 ID。
 
+2026-11-27 用户确认保持总开关语义：关闭时主动加工也必须拦截；开启并保存后，所有已结束执行自动进入队列，主动按钮用于显式重建或复用已有队列。模型字段已填写不等于总开关已开启，错误提示必须指向设置页实际的“启用任务语义与图加工”，不能笼统要求重新配置模型。真实 App 的开启、旧 owner 恢复和主动入队回执验证见 [图谱空态与本机加工](../../40-runbooks/task-graph-empty-model-settings.md)。
+
 已有原生 data_id 时，rebuild 调用 Cognee update 的 chunk_level_diff=False、data_cache=False，强制该文档重新加工并保留 data_id。保持 incremental_loading 默认开启，避免将其他已完成文档一并重建；普通文档更新仍用默认增量路径。rebuild 标记跨失败、取消和重启保留，文档变更或加工成功后清除。加工不创建业务 Run、不改账本完成状态；新加工仍可取消排队并独立统计 Token。
 
 加工协程设置 ContextVar。私有 Gateway 的地址和 Bearer 均匹配时，httpx 与 httpx2 的异步发送边界附加加工 UUID；锁定的 LiteLLM 与 OpenAI SDK 分别使用这两个客户端。Gateway 校验 UUID 后用独立关联表连接实际 usage row，不把内部追踪头转发给上游。并发查询没有加工上下文，因此不会混入加工 Token；embedding 拆批逐请求归属。缺失或不完整 usage 显示未报告/部分，旧记录不显示虚假的零用量。

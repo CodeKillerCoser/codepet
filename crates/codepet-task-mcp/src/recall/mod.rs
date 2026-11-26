@@ -181,7 +181,10 @@ impl Recall {
                 uuid::Uuid::parse_str(id).map_err(|_| "任务或操作 ID 无效")?;
             }
             if !settings::read(self.ledger.data_directory())?.enabled {
-                return Err("请先在设置 → 模型配置中启用任务召回并配置模型".into());
+                return Err(
+                    "任务加工尚未启用，请在设置 → 模型配置中打开“启用任务语义与图加工”并保存"
+                        .into(),
+                );
             }
             let documents = self.documents().await?;
             if !documents

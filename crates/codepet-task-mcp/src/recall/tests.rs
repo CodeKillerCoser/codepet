@@ -100,7 +100,9 @@ async fn manual_processing_validates_ids_and_requires_enabled_models_before_star
         .await
         .unwrap_err()
         .contains("ID 无效"));
-    assert!(recall.history(json!({"action":"enqueue","taskId":uuid::Uuid::new_v4().to_string(),"operationId":operation})).await.unwrap_err().contains("模型配置"));
+    let error = recall.history(json!({"action":"enqueue","taskId":uuid::Uuid::new_v4().to_string(),"operationId":operation})).await.unwrap_err();
+    assert!(error.contains("启用任务语义与图加工"));
+    assert!(!error.contains("配置模型"));
     assert!(recall.process.lock().await.is_none());
 }
 
