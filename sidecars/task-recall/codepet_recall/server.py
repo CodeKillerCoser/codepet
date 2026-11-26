@@ -37,16 +37,22 @@ class Service:
         self.want_semantic = False
         self.busy = threading.Lock()
         self.loop = asyncio.new_event_loop()
-        threading.Thread(target=self.worker, daemon=True).start()
 
     def worker(self):
+        warmup = True
         while True:
             time.sleep(0.5)
-            if not self.config["enabled"] or not self.busy.acquire(blocking=False):
+            if (not warmup and not self.config["enabled"]) or not self.busy.acquire(blocking=False):
                 continue
             row = None
             try:
-                row = self.catalog.claim()
+                if warmup:
+                    warmup = False
+                    try:
+                        asyncio.run_coroutine_threadsafe(self.prepare_preview(), self.loop).result()
+                    except Exception as error:
+                        print("Task recall preview preparation failed: " + type(error).__name__, file=sys.stderr, flush=True)
+                row = self.catalog.claim() if self.config["enabled"] else None
                 if row:
                     future = asyncio.run_coroutine_threadsafe(self.process(row), self.loop)
                     data_id, result, graph, projected = future.result()
@@ -63,6 +69,14 @@ class Service:
                     print("Task recall processing failed: " + type(error).__name__, file=sys.stderr, flush=True)
             finally:
                 self.busy.release()
+
+    async def prepare_preview(self):
+        # Backfill old indexes without re-running extraction or inference. An
+        # existing published snapshot needs no native imports at startup.
+        if self.preview.get() is None and (self.preview.root / "dataset.json").is_file():
+            graph = await self.engine.graph()
+            if graph.get("previewVersion"):
+                self.preview.publish(self.engine.dataset, graph)
 
     async def process(self, row):
         # Capture identity in the pipeline coroutine, so concurrent SDK child tasks
@@ -295,6 +309,9 @@ def main():
         handshake.write(json.dumps({**info,"owned":True}) + "\n")
         handshake.flush()
         threading.Thread(target=watch_parent, daemon=True).start()
+        # Heavy native imports/export may block the event loop. They must only
+        # begin after the ready handshake and HTTP server have been published.
+        threading.Thread(target=service.worker, daemon=True).start()
         await asyncio.Event().wait()
 
     # Native Arrow/Pandas initialization must stay on the main interpreter thread.

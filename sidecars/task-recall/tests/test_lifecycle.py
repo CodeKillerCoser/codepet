@@ -160,6 +160,39 @@ server.Service.process = process
         self.assertNotEqual(latest["previewVersion"], snapshot["previewVersion"])
         self.assertFalse(latest["previewStatus"]["updating"])
 
+    def test_existing_index_is_backfilled_after_handshake_without_graph_request_or_models(self):
+        blocked, release = self.root / "export-started", self.root / "release-export"
+        index = self.root / "tasks/recall/indexes/lifecycle"
+        index.mkdir(parents=True)
+        (index / "dataset.json").write_text(json.dumps({"id":"existing"}))
+        _, output = self.spawn(f"""
+async def graph(self, semantic=False):
+    assert not semantic
+    server.Path({str(blocked)!r}).touch()
+    while not server.Path({str(release)!r}).exists():
+        await server.asyncio.sleep(0.01)
+    self.dataset = 'existing'
+    return {{'nodes':[{{'id':'old-index'}}], 'links':[], 'previewVersion':'backfilled'}}
+async def no_inference(*args):
+    raise AssertionError('startup must never process documents')
+server.Engine.graph = graph
+server.Engine.process = no_inference
+""")
+        info = self.hello(output)
+        self.assertEqual(self.request(info, "/health")["protocol"], 1)
+        deadline = time.monotonic() + 5
+        while not blocked.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(blocked.exists())
+        self.assertEqual(self.request(info, "/health")["ready"], 0)
+        release.touch()
+        published = index / "published/preview-graph.json"
+        deadline = time.monotonic() + 5
+        while not published.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(published.exists(), 'backfill must not depend on a /graph call')
+        self.assertEqual(self.request(info, "/graph", {})["nodes"], [{"id":"old-index"}])
+
 
 if __name__ == "__main__":
     unittest.main()

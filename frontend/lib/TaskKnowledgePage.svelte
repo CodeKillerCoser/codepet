@@ -3,11 +3,13 @@
   import { Button } from './ui/button/index';
   import { loadRecallGraph, renderRecallGraph, type GraphView } from './cogneeGraph';
   import { modelGatewayRequest, type ModelSettings } from './modelGateway';
+  import { recordPerfEvent } from './api';
   export let onModels: () => void = () => {};
   let host: HTMLDivElement;
   let view: GraphView | undefined;
   let busy = false, loaded = false, error = '';
   let processing = false;
+  let preparing = false;
   let nodes = 0, links = 0;
   let rendering = false;
   let disposed = false;
@@ -15,6 +17,8 @@
   let version: string | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let emptySettings: ModelSettings | null = null;
+  const openedAt = performance.now();
+  let firstPaintRecorded = false;
   $: modelsConfigured = !!emptySettings && [emptySettings.llm, emptySettings.embedding].every(profile => profile.endpoint.trim() && profile.model.trim()) && emptySettings.embedding.dimensions > 0;
   export let revision = 0;
   let renderedRevision = 0;
@@ -28,7 +32,7 @@
     if (!disposed) timer = setTimeout(() => {
       if (document.visibilityState === 'hidden') schedule();
       else void readGraph(true);
-    }, 5000);
+    }, preparing || !loaded ? 1000 : 5000);
   }
   async function readGraph(quiet: boolean) {
     if (checking || disposed) return;
@@ -37,6 +41,7 @@
     try {
       const graph = await loadRecallGraph(false, version);
       if (disposed) return;
+      preparing = !!graph.previewStatus?.preparing;
       processing = !!graph.previewStatus?.updating;
       if (view && graph.previewVersion && graph.previewVersion === version) return;
       if (graph.unchanged) throw new Error('图谱快照已失效，请重新读取');
@@ -62,9 +67,19 @@
       view?.destroy(); view = next;
       version = graph.previewVersion;
       nodes = graph.nodes.length; links = graph.links.length; loaded = true;
+      if (!firstPaintRecorded) {
+        firstPaintRecorded = true;
+        requestAnimationFrame(() => requestAnimationFrame(() => {
+          if (!disposed) void recordPerfEvent({name:'task_graph.first_paint',durationMs:performance.now()-openedAt,
+            fields:{nodes,links,source:graph.previewSource === 'published' ? 'published' : 'service'}}).catch(() => {});
+        }));
+      }
     } catch (cause) {
       if (!disposed) {
-        if (String(cause).includes('(409)')) processing = true;
+        if (String(cause).includes('(409)')) {
+          processing = true;
+          if (!loaded || String(cause).includes('准备图谱后台')) preparing = true;
+        }
         else error = String(cause);
       }
     } finally { if (!disposed) { checking = busy = rendering = false; schedule(); } }
@@ -79,7 +94,8 @@
 
 <section class="knowledge-page" aria-label="工作记忆" tabindex="-1">
   {#if error}<div class="notice error" role="alert">{error}{#if loaded}<Button class="graph-button" type="button" disabled={busy} onclick={refresh}>重新读取</Button>{/if}</div>{/if}
-  {#if processing}<div class="notice" role="status">后台正在加工任务记录，已完成的图谱保持可用并自动更新。{#if loaded}<Button class="graph-button" type="button" disabled={busy} onclick={refresh}>刷新图谱</Button>{/if}</div>{/if}
+  {#if preparing && loaded}<div class="notice" role="status">正在连接后台，先展示上次图谱，就绪后自动更新。</div>
+  {:else if processing}<div class="notice" role="status">后台正在加工任务记录，已完成的图谱保持可用并自动更新。{#if loaded}<Button class="graph-button" type="button" disabled={busy} onclick={refresh}>刷新图谱</Button>{/if}</div>{/if}
   {#if busy}<p class="notice" role="status">{nodes ? '正在更新图谱，当前预览保持可用…' : '正在读取真实任务图谱…'}</p>{/if}
   <div class="graph-surface" class:empty={!nodes && !rendering} bind:this={host} aria-label="Cognee 原生图预览"></div>
   {#if loaded && !nodes && !busy && !error && !processing}

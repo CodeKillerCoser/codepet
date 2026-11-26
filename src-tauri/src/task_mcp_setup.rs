@@ -3,14 +3,20 @@ use serde_json::Value;
 use std::path::PathBuf;
 
 pub(crate) async fn configuration(app: &tauri::AppHandle, data: PathBuf) -> Result<Value, String> {
+    let span = crate::app_log::PerfSpan::start("task_graph.components_ready");
     let paths = crate::paths::for_package(app.package_info()).map_err(|e| e.to_string())?;
     let source = packaged_binary(&paths.resources);
-    tauri::async_runtime::spawn_blocking(move || {
+    let result = tauri::async_runtime::spawn_blocking(move || {
         codepet_task_mcp::managed::install(&source, &paths.workspace, &data)
             .map_err(|e| e.to_string())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    match &result {
+        Ok(_) => span.finish_ok(&[]),
+        Err(_) => span.finish_error("component installation failed", &[]),
+    }
+    result
 }
 
 fn packaged_binary(resources: &std::path::Path) -> PathBuf {

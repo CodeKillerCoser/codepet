@@ -4,10 +4,12 @@ import { mount, unmount, tick } from 'svelte';
 import TaskKnowledgePage from './TaskKnowledgePage.svelte';
 import { loadRecallGraph, renderRecallGraph } from './cogneeGraph';
 import { modelGatewayRequest, type ModelConfiguration } from './modelGateway';
+import { recordPerfEvent } from './api';
 vi.mock('./cogneeGraph', () => ({loadRecallGraph:vi.fn(),renderRecallGraph:vi.fn()}));
 vi.mock('./modelGateway', () => ({modelGatewayRequest:vi.fn()}));
+vi.mock('./api', () => ({recordPerfEvent:vi.fn().mockResolvedValue(undefined)}));
 const configuration = (enabled = true): ModelConfiguration => ({settings:{enabled, llm:{endpoint:'http://127.0.0.1:11234/v1',model:'local-chat',apiKey:'',dimensions:0},embedding:{endpoint:'http://127.0.0.1:11234/v1',model:'local-embedding',apiKey:'',dimensions:1024},plainJson:false,llmExtraBody:{}},usage:{models:[]}});
-beforeEach(() => { vi.mocked(modelGatewayRequest).mockResolvedValue(configuration()); });
+beforeEach(() => { vi.mocked(modelGatewayRequest).mockResolvedValue(configuration()); vi.mocked(recordPerfEvent).mockResolvedValue(undefined); });
 const graph = {nodes:[{id:'a'},{id:'b'}],links:[{source:'a',target:'b'}]};
 let component: ReturnType<typeof mount> | undefined;
 const settle = async () => { for (let i=0;i<6;i++) { await Promise.resolve(); await tick(); } };
@@ -44,6 +46,20 @@ test('the first completed preview appears automatically while the rest keeps pro
   expect(renderRecallGraph).toHaveBeenCalledOnce();
   expect(document.body.textContent).not.toContain('正在准备首份图谱');
   expect(document.body.textContent).toContain('自动更新');
+});
+
+test('shows the published snapshot while connecting and clears startup status without redrawing',async () => {
+  vi.useFakeTimers();
+  vi.mocked(loadRecallGraph).mockResolvedValueOnce({...graph,previewVersion:'one',previewStatus:{preparing:true}})
+    .mockResolvedValue({unchanged:true,previewVersion:'one',previewStatus:{updating:false}});
+  vi.mocked(renderRecallGraph).mockResolvedValue({detail:{nodes:2,links:1},destroy:vi.fn()});
+  component=mount(TaskKnowledgePage,{target:document.body});await settle();
+  expect(document.body.textContent).toContain('先展示上次图谱');
+  await vi.advanceTimersByTimeAsync(1000);await settle();
+  expect(loadRecallGraph).toHaveBeenLastCalledWith(false,'one');
+  expect(document.body.textContent).not.toContain('先展示上次图谱');
+  expect(renderRecallGraph).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1000);expect(loadRecallGraph).toHaveBeenCalledTimes(2);
 });
 
 test('a user changing views during background rendering keeps the current renderer',async () => {

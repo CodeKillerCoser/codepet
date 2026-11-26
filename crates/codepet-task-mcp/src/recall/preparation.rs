@@ -5,6 +5,9 @@ use tokio::sync::watch;
 #[derive(Clone)]
 pub(super) struct Preparation(watch::Receiver<Option<Result<(), String>>>);
 impl Preparation {
+    pub fn pending(&self) -> bool {
+        self.0.borrow().is_none() && self.0.has_changed().is_ok()
+    }
     pub fn start(
         executor: &tokio::runtime::Handle,
         install: impl Future<Output = Result<(), String>> + Send + 'static,

@@ -1,5 +1,5 @@
 import { taskRequest } from './taskLedger';
-interface PreviewMetadata { previewVersion?: string; previewStatus?: {updating: boolean; pending: number; processing: number; ready: number} }
+interface PreviewMetadata { previewVersion?: string; previewStatus?: {preparing?: boolean; updating?: boolean; pending?: number; processing?: number; ready?: number} }
 export interface GraphSnapshot extends PreviewMetadata { nodes: {id: string; [key: string]: unknown}[]; links: {source: string; target: string; [key: string]: unknown}[]; unchanged?: false; [key: string]: unknown }
 export interface GraphUnchanged extends PreviewMetadata { unchanged: true; semanticPending?: boolean }
 export interface GraphView { detail: {nodes: number; links: number}; destroy(): void; getState?(): Record<string, unknown> }

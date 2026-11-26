@@ -1,6 +1,7 @@
 //! Host-owned recall. Canonical ledger reads never wait for model extraction.
 pub mod bundle;
 mod preparation;
+mod preview;
 mod process;
 mod snapshot;
 use codepet_model_gateway::settings;
@@ -173,6 +174,35 @@ impl Recall {
         semantic: bool,
         known_version: Option<&str>,
     ) -> Result<Value, String> {
+        let startup = self.startup.lock().unwrap().clone();
+        if startup.is_cancelled() {
+            return Err("任务召回启动已取消".into());
+        }
+        let preparing = self
+            .preparation
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|p| p.pending());
+        // First paint must not wait for a large component install or Python.
+        // Subsequent reads return to the service for current queue metadata.
+        if !semantic && (known_version.is_none() || preparing) {
+            let data = self.ledger.data_directory().to_owned();
+            let known = known_version.map(str::to_owned);
+            let cached =
+                tokio::task::spawn_blocking(move || preview::published(&data, known.as_deref()))
+                    .await
+                    .map_err(|e| e.to_string())?;
+            if startup.is_cancelled() {
+                return Err("任务召回启动已取消".into());
+            }
+            if let Some(graph) = cached {
+                return Ok(graph);
+            }
+        }
+        if preparing {
+            return Err("任务召回请求失败 (409)：正在准备图谱后台".into());
+        }
         self.request(
             "/graph",
             Some(json!({"semantic":semantic,"knownVersion":known_version})),
