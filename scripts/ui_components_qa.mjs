@@ -118,7 +118,21 @@ try {
   await page.goto('http://127.0.0.1:1449/frontend/qa/main-window.html?uiHistory');
   const history = page.getByRole('dialog', { name: '抽取历史', exact: true });
   await history.waitFor();
-  assert.equal(await history.getByRole('heading').evaluate(el => getComputedStyle(el).fontSize), '18px','Dialog headings use the shared section typography');
+  const typography = await history.getByRole('heading').evaluate(el => {
+    const reference = document.createElement('span');
+    reference.setAttribute('aria-hidden', 'true');
+    reference.style.font = 'var(--font-section)';
+    el.parentElement.append(reference);
+    const values = element => {
+      const style = getComputedStyle(element);
+      return {size: style.fontSize, weight: style.fontWeight, lineHeight: style.lineHeight};
+    };
+    const result = {actual: values(el), expected: values(reference), token: getComputedStyle(el).getPropertyValue('--font-section').trim()};
+    reference.remove();
+    return result;
+  });
+  assert.ok(typography.token, 'Shared section typography token is defined');
+  assert.deepEqual(typography.actual, typography.expected, 'Dialog headings use the shared section typography');
   assert.equal(await page.locator('.history-overlay').evaluate(el => getComputedStyle(el).backdropFilter), 'none');
   await page.keyboard.press('Escape'); await history.waitFor({ state: 'hidden' });
 

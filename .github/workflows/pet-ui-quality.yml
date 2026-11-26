@@ -1,10 +1,10 @@
 name: Pet UI quality
 on:
   pull_request:
-    paths: ['frontend/**', 'scripts/pet_*qa*', 'package*.json', 'vite.config.*', '.github/workflows/pet-ui-quality.yml']
+    paths: ['frontend/**', 'scripts/pet_*qa*', 'scripts/ui_components_qa.mjs', 'package*.json', 'vite.config.*', '.github/workflows/pet-ui-quality.yml']
   push:
     branches: [main]
-    paths: ['frontend/**', 'scripts/pet_*qa*', 'package*.json', 'vite.config.*', '.github/workflows/pet-ui-quality.yml']
+    paths: ['frontend/**', 'scripts/pet_*qa*', 'scripts/ui_components_qa.mjs', 'package*.json', 'vite.config.*', '.github/workflows/pet-ui-quality.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -48,5 +48,6 @@ jobs:
             artifacts/pet-plane-stack-qa/*.gif
             artifacts/pet-plane-stack-qa/*.jpg
             artifacts/pet-plane-stack-qa/*.html
-            artifacts/ui-refactor/after/*.png
-            artifacts/ui-refactor/results.json
+            artifacts/ui-refactor/**/after/*.png
+            artifacts/ui-refactor/**/results.json
+            artifacts/ui-refactor/**/failure*
