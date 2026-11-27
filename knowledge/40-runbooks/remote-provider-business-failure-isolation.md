@@ -24,16 +24,29 @@ Remote 原 `_connect` 在握手后 Future.wait 全部 Provider 描述，再 awai
 
 ## 验证结果与风险
 
-验证基线为 Remote `b1e6844907ff1ed37f1b382ad3f4c33c4fa9b265` 与 Host 工作树 `7a6d434e2add0daed90974755f592d2474ff86d0` 的工作区改动；都不是已发布版本。
+以下为提交前的本地验证记录，基线为 Remote `b1e6844907ff1ed37f1b382ad3f4c33c4fa9b265` 与 Host 工作树 `7a6d434e2add0daed90974755f592d2474ff86d0` 的工作区改动。正式构建与提交记录见下节。
 
 - Remote `flutter test --no-pub --reporter expanded`：529 项通过；`flutter analyze --no-pub` 无问题。新增隔离、执行失败后健康发送、超时后晚回包、卸载重装、快照/事件以及 320/1000px 键盘重试用例，另覆盖能力未知不误报不支持、成功事件读取清除局部错误。
 - Host `cargo test --manifest-path crates/Cargo.toml -p codepet-host --test manager_gateway`：59 项通过，含四种跨插件故障以及健康 Provider 发送。
 - `npm run check:source-size`：通过；Remote session、独立 parts 和测试也均低于源码尺寸上限。`git diff --check` 检查两个工作区；保留原有用户改动。
 - 只读超时不等于取消远端执行；迟到读取不回写，写入不自动重试。通道真正断开、认证拒绝、事件流错误与重连既有测试继续覆盖。
 - 新行为在手机客户端；电脑当前安装的 Provider 修复不能替代安装新版手机客户端。正式 APK 需要既有发布签名，不能用公开调试密钥替代正式签名。本地调试 APK 与真机正式安装分别记录。
-- Android arm64 Debug APK `0.1.3+4` 构建通过，buildRevision 为 `b1e6844-provider-isolation-20261127`，SHA-256 为 `eb280feb497680b8f3a61742795093d8bb625a57307613b5966672de750ab03a`。与 QA 模拟器原包的固定 Debug 证书相同，使用 `adb install -r` 保留数据覆盖安装，包元数据确认版本；没有用 adb 操作界面，也没有完成实体手机签名安装。正式发布密钥本机未配置，未生成或发布 Release 包。
+- Android arm64 Debug APK `0.1.3+4` 构建通过，buildRevision 为 `b1e6844-provider-isolation-20261127`，SHA-256 为 `eb280feb497680b8f3a61742795093d8bb625a57307613b5966672de750ab03a`。与 QA 模拟器原包的固定 Debug 证书相同，使用 `adb install -r` 保留数据覆盖安装，包元数据确认版本；没有用 adb 操作界面，也没有完成实体手机签名安装。该本地验证阶段未配置正式签名；正式构建由 GitHub Actions 的既有签名流程执行。
 
-本轮双仓库补丁、测试日志、安装元数据和 APK 保存在 `artifacts/remote-provider-isolation-20261127/`；改动未提交，补丁与当前工作树对应，不是已发布提交。
+本轮双仓库的提交前补丁快照、测试日志、安装元数据和 APK 保存在 `artifacts/remote-provider-isolation-20261127/`；补丁快照用于追溯本地验证，不代表后续主分支的完整状态。
+
+## 提交与正式构建
+
+2026-11-27，Remote 修复提交 `9b26742eacb5425099ae3f3e45660f0eb1a37391` 已推送 `codepet-remote/main`。Host 测试与规约在最新主分支基线 `9dbc7b12` 上整合为 `a22ec701bdfb8e98fafcd606c4569820c4a634b3` 并推送 `codepet/main`；整合后的 59 项 manager_gateway 测试、源码尺寸检查通过，远端 Provider protocol conformance 与 Source size 也通过。
+
+[Android Release 构建 46021601198](https://github.com/CodeKillerCoser/codepet-remote/actions/runs/46021601198) 成功，构建 headSha 与 Remote 修复提交完全一致。使用仓库既有签名 secrets，下载后的 APK 经 `apksigner verify --print-certs` 和 `aapt dump badging` 核对：
+
+- 包名 `com.codepet.remote`，版本 `0.1.3+4`，Release APK 114363130 字节。
+- APK SHA-256：`4fe3344aa2b0ec475893d6aa706be5d2617e6735ca2fc41d355cbfe40dfa0368`。
+- 正式证书 SHA-256：`cee49b08b2bf2e20b1b862c1953782e4709615420dd4c7b5b2e5ab9e040e2665`，与本地 Debug 证书不同。
+- [构建产物](https://github.com/CodeKillerCoser/codepet-remote/actions/runs/46021601198/artifacts/15207954646) 保留至 2026-12-11；本地副本与核验元数据保存在上述 artifacts 目录的 `codepet-remote-0.1.3-4-9b26742-release.apk` 与 `release-apk.json`。
+
+正式包尚未安装至实体手机；手机网络、后台挂起和签名升级兼容性仍按下节验收。
 
 ## 回归防线与未知项
 
