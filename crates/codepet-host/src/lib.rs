@@ -12,6 +12,7 @@ mod recent_conversations;
 mod device;
 mod error;
 mod gateway;
+mod terminal;
 mod providers;
 mod remote;
 mod storage;

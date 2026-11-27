@@ -696,10 +696,22 @@ pub struct ProtocolDescribeResponse {
     pub features: Vec<ProtocolFeature>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProtocolFeature {
-    #[serde(rename = "trace-context-v1")]
     TraceContextV1,
+    TerminalPtyV1,
+    Unrecognized(String),
+}
+impl Serialize for ProtocolFeature {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(match self { Self::TraceContextV1 => "trace-context-v1", Self::TerminalPtyV1 => "terminal-pty-v1", Self::Unrecognized(raw) => raw })
+    }
+}
+impl<'de> Deserialize<'de> for ProtocolFeature {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = String::deserialize(deserializer)?;
+        Ok(match raw.as_str() { "trace-context-v1" => Self::TraceContextV1, "terminal-pty-v1" => Self::TerminalPtyV1, _ => Self::Unrecognized(raw) })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -815,6 +827,88 @@ pub struct ProviderSummary {
     pub plugin_id: Option<ProviderPluginId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub features: Option<Vec<ProviderFeature>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalCloseRequest {
+    pub terminal_id: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalCloseResponse {
+
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalOpenRequest {
+    pub session_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    pub columns: u64,
+    pub rows: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalOpenResponse {
+    pub session: TerminalSession,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalReadRequest {
+    pub terminal_id: String,
+    pub offset: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalReadResponse {
+    pub data: String,
+    pub next_offset: u64,
+    pub exited: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalResizeRequest {
+    pub terminal_id: String,
+    pub columns: u64,
+    pub rows: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalResizeResponse {
+
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalSession {
+    pub terminal_id: String,
+    pub cwd: String,
+    pub shell: String,
+    pub exited: bool,
+    pub columns: u64,
+    pub rows: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalWriteRequest {
+    pub terminal_id: String,
+    pub sequence: u64,
+    pub data: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalWriteResponse {
+
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1006,7 +1100,8 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
   "gateway:ProtocolFeature": {
     "type": "string",
     "enum": [
-      "trace-context-v1"
+      "trace-context-v1",
+      "terminal-pty-v1"
     ]
   },
   "gateway:ProtocolDescribeRequest": {
@@ -2719,6 +2814,211 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
     "required": [
       "notice"
     ],
+    "additionalProperties": true
+  },
+  "gateway:TerminalSession": {
+    "type": "object",
+    "properties": {
+      "terminalId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "cwd": {
+        "type": "string"
+      },
+      "shell": {
+        "type": "string"
+      },
+      "exited": {
+        "type": "boolean"
+      },
+      "columns": {
+        "type": "integer",
+        "minimum": 2,
+        "maximum": 500
+      },
+      "rows": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 300
+      }
+    },
+    "required": [
+      "terminalId",
+      "cwd",
+      "shell",
+      "exited",
+      "columns",
+      "rows"
+    ],
+    "additionalProperties": true
+  },
+  "gateway:TerminalOpenRequest": {
+    "type": "object",
+    "properties": {
+      "sessionKey": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256
+      },
+      "cwd": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 4096
+      },
+      "columns": {
+        "type": "integer",
+        "minimum": 2,
+        "maximum": 500
+      },
+      "rows": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 300
+      }
+    },
+    "required": [
+      "sessionKey",
+      "columns",
+      "rows"
+    ],
+    "additionalProperties": true
+  },
+  "gateway:TerminalOpenResponse": {
+    "type": "object",
+    "properties": {
+      "session": {
+        "ref": "gateway:TerminalSession"
+      }
+    },
+    "required": [
+      "session"
+    ],
+    "additionalProperties": true
+  },
+  "gateway:TerminalReadRequest": {
+    "type": "object",
+    "properties": {
+      "terminalId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "offset": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "required": [
+      "terminalId",
+      "offset"
+    ],
+    "additionalProperties": true
+  },
+  "gateway:TerminalReadResponse": {
+    "type": "object",
+    "properties": {
+      "data": {
+        "type": "string",
+        "maxLength": 43692
+      },
+      "nextOffset": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "exited": {
+        "type": "boolean"
+      }
+    },
+    "required": [
+      "data",
+      "nextOffset",
+      "exited"
+    ],
+    "additionalProperties": true
+  },
+  "gateway:TerminalWriteRequest": {
+    "type": "object",
+    "properties": {
+      "terminalId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "sequence": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "data": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 21848
+      }
+    },
+    "required": [
+      "terminalId",
+      "sequence",
+      "data"
+    ],
+    "additionalProperties": true
+  },
+  "gateway:TerminalWriteResponse": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": true
+  },
+  "gateway:TerminalResizeRequest": {
+    "type": "object",
+    "properties": {
+      "terminalId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      },
+      "columns": {
+        "type": "integer",
+        "minimum": 2,
+        "maximum": 500
+      },
+      "rows": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 300
+      }
+    },
+    "required": [
+      "terminalId",
+      "columns",
+      "rows"
+    ],
+    "additionalProperties": true
+  },
+  "gateway:TerminalResizeResponse": {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": true
+  },
+  "gateway:TerminalCloseRequest": {
+    "type": "object",
+    "properties": {
+      "terminalId": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 128
+      }
+    },
+    "required": [
+      "terminalId"
+    ],
+    "additionalProperties": true
+  },
+  "gateway:TerminalCloseResponse": {
+    "type": "object",
+    "properties": {},
+    "required": [],
     "additionalProperties": true
   },
   "core:ConnectionStatus": {
@@ -6082,7 +6382,7 @@ fn validate_payload(name: &str, value: &serde_json::Value, allow_unknown: bool) 
     codepet_core_sdk::validate_protocol_value(schemas, name, value, allow_unknown)
 }
 fn validate_request_params(method: &str, value: &serde_json::Value) -> Result<(), ProtocolError> {
-    match method { "protocol.ping" => validate_payload("gateway:PingRequest",value,false), "protocol.handshake" => validate_payload("gateway:HandshakeRequest",value,false), "protocol.describe" => validate_payload("gateway:ProtocolDescribeRequest",value,false), "event.subscribe" => validate_payload("gateway:EventSubscribeRequest",value,false), "provider.list" => validate_payload("gateway:ProviderListRequest",value,false), "provider.describe" => validate_payload("gateway:ProviderDescribeRequest",value,false), "project.list" => validate_payload("gateway:ProjectListRequest",value,false), "project.get" => validate_payload("gateway:ProjectGetRequest",value,false), "project.create" => validate_payload("gateway:ProjectCreateRequest",value,false), "project.update" => validate_payload("gateway:ProjectUpdateRequest",value,false), "project.delete" => validate_payload("gateway:ProjectDeleteRequest",value,false), "conversation.releaseInteraction" => validate_payload("gateway:ConversationReleaseInteractionRequest",value,false), "conversation.recent" => validate_payload("gateway:ConversationRecentRequest",value,false), "conversation.list" => validate_payload("gateway:ConversationListRequest",value,false), "conversation.search" => validate_payload("gateway:ConversationSearchRequest",value,false), "conversation.get" => validate_payload("gateway:ConversationGetRequest",value,false), "conversation.markRead" => validate_payload("gateway:ConversationMarkReadRequest",value,false), "conversation.acquireInteraction" => validate_payload("gateway:ConversationAcquireInteractionRequest",value,false), "conversation.resume" => validate_payload("gateway:ConversationResumeRequest",value,false), "conversation.create" => validate_payload("gateway:ConversationCreateRequest",value,false), "conversation.inputQueue.get" => validate_payload("gateway:InputQueueGetRequest",value,false), "conversation.inputQueue.enqueue" => validate_payload("gateway:InputQueueEnqueueRequest",value,false), "conversation.inputQueue.withdraw" => validate_payload("gateway:InputQueueWithdrawRequest",value,false), "conversation.inputQueue.steer" => validate_payload("gateway:InputQueueSteerRequest",value,false), "conversation.inputQueue.resume" => validate_payload("gateway:InputQueueResumeRequest",value,false), "conversation.inputQueue.acknowledgeEdit" => validate_payload("gateway:InputQueueAcknowledgeEditRequest",value,false), "turn.steer" => validate_payload("gateway:TurnSteerRequest",value,false), "turn.send" => validate_payload("gateway:TurnSendRequest",value,false), "turn.interrupt" => validate_payload("gateway:TurnInterruptRequest",value,false), "approval.resolve" => validate_payload("gateway:ApprovalResolveRequest",value,false), "codepet.usage.query" => validate_payload("gateway:UsageQueryRequest",value,false), "notice.list" => validate_payload("gateway:NoticeListRequest",value,false), "notice.get" => validate_payload("gateway:NoticeGetRequest",value,false), "notice.action.execute" => validate_payload("gateway:NoticeActionRequest",value,false), "notice.source.setEnabled" => validate_payload("gateway:NoticeSourceSetEnabledRequest",value,false), _ => Ok(()) }
+    match method { "protocol.ping" => validate_payload("gateway:PingRequest",value,false), "protocol.handshake" => validate_payload("gateway:HandshakeRequest",value,false), "protocol.describe" => validate_payload("gateway:ProtocolDescribeRequest",value,false), "event.subscribe" => validate_payload("gateway:EventSubscribeRequest",value,false), "provider.list" => validate_payload("gateway:ProviderListRequest",value,false), "provider.describe" => validate_payload("gateway:ProviderDescribeRequest",value,false), "project.list" => validate_payload("gateway:ProjectListRequest",value,false), "project.get" => validate_payload("gateway:ProjectGetRequest",value,false), "project.create" => validate_payload("gateway:ProjectCreateRequest",value,false), "project.update" => validate_payload("gateway:ProjectUpdateRequest",value,false), "project.delete" => validate_payload("gateway:ProjectDeleteRequest",value,false), "conversation.releaseInteraction" => validate_payload("gateway:ConversationReleaseInteractionRequest",value,false), "conversation.recent" => validate_payload("gateway:ConversationRecentRequest",value,false), "conversation.list" => validate_payload("gateway:ConversationListRequest",value,false), "conversation.search" => validate_payload("gateway:ConversationSearchRequest",value,false), "conversation.get" => validate_payload("gateway:ConversationGetRequest",value,false), "conversation.markRead" => validate_payload("gateway:ConversationMarkReadRequest",value,false), "conversation.acquireInteraction" => validate_payload("gateway:ConversationAcquireInteractionRequest",value,false), "conversation.resume" => validate_payload("gateway:ConversationResumeRequest",value,false), "conversation.create" => validate_payload("gateway:ConversationCreateRequest",value,false), "conversation.inputQueue.get" => validate_payload("gateway:InputQueueGetRequest",value,false), "conversation.inputQueue.enqueue" => validate_payload("gateway:InputQueueEnqueueRequest",value,false), "conversation.inputQueue.withdraw" => validate_payload("gateway:InputQueueWithdrawRequest",value,false), "conversation.inputQueue.steer" => validate_payload("gateway:InputQueueSteerRequest",value,false), "conversation.inputQueue.resume" => validate_payload("gateway:InputQueueResumeRequest",value,false), "conversation.inputQueue.acknowledgeEdit" => validate_payload("gateway:InputQueueAcknowledgeEditRequest",value,false), "turn.steer" => validate_payload("gateway:TurnSteerRequest",value,false), "turn.send" => validate_payload("gateway:TurnSendRequest",value,false), "turn.interrupt" => validate_payload("gateway:TurnInterruptRequest",value,false), "approval.resolve" => validate_payload("gateway:ApprovalResolveRequest",value,false), "codepet.usage.query" => validate_payload("gateway:UsageQueryRequest",value,false), "notice.list" => validate_payload("gateway:NoticeListRequest",value,false), "notice.get" => validate_payload("gateway:NoticeGetRequest",value,false), "notice.action.execute" => validate_payload("gateway:NoticeActionRequest",value,false), "notice.source.setEnabled" => validate_payload("gateway:NoticeSourceSetEnabledRequest",value,false), "terminal.open" => validate_payload("gateway:TerminalOpenRequest",value,false), "terminal.read" => validate_payload("gateway:TerminalReadRequest",value,false), "terminal.write" => validate_payload("gateway:TerminalWriteRequest",value,false), "terminal.resize" => validate_payload("gateway:TerminalResizeRequest",value,false), "terminal.close" => validate_payload("gateway:TerminalCloseRequest",value,false), _ => Ok(()) }
 }
 fn validate_event_params(method: &str, value: &serde_json::Value) -> Result<(), ProtocolError> {
     match method { "provider.changed" => validate_payload("gateway:ProviderChangedEvent",&value["payload"],true), "provider.removed" => validate_payload("gateway:ProviderRemovedEvent",&value["payload"],true), "project.changed" => validate_payload("gateway:ProjectChangedEvent",&value["payload"],true), "conversation.recentChanged" => validate_payload("gateway:ConversationRecentChangedEvent",&value["payload"],true), "conversation.upserted" => validate_payload("gateway:ConversationUpsertedEvent",&value["payload"],true), "conversation.itemUpserted" => validate_payload("gateway:ConversationItemUpsertedEvent",&value["payload"],true), "conversation.activityChanged" => validate_payload("gateway:ConversationActivityChangedEvent",&value["payload"],true), "conversation.inputQueueChanged" => validate_payload("gateway:InputQueueChangedEvent",&value["payload"],true), "turn.upserted" => validate_payload("gateway:TurnUpsertedEvent",&value["payload"],true), "turn.outputDelta" => validate_payload("gateway:TurnOutputDeltaEvent",&value["payload"],true), "approval.requested" => validate_payload("gateway:ApprovalRequestedEvent",&value["payload"],true), "approval.resolved" => validate_payload("gateway:ApprovalResolvedEvent",&value["payload"],true), "notice.changed" => validate_payload("gateway:NoticeChangedEvent",&value["payload"],true), _ => Ok(()) }
@@ -6166,6 +6466,16 @@ pub enum ProtocolMethod {
     NoticeActionExecute,
     #[serde(rename = "notice.source.setEnabled")]
     NoticeSourceSetEnabled,
+    #[serde(rename = "terminal.open")]
+    TerminalOpen,
+    #[serde(rename = "terminal.read")]
+    TerminalRead,
+    #[serde(rename = "terminal.write")]
+    TerminalWrite,
+    #[serde(rename = "terminal.resize")]
+    TerminalResize,
+    #[serde(rename = "terminal.close")]
+    TerminalClose,
 }
 
 impl ProtocolMethod {
@@ -6206,6 +6516,11 @@ impl ProtocolMethod {
             Self::NoticeGet => "notice.get",
             Self::NoticeActionExecute => "notice.action.execute",
             Self::NoticeSourceSetEnabled => "notice.source.setEnabled",
+            Self::TerminalOpen => "terminal.open",
+            Self::TerminalRead => "terminal.read",
+            Self::TerminalWrite => "terminal.write",
+            Self::TerminalResize => "terminal.resize",
+            Self::TerminalClose => "terminal.close",
         }
     }
 
@@ -6246,6 +6561,11 @@ impl ProtocolMethod {
             Self::NoticeGet => ProtocolDispatchLane::Normal,
             Self::NoticeActionExecute => ProtocolDispatchLane::Normal,
             Self::NoticeSourceSetEnabled => ProtocolDispatchLane::Normal,
+            Self::TerminalOpen => ProtocolDispatchLane::Normal,
+            Self::TerminalRead => ProtocolDispatchLane::Normal,
+            Self::TerminalWrite => ProtocolDispatchLane::Normal,
+            Self::TerminalResize => ProtocolDispatchLane::Normal,
+            Self::TerminalClose => ProtocolDispatchLane::Normal,
         }
     }
 
@@ -6286,6 +6606,11 @@ impl ProtocolMethod {
             Self::NoticeGet => None,
             Self::NoticeActionExecute => None,
             Self::NoticeSourceSetEnabled => None,
+            Self::TerminalOpen => None,
+            Self::TerminalRead => None,
+            Self::TerminalWrite => None,
+            Self::TerminalResize => None,
+            Self::TerminalClose => None,
         }
     }
 
@@ -6326,6 +6651,11 @@ impl ProtocolMethod {
             Self::NoticeGet => "clientToGateway",
             Self::NoticeActionExecute => "clientToGateway",
             Self::NoticeSourceSetEnabled => "clientToGateway",
+            Self::TerminalOpen => "clientToGateway",
+            Self::TerminalRead => "clientToGateway",
+            Self::TerminalWrite => "clientToGateway",
+            Self::TerminalResize => "clientToGateway",
+            Self::TerminalClose => "clientToGateway",
         }
     }
 }
@@ -6370,6 +6700,11 @@ impl std::str::FromStr for ProtocolMethod {
             "notice.get" => Ok(Self::NoticeGet),
             "notice.action.execute" => Ok(Self::NoticeActionExecute),
             "notice.source.setEnabled" => Ok(Self::NoticeSourceSetEnabled),
+            "terminal.open" => Ok(Self::TerminalOpen),
+            "terminal.read" => Ok(Self::TerminalRead),
+            "terminal.write" => Ok(Self::TerminalWrite),
+            "terminal.resize" => Ok(Self::TerminalResize),
+            "terminal.close" => Ok(Self::TerminalClose),
             _ => Err(()),
         }
     }
@@ -6668,6 +7003,36 @@ pub enum ProtocolRequest {
         id: RequestId,
         params: NoticeSourceSetEnabledRequest,
     },
+    #[serde(rename = "terminal.open")]
+    TerminalOpen {
+        jsonrpc: String,
+        id: RequestId,
+        params: TerminalOpenRequest,
+    },
+    #[serde(rename = "terminal.read")]
+    TerminalRead {
+        jsonrpc: String,
+        id: RequestId,
+        params: TerminalReadRequest,
+    },
+    #[serde(rename = "terminal.write")]
+    TerminalWrite {
+        jsonrpc: String,
+        id: RequestId,
+        params: TerminalWriteRequest,
+    },
+    #[serde(rename = "terminal.resize")]
+    TerminalResize {
+        jsonrpc: String,
+        id: RequestId,
+        params: TerminalResizeRequest,
+    },
+    #[serde(rename = "terminal.close")]
+    TerminalClose {
+        jsonrpc: String,
+        id: RequestId,
+        params: TerminalCloseRequest,
+    },
 }
 
 impl ProtocolRequest {
@@ -6854,6 +7219,31 @@ impl ProtocolRequest {
                 id,
                 params: serde_json::from_value(params).map_err(|error| codec_error("decode notice.source.setEnabled request params", error))?,
             }),
+            ProtocolMethod::TerminalOpen => Ok(Self::TerminalOpen {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode terminal.open request params", error))?,
+            }),
+            ProtocolMethod::TerminalRead => Ok(Self::TerminalRead {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode terminal.read request params", error))?,
+            }),
+            ProtocolMethod::TerminalWrite => Ok(Self::TerminalWrite {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode terminal.write request params", error))?,
+            }),
+            ProtocolMethod::TerminalResize => Ok(Self::TerminalResize {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode terminal.resize request params", error))?,
+            }),
+            ProtocolMethod::TerminalClose => Ok(Self::TerminalClose {
+                jsonrpc,
+                id,
+                params: serde_json::from_value(params).map_err(|error| codec_error("decode terminal.close request params", error))?,
+            }),
         }
     }
 
@@ -6894,6 +7284,11 @@ impl ProtocolRequest {
             Self::NoticeGet { jsonrpc, .. } => jsonrpc,
             Self::NoticeActionExecute { jsonrpc, .. } => jsonrpc,
             Self::NoticeSourceSetEnabled { jsonrpc, .. } => jsonrpc,
+            Self::TerminalOpen { jsonrpc, .. } => jsonrpc,
+            Self::TerminalRead { jsonrpc, .. } => jsonrpc,
+            Self::TerminalWrite { jsonrpc, .. } => jsonrpc,
+            Self::TerminalResize { jsonrpc, .. } => jsonrpc,
+            Self::TerminalClose { jsonrpc, .. } => jsonrpc,
         }
     }
 
@@ -6934,6 +7329,11 @@ impl ProtocolRequest {
             Self::NoticeGet { id, .. } => id,
             Self::NoticeActionExecute { id, .. } => id,
             Self::NoticeSourceSetEnabled { id, .. } => id,
+            Self::TerminalOpen { id, .. } => id,
+            Self::TerminalRead { id, .. } => id,
+            Self::TerminalWrite { id, .. } => id,
+            Self::TerminalResize { id, .. } => id,
+            Self::TerminalClose { id, .. } => id,
         }
     }
 
@@ -6974,6 +7374,11 @@ impl ProtocolRequest {
             Self::NoticeGet { .. } => ProtocolMethod::NoticeGet,
             Self::NoticeActionExecute { .. } => ProtocolMethod::NoticeActionExecute,
             Self::NoticeSourceSetEnabled { .. } => ProtocolMethod::NoticeSourceSetEnabled,
+            Self::TerminalOpen { .. } => ProtocolMethod::TerminalOpen,
+            Self::TerminalRead { .. } => ProtocolMethod::TerminalRead,
+            Self::TerminalWrite { .. } => ProtocolMethod::TerminalWrite,
+            Self::TerminalResize { .. } => ProtocolMethod::TerminalResize,
+            Self::TerminalClose { .. } => ProtocolMethod::TerminalClose,
         }
     }
 }
@@ -7390,6 +7795,26 @@ pub trait ProtocolServer: Send + Sync {
     fn notice_source_set_enabled<'a>(&'a self, _request: NoticeSourceSetEnabledRequest) -> ProtocolFuture<'a, NoticeSourceSetEnabledResponse> {
         Box::pin(async { Err(method_not_implemented("notice.source.setEnabled")) })
     }
+
+    fn terminal_open<'a>(&'a self, _request: TerminalOpenRequest) -> ProtocolFuture<'a, TerminalOpenResponse> {
+        Box::pin(async { Err(method_not_implemented("terminal.open")) })
+    }
+
+    fn terminal_read<'a>(&'a self, _request: TerminalReadRequest) -> ProtocolFuture<'a, TerminalReadResponse> {
+        Box::pin(async { Err(method_not_implemented("terminal.read")) })
+    }
+
+    fn terminal_write<'a>(&'a self, _request: TerminalWriteRequest) -> ProtocolFuture<'a, TerminalWriteResponse> {
+        Box::pin(async { Err(method_not_implemented("terminal.write")) })
+    }
+
+    fn terminal_resize<'a>(&'a self, _request: TerminalResizeRequest) -> ProtocolFuture<'a, TerminalResizeResponse> {
+        Box::pin(async { Err(method_not_implemented("terminal.resize")) })
+    }
+
+    fn terminal_close<'a>(&'a self, _request: TerminalCloseRequest) -> ProtocolFuture<'a, TerminalCloseResponse> {
+        Box::pin(async { Err(method_not_implemented("terminal.close")) })
+    }
 }
 
 fn method_not_implemented(method: &str) -> ProtocolError {
@@ -7745,6 +8170,56 @@ pub async fn dispatch<S: ProtocolServer + ?Sized>(server: &S, request: ProtocolR
         },
         ProtocolRequest::NoticeSourceSetEnabled { jsonrpc, id, params } => {
             let response = match server.notice_source_set_enabled(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::TerminalOpen { jsonrpc, id, params } => {
+            let response = match server.terminal_open(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::TerminalRead { jsonrpc, id, params } => {
+            let response = match server.terminal_read(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::TerminalWrite { jsonrpc, id, params } => {
+            let response = match server.terminal_write(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::TerminalResize { jsonrpc, id, params } => {
+            let response = match server.terminal_resize(params).await {
+                Ok(result) => match serde_json::to_value(result) {
+                    Ok(result) => JsonRpcResponsePayload::Ok { result },
+                    Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
+                },
+                Err(error) => JsonRpcResponsePayload::Error { error: rpc_method_error(error) },
+            };
+            JsonRpcResponse { jsonrpc, id: Some(id), response }
+        },
+        ProtocolRequest::TerminalClose { jsonrpc, id, params } => {
+            let response = match server.terminal_close(params).await {
                 Ok(result) => match serde_json::to_value(result) {
                     Ok(result) => JsonRpcResponsePayload::Ok { result },
                     Err(error) => JsonRpcResponsePayload::Error { error: rpc_codec_error("encode response result", error) },
@@ -8146,6 +8621,56 @@ impl<T: ProtocolTransport> ProtocolClient<T> {
             validate_request_params("notice.source.setEnabled", &params)?;
             let result = self.transport.request(ProtocolMethod::NoticeSourceSetEnabled, params).await?;
             validate_payload("gateway:NoticeSourceSetEnabledResponse", &result, true)?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn terminal_open<'a>(&'a self, request: TerminalOpenRequest) -> ProtocolFuture<'a, TerminalOpenResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            validate_request_params("terminal.open", &params)?;
+            let result = self.transport.request(ProtocolMethod::TerminalOpen, params).await?;
+            validate_payload("gateway:TerminalOpenResponse", &result, true)?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn terminal_read<'a>(&'a self, request: TerminalReadRequest) -> ProtocolFuture<'a, TerminalReadResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            validate_request_params("terminal.read", &params)?;
+            let result = self.transport.request(ProtocolMethod::TerminalRead, params).await?;
+            validate_payload("gateway:TerminalReadResponse", &result, true)?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn terminal_write<'a>(&'a self, request: TerminalWriteRequest) -> ProtocolFuture<'a, TerminalWriteResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            validate_request_params("terminal.write", &params)?;
+            let result = self.transport.request(ProtocolMethod::TerminalWrite, params).await?;
+            validate_payload("gateway:TerminalWriteResponse", &result, true)?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn terminal_resize<'a>(&'a self, request: TerminalResizeRequest) -> ProtocolFuture<'a, TerminalResizeResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            validate_request_params("terminal.resize", &params)?;
+            let result = self.transport.request(ProtocolMethod::TerminalResize, params).await?;
+            validate_payload("gateway:TerminalResizeResponse", &result, true)?;
+            serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
+        })
+    }
+
+    pub fn terminal_close<'a>(&'a self, request: TerminalCloseRequest) -> ProtocolFuture<'a, TerminalCloseResponse> {
+        Box::pin(async move {
+            let params = serde_json::to_value(request).map_err(|error| codec_error("encode request params", error))?;
+            validate_request_params("terminal.close", &params)?;
+            let result = self.transport.request(ProtocolMethod::TerminalClose, params).await?;
+            validate_payload("gateway:TerminalCloseResponse", &result, true)?;
             serde_json::from_value(result).map_err(|error| codec_error("decode response result", error))
         })
     }

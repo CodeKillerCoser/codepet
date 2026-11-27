@@ -39,6 +39,7 @@ url = "2"
 jsonschema = { version = "0.61.2", default-features = false }
 x509-parser = { version = "0.18", features = ["verify"] }
 yawc = { version = "=0.2.0", default-features = false, features = ["axum"] }
+portable-pty = "0.9.0"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock"] }
@@ -54,3 +55,7 @@ tokio-tungstenite = "0.24"
 [[bin]]
 name = "codepet-host-fake-provider"
 path = "tests/fixtures/fake_provider.rs"
+
+[[bin]]
+name = "codepet-host-terminal-probe"
+path = "tests/fixtures/terminal_probe.rs"

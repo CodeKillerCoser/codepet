@@ -123,7 +123,8 @@
     "ProtocolFeature": {
       "type": "string",
       "enum": [
-        "trace-context-v1"
+        "trace-context-v1",
+        "terminal-pty-v1"
       ],
       "description": "ProtocolFeature 的允许取值；调用方必须按枚举处理。"
     },
@@ -2019,6 +2020,244 @@
       "required": [
         "notice"
       ],
+      "additionalProperties": true
+    },
+    "TerminalSession": {
+      "type": "object",
+      "description": "Host持有的真实PTY会话；面板关闭不结束该会话。",
+      "properties": {
+        "terminalId": {
+          "type": "string",
+          "description": "Host生成的不透明终端会话ID。",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "cwd": {
+          "type": "string",
+          "description": "真实启动目录。"
+        },
+        "shell": {
+          "type": "string",
+          "description": "实际使用的shell可执行路径。"
+        },
+        "exited": {
+          "type": "boolean",
+          "description": "进程是否退出。"
+        },
+        "columns": {
+          "type": "integer",
+          "description": "终端列数。",
+          "minimum": 2,
+          "maximum": 500
+        },
+        "rows": {
+          "type": "integer",
+          "description": "终端行数。",
+          "minimum": 1,
+          "maximum": 300
+        }
+      },
+      "required": [
+        "terminalId",
+        "cwd",
+        "shell",
+        "exited",
+        "columns",
+        "rows"
+      ],
+      "additionalProperties": true
+    },
+    "TerminalOpenRequest": {
+      "type": "object",
+      "description": "按客户端与sessionKey幂等打开或重新附着PTY，不自动重放输入。",
+      "properties": {
+        "sessionKey": {
+          "type": "string",
+          "description": "客户端为本次终端生命周期生成的稳定键。",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "cwd": {
+          "type": "string",
+          "description": "可选的电脑绝对工作目录；缺省为用户主目录。",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "columns": {
+          "type": "integer",
+          "description": "终端列数。",
+          "minimum": 2,
+          "maximum": 500
+        },
+        "rows": {
+          "type": "integer",
+          "description": "终端行数。",
+          "minimum": 1,
+          "maximum": 300
+        }
+      },
+      "required": [
+        "sessionKey",
+        "columns",
+        "rows"
+      ],
+      "additionalProperties": true
+    },
+    "TerminalOpenResponse": {
+      "type": "object",
+      "description": "已创建或复用的终端会话。",
+      "properties": {
+        "session": {
+          "$ref": "#/$defs/TerminalSession"
+        }
+      },
+      "required": [
+        "session"
+      ],
+      "additionalProperties": true
+    },
+    "TerminalReadRequest": {
+      "type": "object",
+      "description": "从明确的字节偏移读取原始PTY输出；短轮询不等待shell完成。",
+      "properties": {
+        "terminalId": {
+          "type": "string",
+          "description": "Host生成的不透明终端会话ID。",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "offset": {
+          "type": "integer",
+          "description": "已消费的输出字节数；重试相同偏移不会丢数据。",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "terminalId",
+        "offset"
+      ],
+      "additionalProperties": true
+    },
+    "TerminalReadResponse": {
+      "type": "object",
+      "description": "原样二进制输出；不可去除ANSI或按日志行重组。",
+      "properties": {
+        "data": {
+          "type": "string",
+          "description": "PTY原始字节的标准base64，每次至多32KiB。",
+          "maxLength": 43692
+        },
+        "nextOffset": {
+          "type": "integer",
+          "description": "本次数据之后的字节偏移。",
+          "minimum": 0
+        },
+        "exited": {
+          "type": "boolean",
+          "description": "PTY读取结束且子进程已回收。"
+        }
+      },
+      "required": [
+        "data",
+        "nextOffset",
+        "exited"
+      ],
+      "additionalProperties": true
+    },
+    "TerminalWriteRequest": {
+      "type": "object",
+      "description": "按递增序号发送终端输入，重复的相同输入可确认，禁止重放不同内容。",
+      "properties": {
+        "terminalId": {
+          "type": "string",
+          "description": "Host生成的不透明终端会话ID。",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "sequence": {
+          "type": "integer",
+          "description": "本会话输入序号，从1开始。",
+          "minimum": 1
+        },
+        "data": {
+          "type": "string",
+          "description": "原始输入字节的标准base64，至多16KiB。",
+          "minLength": 1,
+          "maxLength": 21848
+        }
+      },
+      "required": [
+        "terminalId",
+        "sequence",
+        "data"
+      ],
+      "additionalProperties": true
+    },
+    "TerminalWriteResponse": {
+      "type": "object",
+      "description": "输入已写入PTY的确认，不代表shell命令执行完成。",
+      "properties": {},
+      "required": [],
+      "additionalProperties": true
+    },
+    "TerminalResizeRequest": {
+      "type": "object",
+      "description": "更新同一PTY窗口尺寸，交由系统通知前台程序。",
+      "properties": {
+        "terminalId": {
+          "type": "string",
+          "description": "Host生成的不透明终端会话ID。",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "columns": {
+          "type": "integer",
+          "description": "终端列数。",
+          "minimum": 2,
+          "maximum": 500
+        },
+        "rows": {
+          "type": "integer",
+          "description": "终端行数。",
+          "minimum": 1,
+          "maximum": 300
+        }
+      },
+      "required": [
+        "terminalId",
+        "columns",
+        "rows"
+      ],
+      "additionalProperties": true
+    },
+    "TerminalResizeResponse": {
+      "type": "object",
+      "description": "PTY尺寸更新完成。",
+      "properties": {},
+      "required": [],
+      "additionalProperties": true
+    },
+    "TerminalCloseRequest": {
+      "type": "object",
+      "description": "显式终止并释放本客户端的PTY会话。",
+      "properties": {
+        "terminalId": {
+          "type": "string",
+          "description": "Host生成的不透明终端会话ID。",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "terminalId"
+      ],
+      "additionalProperties": true
+    },
+    "TerminalCloseResponse": {
+      "type": "object",
+      "description": "PTY会话已关闭；重复关闭同一会话安全。",
+      "properties": {},
+      "required": [],
       "additionalProperties": true
     }
   }

@@ -104,6 +104,11 @@
       "schema": "notice/messages.schema.json",
       "methods": "notice/methods.json",
       "events": "notice/events.json"
+    },
+    {
+      "id": "terminal",
+      "schema": "terminal/messages.schema.json",
+      "methods": "terminal/methods.json"
     }
   ],
   "compatibility": {

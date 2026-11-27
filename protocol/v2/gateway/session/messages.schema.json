@@ -132,7 +132,8 @@
     "ProtocolFeature": {
       "type": "string",
       "enum": [
-        "trace-context-v1"
+        "trace-context-v1",
+        "terminal-pty-v1"
       ],
       "description": "ProtocolFeature 的允许取值；调用方必须按枚举处理。"
     },

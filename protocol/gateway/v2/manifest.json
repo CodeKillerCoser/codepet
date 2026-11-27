@@ -486,6 +486,66 @@
         "$ref": "schema.json#/$defs/NoticeSourceSetEnabledResponse"
       },
       "description": "notice.source.setEnabled：仅真实本机会话可调用，远程拒绝。"
+    },
+    {
+      "name": "terminal.open",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/TerminalOpenRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/TerminalOpenResponse"
+      },
+      "description": "已认证客户端的终端open操作；终端按客户端隔离，独立于Provider。"
+    },
+    {
+      "name": "terminal.read",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "schema.json#/$defs/TerminalReadRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/TerminalReadResponse"
+      },
+      "description": "已认证客户端的终端read操作；终端按客户端隔离，独立于Provider。"
+    },
+    {
+      "name": "terminal.write",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/TerminalWriteRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/TerminalWriteResponse"
+      },
+      "description": "已认证客户端的终端write操作；终端按客户端隔离，独立于Provider。"
+    },
+    {
+      "name": "terminal.resize",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/TerminalResizeRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/TerminalResizeResponse"
+      },
+      "description": "已认证客户端的终端resize操作；终端按客户端隔离，独立于Provider。"
+    },
+    {
+      "name": "terminal.close",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "schema.json#/$defs/TerminalCloseRequest"
+      },
+      "response": {
+        "$ref": "schema.json#/$defs/TerminalCloseResponse"
+      },
+      "description": "已认证客户端的终端close操作；终端按客户端隔离，独立于Provider。"
     }
   ],
   "events": [

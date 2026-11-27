@@ -1,0 +1,65 @@
+{
+  "description": "Host终端操作方法。",
+  "methods": [
+    {
+      "name": "terminal.open",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/TerminalOpenRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/TerminalOpenResponse"
+      },
+      "description": "已认证客户端的终端open操作；终端按客户端隔离，独立于Provider。"
+    },
+    {
+      "name": "terminal.read",
+      "direction": "clientToGateway",
+      "idempotency": "safe",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/TerminalReadRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/TerminalReadResponse"
+      },
+      "description": "已认证客户端的终端read操作；终端按客户端隔离，独立于Provider。"
+    },
+    {
+      "name": "terminal.write",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/TerminalWriteRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/TerminalWriteResponse"
+      },
+      "description": "已认证客户端的终端write操作；终端按客户端隔离，独立于Provider。"
+    },
+    {
+      "name": "terminal.resize",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/TerminalResizeRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/TerminalResizeResponse"
+      },
+      "description": "已认证客户端的终端resize操作；终端按客户端隔离，独立于Provider。"
+    },
+    {
+      "name": "terminal.close",
+      "direction": "clientToGateway",
+      "idempotency": "idempotent",
+      "request": {
+        "$ref": "messages.schema.json#/$defs/TerminalCloseRequest"
+      },
+      "response": {
+        "$ref": "messages.schema.json#/$defs/TerminalCloseResponse"
+      },
+      "description": "已认证客户端的终端close操作；终端按客户端隔离，独立于Provider。"
+    }
+  ]
+}
