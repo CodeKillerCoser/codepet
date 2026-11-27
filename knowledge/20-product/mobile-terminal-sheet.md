@@ -78,6 +78,19 @@ Tauri 直接 cargo 检查沿用既有 `TAURI_CONFIG='{"app":{"macOSPrivateApi":f
 
 本次重新验证 320×800、800×360、1000×900，覆盖无尺寸按钮、小/大半屏拖动、全屏/还原、键盘/缩放/焦点、对话草稿和同一 PTY 模型；相关 8 项测试、静态分析及源码尺寸通过。新预览与日志保存在 `artifacts/terminal-sheet-chrome-20261128/`。前节安装包和补丁为初版快照，不包含此次视觉修订；本轮未重新构建或发布安装包。
 
+### 主干提交与构建（2026-11-28）
+
+用户随后明确要求提交、推送、构建，两个仓库均推送 `main`：Remote `1b46fe6395fa698b7275b7983a1dca8063eafeaf`（版本 `0.1.4+5`），Host `79fbaf2576c8a4744e9dab299b8d1d65027acb64`。Host 原工作树的本地提交 `ee1ce390` 已基于 `8db34490` 整合；依赖锁文件按主干重新解析，保留主干已有模块，未强推。整合后的 lib 122 项、manager_gateway 59 项、terminal_gateway 3 项通过（另有 2 项既有手工用例忽略），协议 41 项与源码尺寸通过。
+
+[Android Release 构建 46051617290](https://github.com/CodeKillerCoser/codepet-remote/actions/runs/46051617290) 与远端 Quality 均成功。下载 [APK 产物](https://github.com/CodeKillerCoser/codepet-remote/actions/runs/46051617290/artifacts/15224334349) 后核对 `com.codepet.remote`、versionCode 5、versionName 0.1.4、精确来源提交与正式证书。APK 115411918 字节，SHA-256 为 `5bc95d1ba25ade14c51b2645574f2dd38d791ae6b3086394e83cc3ead11cdb54`；证书 SHA-256 为 `cee49b08b2bf2e20b1b862c1953782e4709615420dd4c7b5b2e5ab9e040e2665`，与既有正式包一致。
+
+[桌面 Build(all) 46051932010](https://github.com/CodeKillerCoser/codepet/actions/runs/46051932010) 使用精确 Host 提交，版本为 `0.3.12-beta+79fbaf2`，macOS ARM64 和 Windows x86_64 均构建成功。四份原始产物与 GitHub 摘要、字节数、构建元数据及完整文件集合验证均通过。
+
+- [macOS DMG](https://github.com/CodeKillerCoser/codepet/actions/runs/46051932010/artifacts/15226196234)：454439606 字节，SHA-256 `80268d706595f1d89a87b8ae6caa076b56cd4c7c4b1e1b2fc1586c29690fc34c`。镜像校验、DMG 签名、只读挂载后 App 深度签名及 arm64 架构验证通过，包内版本与构建提交相符。沿用固定自签开发证书 `Code Pet Development Code Signing`，证书 SHA-1 `5fa53f2c971be12909e9b2c9cfcc86e63632a590` 与既有约束一致；不代表 Apple Developer ID 签名或公证。
+- [Windows 安装包](https://github.com/CodeKillerCoser/codepet/actions/runs/46051932010/artifacts/15226731989)：477256959 字节，SHA-256 `b6a74f0921244b1f003e5aca1001d190a1cc17c445794d6a8c2f4e12356614b8`。独立下载配套 `.sig`，使用 App 配置的公开更新密钥验证安装包和 trusted comment 签名成功；这是更新签名验证，不代表 Windows 原生交互验收。
+
+本轮提交补丁、构建元数据、日志和安装包核验记录保存于 `artifacts/terminal-delivery-20261128/`。电脑和手机已安装应用尚未被本轮构建替换。本次安装包对应上述精确提交；构建期间其他并行任务继续推进主干，后续提交不在这批安装包内。
+
 ## 来源与后续观察
 
 标准组件见 [Flutter DraggableScrollableSheet](https://api.flutter.dev/flutter/widgets/DraggableScrollableSheet-class.html)、[Material Bottom Sheet](https://api.flutter.dev/flutter/material/showModalBottomSheet.html)；终端组件见 [xterm.dart](https://pub.dev/packages/xterm)、[portable-pty](https://docs.rs/portable-pty/latest/portable_pty/)。当前锁定 xterm 4.0.0，后续升级需比较维护分支的中文输入、CJK 宽度、备用屏与原始控制序列兼容，不只比较版本号。
