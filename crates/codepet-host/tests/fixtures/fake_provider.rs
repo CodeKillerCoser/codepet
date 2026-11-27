@@ -279,8 +279,21 @@ impl ProtocolServer for FakeProvider {
     ) -> ProtocolFuture<'a, ProjectListResponse> {
         Box::pin(async move {
             self.instance(&request.route)?;
+            if let Ok(marker) = std::env::var("CODEPET_FAKE_PROJECT_MARKER") {
+                std::fs::write(marker, b"project request reached provider").unwrap();
+            }
+            match std::env::var("CODEPET_FAKE_PROJECT_FAULT").as_deref() {
+                Ok("hang") => std::future::pending::<()>().await,
+                Ok("exit") => std::process::exit(17),
+                Ok("error") => return Err(protocol_error("fixture_project_failure", "Project source failed")),
+                _ => {}
+            }
+            let mut value = project(&request.route, "project-list", "Listed Project");
+            if std::env::var("CODEPET_FAKE_PROJECT_FAULT").as_deref() == Ok("invalid") {
+                value.roots.clear();
+            }
             Ok(ProjectListResponse {
-                projects: vec![project(&request.route, "project-list", "Listed Project")],
+                projects: vec![value],
                 page_info: PageInfo {
                     next_cursor: Some("project-next".to_string()),
                 },
