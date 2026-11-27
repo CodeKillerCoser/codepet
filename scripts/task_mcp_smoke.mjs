@@ -31,16 +31,21 @@ function client(){
 }
 let a,b;
 try{
-  a=client();await a.start();const tools=await a.request('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['comment-task-run','create-task','create-task-run','find-task-runs','finish-task-run','update-task-run']);const toolBytes=Buffer.byteLength(JSON.stringify(tools));assert.ok(toolBytes<24000);
+  a=client();await a.start();const tools=await a.request('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['comment-task-run','create-task','create-task-run','find-task-runs','finish-task-run','get-task-operation','read-task-run-details','update-task-run']);const toolBytes=Buffer.byteLength(JSON.stringify(tools));assert.ok(toolBytes<24000);
   const create={agentWorkspace:{path:workspace},title:'修复菜单点击',description:'切换窗口后的首次点击无响应',initialRun:{agentConversation:[threadId],title:'首次实现',kind:'bugfix',goal:'修复目标',solution:'修复方案',description:'排查点击事件绑定',validationPlan:{items:[{title:'切换窗口点击',steps:'切换窗口后点击桌宠',expected:'菜单出现'}]}}};
   const first=await a.call('create-task',create);assert.equal(first.revision,1);assert.equal(first.status,'in_progress');assert.equal(first.createdBy,'codex');assert.ok(Buffer.byteLength(JSON.stringify(first))<1000);
   const repeat=await a.call('create-task',create);assert.equal(repeat.taskId,first.taskId);
-  const finish={taskId:first.taskId,runId:first.runId,expectedRevision:first.revision,agentConversation:[threadId],conclusion:'确认事件绑定原因并修复',changedFiles:['file'],agentWorkspace:{path:workspace,relatedCommits:[git(['rev-parse','HEAD'])]},verification:{planRevision:first.planRevision,stage:'local',target:'dirty worktree at HEAD',environment:process.platform,results:[{criterionId:first.criterionIds[0],result:'passed',evidence:'实际本地测试通过'}]}};
+  const finish={operationId:'stdio-finish-one',taskId:first.taskId,runId:first.runId,expectedRevision:first.revision,agentConversation:[threadId],conclusion:'确认事件绑定原因并修复',changedFiles:['file'],agentWorkspace:{path:workspace,relatedCommits:[git(['rev-parse','HEAD'])]},verification:{planRevision:first.planRevision,stage:'local',target:'dirty worktree at HEAD',environment:process.platform,results:[{criterionId:first.criterionIds[0],result:'passed',evidence:'实际本地测试通过'}]}};
   const second=await a.call('finish-task-run',finish);assert.equal(second.revision,2);
   await assert.rejects(a.call('update-task-run',{taskId:first.taskId,runId:first.runId,expectedRevision:2,status:'published'}),/发布版本/);
   const publish={taskId:first.taskId,runId:first.runId,expectedRevision:2,status:'published',delivery:'MCP 验收样例 1.3.0'};
   await a.call('update-task-run',publish);await a.stop();a=null;
-  b=client();await b.start();const detail=await b.call('find-task-runs',{taskId:first.taskId});assert.equal(detail.revision,3);assert.equal(detail.run.status,'published');assert.equal(detail.taskDescription,create.description);assert.equal(detail.run.agentWorkspace.changeStatus.hasUncommittedChanges,true);assert.equal(detail.run.agentWorkspace.relatedCommits.length,1);assert.equal(detail.run.validationPlan.latestVerification.actor,'agent');assert.equal(detail.run.agentConversation[0].verified,true);
+  b=client();await b.start();const detail=await b.call('find-task-runs',{taskId:first.taskId});assert.equal(detail.revision,3);assert.equal(detail.run.status,'published');assert.equal(detail.taskDescription,create.description);assert.equal('agentWorkspace' in detail.run,false);assert.equal('activity' in detail,false);assert.equal(detail.run.validationPlan.latestVerification.actor,'agent');
+  const gitDetail=await b.call('read-task-run-details',{runId:first.runId,section:'git'});assert.equal(gitDetail.changeStatus.hasUncommittedChanges,true);assert.equal(gitDetail.relatedCommits.length,1);
+  const summaryContext=await b.call('read-task-run-details',{runId:first.runId,section:'context'});assert.equal(summaryContext.agentConversation[0].verified,true);
+  const operation=await b.call('get-task-operation',{operationId:finish.operationId});assert.deepEqual(operation.receipt,second);assert.equal(operation.status,'committed');
+  assert.deepEqual(await b.call('finish-task-run',finish),second);
+  assert.equal((await b.call('get-task-operation',{operationId:'missing'})).status,'unconfirmed');
   assert.equal((await b.call('update-task-run',publish)).revision,3);
   await assert.rejects(b.call('update-task-run',{taskId:first.taskId,runId:first.runId,expectedRevision:1,note:'stale'}),/revision=3/);
   await assert.rejects(b.call('update-task-run',{taskId:first.taskId,runId:first.runId,expectedRevision:3,status:'closed'}),/人工操作/);
@@ -49,10 +54,10 @@ try{
   const found=await b.call('find-task-runs',{workspace,query:'菜单'});assert.equal(found.total,2);assert.ok(Array.isArray(found.runs));assert.ok(found.runs.some(r=>r.runId===first.runId&&!r.isCurrentRun));assert.ok(found.runs.some(r=>r.runId===next.runId&&r.isCurrentRun));const comment={taskId:first.taskId,runId:first.runId,comment:'交接给另一个 Agent 的历史补充',agentConversation:[threadId],operationId:'stdio-comment-retry'};
   const posted=await b.call('comment-task-run',comment);assert.equal(posted.runId,first.runId);assert.ok(posted.activityId);
   assert.equal((await b.call('comment-task-run',comment)).activityId,posted.activityId);
-  const conversation=await b.call('find-task-runs',{runId:first.runId,workspace:'/another/workspace'});
-  assert.equal(conversation.activity.items.at(-1).summary,comment.comment);assert.equal(conversation.activity.items.at(-1).actor,'codex');
+  const conversation=await b.call('read-task-run-details',{runId:first.runId,section:'activity'});
+  assert.equal(conversation.items.at(-1).summary,comment.comment);assert.equal(conversation.items.at(-1).actor,'codex');
   assert.equal((await b.call('find-task-runs',{taskId:first.taskId})).run.id,next.runId);
   await b.stop();b=null;
-  const report={success:true,mode:'real-stdio-without-frontend',toolCount:6,toolDefinitionBytes:toolBytes,receiptBytes:Buffer.byteLength(JSON.stringify(first)),retryAcrossRestart:true,taskRunIsolation:true,historyPreserved:true,changedFilesObserved:true,explicitSourceVerifiedLocally:true,agentCannotClose:true,testCalls:count};
+  const report={success:true,mode:'real-stdio-without-frontend',toolCount:8,toolDefinitionBytes:toolBytes,receiptBytes:Buffer.byteLength(JSON.stringify(first)),retryAcrossRestart:true,taskRunIsolation:true,historyPreserved:true,changedFilesObserved:true,explicitSourceVerifiedLocally:true,operationReceiptAcrossRestart:true,agentCannotClose:true,testCalls:count};
   await mkdir(join(root,'artifacts/task-ledger-qa'),{recursive:true});await writeFile(join(root,'artifacts/task-ledger-qa/mcp-report.json'),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
 }finally{a?.child.kill();b?.child.kill();await rm(temporary,{recursive:true,force:true});}

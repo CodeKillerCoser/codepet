@@ -47,7 +47,7 @@ async function start(){
 let first,second;
 try{
  first=await start();
- const tools=await first.rpc('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['comment-task-run','create-task','create-task-run','find-task-runs','finish-task-run','update-task-run']);
+ const tools=await first.rpc('tools/list');assert.deepEqual(tools.tools.map(t=>t.name).sort(),['comment-task-run','create-task','create-task-run','find-task-runs','finish-task-run','get-task-operation','read-task-run-details','update-task-run']);
  const toolBytes=Buffer.byteLength(JSON.stringify(tools));assert.ok(toolBytes<24000);
  const input={agentWorkspace:{path:workspace},title:'HTTP 验收样例',description:'任务背景',initialRun:{agentConversation:['00000000-0000-4000-8000-000000000003'],title:'首次实现',kind:'bugfix',goal:'修复目标',solution:'修复方案',description:'通过 HTTP 登记并验证',validationPlan:{items:[{title:'可登记并读取',steps:'保存并查询',expected:'任务和执行一致'}]}}};
  const created=await first.call('create-task',input);assert.equal(created.revision,1);assert.equal(created.createdBy,'codex');
@@ -58,7 +58,7 @@ try{
  const missingAgent=await post(first.metadata.url,{authorization:`Bearer ${first.token}`},{jsonrpc:'2.0',id:1,method:'tools/list',params:{}});assert.equal(missingAgent.status,400);
  const token=first.token;await first.stop();first=null;
  second=await start();assert.equal(second.token,token);
- const task=await second.call('find-task-runs',{taskId:created.taskId});assert.equal(task.revision,2);assert.equal(task.taskDescription,'任务背景');assert.equal(task.run.status,'ready_for_delivery');assert.equal(task.run.agentWorkspace.changeStatus.hasUncommittedChanges,true);assert.ok(task.run.agentWorkspace.changedFiles.length);assert.equal(task.run.createdBy,'codex');
+ const task=await second.call('find-task-runs',{taskId:created.taskId});assert.equal(task.revision,2);assert.equal(task.taskDescription,'任务背景');assert.equal(task.run.status,'ready_for_delivery');assert.equal('agentWorkspace' in task.run,false);const files=await second.call('read-task-run-details',{runId:created.runId,section:'git'});assert.equal(files.changeStatus.hasUncommittedChanges,true);assert.ok(files.changedFiles.length);assert.equal(task.run.createdBy,'codex');
  await assert.rejects(second.call('update-task-run',{taskId:created.taskId,runId:created.runId,expectedRevision:1,note:'stale'}),/revision=2/);
  await assert.rejects(second.call('update-task-run',{taskId:created.taskId,runId:created.runId,expectedRevision:2,actor:'human'}));
  const agentCall=async(source,name,input)=>{const response=await post(second.metadata.url,{authorization:`Bearer ${second.token}`,'X-CodePet-Agent':source,'MCP-Protocol-Version':'2025-06-18'},{jsonrpc:'2.0',id:++sequence,method:'tools/call',params:{name,arguments:input}});assert.equal(response.status,200);const result=JSON.parse(response.body).result;assert.notEqual(result.isError,true,JSON.stringify(result));return JSON.parse(result.content[0].text);};
@@ -66,10 +66,10 @@ try{
  const posted=await agentCall('claude','comment-task-run',commentInput);
  const reply=await agentCall('cursor','comment-task-run',{taskId:created.taskId,runId:created.runId,comment:'已读到复核结果，后续实现沿用同一 Run',replyTo:posted.activityId,agentConversation:['cursor-comment-chat']});
  const replay=await agentCall('claude','comment-task-run',commentInput);assert.equal(replay.activityId,posted.activityId);
- const activity=await second.call('find-task-runs',{runId:created.runId,workspace:'/different/workspace',activityAfter:posted.activityId});
- assert.equal(activity.activity.items[0].id,reply.activityId);assert.equal(activity.activity.items[0].actor,'cursor');assert.equal(activity.activity.items[0].replyTo,posted.activityId);
- assert.equal(activity.run.status,'ready_for_delivery');
+ const activity=await second.call('read-task-run-details',{runId:created.runId,section:'activity',after:posted.activityId});
+ assert.equal(activity.items[0].id,reply.activityId);assert.equal(activity.items[0].actor,'cursor');assert.equal(activity.items[0].replyTo,posted.activityId);
+ assert.equal((await second.call('find-task-runs',{runId:created.runId})).run.status,'ready_for_delivery');
  await second.stop();second=null;
- const report={success:true,mode:'real-http-without-frontend',toolCount:6,toolDefinitionBytes:toolBytes,createReceiptBytes:Buffer.byteLength(JSON.stringify(created)),updateReceiptBytes:Buffer.byteLength(JSON.stringify(updated)),nativeCli:!!process.env.CODEPET_MCP_EMBEDDED,credentialsPersistedAcrossRestart:true,unauthorizedRejected:true,crossOriginRejected:true,agentCannotImpersonateHuman:true,taskPersistsAcrossRestart:true,revisionConflictPreserved:true,dirtyWorkspaceObserved:true,changedFilesObserved:true,agentSourceFromHeader:true,taskRunIsolation:true,multiAgentComments:true,commentReplayIsIdempotent:true,replyCursor:true};
+ const report={success:true,mode:'real-http-without-frontend',toolCount:8,toolDefinitionBytes:toolBytes,createReceiptBytes:Buffer.byteLength(JSON.stringify(created)),updateReceiptBytes:Buffer.byteLength(JSON.stringify(updated)),nativeCli:!!process.env.CODEPET_MCP_EMBEDDED,credentialsPersistedAcrossRestart:true,unauthorizedRejected:true,crossOriginRejected:true,agentCannotImpersonateHuman:true,taskPersistsAcrossRestart:true,revisionConflictPreserved:true,dirtyWorkspaceObserved:true,changedFilesObserved:true,agentSourceFromHeader:true,taskRunIsolation:true,multiAgentComments:true,commentReplayIsIdempotent:true,replyCursor:true};
  await mkdir(join(root,'artifacts/task-ledger-qa'),{recursive:true});await writeFile(join(root,`artifacts/task-ledger-qa/http${process.env.CODEPET_MCP_EMBEDDED?'-embedded':''}-report.json`),JSON.stringify(report,null,2));console.log(JSON.stringify(report,null,2));
 }finally{first?.child.kill();second?.child.kill();await rm(temporary,{recursive:true,force:true});}

@@ -133,6 +133,21 @@ impl Recall {
             .map_err(|e| e.to_string())?
     }
     pub async fn sync(&self) -> Result<Value, String> {
+        let preparing = self
+            .preparation
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|p| p.pending());
+        if !preparing
+            && self
+                .process
+                .try_lock()
+                .is_ok_and(|process| process.is_none())
+            && process::bundle().is_none()
+        {
+            return Err("未安装任务召回 sidecar".into());
+        }
         // Cross-process snapshot ordering: a delayed old host cannot overwrite a
         // newer sync or delete Runs created since its snapshot. No ledger lock is held.
         let root = self.ledger.data_directory().join("tasks/recall");
@@ -277,7 +292,7 @@ impl Recall {
         }
         Ok(result)
     }
-    pub async fn find(&self, input: FindTaskRunsInput) -> Result<Value, String> {
+    pub async fn find(&self, ledger: &Ledger, input: FindTaskRunsInput) -> Result<Value, String> {
         let query = input.query.as_deref().unwrap_or("").trim().to_owned();
         if input.task_id.is_some()
             || input.run_id.is_some()
@@ -286,32 +301,38 @@ impl Recall {
             || input.activity_before.is_some()
             || input.activity_limit.is_some()
         {
-            let ledger = self.ledger.clone();
+            let ledger = ledger.clone();
             return tokio::task::spawn_blocking(move || ledger.find_runs(input))
                 .await
                 .map_err(|e| e.to_string())?;
         }
-        let result = async {
-            self.sync().await?;
-            self.request("/query", Some(json!({"query":query}))).await
-        }
-        .await;
-        match result {
-            Ok(result) => {
-                // Re-read after retrieval: deleted/superseded sources cannot escape through cached hits.
-                let documents = self.documents().await?;
-                Ok(merge(result, &documents, input.workspace.as_deref()))
+        // Startup and indexing are background work. Search only an already running sidecar
+        // within a small budget, then fall back to the current local ledger.
+        let lookup = async {
+            let active = self
+                .process
+                .lock()
+                .await
+                .as_ref()
+                .cloned()
+                .ok_or("语义召回正在启动")?;
+            let result = active
+                .request("/query", Some(json!({"query":query})))
+                .await?;
+            let documents = self.documents().await?;
+            Ok::<_, String>(merge(result, &documents, input.workspace.as_deref()))
+        };
+        if let Ok(Ok(result)) = tokio::time::timeout(Duration::from_millis(60), lookup).await {
+            if result["total"].as_u64().unwrap_or(0) > 0 {
+                return Ok(result);
             }
-            Err(error) => {
-                let ledger = self.ledger.clone();
-                let mut result = tokio::task::spawn_blocking(move || ledger.find_runs(input))
-                    .await
-                    .map_err(|e| e.to_string())??;
-                result["recall"] =
-                    json!({"state":"unavailable","routes":["substring"],"reason":error});
-                Ok(result)
-            }
         }
+        let ledger = ledger.clone();
+        let mut result = tokio::task::spawn_blocking(move || ledger.find_runs(input))
+            .await
+            .map_err(|error| error.to_string())??;
+        result["recall"] = json!({"state":"fallback","routes":["substring"]});
+        Ok(result)
     }
 }
 fn merge(result: Value, documents: &[Value], workspace: Option<&str>) -> Value {

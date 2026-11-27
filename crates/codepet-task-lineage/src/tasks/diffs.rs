@@ -4,6 +4,8 @@ use crate::{stable_id, store::Store, workbench, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{io::Read, path::Path};
+mod batch;
+
 const FILE_LIMIT: usize = 256 * 1024;
 const CAPTURE_LIMIT: usize = 8 * 1024 * 1024;
 #[derive(Clone, Serialize, Deserialize)]
@@ -43,17 +45,14 @@ fn summary(version: &Version) -> Value {
 fn git_patch(
     root: &Path,
     file: &ChangedFile,
-    commit: Option<&str>,
+    read_as_added: bool,
+    patch: Result<&[u8]>,
 ) -> Result<(String, Option<u64>, Option<u64>)> {
     workspace::validate_run_files(std::slice::from_ref(&file.path))?;
     if let Some(original) = &file.original_path {
         workspace::validate_run_files(std::slice::from_ref(original))?;
     }
-    if commit.is_none()
-        && (file.change_type == "untracked"
-            || (file.change_type == "added"
-                && workbench::text_git(root, &["rev-parse", "--verify", "HEAD"]).is_err()))
-    {
+    if read_as_added {
         let target = workbench::change_path(root, &json!({"path":file.path}))?;
         let mut bytes = vec![];
         std::fs::File::open(target)
@@ -85,38 +84,13 @@ fn git_patch(
     if file.change_type == "conflicted" {
         return Err("存在合并冲突，请在工作区解决后记录差异".into());
     }
-    let base;
-    let mut args = if let Some(commit) = commit {
-        vec!["show", "--format=", "--first-parent", "--root", commit]
-    } else {
-        base = workbench::text_git(root, &["rev-parse", "--verify", "HEAD"])?;
-        vec!["diff", base.as_str()]
-    };
-    args.extend([
-        "--no-ext-diff",
-        "--no-textconv",
-        "--no-color",
-        "--binary",
-        "--find-renames",
-        "--src-prefix=a/",
-        "--dst-prefix=b/",
-        "--unified=3",
-        "--",
-    ]);
-    let literal = format!(":(literal){}", file.path);
-    let original = file
-        .original_path
-        .as_ref()
-        .map(|p| format!(":(literal){p}"));
-    args.push(&literal);
-    if let Some(original) = &original {
-        args.push(original);
-    }
-    let bytes = workbench::git(root, &args)?;
+    let bytes = patch?;
     if bytes.len() > FILE_LIMIT {
         return Err("差异超过 256 KiB 预览上限".into());
     }
-    let patch = String::from_utf8(bytes).map_err(|_| "差异不是 UTF-8 文本")?;
+    let patch = std::str::from_utf8(bytes)
+        .map_err(|_| "差异不是 UTF-8 文本")?
+        .to_owned();
     if patch
         .lines()
         .any(|l| l.starts_with("Binary files ") || l == "GIT binary patch")
@@ -145,14 +119,57 @@ fn capture(
     commit: Option<&str>,
     budget: &mut usize,
 ) -> Vec<FileDiff> {
+    let files = &files[..files.len().min(300)];
+    let unborn = commit.is_none()
+        && files.iter().any(|file| file.change_type == "added")
+        && workbench::text_git(root, &["rev-parse", "--verify", "HEAD"]).is_err();
+    capture_batch(root, files, commit, unborn, budget)
+}
+
+fn capture_batch(
+    root: &Path,
+    files: &[ChangedFile],
+    commit: Option<&str>,
+    unborn: bool,
+    budget: &mut usize,
+) -> Vec<FileDiff> {
+    let output = if *budget < FILE_LIMIT || unborn {
+        Ok(vec![])
+    } else {
+        batch::read(root, files, commit)
+    };
+    if files.len() > 1
+        && output
+            .as_ref()
+            .is_err_and(|error| error == workbench::GIT_OUTPUT_LIMIT_ERROR)
+    {
+        // Keep unrelated small patches when a combined Git reply hits the output cap.
+        let (first, second) = files.split_at(files.len() / 2);
+        let mut captured = capture_batch(root, first, commit, unborn, budget);
+        captured.extend(capture_batch(root, second, commit, unborn, budget));
+        return captured;
+    }
+    let patches = output
+        .as_deref()
+        .map_err(Clone::clone)
+        .and_then(batch::patches);
     files
         .iter()
-        .take(300)
         .map(|file| {
             let result = if *budget < FILE_LIMIT {
                 Err("本次快照达到 8 MiB 上限，未保存此文件差异".into())
             } else {
-                git_patch(root, file, commit)
+                let patch =
+                    patches.as_ref().map_err(Clone::clone).and_then(|patches| {
+                        match patches.get(file.path.as_bytes()) {
+                            Some(patch) => Ok(*patch),
+                            None if commit.is_none() => Ok(&[][..]),
+                            None => Err("Git 未返回该文件差异".into()),
+                        }
+                    });
+                let read_as_added = commit.is_none()
+                    && (file.change_type == "untracked" || (file.change_type == "added" && unborn));
+                git_patch(root, file, read_as_added, patch)
             };
             let (patch, added, deleted, error) = match result {
                 Ok((patch, added, deleted)) => {
@@ -203,14 +220,19 @@ fn prepare_run(
         let id = format!("commit-{sha}");
         if index.iter().any(|v| {
             v["id"] == id
-                && v["error"].is_null()
-                && v["files"]
-                    .as_array()
-                    .is_some_and(|f| f.iter().all(|f| f["error"].is_null()))
+                && (capture_workspace
+                    || v["error"].is_null()
+                    || v["files"].as_array().is_some_and(|files| !files.is_empty()))
         }) {
             continue;
         }
-        let changes = workspace::commit_changes(Path::new(&repository), sha);
+        let changes = run
+            .agent_workspace
+            .commit_changes
+            .iter()
+            .find(|change| change.commit == *sha && change.error.is_none())
+            .cloned()
+            .unwrap_or_else(|| workspace::commit_changes(Path::new(&repository), sha));
         let version = Version {
             id: id.clone(),
             commit: Some(sha.clone()),

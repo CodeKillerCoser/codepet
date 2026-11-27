@@ -58,6 +58,7 @@ pub(super) fn inspect(input: &WorkspaceInput) -> Result<Context> {
                 "status",
                 "--porcelain=v2",
                 "--branch",
+                "--ahead-behind",
                 "-z",
                 "--untracked-files=all",
             ],
@@ -72,8 +73,7 @@ pub(super) fn inspect(input: &WorkspaceInput) -> Result<Context> {
                     .as_str()
                     .filter(|s| !s.starts_with('(') && !s.is_empty())
                     .map(str::to_owned);
-                observation.upstream =
-                    workbench::text_git(&path, &["rev-parse", "--abbrev-ref", "@{upstream}"]).ok();
+                observation.upstream = parsed["upstreamRef"].as_str().map(str::to_owned);
                 for file in parsed["changes"].as_array().into_iter().flatten() {
                     let status = file["status"].as_str().unwrap_or("??");
                     let kind = if file["conflict"] == true {
@@ -98,14 +98,9 @@ pub(super) fn inspect(input: &WorkspaceInput) -> Result<Context> {
                 }
                 observation.change_status.has_uncommitted_changes =
                     Some(!observation.changed_files.is_empty());
-                if let Some(upstream) = &observation.upstream {
-                    observation.change_status.has_unpushed_commits = workbench::text_git(
-                        &path,
-                        &["rev-list", "--count", &format!("{upstream}..HEAD")],
-                    )
-                    .ok()
-                    .and_then(|s| s.parse::<u64>().ok())
-                    .map(|n| n > 0);
+                if observation.upstream.is_some() {
+                    observation.change_status.has_unpushed_commits =
+                        parsed["ahead"].as_u64().map(|count| count > 0);
                 }
             }
             Err(e) => observation.error = Some(e),

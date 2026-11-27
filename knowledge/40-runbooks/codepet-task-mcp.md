@@ -27,9 +27,7 @@ HTTP 服务由 App Rust 后台托管，固定回环端口；关闭窗口而 App 
 
 查询工具由 `find-tasks` 改为 `find-task-runs`，不同时暴露旧名。需更新后重连客户端刷新工具清单。列表字段为 `runs`；每项有 `taskId/taskTitle/runId/title/kind/goal/status/isCurrentRun/revision`，total 与 truncated 按执行计数。历史执行自己的方案或活动命中时，返回该历史 Run，不返回主题的最新执行。workspace 是软优先级，不能隔离其他工作区。
 
-`runId` 可单独读取详情；同时提供 taskId 时校验归属。taskId 单独使用仍读取当前 Run。详情返回 `taskTitle/taskDescription/taskCreatedBy` 作为主题上下文，`runId` 与 `run` 为选中执行；不再用顶层 title/description 混淆 Task 与 Run。`history` 只在详情中附加最多 10 个执行摘要。列表最多 20 个 Run，文件/验证证据的既有限制继续保留。
-
-当前这一层仍是 Rust 关键词查询；Cognee sidecar 与语义多路召回单独接入，不能因工具更名宣称已经具备 embedding 或图检索。
+`runId` 可单独读取执行摘要。同时提供 taskId 时校验归属，taskId 单独使用时读取当前 Run。摘要包含 revision、目标、最新进展及当前验收计划的分阶段结果。需要完整背景、活动、Git、验收证据或历史时调用 `read-task-run-details`。本机延迟复测和异常处理见 [任务 MCP 本机性能](task-mcp-local-performance.md)。
 
 2026-11-25 本轮从旧工作树更新到 `origin/main` 的 `48614edd` 后实施，工作分支为 `codex/cognee-task-run-recall`，保留此前 Cognee 实验与未提交的 ignore 规则。MCP crate 升为 0.5.0，查询实现拆到 `tasks/find.rs`。验证覆盖历史命中不替换成最新执行、主题展开多个 Run、独立 runId、归属不匹配拒绝、workspace 软排序及按 Run 截断；详情继续保留文件、提交与验证摘要上限，列表 goal 限 400 字。
 
@@ -37,9 +35,9 @@ HTTP 服务由 App Rust 后台托管，固定回环端口；关闭窗口而 App 
 
 开发登记的 HTTP 服务当时未运行，现有“Task MCP 与任务管理”主题也已关闭。本轮没有写入或绕过关闭锁创建替代任务，未把测试样例当作开发登记。
 
-## 六个工具
+## 八个工具
 
-追加协作需要原生 Host/MCP backend API 39；更新后重连客户端刷新六工具。记录 schema 6 保持旧活动不可变，旧 writer 不可写入。分页、历史评论和回归约束见 [TaskRun 活动](../30-domains/task-management/task-run-activity.md)。
+追加协作需要原生 Host/MCP backend API 39；更新后重连客户端刷新工具清单。记录 schema 6 保持旧活动不可变，旧 writer 不可写入。分页、历史评论和回归约束见 [TaskRun 活动](../30-domains/task-management/task-run-activity.md)。
 
 | 工具 | 输入与职责 |
 | --- | --- |
@@ -48,9 +46,11 @@ HTTP 服务由 App Rust 后台托管，固定回环端口；关闭窗口而 App 
 | update-task-run | taskId、runId、expectedRevision，以及变化的摘要、status、validationPlan、verification、明确关联提交或 delivery |
 | finish-task-run | taskId、runId、expectedRevision、conclusion、非空 agentConversation、changedFiles（无变更显式 []）、verification；原子结束开发并按必验本地结果进入待验收或保持进行中，不确认人工通过、不关闭 |
 | comment-task-run | taskId、runId、comment、非空 agentConversation；可选 replyTo、operationId，追加评论/回复并返回 activityId，无需 expectedRevision，可用于历史或已完成执行但不会重新开启开发 |
-| find-task-runs | 搜索具体执行并返回 runs；workspace 仅提升排序；runId 可独立读取历史执行，taskId 单独使用时读当前执行，history 显式获取所属主题的执行历史 |
+| find-task-runs | 搜索执行或读取摘要。workspace 影响排序，runId 精确选中执行，taskId 单独使用时读当前执行 |
+| read-task-run-details | runId 或 taskId，加 section。context 读完整描述与会话；activity 用 before/after；git 用 commit 和 offset；verification 用 planRevision 和 offset；history 用 offset |
+| get-task-operation | 用原 operationId 查询持久化回执。不同工具复用同一 ID 时加 operation。回执限同一连接来源可见 |
 
-所有 MCP 写入都必须携带非空 agentConversation，对话 ID 或 codex://threads/<id> 均可；人工入口可空。每项验收必须同时提供 result 与非空 evidence，缺任一项整次不落库。没有 update-task MCP 工具；任务基本信息可在 App 单独修改。kind 在 TaskRun 上，只有 bugfix/feature。状态为 in_progress、ready_for_delivery、published、closed，Agent 不能关闭或记录人工验收。首次 published 要同时提供实际 delivery；提交不证明发布。
+所有 MCP 写入都必须携带非空 agentConversation，对话 ID 或 codex://threads/<id> 均可；人工入口可空。每项验收必须同时提供 result 与非空 evidence，缺任一项整次不落库。verification.stage 只允许 local 或 release，每次提交一个阶段。清单项 scope 可为 both。阶段错误会指出具体验收项 ID、其 scope 和提交的 stage。没有 update-task MCP 工具；任务基本信息可在 App 单独修改。kind 在 TaskRun 上，只有 bugfix/feature。状态为 in_progress、ready_for_delivery、published、closed，Agent 不能关闭或记录人工验收。首次 published 要同时提供实际 delivery；提交不证明发布。
 
 最小创建示例（工具参数，不含创建来源和时间）：
 
@@ -74,7 +74,7 @@ HTTP 服务由 App Rust 后台托管，固定回环端口；关闭窗口而 App 
 
 保留回执 taskId/runId/revision/planRevision/criterionIds。更新省略不变字段，agentWorkspace 只允许提交路径和 relatedCommits，Git 状态与文件由 Rust 观测，不能从参数伪造。新执行省略计划时复用旧清单，但生成新检查项 ID 并清空结果；不要把恢复同次处理当作新执行。
 
-实施或续办前读取给定 taskId/runId，或查询相关执行并复用匹配目标。新目标实施前一次 create-task，关键进展合并一次 update-task-run，开发完成交付前一次 finish-task-run；发布和复发再按事实补记。初始化 instructions 自动携带这套规则，前512字符包含召回及三个关键节点；模型是否看到仍取决于客户端。复制的安装请求将可选简短持久化约定与当前说明核对原文分开，不自动修改客户端 system prompt 或全局文件。接入面板保存说明后重新连接 MCP 或开新对话使用；恢复默认可撤销覆盖。自定义内容保存在 Rust 配置，升级保留原文；已有全局规则也不会随说明保存自动更新。纯咨询不登记，不轮询，不逐文件维护。普通回执保持紧凑，六工具定义受 24 KB 上限测试约束，实际数值见黑盒报告；不把这些字节数当作模型 token 计费或自动登记可靠性保证。产品边界及验证路径见 [Task Memory 接入](../20-product/task-memory-agent-onboarding.md)。
+实施或续办前读取给定 taskId/runId，或查询相关执行并复用匹配目标。新目标实施前一次 create-task，关键进展合并一次 update-task-run，开发完成交付前一次 finish-task-run；发布和复发再按事实补记。初始化 instructions 自动携带这套规则，前512字符包含召回及三个关键节点；模型是否看到仍取决于客户端。复制的安装请求将可选简短持久化约定与当前说明核对原文分开，不自动修改客户端 system prompt 或全局文件。接入面板保存说明后重新连接 MCP 或开新对话使用；恢复默认可撤销覆盖。自定义内容保存在 Rust 配置，升级保留原文；已有全局规则也不会随说明保存自动更新。纯咨询不登记，不轮询，不逐文件维护。普通回执保持紧凑，八个工具的定义受 24 KB 上限测试约束，实际数值见黑盒报告；不把这些字节数当作模型 token 计费或自动登记可靠性保证。产品边界及验证路径见 [Task Memory 接入](../20-product/task-memory-agent-onboarding.md)。
 
 agentConversation 输入是实际对话 ID 的数组，来源从传输上下文取得。ID 不确定时不要猜造，先确认实际来源，新的 MCP 写入不允许省略；只有来源 codex 的引用尝试只读查询本地 state_5.sqlite 核实是否存在，缺失保持待核实，跨项目/已删除工作区的对话仍可关联。不读取其他 Agent 的历史。来源标记不等于对话 ID。
 
@@ -84,7 +84,7 @@ agentConversation 输入是实际对话 ID 的数组，来源从传输上下文�
 
 首次读取优先原子导入 v3，没有 v3 时导入 v2，源文件保持原样。v3 的任务类型继承到执行；原自由文本保存在补充说明，不能猜测拆成目标和方案。旧任务/执行/检查项 ID 和证据保留，旧 objective 合入说明，bug/investigation 标记变为 bugfix。旧 Agent 没有具体名称时显示历史 Agent；缺失文件清单的旧观测不伪装成当前扫描，之后更新当前执行重新读取。不要让旧 App/MCP 进程在迁移后继续写旧账本，升级后重启并替换配置。
 
-状态、计划和内容等业务更新的 expectedRevision 是整个 Task 的聚合版本；独立追加评论不要求它，但会增加聚合版本。冲突保留草稿，用 find-task-runs 读取后合并，不自动覆盖人工修改。请求失败用相同参数/operationId 重试；不同参数不能复用显式键。重试先查回执，因此工作区被删除后仍能返回已提交结果。
+状态、计划和内容等业务更新的 expectedRevision 是整个 Task 的聚合版本；独立追加评论不要求它，但会增加聚合版本。冲突保留草稿，用 find-task-runs 读取后合并，不自动覆盖人工修改。回包丢失时先用原 operationId 查询。committed 包含已保存回执，unconfirmed 表示当前未找到成功回执。需要重试时携带相同参数与原键，因此工作区被删除后仍能返回已提交结果。
 
 Git 状态属于共享工作区，上游只比较本地引用；不 fetch。relatedCommits 只接受可核实的 SHA。记录实际被测目标、环境、计划版本、执行者及证据，Agent 自测不能解锁人工通过；不同版本的结果不混用。结束执行仍可注明原因而不声称验收通过。
 

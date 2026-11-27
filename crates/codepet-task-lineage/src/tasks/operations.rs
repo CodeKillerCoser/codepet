@@ -337,16 +337,29 @@ impl Ledger {
             path: last.agent_workspace.path.clone(),
             related_commits: vec![],
         });
-        let same_repository = workspace::same_repository(&workspace.path, &last.agent_workspace);
-        for sha in last
-            .agent_workspace
+        let previous_workspace = &last.agent_workspace;
+        let missing_changes: Vec<_> = previous_workspace
             .related_commits
             .iter()
-            .filter(|_| same_repository)
+            .filter(|sha| {
+                !previous_workspace
+                    .commit_changes
+                    .iter()
+                    .any(|change| &change.commit == *sha)
+                    && !workspace.related_commits.contains(sha)
+            })
+            .cloned()
+            .collect();
+        // Old records can have associations without a saved file list. Backfill
+        // only those missing lists, and only if the workspace is still in the same repo.
+        if !missing_changes.is_empty()
+            && workspace::same_repository(&workspace.path, previous_workspace)
         {
-            if !workspace.related_commits.contains(sha) {
-                workspace.related_commits.push(sha.clone());
-            }
+            workspace.related_commits.extend(
+                missing_changes
+                    .into_iter()
+                    .take(30usize.saturating_sub(workspace.related_commits.len())),
+            );
         }
         // Milestone writes still work if a previously recorded worktree was removed.
         let ctx = match workspace::inspect(&workspace) {
@@ -389,19 +402,29 @@ impl Ledger {
                 run.description = value;
             }
             if let Some(ctx) = ctx {
-                let retained = run.agent_workspace.related_commits.clone();
-                let run_files = if same_repository {
-                    run.agent_workspace.run_files.clone()
-                } else {
-                    None
+                let same_repository = match &run.agent_workspace.repository {
+                    Some(repository) => repository == &ctx.repository,
+                    None => workspace::same_repository(&workspace.path, &run.agent_workspace),
                 };
-                run.agent_workspace = ctx.observation;
-                run.agent_workspace.run_files = run_files;
-                for sha in retained.into_iter().filter(|_| same_repository) {
-                    if !run.agent_workspace.related_commits.contains(&sha) {
-                        run.agent_workspace.related_commits.push(sha);
+                let mut observed = ctx.observation;
+                if same_repository {
+                    observed.run_files = run.agent_workspace.run_files.take();
+                    for sha in run.agent_workspace.related_commits.drain(..) {
+                        if !observed.related_commits.contains(&sha) {
+                            observed.related_commits.push(sha);
+                        }
+                    }
+                    for change in run.agent_workspace.commit_changes.drain(..) {
+                        if !observed
+                            .commit_changes
+                            .iter()
+                            .any(|entry| entry.commit == change.commit)
+                        {
+                            observed.commit_changes.push(change);
+                        }
                     }
                 }
+                run.agent_workspace = observed;
             } else {
                 run.agent_workspace.change_status = ChangeStatus {
                     has_uncommitted_changes: None,

@@ -64,13 +64,13 @@ impl Actor {
         }
     }
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangeStatus {
     pub has_uncommitted_changes: Option<bool>,
     pub has_unpushed_commits: Option<bool>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChangedFile {
     pub path: String,
@@ -78,14 +78,14 @@ pub struct ChangedFile {
     pub staged: bool,
     pub original_path: Option<String>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitChange {
     pub commit: String,
     pub files: Vec<ChangedFile>,
     pub error: Option<String>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentWorkspace {
     pub path: String,
@@ -246,6 +246,7 @@ pub struct CreateTaskInput {
     pub description: String,
     pub agent_workspace: WorkspaceInput,
     pub initial_run: InitialRunInput,
+    /// Caller-generated retry key. Use the same value with identical arguments to retry.
     pub operation_id: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -266,8 +267,18 @@ pub struct CreateTaskRunInput {
     pub validation_plan: Option<ChecklistInput>,
     #[schemars(length(min = 1, max = 20), inner(length(min = 1, max = 220)))]
     pub agent_conversation: Vec<String>,
+    /// Caller-generated retry key. Use the same value with identical arguments to retry.
     pub operation_id: Option<String>,
 }
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum AgentRunStatus {
+    InProgress,
+    ReadyForDelivery,
+    Published,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdateTaskRunInput {
@@ -279,7 +290,8 @@ pub struct UpdateTaskRunInput {
     pub run_id: String,
     pub expected_revision: u64,
     pub description: Option<String>,
-    /// Closed is reserved for the human App action; Agent tools cannot close or accept.
+    /// Development or delivery status. Only the user can close a run in the App.
+    #[schemars(with = "Option<AgentRunStatus>")]
     pub status: Option<RunStatus>,
     pub agent_workspace: Option<WorkspaceInput>,
     pub validation_plan: Option<ChecklistInput>,
@@ -289,6 +301,7 @@ pub struct UpdateTaskRunInput {
     /// Actual build/release reference. Required when first marking published.
     pub delivery: Option<String>,
     pub note: Option<String>,
+    /// Caller-generated retry key. Use the same value with identical arguments to retry.
     pub operation_id: Option<String>,
 }
 /// Complete development in one atomic write; never records human acceptance.
@@ -307,6 +320,7 @@ pub struct FinishTaskRunInput {
     pub agent_conversation: Vec<String>,
     pub verification: VerificationInput,
     pub agent_workspace: Option<WorkspaceInput>,
+    /// Caller-generated retry key. Use the same value with identical arguments to retry.
     pub operation_id: Option<String>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -321,14 +335,89 @@ pub struct FindTaskRunsInput {
     /// Keywords or a short description of the work to resume.
     pub query: Option<String>,
     #[serde(default)]
+    #[schemars(skip)]
     pub history: bool,
-    /// Read newer activity after an event ID. Requires taskId or runId.
+    #[schemars(skip)]
     pub activity_after: Option<String>,
-    /// Read older activity before an event ID. Cannot combine with activityAfter.
+    #[schemars(skip)]
     pub activity_before: Option<String>,
-    #[schemars(range(min = 1, max = 50))]
+    #[schemars(skip)]
     pub activity_limit: Option<usize>,
 }
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ReadTaskRunDetailsInput {
+    /// Read an exact run. Use taskId only when requesting the current run.
+    pub run_id: Option<String>,
+    pub task_id: Option<String>,
+    #[serde(flatten)]
+    pub detail: RunDetail,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "section", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RunDetail {
+    Context,
+    Activity {
+        #[schemars(range(min = 1, max = 20))]
+        limit: Option<usize>,
+        before: Option<String>,
+        after: Option<String>,
+    },
+    Git {
+        /// Omit to page through observed workspace files; supply a listed SHA to page its files.
+        commit: Option<String>,
+        offset: Option<usize>,
+    },
+    Verification {
+        /// Read records newest first in the current plan, or select an older plan explicitly.
+        #[serde(rename = "planRevision")]
+        plan_revision: Option<u64>,
+        offset: Option<usize>,
+    },
+    History {
+        offset: Option<usize>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GetTaskOperationInput {
+    /// Only needed when the same ID was reused with different write tools.
+    pub operation: Option<TaskOperation>,
+    pub operation_id: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum TaskOperation {
+    CreateTask,
+    CreateTaskRun,
+    UpdateTaskRun,
+    FinishTaskRun,
+    CommentTaskRun,
+}
+
+impl TaskOperation {
+    pub(super) const ALL: [Self; 5] = [
+        Self::CreateTask,
+        Self::CreateTaskRun,
+        Self::UpdateTaskRun,
+        Self::FinishTaskRun,
+        Self::CommentTaskRun,
+    ];
+
+    pub(super) fn tool_name(&self) -> &'static str {
+        match self {
+            Self::CreateTask => "create-task",
+            Self::CreateTaskRun => "create-task-run",
+            Self::UpdateTaskRun => "update-task-run",
+            Self::FinishTaskRun => "finish-task-run",
+            Self::CommentTaskRun => "comment-task-run",
+        }
+    }
+}
+
 /// Append a comment or reply, including on a historical/closed run. Never changes development state.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -340,6 +429,7 @@ pub struct CommentTaskRunInput {
     pub reply_to: Option<String>,
     #[schemars(length(min = 1, max = 20), inner(length(min = 1, max = 220)))]
     pub agent_conversation: Vec<String>,
+    /// Caller-generated retry key. Use the same value with identical arguments to retry.
     pub operation_id: Option<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]

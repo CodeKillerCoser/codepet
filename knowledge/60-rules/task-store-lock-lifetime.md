@@ -16,6 +16,8 @@ App、独立 MCP、Git 子进程并行时的任务账本与旧抽取 Store。
 
 以 RAII 包装明确锁的拥有者，在 Drop 中先调用 fs2 unlock，再由 File 关闭句柄。共享领域服务继续短时持锁，Git 查询在锁外执行，写入在锁内检查 revision 并原子提交。
 
+任务账本的 JSON 原子写入必须用缓冲区合并序列化产生的小块写入。按写缓冲、flush、同步文件、原子替换的顺序提交，回执放在任务和证据之后。不可变、原子发布的回执允许在另一写入持锁时直接读取。MCP 等待独占锁的预算为 40 毫秒，超出时报告争用。千文件 merge 的 stdio 对照和回执验证见 [任务 MCP 本机性能](../40-runbooks/task-mcp-local-performance.md)。
+
 ## 来源
 
 2026-11-24 任务 MCP 首版集成；`store.rs::operation_releases_locks_even_when_a_duplicate_descriptor_is_retained` 用 try_clone 保留同一文件描述符的副本，覆盖原拥有者结束后仍能重新获取锁。

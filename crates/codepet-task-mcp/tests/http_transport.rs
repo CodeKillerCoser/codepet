@@ -113,7 +113,7 @@ async fn http_writes_share_the_app_ledger_and_survive_restart_without_sessions()
     let initialized = endpoint.rpc("initialize", init()).await;
     assert_eq!(initialized["serverInfo"]["name"], "codepet-tasks");
     let tools = endpoint.rpc("tools/list", json!({})).await;
-    assert_eq!(tools["tools"].as_array().unwrap().len(), 6);
+    assert_eq!(tools["tools"].as_array().unwrap().len(), 8);
     assert!(serde_json::to_vec(&tools).unwrap().len() < 24000);
     let input = json!({"agentWorkspace":{"path":workspace},"title":"HTTP 任务","description":"通过本机 HTTP 登记目标","initialRun":{"agentConversation":["00000000-0000-4000-8000-000000000003"]}});
     let (first, retry) = tokio::join!(
@@ -263,7 +263,7 @@ async fn official_sdk_client_negotiates_and_calls_the_http_tools() {
             .auth_header(endpoint.authorization.trim_start_matches("Bearer ")),
     );
     let client = ClientConfig::default().serve(transport).await.unwrap();
-    assert_eq!(client.list_all_tools().await.unwrap().len(), 6);
+    assert_eq!(client.list_all_tools().await.unwrap().len(), 8);
     let result = client
         .call_tool(
             CallToolRequestParams::new("find-task-runs")
@@ -355,6 +355,23 @@ async fn request_header_is_required_and_each_writer_has_its_own_identity() {
     let posted: Value =
         serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
     assert_eq!(posted["runId"], task.runs[0].id);
+    for (agent, status) in [("codex-b", "committed"), ("codex-c", "unconfirmed")] {
+        let response = rpc(
+            Some(agent),
+            "get-task-operation",
+            json!({"operationId":"http-comment-one"}),
+        )
+        .send()
+        .await
+        .unwrap()
+        .json::<Value>()
+        .await
+        .unwrap();
+        let body: Value =
+            serde_json::from_str(response["result"]["content"][0]["text"].as_str().unwrap())
+                .unwrap();
+        assert_eq!(body["status"], status);
+    }
     let reply = json!({"taskId":task.id,"runId":task.runs[0].id,"comment":"已复核，补充上下文","replyTo":posted["activityId"],"agentConversation":["agent-c-chat"]});
     let response = rpc(Some("codex-c"), "comment-task-run", reply)
         .send()

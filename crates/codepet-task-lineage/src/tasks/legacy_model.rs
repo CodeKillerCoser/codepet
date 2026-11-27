@@ -88,11 +88,22 @@ pub struct CheckResult {
     pub evidence: String,
 }
 
+// Keep the stored Scope representation for existing records. The input schema
+// advertises only executable stages, as enforced by validate_verification.
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum VerificationStage {
+    Local,
+    Release,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct VerificationInput {
     pub plan_revision: u64,
-    /// local or release (both is not a test execution stage).
+    /// Submit local and release evidence in separate requests.
+    #[schemars(with = "VerificationStage")]
     pub stage: Scope,
     /// The actual tested worktree/commit or installed version. Never just say "latest".
     pub target: String,

@@ -4,7 +4,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::Value;
 use std::{
     fs::{self, File, OpenOptions},
-    io::Write,
+    io::{BufWriter, Write},
     path::{Component, Path, PathBuf},
 };
 
@@ -73,15 +73,18 @@ impl Store {
         })
     }
     fn path(&self, relative: &str) -> Result<PathBuf> {
+        Self::checked_path(&self.root, relative)
+    }
+    fn checked_path(root: &Path, relative: &str) -> Result<PathBuf> {
         let path = Path::new(relative);
         if path.as_os_str().is_empty()
             || !path.components().all(|c| matches!(c, Component::Normal(_)))
         {
             return Err("Invalid store key".into());
         }
-        let result = self.root.join(path);
+        let result = root.join(path);
         // Store directories are owned by this service; reject external symlink redirection.
-        let mut current = self.root.clone();
+        let mut current = root.to_path_buf();
         for component in path.components() {
             current.push(component);
             if fs::symlink_metadata(&current).is_ok_and(|meta| meta.file_type().is_symlink()) {
@@ -91,7 +94,14 @@ impl Store {
         Ok(result)
     }
     pub fn read<T: DeserializeOwned>(&self, key: &str) -> Result<Option<T>> {
-        let path = self.path(key)?;
+        Self::read_published(&self.root, key)
+    }
+    // Only use without a Store for immutable files that are atomically published.
+    pub(crate) fn read_published<T: DeserializeOwned>(root: &Path, key: &str) -> Result<Option<T>> {
+        if !root.is_absolute() {
+            return Err("Task data directory must be absolute".into());
+        }
+        let path = Self::checked_path(root, key)?;
         match fs::read(path) {
             Ok(data) => serde_json::from_slice(&data)
                 .map(Some)
@@ -101,6 +111,13 @@ impl Store {
         }
     }
     pub fn list<T: DeserializeOwned>(&self, directory: &str) -> Result<Vec<T>> {
+        self.list_bytes(directory)?
+            .iter()
+            .map(|bytes| serde_json::from_slice(bytes).map_err(|error| error.to_string()))
+            .collect()
+    }
+
+    pub(crate) fn list_bytes(&self, directory: &str) -> Result<Vec<Vec<u8>>> {
         let directory = self.path(directory)?;
         if !directory.exists() {
             return Ok(vec![]);
@@ -117,8 +134,7 @@ impl Store {
                 if !entry.file_type().map_err(|e| e.to_string())?.is_file() {
                     return Err("Unexpected store entry".into());
                 }
-                serde_json::from_slice(&fs::read(entry.path()).map_err(|e| e.to_string())?)
-                    .map_err(|e| e.to_string())
+                fs::read(entry.path()).map_err(|error| error.to_string())
             })
             .collect()
     }
@@ -127,8 +143,12 @@ impl Store {
         let parent = path.parent().ok_or("No parent")?;
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-        serde_json::to_writer(&mut temporary, value).map_err(|e| e.to_string())?;
-        temporary.write_all(b"\n").map_err(|e| e.to_string())?;
+        {
+            let mut output = BufWriter::new(temporary.as_file_mut());
+            serde_json::to_writer(&mut output, value).map_err(|e| e.to_string())?;
+            output.write_all(b"\n").map_err(|e| e.to_string())?;
+            output.flush().map_err(|e| e.to_string())?;
+        }
         temporary.as_file().sync_all().map_err(|e| e.to_string())?;
         temporary.persist(path).map_err(|e| e.to_string())?;
         Ok(())

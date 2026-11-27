@@ -46,6 +46,7 @@ fn valid_id(value: &str) -> Result<()> {
 pub struct Ledger {
     root: PathBuf,
     data: PathBuf,
+    lock_wait: Duration,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,8 +67,16 @@ impl Ledger {
         Self {
             root: data.join("tasks/v4"),
             data: data.into(),
+            lock_wait: Duration::from_secs(2),
         }
     }
+
+    /// Interactive tools can report contention sooner than a background writer.
+    pub fn with_lock_wait(mut self, wait: Duration) -> Self {
+        self.lock_wait = wait;
+        self
+    }
+
     pub fn data_directory(&self) -> &Path {
         &self.data
     }
@@ -83,8 +92,11 @@ impl Ledger {
         let store = loop {
             match Store::open(&self.root) {
                 Ok(s) => break s,
-                Err(e) if e.contains("busy") && start.elapsed() < Duration::from_secs(2) => {
-                    std::thread::sleep(Duration::from_millis(10))
+                Err(e) if e.contains("busy") && start.elapsed() < self.lock_wait => {
+                    std::thread::sleep(
+                        Duration::from_millis(4)
+                            .min(self.lock_wait.saturating_sub(start.elapsed())),
+                    )
                 }
                 Err(e) => return Err(e),
             }
@@ -118,10 +130,15 @@ impl Ledger {
     }
     pub fn list(&self) -> Result<Vec<Task>> {
         let store = self.store()?;
-        let mut tasks = vec![];
+        let mut snapshot = vec![];
         for p in Self::projects(&store)? {
-            tasks.extend(store.list::<Task>(&format!("projects/{}/tasks", p.id))?);
+            snapshot.extend(store.list_bytes(&format!("projects/{}/tasks", p.id))?);
         }
+        drop(store);
+        let mut tasks = snapshot
+            .into_iter()
+            .map(|bytes| serde_json::from_slice::<Task>(&bytes).map_err(|error| error.to_string()))
+            .collect::<Result<Vec<_>>>()?;
         if tasks
             .iter()
             .any(|t| !matches!(t.schema_version, 4 | 5 | 6) || t.runs.is_empty())
@@ -201,18 +218,46 @@ impl Ledger {
             serde_json::to_vec(&(op, actor.role(), actor.source(), input))
                 .map_err(|e| e.to_string())?,
         );
-        let key = format!(
-            "receipts/{}.json",
-            stable_id(format!(
-                "{op}:{}:{}:{}",
-                actor.role(),
-                actor.source(),
-                operation.unwrap_or(&fingerprint)
-            ))
-        );
+        let key = Self::receipt_key(op, operation.unwrap_or(&fingerprint), actor);
         let cached = self.cached(&self.store()?, &key, &fingerprint)?;
         Ok((key, fingerprint, cached))
     }
+    fn receipt_key(operation: &str, operation_id: &str, actor: &Actor) -> String {
+        format!(
+            "receipts/{}.json",
+            stable_id(format!(
+                "{operation}:{}:{}:{operation_id}",
+                actor.role(),
+                actor.source()
+            ))
+        )
+    }
+
+    pub fn operation_receipt(&self, input: GetTaskOperationInput, actor: Actor) -> Result<Value> {
+        text(&input.operation_id, "operationId", 64 * 1024)?;
+        // Receipts are atomically published last, after all task and diff files.
+        // They are immutable and can be read during a different writer's transaction.
+        let operations = input
+            .operation
+            .as_ref()
+            .map_or(&TaskOperation::ALL[..], std::slice::from_ref);
+        let mut receipt = None;
+        for operation in operations {
+            let key = Self::receipt_key(operation.tool_name(), &input.operation_id, &actor);
+            if let Some(saved) = Store::read_published::<SavedReceipt>(&self.root, &key)? {
+                if receipt.replace(saved).is_some() {
+                    return Err("operationId 匹配多种写入，请用 operation 指定工具名称".into());
+                }
+            }
+        }
+        Ok(match receipt {
+            Some(saved) => {
+                json!({"operationId":input.operation_id,"status":"committed","receipt":saved.receipt})
+            }
+            None => json!({"operationId":input.operation_id,"status":"unconfirmed"}),
+        })
+    }
+
     fn cached(&self, store: &Store, key: &str, fingerprint: &str) -> Result<Option<Receipt>> {
         if let Some(saved) = store.read::<SavedReceipt>(key)? {
             if saved.fingerprint != fingerprint {
@@ -277,7 +322,17 @@ impl Ledger {
             .ok_or("项目不存在")?
             .path
             .clone();
-        let mut writes = diffs::prepare(&store, &task, &repository, true)?;
+        let mut writes = if previous
+            .as_ref()
+            .and_then(|task| task.runs.last())
+            .is_none_or(|old| {
+                let run = task.runs.last().unwrap();
+                old.id != run.id || old.agent_workspace != run.agent_workspace
+            }) {
+            diffs::prepare(&store, &task, &repository, true)?
+        } else {
+            vec![]
+        };
         writes.extend(vec![
             ("projects.json".into(), json!(projects)),
             (Self::key(&task.project_id, &task.id), json!(task)),

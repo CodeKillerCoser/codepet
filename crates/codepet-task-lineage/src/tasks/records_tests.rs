@@ -339,18 +339,25 @@ fn mcp_detail_does_not_repeat_full_git_snapshots_in_progress_and_tests() {
         .unwrap();
     let detail = ledger
         .find_runs(FindTaskRunsInput {
-            task_id: Some(task.id),
+            task_id: Some(task.id.clone()),
             ..Default::default()
         })
         .unwrap();
-    assert_eq!(
-        detail["run"]["agentWorkspace"]["changedFiles"]
-            .as_array()
-            .unwrap()
-            .len(),
-        20
-    );
-    assert_eq!(detail["run"]["agentWorkspace"]["changedFileCount"], 40);
+    assert!(detail["run"].get("agentWorkspace").is_none());
+    assert!(detail.get("activity").is_none());
+    let git = ledger
+        .read_run_details(ReadTaskRunDetailsInput {
+            task_id: Some(task.id),
+            run_id: None,
+            detail: RunDetail::Git {
+                commit: None,
+                offset: None,
+            },
+        })
+        .unwrap();
+    assert_eq!(git["changedFiles"].as_array().unwrap().len(), 20);
+    assert_eq!(git["total"], 40);
+    assert_eq!(git["nextOffset"], 20);
     assert!(detail["run"]["latestProgress"]
         .get("agentWorkspace")
         .is_none());

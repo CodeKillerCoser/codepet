@@ -743,7 +743,7 @@ pub(super) fn validate_verification(round: &Round, input: &VerificationInput) ->
         .find(|p| p.revision == input.plan_revision)
         .ok_or("验收计划版本不存在")?;
     if input.stage == Scope::Both {
-        return Err("每次验收请选择本地或发布阶段".into());
+        return Err("INVALID_VERIFICATION_STAGE: verification.stage 请选择 local 或 release；两个阶段请分别提交".into());
     }
     text(&input.target, "实际验收版本", 1000)?;
     text(&input.environment, "验收环境", 1000)?;
@@ -759,7 +759,12 @@ pub(super) fn validate_verification(round: &Round, input: &VerificationInput) ->
             .find(|c| c.id == result.criterion_id)
             .ok_or("验收项不在指定计划中")?;
         if c.scope != Scope::Both && c.scope != input.stage {
-            return Err("验收项不适用于这个验收阶段".into());
+            return Err(format!(
+                "CRITERION_STAGE_MISMATCH: 验收项不适用于这个验收阶段 (criterionId={}, criterionScope={}, submittedStage={})；请按验收项适用阶段分别提交",
+                c.id,
+                json!(c.scope),
+                json!(input.stage)
+            ));
         }
         if !used.insert(&result.criterion_id) {
             return Err("验收项结果重复".into());

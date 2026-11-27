@@ -122,8 +122,8 @@ fn rename_deletion_binary_and_limits_are_explicit() {
     git(&root, &["commit", "-m", "delete"]);
     let sha = git(&root, &["rev-parse", "HEAD"]);
     let file = workspace::commit_changes(&root, &sha).files.remove(0);
-    let patch = git_patch(&root, &file, Some(&sha)).unwrap();
-    assert_eq!(patch.2, Some(2));
+    let patch = capture(&root, &[file], Some(&sha), &mut { CAPTURE_LIMIT }).remove(0);
+    assert_eq!(patch.deleted, Some(2));
 }
 #[cfg(unix)]
 #[test]
@@ -138,7 +138,8 @@ fn untracked_symlink_cannot_capture_outside_workspace() {
         staged: false,
         original_path: None,
     };
-    assert!(git_patch(&root, &file, None).is_err());
+    let patch = capture(&root, &[file], None, &mut { CAPTURE_LIMIT }).remove(0);
+    assert!(patch.error.is_some());
 }
 
 #[test]
@@ -191,7 +192,8 @@ fn filenames_are_literal_pathspecs_not_globs() {
         staged: false,
         original_path: None,
     };
-    let patch = git_patch(&root, &file, Some(&sha)).unwrap().0;
-    assert!(patch.contains("+literal new"));
-    assert!(!patch.contains("unrelated secret"));
+    let patch = capture(&root, &[file], Some(&sha), &mut { CAPTURE_LIMIT }).remove(0);
+    assert!(patch.error.is_none(), "{:?}", patch.error);
+    assert!(patch.patch.contains("+literal new"));
+    assert!(!patch.patch.contains("unrelated secret"));
 }

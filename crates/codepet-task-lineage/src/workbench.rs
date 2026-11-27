@@ -75,6 +75,8 @@ pub fn projects(home: &Path) -> Result<Value> {
         json!({"projects":items,"warnings":warnings,"sourceInfo":{"codexHome":home,"projectCatalog":project_catalog}}),
     )
 }
+pub(crate) const GIT_OUTPUT_LIMIT_ERROR: &str = "Git 输出超过扫描上限";
+
 pub(crate) fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let mut child = Command::new("git")
         .arg("-c")
@@ -109,7 +111,13 @@ pub(crate) fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) if started.elapsed() < std::time::Duration::from_secs(30) => {
-                std::thread::sleep(std::time::Duration::from_millis(10))
+                // Most Git lookups finish quickly. Poll less frequently after the initial wait.
+                let pause = if started.elapsed() < std::time::Duration::from_millis(60) {
+                    std::time::Duration::from_millis(2)
+                } else {
+                    std::time::Duration::from_millis(10)
+                };
+                std::thread::sleep(pause);
             }
             other => {
                 let _ = child.kill();
@@ -131,11 +139,11 @@ pub(crate) fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
         .join()
         .map_err(|_| "Git 错误读取失败")?
         .map_err(|e| e.to_string())?;
+    if bytes.len() > 16 * 1024 * 1024 {
+        return Err(GIT_OUTPUT_LIMIT_ERROR.into());
+    }
     if !status.success() {
         return Err(String::from_utf8_lossy(&errors).trim().to_string());
-    }
-    if bytes.len() > 16 * 1024 * 1024 {
-        return Err("Git 输出超过扫描上限".into());
     }
     Ok(bytes)
 }
@@ -145,7 +153,7 @@ pub(crate) fn text_git(root: &Path, args: &[&str]) -> Result<String> {
 pub fn parse_status(bytes: &[u8]) -> Value {
     let mut branch = String::new();
     let mut head = String::new();
-    let mut upstream = false;
+    let mut upstream_ref = None;
     let mut comparable = false;
     let mut ahead = 0;
     let mut behind = 0;
@@ -157,8 +165,8 @@ pub fn parse_status(bytes: &[u8]) -> Value {
             branch = s.into();
         } else if let Some(s) = row.strip_prefix("# branch.oid ") {
             head = s.into();
-        } else if row.starts_with("# branch.upstream ") {
-            upstream = true;
+        } else if let Some(name) = row.strip_prefix("# branch.upstream ") {
+            upstream_ref = Some(name.to_owned());
         } else if let Some(s) = row.strip_prefix("# branch.ab ") {
             comparable = true;
             let mut p = s.split_whitespace();
@@ -204,7 +212,9 @@ pub fn parse_status(bytes: &[u8]) -> Value {
             changes.push(json!({"id":stable_id(path),"path":path,"original":original,"status":fields[1],"staged":fields[1].as_bytes()[0]!=b'.',"conflict":row.starts_with('u')}));
         }
     }
-    json!({"branch":branch,"head":head,"ahead":ahead,"behind":behind,"upstream":upstream && comparable,"changes":changes,"error":null})
+    let comparable_upstream = upstream_ref.filter(|_| comparable);
+    json!({"branch":branch,"head":head,"ahead":ahead,"behind":behind,"upstream":comparable_upstream.is_some(),
+        "upstreamRef":comparable_upstream,"changes":changes,"error":null})
 }
 pub fn inspect(root: &Path) -> Value {
     match git(

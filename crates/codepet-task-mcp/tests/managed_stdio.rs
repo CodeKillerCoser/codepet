@@ -171,7 +171,7 @@ fn moved_app_and_concurrent_clients_share_the_pinned_ledger_without_http() {
             .as_array()
             .unwrap()
             .len(),
-        6
+        8
     );
     let receipt = a.call(
         "create-task",
