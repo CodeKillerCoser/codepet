@@ -138,21 +138,64 @@ impl Store {
             })
             .collect()
     }
+    pub(crate) fn publish_document(&self, key: &str, bytes: &[u8]) -> Result<()> {
+        if !self.writable {
+            return Err("Read-only task store".into());
+        }
+        let path = self.path(key)?;
+        match fs::metadata(&path) {
+            Ok(meta) if meta.is_file() => {
+                let existing = fs::read(path).map_err(|error| error.to_string())?;
+                if existing == bytes {
+                    Ok(())
+                } else {
+                    Err(format!("任务文档摘要不匹配：{key}"))
+                }
+            }
+            Ok(_) => Err("Invalid task document".into()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.atomic_file(key, |file| file.write_all(bytes).map_err(|e| e.to_string()))
+            }
+            Err(error) => Err(error.to_string()),
+        }
+    }
+
+    pub(crate) fn open_document(root: &Path, key: &str) -> Result<File> {
+        if !root.is_absolute() {
+            return Err("Task data directory must be absolute".into());
+        }
+        let path = Self::checked_path(root, key)?;
+        let meta = fs::metadata(&path).map_err(|e| format!("读取任务文档 {key} 失败：{e}"))?;
+        if !meta.is_file() {
+            return Err("Invalid task document".into());
+        }
+        File::open(path).map_err(|e| format!("读取任务文档 {key} 失败：{e}"))
+    }
+
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
     fn atomic(&self, key: &str, value: &Value) -> Result<()> {
+        self.atomic_file(key, |file| {
+            let mut output = BufWriter::new(file);
+            serde_json::to_writer(&mut output, value).map_err(|e| e.to_string())?;
+            output.write_all(b"\n").map_err(|e| e.to_string())?;
+            output.flush().map_err(|e| e.to_string())
+        })
+    }
+
+    fn atomic_file(&self, key: &str, write: impl FnOnce(&mut File) -> Result<()>) -> Result<()> {
         let path = self.path(key)?;
         let parent = path.parent().ok_or("No parent")?;
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
         let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
-        {
-            let mut output = BufWriter::new(temporary.as_file_mut());
-            serde_json::to_writer(&mut output, value).map_err(|e| e.to_string())?;
-            output.write_all(b"\n").map_err(|e| e.to_string())?;
-            output.flush().map_err(|e| e.to_string())?;
-        }
+        write(temporary.as_file_mut())?;
         temporary.as_file().sync_all().map_err(|e| e.to_string())?;
         temporary.persist(path).map_err(|e| e.to_string())?;
         Ok(())
     }
+
     fn recover(&self) -> Result<()> {
         if let Some(writes) = self.read::<Vec<(String, Value)>>("prepared.json")? {
             for (key, value) in &writes {

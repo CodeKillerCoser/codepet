@@ -1,9 +1,12 @@
 //! Local, immutable diff evidence. Kept outside task/MCP payloads and independent of Git GC.
-use super::{model::*, now, workspace, Ledger, Task};
+use super::{documents, model::*, now, workspace, Ledger, Task};
 use crate::{stable_id, store::Store, workbench, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{io::Read, path::Path};
+use std::{
+    io::{Read, Seek, SeekFrom},
+    path::Path,
+};
 mod batch;
 
 const FILE_LIMIT: usize = 256 * 1024;
@@ -16,8 +19,19 @@ struct FileDiff {
     change_type: String,
     added: Option<u64>,
     deleted: Option<u64>,
+    #[serde(default)]
     patch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    patch_ref: Option<PatchRef>,
     error: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct PatchRef {
+    #[serde(rename = "ref")]
+    reference: String,
+    offset: u64,
+    length: usize,
+    sha256: String,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -38,10 +52,75 @@ fn version_key(prefix: &str, id: &str) -> String {
 fn summary(version: &Version) -> Value {
     let mut value = json!(version);
     for file in value["files"].as_array_mut().unwrap() {
-        file.as_object_mut().unwrap().remove("patch");
+        let fields = file.as_object_mut().unwrap();
+        fields.remove("patch");
+        fields.remove("patchRef");
     }
     value
 }
+fn stored_version(version: &Version) -> Value {
+    let mut value = json!(version);
+    for file in value["files"].as_array_mut().unwrap() {
+        if file.get("patchRef").is_some() {
+            file.as_object_mut().unwrap().remove("patch");
+        }
+    }
+    value
+}
+
+fn persist_patches(store: &Store, version: &mut Version) -> Result<()> {
+    let mut document = Vec::new();
+    let mut ranges = Vec::new();
+    for (index, file) in version.files.iter_mut().enumerate() {
+        if file.patch.is_empty() {
+            continue;
+        }
+        let bytes = std::mem::take(&mut file.patch).into_bytes();
+        let offset = document.len() as u64;
+        let length = bytes.len();
+        let sha256 = stable_id(&bytes);
+        ranges.push((index, offset, length, sha256));
+        document.extend(bytes);
+    }
+    if !document.is_empty() {
+        let reference = documents::key(documents::Kind::Diff, &document);
+        store.publish_document(&reference, &document)?;
+        for (index, offset, length, sha256) in ranges {
+            version.files[index].patch_ref = Some(PatchRef {
+                reference: reference.clone(),
+                offset,
+                length,
+                sha256,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn read_patch(store: &Store, patch: PatchRef) -> Result<String> {
+    if patch.length > CAPTURE_LIMIT {
+        return Err("差异文档范围超过快照上限".into());
+    }
+    let mut doc = documents::open(store.root(), documents::Kind::Diff, &patch.reference)?;
+    let size = doc.metadata().map_err(|error| error.to_string())?.len();
+    if patch
+        .offset
+        .checked_add(patch.length as u64)
+        .is_none_or(|end| end > size)
+    {
+        return Err("差异文档范围越界".into());
+    }
+    doc.seek(SeekFrom::Start(patch.offset))
+        .map_err(|error| error.to_string())?;
+    let mut bytes = vec![0; patch.length];
+    doc.read_exact(&mut bytes)
+        .map_err(|error| error.to_string())?;
+    if stable_id(&bytes) != patch.sha256 {
+        return Err("差异文档摘要不匹配".into());
+    }
+    String::from_utf8(bytes).map_err(|error| error.to_string())
+}
+
 fn git_patch(
     root: &Path,
     file: &ChangedFile,
@@ -185,6 +264,7 @@ fn capture_batch(
                 added,
                 deleted,
                 patch,
+                patch_ref: None,
                 error,
             }
         })
@@ -268,9 +348,10 @@ fn prepare_run(
                 version = old;
             }
         }
+        persist_patches(store, &mut version)?;
         index.retain(|v| v["id"] != id);
         index.push(summary(&version));
-        writes.push((version_key(&prefix, &id), json!(version)));
+        writes.push((version_key(&prefix, &id), stored_version(&version)));
     }
     if capture_workspace && run.agent_workspace.error.is_none() {
         if let Some(scope) = &run.agent_workspace.run_files {
@@ -295,7 +376,7 @@ fn prepare_run(
                 );
                 let id = format!("workspace-{fingerprint}");
                 if !index.iter().any(|v| v["id"] == id) {
-                    let version = Version {
+                    let mut version = Version {
                         id: id.clone(),
                         commit: None,
                         captured_at: now(),
@@ -303,8 +384,9 @@ fn prepare_run(
                         files: captured,
                         error: None,
                     };
+                    persist_patches(store, &mut version)?;
                     index.push(summary(&version));
-                    writes.push((version_key(&prefix, &id), json!(version)));
+                    writes.push((version_key(&prefix, &id), stored_version(&version)));
                 }
             }
         }
@@ -345,7 +427,7 @@ impl Ledger {
         path: &str,
     ) -> Result<Value> {
         let store = self.store()?;
-        let task = Self::load(&store, task_id)?;
+        let task = Self::load_with_documents(&store, task_id, documents::Resolve::TextOnly)?;
         let run = task
             .runs
             .iter()
@@ -361,11 +443,18 @@ impl Ledger {
         let saved: Version = store
             .read(&version_key(&prefix, version))?
             .ok_or("差异快照不可用")?;
-        Ok(json!(saved
+        let mut file = saved
             .files
             .into_iter()
             .find(|f| f.path == path)
-            .ok_or("文件不属于此快照")?))
+            .ok_or("文件不属于此快照")?;
+        let patch = match file.patch_ref.take() {
+            Some(reference) => read_patch(&store, reference)?,
+            None => std::mem::take(&mut file.patch),
+        };
+        let mut output = json!(file);
+        output["patch"] = json!(patch);
+        Ok(output)
     }
 }
 #[cfg(test)]

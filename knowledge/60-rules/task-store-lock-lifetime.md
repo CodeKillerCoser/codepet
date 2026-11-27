@@ -18,6 +18,8 @@ App、独立 MCP、Git 子进程并行时的任务账本与旧抽取 Store。
 
 任务账本的 JSON 原子写入必须用缓冲区合并序列化产生的小块写入。按写缓冲、flush、同步文件、原子替换的顺序提交，回执放在任务和证据之后。不可变、原子发布的回执允许在另一写入持锁时直接读取。MCP 等待独占锁的预算为 40 毫秒，超出时报告争用。千文件 merge 的 stdio 对照和回执验证见 [任务 MCP 本机性能](../40-runbooks/task-mcp-local-performance.md)。
 
+账本外置文档使用相对 `tasks/v4/` 的 `documents/<SHA-256>.<扩展名>`。先原子发布正文，再把引用写入事务日志和记录。回执可独立读取。读取限制文档类型，拒绝目录越界和符号链接，并校验正文摘要。备份和移动保留完整目录结构。回归以移动后的账本、事务回放及非法引用为证据。
+
 ## 来源
 
 2026-11-24 任务 MCP 首版集成；`store.rs::operation_releases_locks_even_when_a_duplicate_descriptor_is_retained` 用 try_clone 保留同一文件描述符的副本，覆盖原拥有者结束后仍能重新获取锁。

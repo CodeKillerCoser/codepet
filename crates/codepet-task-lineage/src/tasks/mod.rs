@@ -3,6 +3,7 @@ mod activity;
 #[allow(dead_code)]
 mod delivery;
 mod diffs;
+mod documents;
 mod find;
 mod legacy;
 mod legacy_model;
@@ -112,23 +113,32 @@ impl Ledger {
     fn projects(store: &Store) -> Result<Vec<Project>> {
         Ok(store.read("projects.json")?.unwrap_or_default())
     }
-    fn load(store: &Store, task_id: &str) -> Result<Task> {
+    fn read_task(store: &Store, key: &str, mode: documents::Resolve) -> Result<Option<Task>> {
+        store
+            .read::<Value>(key)?
+            .map(|stored| documents::decode(stored, store.root(), mode))
+            .transpose()
+    }
+
+    fn load_with_documents(store: &Store, task_id: &str, mode: documents::Resolve) -> Result<Task> {
         valid_id(task_id)?;
         for project in Self::projects(store)? {
-            if let Some(mut task) = store.read::<Task>(&Self::key(&project.id, task_id))? {
-                if !matches!(task.schema_version, 4 | 5 | 6) || task.runs.is_empty() {
-                    return Err("任务格式版本或执行历史无效".into());
-                }
-                task.normalize_completion();
+            if let Some(task) = Self::read_task(store, &Self::key(&project.id, task_id), mode)? {
                 return Ok(task);
             }
         }
         Err("任务不存在".into())
     }
+
+    fn load(store: &Store, task_id: &str) -> Result<Task> {
+        Self::load_with_documents(store, task_id, documents::Resolve::Full)
+    }
+
     pub fn get(&self, task_id: &str) -> Result<Task> {
         Self::load(&self.store()?, task_id)
     }
-    pub fn list(&self) -> Result<Vec<Task>> {
+
+    fn list_with_documents(&self, mode: documents::Resolve) -> Result<Vec<Task>> {
         let store = self.store()?;
         let mut snapshot = vec![];
         for p in Self::projects(&store)? {
@@ -137,20 +147,19 @@ impl Ledger {
         drop(store);
         let mut tasks = snapshot
             .into_iter()
-            .map(|bytes| serde_json::from_slice::<Task>(&bytes).map_err(|error| error.to_string()))
+            .map(|bytes| {
+                let value = serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
+                documents::decode(value, &self.root, mode)
+            })
             .collect::<Result<Vec<_>>>()?;
-        if tasks
-            .iter()
-            .any(|t| !matches!(t.schema_version, 4 | 5 | 6) || t.runs.is_empty())
-        {
-            return Err("任务格式版本或执行历史无效".into());
-        }
-        for task in &mut tasks {
-            task.normalize_completion();
-        }
         tasks.sort_by_key(|t| std::cmp::Reverse(t.updated_at));
         Ok(tasks)
     }
+
+    pub fn list(&self) -> Result<Vec<Task>> {
+        self.list_with_documents(documents::Resolve::Full)
+    }
+
     pub fn view(&self, task: &Task) -> Result<Value> {
         let mut view = json!(task);
         let project = Self::projects(&self.store()?)?
@@ -289,7 +298,8 @@ impl Ledger {
         }
         let mut projects = Self::projects(&store)?;
         let mut task = apply(&store, &mut projects)?;
-        let previous = store.read::<Task>(&Self::key(&task.project_id, &task.id))?;
+        let task_key = Self::key(&task.project_id, &task.id);
+        let previous = Self::read_task(&store, &task_key, documents::Resolve::Full)?;
         activity::validate(previous.as_ref(), &task)?;
         task.revision += 1;
         task.updated_at = now();
@@ -335,7 +345,7 @@ impl Ledger {
         };
         writes.extend(vec![
             ("projects.json".into(), json!(projects)),
-            (Self::key(&task.project_id, &task.id), json!(task)),
+            (task_key, documents::encode(&task, &store)?),
             (
                 key,
                 json!(SavedReceipt {

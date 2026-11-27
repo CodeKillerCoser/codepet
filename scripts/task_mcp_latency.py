@@ -126,7 +126,26 @@ def benchmark(binary, samples, merge_sizes, verbose=False):
                     artifact = base / "ledger/tasks/v4/diffs" / ids["taskId"] / ids["runId"]
                     version = json.loads((artifact / f"commit-{merge}.json").read_text())
                     assert len(version["files"]) == 300
-                    assert "+merge content 0" in version["files"][0]["patch"]
+                    first_file = version["files"][0]
+                    if "patchRef" in first_file:
+                        reference = first_file["patchRef"]
+                        relative = Path(reference["ref"])
+                        assert not relative.is_absolute() and relative.parts[0] == "documents"
+                        assert ".." not in relative.parts and "patch" not in first_file
+                        with (base / "ledger/tasks/v4" / relative).open("rb") as document:
+                            document.seek(reference["offset"])
+                            patch = document.read(reference["length"]).decode()
+                    else:
+                        patch = first_file["patch"]
+                    assert "+merge content 0" in patch
+                    if "patchRef" in first_file:
+                        root = base / "ledger/tasks/v4"
+                        manifest = next((root / "projects").glob(f"*/tasks/{ids['taskId']}.json"))
+                        task = json.loads(manifest.read_text())
+                        files = task["runs"][0]["agentWorkspace"]["commitChanges"][0]["files"]
+                        path = Path(files["ref"])
+                        assert not path.is_absolute() and path.parts[0] == "documents" and ".." not in path.parts
+                        assert len(json.loads((root / path).read_text())) == merge_sizes[0]
                 final_id = prefix + "-finish"
                 finish = dict(context, expectedRevision=comment["revision"], conclusion="Local pass",
                               changedFiles=["owned.txt"], operationId=final_id, verification={

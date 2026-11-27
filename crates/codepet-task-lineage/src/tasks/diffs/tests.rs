@@ -197,3 +197,45 @@ fn filenames_are_literal_pathspecs_not_globs() {
     assert!(patch.patch.contains("+literal new"));
     assert!(!patch.patch.contains("unrelated secret"));
 }
+
+#[test]
+fn patch_references_are_portable_and_legacy_inline_patches_remain_readable() {
+    let (tmp, ledger, root) = setup();
+    let sha = git(&root, &["rev-parse", "HEAD"]);
+    let receipt = create(&ledger, &root, vec![sha.clone()]);
+    let version = format!("commit-{sha}");
+    let diff = ledger
+        .file_diff(&receipt.task_id, &receipt.run_id, &version, "a.txt")
+        .unwrap();
+    let key = format!(
+        "diffs/{}/{}/{version}.json",
+        receipt.task_id, receipt.run_id
+    );
+    let store = ledger.store().unwrap();
+    let stored: Value = store.read(&key).unwrap().unwrap();
+    let patch_ref = &stored["files"][0]["patchRef"];
+    assert!(stored["files"][0].get("patch").is_none());
+    assert!(patch_ref["ref"].as_str().unwrap().starts_with("documents/"));
+    assert_eq!(patch_ref["length"], diff["patch"].as_str().unwrap().len());
+    drop(store);
+
+    let moved = tmp.path().join("relocated-data");
+    fs::rename(ledger.data_directory(), &moved).unwrap();
+    fs::remove_dir_all(&root).unwrap();
+    let ledger = Ledger::new(&moved);
+    let read = || ledger.file_diff(&receipt.task_id, &receipt.run_id, &version, "a.txt");
+    assert_eq!(read().unwrap(), diff);
+    assert!(diff.get("patchRef").is_none());
+
+    let mut invalid = stored.clone();
+    invalid["files"][0]["patchRef"]["offset"] = json!(u64::MAX);
+    ledger.store().unwrap().write(&key, &invalid).unwrap();
+    assert!(read().unwrap_err().contains("范围越界"));
+
+    let mut legacy = stored;
+    let file = legacy["files"][0].as_object_mut().unwrap();
+    file.remove("patchRef");
+    file.insert("patch".into(), diff["patch"].clone());
+    ledger.store().unwrap().write(&key, &legacy).unwrap();
+    assert_eq!(read().unwrap(), diff);
+}

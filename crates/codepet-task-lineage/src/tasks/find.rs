@@ -66,7 +66,11 @@ impl Ledger {
             return Err("读取活动需要 taskId 或 runId".into());
         }
         if input.task_id.is_some() || input.run_id.is_some() {
-            let task = self.find_task_for_run(input.task_id.as_deref(), input.run_id.as_deref())?;
+            let task = self.find_task_for_run(
+                input.task_id.as_deref(),
+                input.run_id.as_deref(),
+                documents::Resolve::TextOnly,
+            )?;
             let run = select_run(&task, input.run_id.as_deref())?;
             let mut result = run_summary(&task, run);
             // Old callers can finish paging while switching to read-task-run-details.
@@ -138,22 +142,33 @@ impl Ledger {
 }
 
 impl Ledger {
-    fn find_task_for_run(&self, task_id: Option<&str>, run_id: Option<&str>) -> Result<Task> {
+    fn find_task_for_run(
+        &self,
+        task_id: Option<&str>,
+        run_id: Option<&str>,
+        mode: documents::Resolve,
+    ) -> Result<Task> {
         if let Some(id) = run_id {
             valid_id(id)?;
         }
         if let Some(id) = task_id {
-            return self.get(id);
+            return Self::load_with_documents(&self.store()?, id, mode);
         }
         let id = run_id.ok_or("请提供 runId 或 taskId")?;
-        self.list()?
+        self.list_with_documents(mode)?
             .into_iter()
             .find(|task| task.runs.iter().any(|run| run.id == id))
             .ok_or("任务或执行不存在".into())
     }
 
     pub fn read_run_details(&self, input: ReadTaskRunDetailsInput) -> Result<Value> {
-        let task = self.find_task_for_run(input.task_id.as_deref(), input.run_id.as_deref())?;
+        let mode = if matches!(&input.detail, RunDetail::Git { .. }) {
+            documents::Resolve::Full
+        } else {
+            documents::Resolve::TextOnly
+        };
+        let task =
+            self.find_task_for_run(input.task_id.as_deref(), input.run_id.as_deref(), mode)?;
         let run = select_run(&task, input.run_id.as_deref())?;
         let mut page = match input.detail {
             RunDetail::Context => json!({
