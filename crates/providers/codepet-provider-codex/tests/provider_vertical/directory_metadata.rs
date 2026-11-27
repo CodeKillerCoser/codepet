@@ -296,17 +296,155 @@ async fn union_directory_applies_desktop_membership_before_project_and_standalon
         json!({"kind":"project","project":conversation_resource(&route,"project-fixture")}),
     )
     .unwrap();
-    let mapped = provider.conversation_list(request).await.unwrap();
+    let mapped = provider.conversation_list(request.clone()).await.unwrap();
     assert_eq!(mapped.conversations.len(), 1);
     assert_eq!(
         mapped.conversations[0].resource.native_resource_id,
         "mapped"
     );
     assert!(mapped.page_info.next_cursor.is_none());
+
+    let desktop = rusqlite::Connection::open(home.join(".codex-global-state.sqlite")).unwrap();
+    desktop
+        .execute_batch(
+            "CREATE TABLE settings(
+                scope TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL,
+                PRIMARY KEY (scope, key)
+            ) WITHOUT ROWID;",
+        )
+        .unwrap();
+    desktop
+        .execute(
+            "INSERT INTO settings VALUES ('global', 'app-server-project-id-by-legacy-project-id-by-host', ?1)",
+            [json!({ format!("local:{}", home.display()): { "legacy": "project-fixture" } }).to_string()],
+        )
+        .unwrap();
+    let sqlite_only = json!({"projectKind":"local","projectId":"legacy"});
+    let unmapped = json!({"projectKind":"local","projectId":"missing"});
+    desktop
+        .execute(
+            "INSERT INTO settings VALUES ('global', 'thread-project-assignments', ?1)",
+            [json!({ "sqlite-only": sqlite_only, "mapped": sqlite_only, "unmapped": unmapped }).to_string()],
+        )
+        .unwrap();
+    db.execute("INSERT INTO threads VALUES ('sqlite-only',0,50,'legacy')", [])
+        .unwrap();
+
+    let first = provider.conversation_list(request.clone()).await.unwrap();
+    assert_eq!(first.conversations.len(), 1);
+    assert_eq!(
+        first.conversations[0].resource.native_resource_id,
+        "sqlite-only"
+    );
+    assert_eq!(
+        first.conversations[0].project.as_ref().unwrap().native_resource_id,
+        "project-fixture"
+    );
+    let mut continuation = request.clone();
+    continuation.cursor = Some(first.page_info.next_cursor.unwrap());
+    let second = provider.conversation_list(continuation.clone()).await.unwrap();
+    assert_eq!(second.conversations.len(), 1);
+    assert_eq!(second.conversations[0].resource.native_resource_id, "mapped");
+    assert!(second.page_info.next_cursor.is_none());
+
+    // Desktop moves the second row out of the project between pages.
+    desktop
+        .execute(
+            "UPDATE settings SET value = ?1 WHERE scope = 'global' AND key = 'thread-project-assignments'",
+            [json!({ "sqlite-only": sqlite_only, "unmapped": unmapped }).to_string()],
+        )
+        .unwrap();
+    assert_eq!(
+        provider.conversation_list(continuation.clone()).await.unwrap_err().code,
+        "invalid_cursor"
+    );
+
+    let refreshed = provider.conversation_list(request.clone()).await.unwrap();
+    assert_eq!(refreshed.conversations.len(), 1);
+    assert_eq!(
+        refreshed.conversations[0].resource.native_resource_id,
+        "sqlite-only"
+    );
+    assert!(refreshed.page_info.next_cursor.is_none());
+
+    request.project_filter = serde_json::from_value(json!({"kind":"standalone"})).unwrap();
+    continuation.project_filter = request.project_filter.clone();
+    assert_eq!(
+        provider.conversation_list(continuation).await.unwrap_err().code,
+        "invalid_cursor"
+    );
+    request.limit = Some(20);
+    let standalone = provider.conversation_list(request).await.unwrap();
+    assert_eq!(
+        standalone.conversations.iter()
+            .map(|row| row.resource.native_resource_id.as_str())
+            .collect::<Vec<_>>(),
+        ["mapped", "standalone"]
+    );
+    assert!(standalone.page_info.next_cursor.is_none());
+    let requests = std::fs::read_to_string(marker.with_extension("directory-requests.jsonl")).unwrap();
+    assert!(requests.lines().any(|line| {
+        let request: Value = serde_json::from_str(line).unwrap();
+        request["method"] == "thread/list" && request["params"]["projectId"] == "project-fixture"
+    }));
     provider
         .instance_stop(InstanceStopRequest { route })
         .await
         .unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn project_directory_partitions_batches_without_losing_native_or_desktop_rows() {
+    use std::collections::BTreeSet;
+
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("codex-home");
+    let marker = temp.path().join("partitioned-project");
+    std::fs::create_dir_all(&home).unwrap();
+    let native_ids = (0..23).map(|index| format!("native-{index:02}")).collect::<Vec<_>>();
+    let desktop_ids = (0..13).map(|index| format!("desktop-{index:02}")).collect::<Vec<_>>();
+    std::fs::write(marker.with_extension("directory.json"), json!({
+        "rows": [],
+        "metadataProjectIds": native_ids.iter().map(|id| (id,"project-fixture")).collect::<BTreeMap<_,_>>()
+    }).to_string()).unwrap();
+    let db = rusqlite::Connection::open(home.join("state_5.sqlite")).unwrap();
+    db.execute_batch(
+        "CREATE TABLE threads(id TEXT PRIMARY KEY, archived INTEGER, updated_at INTEGER,
+         history_mode TEXT, project_id TEXT, cwd TEXT, source TEXT);
+         INSERT INTO threads VALUES
+           ('explicit-standalone',0,100,'legacy',NULL,'/fixture/workspace','vscode'),
+           ('prefix-neighbor',0,100,'legacy',NULL,'/fixture/workspace-other','vscode'),
+           ('different-project',0,100,'legacy','other','/fixture/workspace','vscode'),
+           ('subagent',0,100,'legacy',NULL,'/fixture/workspace','{\"subagent\":{\"other\":\"fixture\"}}');"
+    ).unwrap();
+    for id in &native_ids {
+        db.execute("INSERT INTO threads VALUES (?1,0,90,'legacy','project-fixture','/outside','vscode')", [id]).unwrap();
+    }
+    for id in &desktop_ids {
+        db.execute("INSERT INTO threads VALUES (?1,0,30,'legacy',NULL,'/fixture/workspace/subdir','vscode')", [id]).unwrap();
+    }
+    std::fs::write(home.join(".codex-global-state.json"),json!({
+        "projectless-thread-ids":["explicit-standalone"]
+    }).to_string()).unwrap();
+    let (provider,route,_) = configured_direct_provider("union-directory",&marker).await;
+    let mut request: ConversationListRequest = serde_json::from_value(json!({
+        "route":route,"projectFilter":{"kind":"project","project":conversation_resource(&route,"project-fixture")},
+        "limit":20
+    })).unwrap();
+    let mut seen = BTreeSet::new();
+    for (batch, (native, desktop)) in [(10,10),(10,3),(3,0)].into_iter().enumerate() {
+        let page = provider.conversation_list(request.clone()).await.unwrap();
+        assert_eq!(page.conversations.len(), native + desktop);
+        for (index,row) in page.conversations.iter().enumerate() {
+            assert_eq!(row.project.is_some(), index < native);
+            assert!(seen.insert(row.resource.native_resource_id.clone()));
+        }
+        assert_eq!(page.page_info.next_cursor.is_some(), batch != 2);
+        request.cursor = page.page_info.next_cursor;
+    }
+    assert_eq!(seen, native_ids.into_iter().chain(desktop_ids).collect());
+    assert!(!marker.with_extension("directory-requests.jsonl").exists());
+    provider.instance_stop(InstanceStopRequest {route}).await.unwrap();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

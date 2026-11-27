@@ -671,6 +671,7 @@ dependencies = [
 name = "codepet-provider-codex"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "codepet-observation",
  "codepet-paths",
  "codepet-provider-data",

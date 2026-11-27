@@ -8,13 +8,14 @@ publish = false
 codepet-paths = { path = "../../codepet-paths" }
 sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 ring = "0.17"
+base64 = "0.22"
 codepet-provider-data = { path = "../codepet-provider-data" }
 codepet-observation = { path = "../codepet-observation" }
 codepet-provider-sdk = { path = "../../../sdk/rust/codepet-provider-sdk", version = "0.1.0" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 semver = "1"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 
 [dev-dependencies]

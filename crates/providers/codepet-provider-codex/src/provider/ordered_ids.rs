@@ -49,6 +49,7 @@ impl CodexInstanceRuntime {
         value.as_object_mut().unwrap().remove("cursor");
         value.as_object_mut().unwrap().remove("limit");
         let binding = format!("{generation}:{value}");
+        let assignments = self.desktop_project_assignments(request).await?;
         let (token, offset, saved) = {
             let mut pages = lock(&self.ordered_ids.0);
             pages.retain(|_, view| {
@@ -100,9 +101,7 @@ impl CodexInstanceRuntime {
                     binding: binding.clone(),
                     created: Instant::now(),
                     epoch: self.atoms.event_epoch(),
-                    assignments: load_codex_desktop_project_assignments(
-                        self.settings.data_directory.as_deref(),
-                    )?,
+                    assignments,
                     evidence: BTreeMap::new(),
                     ranks: vec![],
                     objects: BTreeMap::new(),

@@ -18,6 +18,8 @@ Codex 普通、项目、standalone、updatedAfter、ids 列表，Host 最近页�
 
 ## 推荐做法
 
+Codex 的项目会话查询使用独立的双游标分页，按来源各自分配额度。Provider 对每批统一排序，分页以后按来源继续读取。项目归属、无缓冲续页和手机显示顺序以[项目身份规约](remote-project-identity.md)为准。以下并集补读规则适用于其余列表模式。
+
 Provider 保留两源进度、未消费候选、已返回 ID 和已访问页。以当前页排序边界判断是否补读；同秒时间精度和同时间戳的 ID 排序需要越过边界才能确认。工作预算耗尽必须显式报不完整，不能返回假末页。
 
 无 cursor 开始新查询；cursor 绑定 route、generation、filter、readerScope，过期和篡改显式失败。只承诺已访问页可重放，未访问历史不预先物化。Native cursor 与 DB keyset 分开保存。DB 查询只读，RPC 期间不持有 DB 事务；仅缺少正式摘要的候选执行 metadata read。

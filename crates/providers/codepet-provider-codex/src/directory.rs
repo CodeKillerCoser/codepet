@@ -3,6 +3,7 @@ use codepet_provider_sdk::ProtocolError;
 use rusqlite::{Connection, OpenFlags};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Arc;
 use std::time::Duration;
 
 #[derive(Clone, Debug)]
@@ -37,13 +38,29 @@ pub(crate) struct DbQuery {
     // None = all; Some(None) = standalone.
     pub project: Option<Option<String>>,
     pub assignments: BTreeMap<String, Option<String>>,
+    pub project_source: Option<ProjectDbSource>,
     pub limit: Option<usize>,
 }
 
+type DesktopMatcher = Arc<dyn Fn(&str, Option<&str>) -> bool + Send + Sync>;
+
+#[derive(Clone)]
+pub(crate) enum ProjectDbSource {
+    Native(String),
+    Desktop(DesktopMatcher),
+}
+
 pub(crate) fn read_page(home: &Path, query: &DbQuery) -> Result<Vec<(String, DbEvidence)>, ProtocolError> {
+    read_page_with_project_support(home, query).map(|(_, rows)| rows)
+}
+
+pub(crate) fn read_page_with_project_support(
+    home: &Path,
+    query: &DbQuery,
+) -> Result<(bool, Vec<(String, DbEvidence)>), ProtocolError> {
     let files = match std::fs::read_dir(home) {
         Ok(files) => files,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok((false, Vec::new())),
         Err(error) => return Err(unavailable(error)),
     };
     let mut databases = Vec::new();
@@ -61,7 +78,7 @@ pub(crate) fn read_page(home: &Path, query: &DbQuery) -> Result<Vec<(String, DbE
     }
     // Never fall back to an older database after a new schema fails validation.
     let Some((_, path)) = databases.into_iter().max_by_key(|(version, _)| *version) else {
-        return Ok(Vec::new());
+        return Ok((false, Vec::new()));
     };
     let connection = Connection::open_with_flags(
         path,
@@ -95,10 +112,20 @@ pub(crate) fn read_page(home: &Path, query: &DbQuery) -> Result<Vec<(String, DbE
     } else {
         "'legacy'"
     };
-    let native_project = if columns.contains("project_id") { "NULLIF(project_id, '')" } else { "NULL" };
+    let supports_native_project = columns.contains("project_id");
+    let native_project = if supports_native_project { "NULLIF(project_id, '')" } else { "NULL" };
     let mut predicates = Vec::new();
     let mut parameters = Vec::<rusqlite::types::Value>::new();
     if query.limit.is_some() && query.ids.is_none() { predicates.push("archived = 0".to_string()); }
+    if query.project_source.is_some() && columns.contains("attached_thread_parent_id") {
+        predicates.push("attached_thread_parent_id IS NULL".into());
+    }
+    if query.project_source.is_some() && columns.contains("source") {
+        predicates.push(
+            "CASE WHEN json_valid(source) THEN json_type(source, '$.subagent') IS NULL ELSE 1 END"
+                .into(),
+        );
+    }
     if let Some(since) = query.updated_after {
         predicates.push(format!("{updated} >= ?"));
         parameters.push((since.min(i64::MAX as u64) as i64).into());
@@ -123,6 +150,33 @@ pub(crate) fn read_page(home: &Path, query: &DbQuery) -> Result<Vec<(String, DbE
                 parameters.extend([project.clone().into(), assignments.into(), project.clone().into()]);
             }
         }
+    }
+    match &query.project_source {
+        Some(ProjectDbSource::Native(project)) => {
+            if !supports_native_project {
+                return Ok((false, Vec::new()));
+            }
+            predicates.push("project_id = ?".into());
+            parameters.push(project.clone().into());
+        }
+        Some(ProjectDbSource::Desktop(matches)) => {
+            let matches = matches.clone();
+            connection
+                .create_scalar_function(
+                    "matches_desktop_project",
+                    2,
+                    rusqlite::functions::FunctionFlags::SQLITE_UTF8,
+                    move |context| {
+                        let id = context.get::<String>(0)?;
+                        let cwd = context.get::<Option<String>>(1)?;
+                        Ok(matches(&id, cwd.as_deref()))
+                    },
+                )
+                .map_err(unavailable)?;
+            let cwd = if columns.contains("cwd") { "cwd" } else { "NULL" };
+            predicates.push(format!("{native_project} IS NULL AND matches_desktop_project(id, {cwd})"));
+        }
+        None => {}
     }
     let predicate = if predicates.is_empty() { String::new() } else { format!(" WHERE {}", predicates.join(" AND ")) };
     let limit = query.limit.map(|limit| format!(" LIMIT {limit}")).unwrap_or_default();
@@ -159,7 +213,7 @@ pub(crate) fn read_page(home: &Path, query: &DbQuery) -> Result<Vec<(String, DbE
         .map_err(unavailable)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(unavailable)?;
-    Ok(entries)
+    Ok((supports_native_project, entries))
 }
 
 /// Restore DB millisecond precision within the same native second, and correct

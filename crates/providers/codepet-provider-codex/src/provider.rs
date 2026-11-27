@@ -11,6 +11,7 @@ use account_metadata::{codex_authentication, codex_usage};
 mod directory_list;
 mod hook_observation;
 mod ordered_ids;
+mod project_directory;
 use crate::client::{CodexAppServerSession, CodexRequestOutcome};
 use crate::mapper::{parse_permission_level, CodexProtocolMapper};
 use crate::protocol::{

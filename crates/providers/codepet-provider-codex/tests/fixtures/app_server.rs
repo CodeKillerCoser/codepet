@@ -549,6 +549,9 @@ fn main() {
                     }
                     let mut value = thread(thread_id, "idle", Vec::new());
                     value["updatedAt"] = config["metadataUpdatedAt"].get(&thread_id).cloned().unwrap_or(json!(10));
+                    if let Some(project) = config["metadataProjectIds"].get(&thread_id) {
+                        value["projectId"] = project.clone();
+                    }
                     value["name"] = Value::Null;
                     value["preview"] = json!("");
                     respond(&mut writer, id, json!({"thread":value}));

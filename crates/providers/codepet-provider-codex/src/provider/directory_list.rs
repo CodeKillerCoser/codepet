@@ -118,6 +118,10 @@ impl QueryState {
 
 impl CodexInstanceRuntime {
     pub(super) async fn list_directory_page(&self, generation: &str, request: &ConversationListRequest) -> Result<ConversationListResponse, ProtocolError> {
+        if let ConversationProjectFilter::ConversationProjectFilterProject(filter) = &request.project_filter {
+            return tokio::time::timeout(LIST_BUDGET, self.list_project_conversations(generation, request, filter)).await
+                .map_err(|_| protocol_error("conversation_query_incomplete", "Project page exceeded its time budget".into(), true))?;
+        }
         if matches!(&request.query, Some(ConversationListQuery::ConversationIdsQuery(query)) if query.order_by_updated_at == Some(true)) {
             return tokio::time::timeout(LIST_BUDGET, self.list_ordered_ids(generation, request)).await
                 .map_err(|_| protocol_error("conversation_query_incomplete", "Ordered IDs page exceeded its time budget".into(), true))?;
@@ -131,6 +135,7 @@ impl CodexInstanceRuntime {
         value.as_object_mut().unwrap().remove("cursor");
         value.as_object_mut().unwrap().remove("limit");
         let binding = format!("{generation}:{value}");
+        let assignments = self.desktop_project_assignments(request).await?;
         let (token, offset, state) = {
             let mut pages = lock(&self.directory_pages.views);
             pages.retain(|_, state| state.try_lock().map(|state| state.created.elapsed() < Duration::from_secs(120)).unwrap_or(true));
@@ -147,7 +152,6 @@ impl CodexInstanceRuntime {
                     if let Some(oldest) = oldest { pages.remove(&oldest); }
                     else { return Err(protocol_error("conversation_query_busy", "Too many active list queries".into(), true)); }
                 }
-                let assignments = load_codex_desktop_project_assignments(self.settings.data_directory.as_deref())?;
                 let db = DbQuery {
                     updated_after: match &request.query { Some(ConversationListQuery::ConversationUpdatedAfterQuery(query)) => Some(query.updated_after), _ => None },
                     ids: match &request.query { Some(ConversationListQuery::ConversationIdsQuery(query)) => Some(query.ids.clone()), _ => None },
